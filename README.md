@@ -2,6 +2,10 @@
 
 StockLSTM is a full-stack stock forecasting app that uses an LSTM neural network to predict the next 7 trading days of closing prices and visualize results in an interactive chart.
 
+## Preview
+
+![Live App Preview](assets/screenshot.png)
+
 ## Features
 
 - FastAPI backend for model inference
@@ -27,6 +31,8 @@ stock-predictor-lstm/
 		index.html
 		app.js
 		styles.css
+	assets/
+		screenshot.png
 	README.md
 ```
 
