@@ -28,18 +28,18 @@ def predict(ticker: str = "AAPL"):
         # 2. Load existing model or train a new one
         model = load_or_train(ticker, X_train, y_train)
 
-        # 3. Predict the next 5 days
-        predictions = predict_future(model, closing_prices, scaler, days=5)
+        # 3. Predict the next 7 days
+        predictions = predict_future(model, closing_prices, scaler, days=7)
 
         # 4. Generate Dates for the Chart
         raw_data = yf.download(ticker, period=f"{HISTORICAL_YEARS}y", progress=False)
         historical_dates = raw_data.index.strftime('%Y-%m-%d').tolist()
         
-        # Calculate the next 5  days (skipping weekends)
+        # Calculate the next 7 days (skipping weekends)
         future_dates = []
         current_date = raw_data.index[-1]
         days_added = 0
-        while days_added < 5:
+        while days_added < 7:
             current_date += timedelta(days=1)
             if current_date.weekday() < 5:  # 0-4 are Monday-Friday
                 future_dates.append(current_date.strftime('%Y-%m-%d'))
