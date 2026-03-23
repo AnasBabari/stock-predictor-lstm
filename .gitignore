@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Models 
+backend/saved_models/*.keras
+backend/saved_models/*.h5
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
