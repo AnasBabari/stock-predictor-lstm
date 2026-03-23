@@ -1,15 +1,25 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 venv/
+env/
 .env
 
-# Models 
+# Models & Data
 backend/saved_models/*.keras
 backend/saved_models/*.h5
+*.csv
+*.dat
+
+# Logs
+*.log
 
 # Jupyter
 .ipynb_checkpoints/
 
-# OS
+# OS & IDEs
 .DS_Store
+.vscode/
+.idea/
