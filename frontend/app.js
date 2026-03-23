@@ -1,5 +1,3 @@
-//Fetches predictions and renders graph
-
 const tickerInput = document.getElementById('tickerInput');
 const predictBtn = document.getElementById('predictBtn');
 const errorMsg = document.getElementById('errorMsg');
@@ -8,9 +6,11 @@ const statsBar = document.getElementById('statsBar');
 const chartContainer = document.getElementById('chartContainer');
 const chartTitle = document.getElementById('chartTitle');
 
+let stockChart = null; 
+let currentStockData = null; 
+let currentDaysView = 21; // Set default to 1 Month 
 
-
-
+// Event Listeners 
 predictBtn.addEventListener('click', () => {
     const ticker = tickerInput.value.trim().toUpperCase();
     if (!ticker) {
@@ -24,44 +24,6 @@ tickerInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') predictBtn.click();
 });
 
-
-async function fetchPrediction(ticker) {
-    resetUI();
-    showLoading(true);
-
-    try {
-        const response = await fetch(`http://127.0.0.1:8000/api/v1/predict?ticker=${ticker}`);
-        if (!response.ok) throw new Error(`Server error: ${response.status}`);
-        const data = await response.json();
-        renderStats(data);
-        renderChart(data);
-    } catch (err) {
-        showError(`Failed to fetch prediction.`);
-    } finally {
-        showLoading(false);
-    }
-}
-
-
-function renderStats(data) {
-    const lastClose = data.historical_prices.at(-1).toFixed(2);
-    const forecast = data.predicted_prices[0].toFixed(2);
-    const trend = forecast > lastClose ? '▲ Bullish' : '▼ Bearish';
-    const trendEl = document.getElementById('statTrend');
-
-    document.getElementById('statTicker').textContent = data.ticker;
-    document.getElementById('statLastClose').textContent = `$${lastClose}`;
-    document.getElementById('statForecast').textContent = `$${forecast}`;
-    trendEl.textContent = trend;
-    trendEl.style.color = forecast > lastClose ? '#00f5a0' : '#ff4d6d';
-
-    statsBar.classList.remove('hidden');
-}
-
-
-let currentStockData = null; 
-let currentDaysView = 7;   
-
 document.querySelectorAll('.time-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
         document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
@@ -72,7 +34,7 @@ document.querySelectorAll('.time-btn').forEach(btn => {
     });
 });
 
-
+// API Call 
 async function fetchPrediction(ticker) {
     resetUI();
     showLoading(true);
@@ -92,6 +54,22 @@ async function fetchPrediction(ticker) {
     }
 }
 
+// UI Rendering
+function renderStats(data) {
+    const lastClose = data.historical_prices.at(-1).toFixed(2);
+    const forecast = data.predicted_prices[0].toFixed(2);
+    const trend = forecast > lastClose ? '▲ Bullish' : '▼ Bearish';
+    const trendEl = document.getElementById('statTrend');
+
+    document.getElementById('statTicker').textContent = data.ticker;
+    document.getElementById('statLastClose').textContent = `$${lastClose}`;
+    document.getElementById('statForecast').textContent = `$${forecast}`;
+    trendEl.textContent = trend;
+    trendEl.style.color = forecast > lastClose ? '#00f5a0' : '#ff4d6d';
+
+    statsBar.classList.remove('hidden');
+}
+
 function renderChart(data) {
     chartTitle.textContent = `${data.ticker} — Historical vs Predicted Closing Price`;
     chartContainer.classList.remove('hidden');
@@ -103,7 +81,6 @@ function renderChart(data) {
     const slicedHistoricalDates = data.historical_dates.slice(sliceIndex);
     const slicedHistoricalPrices = data.historical_prices.slice(sliceIndex);
 
-    // Combine the sliced past with the predicted future
     const allDates = [...slicedHistoricalDates, ...data.future_dates];
     
     const historicalPadded = [
@@ -157,7 +134,6 @@ function renderChart(data) {
         }
     });
 }
-
 
 function resetUI() {
     errorMsg.classList.add('hidden');
