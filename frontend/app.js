@@ -99,10 +99,10 @@ function renderChart(data) {
     const isDark       = currentTheme === 'dark';
     const gridColor    = isDark ? '#1e1e2e' : '#e0e4ea';
     const tickColor    = isDark ? '#555577' : '#8888aa';
-    const tooltipBg    = isDark ? '#0f0f1a' : '#ffffff';
+    const tooltipBg    = isDark ? '#0f0f1a' : '#fffefb';
     const tooltipTitle = isDark ? '#e0e0e0' : '#1a1a2e';
     const tooltipBody  = isDark ? '#888899' : '#555577';
-    const tooltipBorder= isDark ? '#1e1e2e' : '#dde1e7';
+    const tooltipBorder = isDark ? '#1e1e2e' : '#e0dbd0';
     const legendColor  = isDark ? '#888899' : '#555577';
 
     const totalHistorical = data.historical_prices.length;
@@ -158,7 +158,7 @@ function renderChart(data) {
         },
         options: {
             responsive: true,
-            interaction: { mode: 'index', intersect: false },
+            interaction: { mode: 'nearest', intersect: false },
             plugins: {
                 legend: {
                     labels: { color: legendColor, font: { size: 12 } }
