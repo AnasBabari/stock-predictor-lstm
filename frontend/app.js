@@ -13,6 +13,14 @@ let currentStockData = null;
 let currentDaysView  = 21;
 let currentTheme     = 'dark';
 
+//Splash screen
+window.addEventListener('load', () => {
+    const splashScreen = document.getElementById('splashScreen');
+    setTimeout(() => {
+        splashScreen.classList.add('fade-out');
+    }, 1200); 
+});
+
 //dark/light mode toggle
 themeToggle.addEventListener('click', () => {
     currentTheme = currentTheme === 'dark' ? 'light' : 'dark';

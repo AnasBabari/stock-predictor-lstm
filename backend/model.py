@@ -1,5 +1,5 @@
 # model.py - Builds, trains, and runs the  LSTM model
-
+#type:ignore
 import os
 import numpy as np
 from tensorflow.keras.models import Sequential, load_model
