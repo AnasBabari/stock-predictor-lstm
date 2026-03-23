@@ -136,6 +136,14 @@ You can tune training/inference settings in `backend/config.py`:
 - Forecasts are based on historical price patterns and are not financial advice.
 - Initial request for a new ticker may take longer because model training runs first.
 
+## Future Improvements
+
+- Let users type company names (like Apple) and automatically map them to ticker symbols (AAPL).
+- Improve model quality by adding more signals, such as volume and key technical indicators.
+- Make the API more resilient with better input checks, clearer error messages, and retry logic.
+- Add automated tests and a simple CI (Continuous Integration) pipeline to catch bugs early.
+- Make deployment easier with Docker, environment-based settings, and scheduled model retraining.
+
 ## Troubleshooting
 
 - `Not enough data for training.`
