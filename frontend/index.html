@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -9,6 +9,10 @@
 </head>
 <body>
 
+    <nav class="navbar">
+        <div class="nav-logo">📈 StockLSTM</div>
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌙</button>
+    </nav>
 
     <div class="container">
         <div class="hero">
@@ -47,6 +51,10 @@
             <div class="stat">
                 <span class="stat-label">Day 1 Forecast</span>
                 <span class="stat-value" id="statForecast">—</span>
+            </div>
+            <div class="stat">
+                <span class="stat-label">Change</span>
+                <span class="stat-value" id="statChange">—</span>
             </div>
             <div class="stat">
                 <span class="stat-label">Trend</span>

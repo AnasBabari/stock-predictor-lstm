@@ -1,3 +1,4 @@
+#type: ignore
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
@@ -21,17 +22,17 @@ app.add_middleware(
 def predict(ticker: str = "AAPL"):
     ticker = ticker.upper()
     try:
-        # 1. Fetch data & preprocess
+        # Fetch data & preprocess
         pipeline_data, closing_prices = get_pipeline(ticker)
         X_train, X_test, y_train, y_test, scaler = pipeline_data
 
-        # 2. Load existing model or train a new one
+        # Load existing model or train a new one
         model = load_or_train(ticker, X_train, y_train)
 
-        # 3. Predict the next 7 days
+        # Predict the next 7 days
         predictions = predict_future(model, closing_prices, scaler, days=7)
 
-        # 4. Generate Dates for the Chart
+        # Generate Dates for the Chart
         raw_data = yf.download(ticker, period=f"{HISTORICAL_YEARS}y", progress=False)
         raw_data = raw_data.dropna()
         historical_dates = raw_data.index.strftime('%Y-%m-%d').tolist()

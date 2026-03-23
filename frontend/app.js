@@ -1,22 +1,29 @@
-const tickerInput = document.getElementById('tickerInput');
-const predictBtn = document.getElementById('predictBtn');
-const errorMsg = document.getElementById('errorMsg');
-const loading = document.getElementById('loading');
-const statsBar = document.getElementById('statsBar');
+
+const tickerInput    = document.getElementById('tickerInput');
+const predictBtn     = document.getElementById('predictBtn');
+const errorMsg       = document.getElementById('errorMsg');
+const loading        = document.getElementById('loading');
+const statsBar       = document.getElementById('statsBar');
 const chartContainer = document.getElementById('chartContainer');
-const chartTitle = document.getElementById('chartTitle');
+const chartTitle     = document.getElementById('chartTitle');
+const themeToggle    = document.getElementById('themeToggle');
 
-let stockChart = null; 
-let currentStockData = null; 
-let currentDaysView = 21; // Set default to 1 Month 
+let stockChart       = null;
+let currentStockData = null;
+let currentDaysView  = 21;
+let currentTheme     = 'dark';
 
-// Event Listeners 
+//dark/light mode toggle
+themeToggle.addEventListener('click', () => {
+    currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', currentTheme);
+    themeToggle.textContent = currentTheme === 'dark' ? '🌙' : '☀️';
+    if (currentStockData) renderChart(currentStockData);
+});
+ 
 predictBtn.addEventListener('click', () => {
     const ticker = tickerInput.value.trim().toUpperCase();
-    if (!ticker) {
-        showError('Please enter a ticker symbol.');
-        return;
-    }
+    if (!ticker) { showError('Please enter a ticker symbol.'); return; }
     fetchPrediction(ticker);
 });
 
@@ -28,74 +35,90 @@ document.querySelectorAll('.time-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
         document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
         e.target.classList.add('active');
-        
         currentDaysView = parseInt(e.target.dataset.days);
         if (currentStockData) renderChart(currentStockData);
     });
 });
 
-// API Call 
+//Fetch prediction from backend
 async function fetchPrediction(ticker) {
     resetUI();
     showLoading(true);
+    predictBtn.disabled = true;
 
     try {
         const response = await fetch(`http://127.0.0.1:8000/api/v1/predict?ticker=${ticker}`);
-        
-        
         if (!response.ok) {
             const errData = await response.json();
             throw new Error(errData.detail || `Server error: ${response.status}`);
         }
-        
-        currentStockData = await response.json(); 
+        currentStockData = await response.json();
         renderStats(currentStockData);
-        renderChart(currentStockData);            
+        renderChart(currentStockData);
     } catch (err) {
         console.error(err);
-        showError(`Error: ${err.message}`); 
+        showError(`Error: ${err.message}`);
     } finally {
         showLoading(false);
+        predictBtn.disabled = false;
     }
 }
 
-// UI Rendering
+//Render Stats 
 function renderStats(data) {
-    const lastClose = data.historical_prices.at(-1).toFixed(2);
-    const forecast = data.predicted_prices[0].toFixed(2);
-    const trend = forecast > lastClose ? '▲ Bullish' : '▼ Bearish';
-    const trendEl = document.getElementById('statTrend');
+    const lastClose = data.historical_prices.at(-1);
+    const forecast  = data.predicted_prices[0];
+    const isUp      = forecast > lastClose;
+    const change    = forecast - lastClose;
+    const changePct = ((change / lastClose) * 100).toFixed(2);
 
-    document.getElementById('statTicker').textContent = data.ticker;
-    document.getElementById('statLastClose').textContent = `$${lastClose}`;
-    document.getElementById('statForecast').textContent = `$${forecast}`;
-    trendEl.textContent = trend;
-    trendEl.style.color = forecast > lastClose ? '#00f5a0' : '#ff4d6d';
+    const changeEl = document.getElementById('statChange');
+    const trendEl  = document.getElementById('statTrend');
+
+    document.getElementById('statTicker').textContent    = data.ticker;
+    document.getElementById('statLastClose').textContent = `$${lastClose.toFixed(2)}`;
+    document.getElementById('statForecast').textContent  = `$${forecast.toFixed(2)}`;
+
+    changeEl.textContent = `${isUp ? '+' : ''}${changePct}%`;
+    changeEl.style.color = isUp ? 'var(--accent)' : '#ff4d6d';
+
+    trendEl.textContent  = isUp ? '▲ Bullish' : '▼ Bearish';
+    trendEl.style.color  = isUp ? 'var(--accent)' : '#ff4d6d';
 
     statsBar.classList.remove('hidden');
+    statsBar.style.animation = 'none';
+    statsBar.offsetHeight;
+    statsBar.style.animation = '';
 }
 
+//Render Chart 
 function renderChart(data) {
     chartTitle.textContent = `${data.ticker} — Historical vs Predicted Closing Price`;
     chartContainer.classList.remove('hidden');
 
-    // Slice the historical data based on the selected timeframe button
-    const totalHistorical = data.historical_prices.length;
-    const sliceIndex = Math.max(0, totalHistorical - currentDaysView);
-    
-    const slicedHistoricalDates = data.historical_dates.slice(sliceIndex);
-    const slicedHistoricalPrices = data.historical_prices.slice(sliceIndex);
+    const isDark       = currentTheme === 'dark';
+    const gridColor    = isDark ? '#1e1e2e' : '#e0e4ea';
+    const tickColor    = isDark ? '#555577' : '#8888aa';
+    const tooltipBg    = isDark ? '#0f0f1a' : '#ffffff';
+    const tooltipTitle = isDark ? '#e0e0e0' : '#1a1a2e';
+    const tooltipBody  = isDark ? '#888899' : '#555577';
+    const tooltipBorder= isDark ? '#1e1e2e' : '#dde1e7';
+    const legendColor  = isDark ? '#888899' : '#555577';
 
-    const allDates = [...slicedHistoricalDates, ...data.future_dates];
-    
+    const totalHistorical = data.historical_prices.length;
+    const sliceIndex      = Math.max(0, totalHistorical - currentDaysView);
+    const slicedDates     = data.historical_dates.slice(sliceIndex);
+    const slicedPrices    = data.historical_prices.slice(sliceIndex);
+    const allDates        = [...slicedDates, ...data.future_dates];
+
     const historicalPadded = [
-        ...slicedHistoricalPrices,
+        ...slicedPrices,
         ...Array(data.future_dates.length).fill(null)
     ];
-    
+
     const predictedPadded = [
-        ...Array(slicedHistoricalPrices.length - 1).fill(null),
-        slicedHistoricalPrices.at(-1), 
+        ...Array(slicedPrices.length - 1).fill(null),
+        slicedPrices.at(-1),
         ...data.predicted_prices
     ];
 
@@ -116,6 +139,7 @@ function renderChart(data) {
                     pointRadius: 0,
                     tension: 0.3,
                     fill: true,
+                    spanGaps: false,
                 },
                 {
                     label: 'Predicted Price',
@@ -128,16 +152,50 @@ function renderChart(data) {
                     borderDash: [6, 3],
                     tension: 0.3,
                     fill: true,
+                    spanGaps: false,
                 }
             ]
         },
         options: {
             responsive: true,
             interaction: { mode: 'index', intersect: false },
-            plugins: { legend: { labels: { color: '#888899', font: { size: 12 } } }, tooltip: { backgroundColor: '#0f0f1a', titleColor: '#e0e0e0', bodyColor: '#888899', borderColor: '#1e1e2e', borderWidth: 1, callbacks: { label: (ctx) => ` $${ctx.parsed.y?.toFixed(2) ?? '—'}` } } },
-            scales: { x: { ticks: { color: '#555577', maxTicksLimit: 10 }, grid: { color: '#1e1e2e' } }, y: { ticks: { color: '#555577', callback: (val) => `$${val.toFixed(0)}` }, grid: { color: '#1e1e2e' } } }
+            plugins: {
+                legend: {
+                    labels: { color: legendColor, font: { size: 12 } }
+                },
+                tooltip: {
+                    backgroundColor: tooltipBg,
+                    titleColor: tooltipTitle,
+                    bodyColor: tooltipBody,
+                    borderColor: tooltipBorder,
+                    borderWidth: 1,
+                    callbacks: {
+                        label: (ctx) => {
+                            const val = ctx.parsed.y;
+                            return val != null ? ` $${val.toFixed(2)}` : null;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: tickColor, maxTicksLimit: 10 },
+                    grid:  { color: gridColor }
+                },
+                y: {
+                    ticks: {
+                        color: tickColor,
+                        callback: (val) => `$${val.toFixed(0)}`
+                    },
+                    grid: { color: gridColor }
+                }
+            }
         }
     });
+
+    chartContainer.style.animation = 'none';
+    chartContainer.offsetHeight;
+    chartContainer.style.animation = '';
 }
 
 function resetUI() {
