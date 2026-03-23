@@ -84,9 +84,8 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 16px 40px;
-    background: var(--bg-card);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
+    background: transparent; 
+    border-bottom: none;     
     transition: background 0.3s ease;
 }
 
@@ -387,7 +386,7 @@ canvas {
     padding: 28px 24px;
     color: var(--text-dim);
     font-size: 0.8rem;
-    border-top: 1px solid var(--border);
+    border-top: none;      
     letter-spacing: 0.3px;
 }
 
@@ -408,6 +407,8 @@ canvas {
     width: 100vw;
     height: 100vh;
     background: var(--bg-base);
+    background: transparent;
+    backdrop-filter: blur(20px);
     z-index: 9999;
     display: flex;
     justify-content: center;
