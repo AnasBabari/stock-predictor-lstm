@@ -5,6 +5,7 @@ StockLSTM is a full-stack stock forecasting app that uses an LSTM neural network
 ## Preview
 
 ![Live App Preview](assets/screenshot.png)
+*Interactive chart showing historical data and 7-day forecast with timeframe filters*
 
 ## Features
 

@@ -466,3 +466,23 @@ canvas {
     0% { transform: scale(0.98); opacity: 0.8; }
     100% { transform: scale(1.02); opacity: 1; }
 }
+
+::-webkit-scrollbar
+{
+    width: 0px;
+}
+::-webkit-scrollbar-track-piece
+{
+    background-color: transparent;   /*transparent scroll bar  */
+    -webkit-border-radius: 6px;
+}
+
+/* Hide scrollbar */
+* {
+  -ms-overflow-style: none;  
+  scrollbar-width: none;     
+}
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
