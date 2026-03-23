@@ -4,11 +4,12 @@ import numpy as np
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
 from config import HISTORICAL_YEARS, WINDOW_SIZE, TRAIN_SPLIT
+import math
 
 
 def fetch_data(ticker: str):
-    
     data = yf.download(ticker, period=f"{HISTORICAL_YEARS}y")
+    data = data.dropna()
     closing_prices = data["Close"].values.reshape(-1, 1)
     return closing_prices
 
@@ -24,6 +25,8 @@ def preprocess(closing_prices):
         y.append(scaled[i, 0])
 
     X, y = np.array(X), np.array(y)
+    if len(X)==0:
+        raise ValueError("Not enough data for training.")
     X = X.reshape((X.shape[0], X.shape[1], 1))  
 
     split = int(len(X) * TRAIN_SPLIT)

@@ -33,6 +33,7 @@ def predict(ticker: str = "AAPL"):
 
         # 4. Generate Dates for the Chart
         raw_data = yf.download(ticker, period=f"{HISTORICAL_YEARS}y", progress=False)
+        raw_data = raw_data.dropna()
         historical_dates = raw_data.index.strftime('%Y-%m-%d').tolist()
         
         # Calculate the next 7 days (skipping weekends)

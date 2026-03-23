@@ -41,14 +41,19 @@ async function fetchPrediction(ticker) {
 
     try {
         const response = await fetch(`http://127.0.0.1:8000/api/v1/predict?ticker=${ticker}`);
-        if (!response.ok) throw new Error(`Server error: ${response.status}`);
+        
+        
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.detail || `Server error: ${response.status}`);
+        }
         
         currentStockData = await response.json(); 
         renderStats(currentStockData);
         renderChart(currentStockData);            
     } catch (err) {
         console.error(err);
-        showError(`Failed to fetch prediction.`);
+        showError(`Error: ${err.message}`); 
     } finally {
         showLoading(false);
     }
