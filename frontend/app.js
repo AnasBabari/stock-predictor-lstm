@@ -38,6 +38,66 @@ predictBtn.addEventListener('click', () => {
 tickerInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') predictBtn.click();
 });
+// Search Dropdown 
+const searchDropdown = document.getElementById('searchDropdown');
+let searchTimeout = null;
+
+tickerInput.addEventListener('input', () => {
+    const query = tickerInput.value.trim();
+    clearTimeout(searchTimeout);
+
+    if (query.length < 2) {
+        closeDropdown();
+        return;
+    }
+
+    searchTimeout = setTimeout(() => fetchSuggestions(query), 200);
+});
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.input-wrapper')) closeDropdown();
+});
+
+async function fetchSuggestions(query) {
+    try {
+        const response = await fetch(`http://127.0.0.1:8000/api/v1/search?query=${encodeURIComponent(query)}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        renderDropdown(data.results);
+    } catch (err) {
+        console.error('Search failed:', err);
+    }
+}
+
+function renderDropdown(results) {
+    if (!results.length) { closeDropdown(); return; }
+
+    searchDropdown.innerHTML = results.map(r => `
+        <div class="dropdown-item" data-ticker="${r.ticker}">
+            <div>
+                <div class="dropdown-name">${r.name}</div>
+                <div class="dropdown-type">${r.type}</div>
+            </div>
+            <div class="dropdown-ticker">${r.ticker}</div>
+        </div>
+    `).join('');
+
+    searchDropdown.querySelectorAll('.dropdown-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const ticker = item.dataset.ticker;
+            tickerInput.value = ticker;
+            closeDropdown();
+            fetchPrediction(ticker);
+        });
+    });
+
+    searchDropdown.classList.remove('hidden');
+}
+
+function closeDropdown() {
+    searchDropdown.classList.add('hidden');
+    searchDropdown.innerHTML = '';
+}
 
 document.querySelectorAll('.time-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {

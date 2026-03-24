@@ -18,6 +18,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/api/v1/search")
+def search(query: str):
+    try:
+        ticker = yf.Ticker(query)
+        search_results = yf.Search(query, max_results=6)
+        suggestions = []
+        for r in search_results.quotes:
+            if r.get("quoteType") in ("EQUITY", "ETF"):
+                suggestions.append({
+                    "ticker": r.get("symbol", ""),
+                    "name": r.get("longname") or r.get("shortname", ""),
+                    "type": r.get("quoteType", "")
+                })
+        return {"results": suggestions}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @app.get("/api/v1/predict")
 def predict(ticker: str = "AAPL"):
     ticker = ticker.upper()

@@ -29,12 +29,16 @@
 
         <div class="input-card">
             <div class="input-row">
-                <input
-                    type="text"
-                    id="tickerInput"
-                    placeholder="Enter ticker (e.g. AAPL, TSLA, GOOGL)"
-                    maxlength="10"
-                />
+                <div class="input-wrapper">
+                    <input
+                        type="text"
+                        id="tickerInput"
+                        placeholder="Enter ticker or company name (e.g. Apple, TSLA)"
+                        maxlength="50"
+                        autocomplete="off"
+                    />
+                    <div id="searchDropdown" class="search-dropdown hidden"></div>
+                </div>
                 <button id="predictBtn">Predict</button>
             </div>
         </div>
