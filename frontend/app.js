@@ -65,7 +65,14 @@ async function fetchPrediction(ticker) {
         renderChart(currentStockData);
     } catch (err) {
         console.error(err);
-        showError(`Error: ${err.message}`);
+        const friendlyError = err.message.includes('Failed to fetch')
+            ? 'Could not connect to the backend. Make sure the server is running.'
+            : err.message.includes('500')
+            ? 'Something went wrong on the server. The ticker may be invalid or unsupported.'
+            : err.message.includes('404')
+            ? 'Endpoint not found. Check the backend is running correctly.'
+            : 'Something went wrong. Please try again with a valid ticker symbol.';
+        showError(friendlyError);
     } finally {
         showLoading(false);
         predictBtn.disabled = false;
