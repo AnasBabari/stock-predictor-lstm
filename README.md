@@ -16,6 +16,7 @@ StockLSTM is a full-stack stock forecasting app that uses an LSTM neural network
 - Interactive frontend with Chart.js
 - Timeframe filters: `1W`, `1M`, `3M`, `6M`, `1Y`
 - Dark/light theme toggle
+- Company-name search with live ticker autocomplete (e.g., Apple -> AAPL).
 
 ## Project Structure
 
@@ -145,7 +146,6 @@ You can tune training/inference settings in `backend/config.py`:
 
 ## Future Improvements
 
-- Let users type company names (like Apple) and automatically map them to ticker symbols (AAPL).
 - Improve model quality by adding more signals, such as volume and key technical indicators.
 - Make the API more resilient with better input checks, clearer error messages, and retry logic.
 - Add automated tests and a simple CI (Continuous Integration) pipeline to catch bugs early.
