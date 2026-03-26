@@ -3,54 +3,89 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Stock Price Predictor</title>
+    <title>StockLSTM — AI Stock Price Predictor</title>
+    <meta name="description" content="AI-powered stock price forecasting using LSTM neural networks. Predict the next 3–30 trading days for any ticker." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
+    <!-- Splash Screen -->
     <div id="splashScreen" class="splash-screen">
         <div class="splash-content">
             <div class="splash-logo">📈 StockLSTM</div>
+            <div class="splash-tagline">AI-Powered Forecasting</div>
             <div class="splash-loading-bar"></div>
         </div>
     </div>
-    
-    <nav class="navbar">
+
+    <!-- Navbar -->
+    <header class="navbar" id="navbar">
         <div class="nav-logo">📈 StockLSTM</div>
-        <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌙</button>
-    </nav>
-
-    <div class="container">
-        <div class="hero">
-            <h1>Stock Price Predictor</h1>
-            <p class="subtitle">Enter any stock ticker to forecast the next 7 days</p>
+        <div class="nav-actions">
+            <button class="icon-btn" id="themeToggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
         </div>
+    </header>
 
-        <div class="input-card">
+    <!-- Main Content -->
+    <main class="container">
+
+        <!-- Hero -->
+        <section class="hero">
+            <h1>Stock Price <span class="gradient-text">Predictor</span></h1>
+            <p class="subtitle">LSTM neural network forecasting for any ticker — powered by deep learning</p>
+        </section>
+
+        <!-- Input Card -->
+        <section class="input-card" id="inputCard">
             <div class="input-row">
                 <div class="input-wrapper">
+                    <span class="input-icon">🔍</span>
                     <input
                         type="text"
                         id="tickerInput"
-                        placeholder="Enter ticker or company name (e.g. Apple, TSLA)"
+                        placeholder="Search tickers or company names…"
                         maxlength="50"
                         autocomplete="off"
                     />
                     <div id="searchDropdown" class="search-dropdown hidden"></div>
                 </div>
-                <button id="predictBtn">Predict</button>
+                <div class="forecast-selector">
+                    <label for="forecastDays" class="sr-only">Forecast horizon</label>
+                    <select id="forecastDays" title="Forecast horizon">
+                        <option value="3">3 days</option>
+                        <option value="7" selected>7 days</option>
+                        <option value="14">14 days</option>
+                        <option value="30">30 days</option>
+                    </select>
+                </div>
+                <button id="predictBtn">
+                    <span class="btn-text">Predict</span>
+                    <span class="btn-icon">→</span>
+                </button>
             </div>
-        </div>
+        </section>
 
+        <!-- Error -->
         <div id="errorMsg" class="error hidden"></div>
 
+        <!-- Loading -->
         <div id="loading" class="loading hidden">
             <div class="spinner"></div>
-            <p>Fetching data and running LSTM model...</p>
+            <p>Fetching data &amp; running LSTM model…</p>
+            <p class="loading-hint">First prediction for a new ticker may take longer while the model trains.</p>
         </div>
 
-        <div id="statsBar" class="stats-bar hidden">
+        <!-- Stock Info Cards -->
+        <section id="stockInfo" class="stock-info hidden">
+            <div class="info-grid" id="infoGrid"></div>
+        </section>
+
+        <!-- Stats Bar -->
+        <section id="statsBar" class="stats-bar hidden">
             <div class="stat">
                 <span class="stat-label">Ticker</span>
                 <span class="stat-value" id="statTicker">—</span>
@@ -60,7 +95,7 @@
                 <span class="stat-value" id="statLastClose">—</span>
             </div>
             <div class="stat">
-                <span class="stat-label">Day 1 Forecast</span>
+                <span class="stat-label">Forecast</span>
                 <span class="stat-value" id="statForecast">—</span>
             </div>
             <div class="stat">
@@ -71,9 +106,18 @@
                 <span class="stat-label">Trend</span>
                 <span class="stat-value" id="statTrend">—</span>
             </div>
-        </div>
-        <div id="chartContainer" class="hidden">
-            <h2 id="chartTitle"></h2>
+        </section>
+
+        <!-- Chart -->
+        <section id="chartContainer" class="chart-section hidden">
+            <div class="chart-header">
+                <h2 id="chartTitle"></h2>
+                <div class="chart-actions">
+                    <button class="icon-btn small" id="exportPng" title="Export chart as PNG">📸</button>
+                    <button class="icon-btn small" id="exportCsv" title="Export data as CSV">📄</button>
+                    <button class="icon-btn small" id="addWatchlist" title="Add to watchlist">⭐</button>
+                </div>
+            </div>
             <div class="timeframe-filters">
                 <button class="time-btn" data-days="5">1W</button>
                 <button class="time-btn active" data-days="21">1M</button>
@@ -81,13 +125,62 @@
                 <button class="time-btn" data-days="126">6M</button>
                 <button class="time-btn" data-days="252">1Y</button>
             </div>
-            <canvas id="stockChart"></canvas>
+            <div class="chart-canvas-wrap">
+                <canvas id="stockChart"></canvas>
+            </div>
+        </section>
+
+        <!-- Model Metrics -->
+        <section id="metricsCard" class="metrics-card hidden">
+            <div class="metric">
+                <span class="metric-label" title="Root Mean Squared Error — lower is better">RMSE</span>
+                <span class="metric-value" id="metricRMSE">—</span>
+            </div>
+            <div class="metric-divider"></div>
+            <div class="metric">
+                <span class="metric-label" title="Mean Absolute Error — average $ deviation">MAE</span>
+                <span class="metric-value" id="metricMAE">—</span>
+            </div>
+            <div class="metric-divider"></div>
+            <div class="metric">
+                <span class="metric-label">Forecast</span>
+                <span class="metric-value" id="metricDays">—</span>
+            </div>
+        </section>
+
+        <!-- Bottom Panels -->
+        <div class="bottom-panels">
+            <!-- Watchlist -->
+            <section class="panel-card" id="watchlistSection">
+                <div class="panel-header">
+                    <h3>⭐ Watchlist</h3>
+                    <button class="text-btn" id="clearWatchlist" title="Clear all">Clear</button>
+                </div>
+                <div id="watchlistItems" class="panel-items">
+                    <p class="empty-state">No tickers saved yet. Click ⭐ after predicting to add one.</p>
+                </div>
+            </section>
+
+            <!-- Prediction History -->
+            <section class="panel-card" id="historySection">
+                <div class="panel-header">
+                    <h3>📋 Prediction History</h3>
+                    <button class="text-btn" id="clearHistory" title="Clear all">Clear</button>
+                </div>
+                <div id="historyItems" class="panel-items">
+                    <p class="empty-state">No predictions yet. Search a ticker to get started.</p>
+                </div>
+            </section>
         </div>
-    </div>
+
+    </main>
 
     <footer class="footer">
-        <p>Built for educational purposes only.</p>
+        <p>Built for educational purposes only. Forecasts are not financial advice.</p>
     </footer>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
 
     <script src="app.js"></script>
 </body>
