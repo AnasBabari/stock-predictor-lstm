@@ -7,26 +7,45 @@
     <meta name="description" content="AI-powered stock price forecasting using LSTM neural networks. Predict the next 3–30 trading days for any ticker." />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css" />
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
+    <!-- Ambient Orbs (background decoration) -->
+    <div class="ambient-orbs" aria-hidden="true">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
     <!-- Splash Screen -->
     <div id="splashScreen" class="splash-screen">
         <div class="splash-content">
-            <div class="splash-logo">📈 StockLSTM</div>
+            <div class="splash-icon-ring">
+                <svg class="splash-ring-svg" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="45" fill="none" stroke="var(--border)" stroke-width="2"/>
+                    <circle cx="50" cy="50" r="45" fill="none" stroke="var(--accent)" stroke-width="2"
+                            stroke-dasharray="283" stroke-dashoffset="283" class="splash-ring-progress"/>
+                </svg>
+                <span class="splash-emoji">📈</span>
+            </div>
+            <div class="splash-logo">StockLSTM</div>
             <div class="splash-tagline">AI-Powered Forecasting</div>
-            <div class="splash-loading-bar"></div>
         </div>
     </div>
 
     <!-- Navbar -->
     <header class="navbar" id="navbar">
-        <div class="nav-logo">📈 StockLSTM</div>
+        <div class="nav-brand">
+            <span class="nav-logo-icon">📈</span>
+            <span class="nav-logo-text">Stock<span class="nav-logo-accent">LSTM</span></span>
+        </div>
         <div class="nav-actions">
-            <button class="icon-btn" id="themeToggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+            <button class="icon-btn theme-btn" id="themeToggle" aria-label="Toggle theme" title="Toggle theme">
+                <span class="theme-icon">🌙</span>
+            </button>
         </div>
     </header>
 
@@ -35,15 +54,21 @@
 
         <!-- Hero -->
         <section class="hero">
+            <div class="hero-badge">
+                <span class="badge-dot"></span>
+                Neural Network Forecasting
+            </div>
             <h1>Stock Price <span class="gradient-text">Predictor</span></h1>
-            <p class="subtitle">LSTM neural network forecasting for any ticker — powered by deep learning</p>
+            <p class="subtitle">Harness the power of LSTM deep learning to forecast any stock ticker — up to 30 trading days ahead</p>
         </section>
 
         <!-- Input Card -->
-        <section class="input-card" id="inputCard">
+        <section class="input-card glow-border" id="inputCard">
             <div class="input-row">
                 <div class="input-wrapper">
-                    <span class="input-icon">🔍</span>
+                    <svg class="input-svg-icon" viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
+                        <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"/>
+                    </svg>
                     <input
                         type="text"
                         id="tickerInput"
@@ -62,9 +87,14 @@
                         <option value="30">30 days</option>
                     </select>
                 </div>
-                <button id="predictBtn">
+                <button id="predictBtn" class="predict-btn">
                     <span class="btn-text">Predict</span>
-                    <span class="btn-icon">→</span>
+                    <span class="btn-icon">
+                        <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+                            <path fill-rule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z"/>
+                        </svg>
+                    </span>
+                    <span class="btn-shine"></span>
                 </button>
             </div>
         </section>
@@ -74,13 +104,28 @@
 
         <!-- Loading -->
         <div id="loading" class="loading hidden">
-            <div class="spinner"></div>
-            <p>Fetching data &amp; running LSTM model…</p>
+            <div class="loading-visual">
+                <div class="pulse-ring"></div>
+                <div class="pulse-ring delay-1"></div>
+                <div class="pulse-ring delay-2"></div>
+                <svg class="loading-brain" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" width="32" height="32">
+                    <path d="M12 2a7 7 0 017 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 01-2 2h-4a2 2 0 01-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 017-7z"/>
+                    <path d="M9 21h6M10 17v4M14 17v4"/>
+                </svg>
+            </div>
+            <p class="loading-text">Running LSTM model…</p>
             <p class="loading-hint">First prediction for a new ticker may take longer while the model trains.</p>
+            <div class="loading-bar">
+                <div class="loading-bar-fill"></div>
+            </div>
         </div>
 
         <!-- Stock Info Cards -->
         <section id="stockInfo" class="stock-info hidden">
+            <div class="section-label">
+                <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"/><path fill-rule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z"/></svg>
+                Company Overview
+            </div>
             <div class="info-grid" id="infoGrid"></div>
         </section>
 
@@ -88,19 +133,19 @@
         <section id="statsBar" class="stats-bar hidden">
             <div class="stat">
                 <span class="stat-label">Ticker</span>
-                <span class="stat-value" id="statTicker">—</span>
+                <span class="stat-value mono" id="statTicker">—</span>
             </div>
             <div class="stat">
                 <span class="stat-label">Last Close</span>
-                <span class="stat-value" id="statLastClose">—</span>
+                <span class="stat-value mono" id="statLastClose">—</span>
             </div>
             <div class="stat">
                 <span class="stat-label">Forecast</span>
-                <span class="stat-value" id="statForecast">—</span>
+                <span class="stat-value mono" id="statForecast">—</span>
             </div>
             <div class="stat">
                 <span class="stat-label">Change</span>
-                <span class="stat-value" id="statChange">—</span>
+                <span class="stat-value mono" id="statChange">—</span>
             </div>
             <div class="stat">
                 <span class="stat-label">Trend</span>
@@ -113,9 +158,18 @@
             <div class="chart-header">
                 <h2 id="chartTitle"></h2>
                 <div class="chart-actions">
-                    <button class="icon-btn small" id="exportPng" title="Export chart as PNG">📸</button>
-                    <button class="icon-btn small" id="exportCsv" title="Export data as CSV">📄</button>
-                    <button class="icon-btn small" id="addWatchlist" title="Add to watchlist">⭐</button>
+                    <button class="action-chip" id="exportPng" title="Export chart as PNG">
+                        <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"/></svg>
+                        PNG
+                    </button>
+                    <button class="action-chip" id="exportCsv" title="Export data as CSV">
+                        <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"/></svg>
+                        CSV
+                    </button>
+                    <button class="action-chip accent" id="addWatchlist" title="Add to watchlist">
+                        <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+                        Watch
+                    </button>
                 </div>
             </div>
             <div class="timeframe-filters">
@@ -133,18 +187,33 @@
         <!-- Model Metrics -->
         <section id="metricsCard" class="metrics-card hidden">
             <div class="metric">
-                <span class="metric-label" title="Root Mean Squared Error — lower is better">RMSE</span>
-                <span class="metric-value" id="metricRMSE">—</span>
+                <span class="metric-icon" title="Root Mean Squared Error — lower is better">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"/></svg>
+                </span>
+                <div class="metric-content">
+                    <span class="metric-label">RMSE</span>
+                    <span class="metric-value mono" id="metricRMSE">—</span>
+                </div>
             </div>
             <div class="metric-divider"></div>
             <div class="metric">
-                <span class="metric-label" title="Mean Absolute Error — average $ deviation">MAE</span>
-                <span class="metric-value" id="metricMAE">—</span>
+                <span class="metric-icon">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"/></svg>
+                </span>
+                <div class="metric-content">
+                    <span class="metric-label">MAE</span>
+                    <span class="metric-value mono" id="metricMAE">—</span>
+                </div>
             </div>
             <div class="metric-divider"></div>
             <div class="metric">
-                <span class="metric-label">Forecast</span>
-                <span class="metric-value" id="metricDays">—</span>
+                <span class="metric-icon">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"/></svg>
+                </span>
+                <div class="metric-content">
+                    <span class="metric-label">Forecast</span>
+                    <span class="metric-value mono" id="metricDays">—</span>
+                </div>
             </div>
         </section>
 
@@ -153,22 +222,28 @@
             <!-- Watchlist -->
             <section class="panel-card" id="watchlistSection">
                 <div class="panel-header">
-                    <h3>⭐ Watchlist</h3>
+                    <h3>
+                        <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14" style="color:var(--accent)"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+                        Watchlist
+                    </h3>
                     <button class="text-btn" id="clearWatchlist" title="Clear all">Clear</button>
                 </div>
                 <div id="watchlistItems" class="panel-items">
-                    <p class="empty-state">No tickers saved yet. Click ⭐ after predicting to add one.</p>
+                    <p class="empty-state">No tickers saved yet.<br/>Click <strong>Watch</strong> after predicting to add one.</p>
                 </div>
             </section>
 
             <!-- Prediction History -->
             <section class="panel-card" id="historySection">
                 <div class="panel-header">
-                    <h3>📋 Prediction History</h3>
+                    <h3>
+                        <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14" style="color:var(--accent)"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"/></svg>
+                        Prediction History
+                    </h3>
                     <button class="text-btn" id="clearHistory" title="Clear all">Clear</button>
                 </div>
                 <div id="historyItems" class="panel-items">
-                    <p class="empty-state">No predictions yet. Search a ticker to get started.</p>
+                    <p class="empty-state">No predictions yet.<br/>Search a ticker to get started.</p>
                 </div>
             </section>
         </div>
@@ -176,7 +251,7 @@
     </main>
 
     <footer class="footer">
-        <p>Built for educational purposes only. Forecasts are not financial advice.</p>
+        <p>Built for educational purposes only · Forecasts are not financial advice</p>
     </footer>
 
     <!-- Toast Container -->

@@ -31,7 +31,7 @@ let currentTheme     = localStorage.getItem('stocklstm-theme') || 'dark';
 
 // Apply persisted theme on load
 document.documentElement.setAttribute('data-theme', currentTheme);
-themeToggle.textContent = currentTheme === 'dark' ? '🌙' : '☀️';
+themeToggle.querySelector('.theme-icon').textContent = currentTheme === 'dark' ? '🌙' : '☀️';
 
 // ── Splash Screen ───────────────────────────────────────────────────
 window.addEventListener('load', () => {
@@ -44,7 +44,7 @@ window.addEventListener('load', () => {
 themeToggle.addEventListener('click', () => {
     currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', currentTheme);
-    themeToggle.textContent = currentTheme === 'dark' ? '🌙' : '☀️';
+    themeToggle.querySelector('.theme-icon').textContent = currentTheme === 'dark' ? '🌙' : '☀️';
     localStorage.setItem('stocklstm-theme', currentTheme);
     if (currentStockData) renderChart(currentStockData);
 });
@@ -172,21 +172,32 @@ async function fetchPrediction(ticker) {
 
 // ── Render Stock Info Cards ─────────────────────────────────────────
 function renderStockInfo(info) {
+    const icons = {
+        'Company':   '<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z"/></svg>',
+        'Sector':    '<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 002 2H4a2 2 0 01-2-2V5zm3 1h6v4H5V6zm6 6H5v2h6v-2z"/><path d="M15 7h1a2 2 0 012 2v5.5a1.5 1.5 0 01-3 0V7z"/></svg>',
+        'Market Cap':'<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path d="M8.433 7.418c.155-.103.346-.196.567-.267v1.698a2.305 2.305 0 01-.567-.267C8.07 8.34 8 8.114 8 8c0-.114.07-.34.433-.582zM11 12.849v-1.698c.22.071.412.164.567.267.364.243.433.468.433.582 0 .114-.07.34-.433.582a2.305 2.305 0 01-.567.267z"/><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.076 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.076-2.354-1.253V5z"/></svg>',
+        'P/E Ratio': '<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11.707 4.707a1 1 0 00-1.414-1.414L10 9.586 8.707 8.293a1 1 0 00-1.414 0l-2 2a1 1 0 101.414 1.414L8 10.414l1.293 1.293a1 1 0 001.414 0l4-4z"/></svg>',
+        '52W High':  '<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M12 7a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0V8.414l-4.293 4.293a1 1 0 01-1.414 0L8 10.414l-4.293 4.293a1 1 0 01-1.414-1.414l5-5a1 1 0 011.414 0L11 10.586 14.586 7H12z"/></svg>',
+        '52W Low':   '<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M12 13a1 1 0 100 2h5a1 1 0 001-1V9a1 1 0 10-2 0v2.586l-4.293-4.293a1 1 0 00-1.414 0L8 9.586 3.707 5.293a1 1 0 00-1.414 1.414l5 5a1 1 0 001.414 0L11 9.414 14.586 13H12z"/></svg>',
+        'Avg Volume':'<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/></svg>',
+        'Prev Close':'<svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"/></svg>',
+    };
+
     const cards = [
-        { label: 'Company', value: info.name || '—' },
-        { label: 'Sector', value: info.sector || '—' },
-        { label: 'Market Cap', value: formatLargeNum(info.marketCap) },
-        { label: 'P/E Ratio', value: info.peRatio ? info.peRatio.toFixed(2) : '—' },
-        { label: '52W High', value: info.fiftyTwoWeekHigh ? `$${info.fiftyTwoWeekHigh.toFixed(2)}` : '—' },
-        { label: '52W Low', value: info.fiftyTwoWeekLow ? `$${info.fiftyTwoWeekLow.toFixed(2)}` : '—' },
-        { label: 'Avg Volume', value: formatLargeNum(info.avgVolume) },
-        { label: 'Prev Close', value: info.previousClose ? `$${info.previousClose.toFixed(2)}` : '—' },
+        { label: 'Company', value: info.name || '—', mono: false },
+        { label: 'Sector', value: info.sector || '—', mono: false },
+        { label: 'Market Cap', value: formatLargeNum(info.marketCap), mono: true },
+        { label: 'P/E Ratio', value: info.peRatio ? info.peRatio.toFixed(2) : '—', mono: true },
+        { label: '52W High', value: info.fiftyTwoWeekHigh ? `$${info.fiftyTwoWeekHigh.toFixed(2)}` : '—', mono: true },
+        { label: '52W Low', value: info.fiftyTwoWeekLow ? `$${info.fiftyTwoWeekLow.toFixed(2)}` : '—', mono: true },
+        { label: 'Avg Volume', value: formatLargeNum(info.avgVolume), mono: true },
+        { label: 'Prev Close', value: info.previousClose ? `$${info.previousClose.toFixed(2)}` : '—', mono: true },
     ];
 
-    infoGrid.innerHTML = cards.map(c => `
-        <div class="info-card">
-            <span class="info-card-label">${c.label}</span>
-            <span class="info-card-value">${c.value}</span>
+    infoGrid.innerHTML = cards.map((c, i) => `
+        <div class="info-card" style="animation: fadeUp 0.3s ${0.05 * i}s ease both">
+            <span class="info-card-label">${icons[c.label] || ''} ${c.label}</span>
+            <span class="info-card-value${c.mono ? ' mono' : ''}">${c.value}</span>
         </div>
     `).join('');
 
