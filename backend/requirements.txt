@@ -1,7 +1,10 @@
-fastapi
-uvicorn
-yfinance
-pandas
-numpy
-scikit-learn
-tensorflow
+fastapi>=0.115.0,<1.0.0
+uvicorn>=0.34.0,<1.0.0
+yfinance>=0.2.50,<1.0.0
+pandas>=2.2.0,<3.0.0
+numpy>=1.26.0,<2.0.0
+scikit-learn>=1.5.0,<2.0.0
+tensorflow>=2.16.0,<3.0.0
+pydantic-settings>=2.7.0,<3.0.0
+cachetools>=5.5.0,<6.0.0
+slowapi>=0.1.9,<1.0.0

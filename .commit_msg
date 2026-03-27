@@ -1,0 +1,31 @@
+refactor(backend): overhaul ML core, security, and architecture
+
+This commit addresses critical ML data leakage, shifts the model to direct 
+multi-step forecasting, and hardens the FastAPI backend for production use.
+
+Machine Learning & Pipeline:
+- Fix (Critical): Prevent look-ahead bias by fitting MinMaxScaler strictly 
+  on the training split before transforming the full dataset.
+- Feat: Replace recursive prediction loop with direct multi-step output 
+  (Dense(N)) to eliminate exponential error accumulation.
+- Feat: Add robust evaluation metrics (MAPE, R², Directional Accuracy).
+- Fix: Pass explicit `validation_data` to model.fit instead of relying on 
+  keras's sequential split.
+
+Backend Architecture & Security:
+- Security: Restrict wildcard CORS to explicit origins and disable credentials.
+- Security: Add strict regex validation for ticker symbols to prevent path 
+  traversal vulnerabilities.
+- Perf: Eliminate redundant Yahoo Finance API calls during prediction by 
+  extracting the DatetimeIndex directly from the pipeline.
+- Perf: Implement bounded, TTL-based caching via `cachetools` to prevent 
+  unbounded memory growth.
+- Feat: Add `slowapi` rate limiting to protect endpoints from abuse.
+- Feat: Migrate configuration to Pydantic `BaseSettings` with `.env` support.
+- Fix: Add per-ticker threading locks in `model.py` to prevent race 
+  conditions during concurrent training requests.
+- Feat: Add structured standard logging and generic error responses.
+- Chore: Pin backend dependencies to prevent silent breakages.
+
+Note: Existing `Dense(1)` models saved in the cache will be automatically 
+retrained upon load due to the output shape change.
