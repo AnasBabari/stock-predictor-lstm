@@ -202,6 +202,7 @@ def predict(
         return data
 
     except ValueError as e:
+        # Expected errors like "Not enough historical data" are safe to return to client
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
         logger.exception("Error predicting %s", ticker)

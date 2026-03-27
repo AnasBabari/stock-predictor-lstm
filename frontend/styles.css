@@ -1227,3 +1227,12 @@ canvas {
     .stats-bar .stat:last-child { grid-column: span 1; }
     .hero-badge { font-size: 0.65rem; }
 }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}

@@ -1,8 +1,9 @@
 /* ===================================================================
-   StockLSTM — Frontend Application v2
+   StockLSTM — Frontend Application v3
    =================================================================== */
 
-const API_BASE = 'http://127.0.0.1:8000';
+// 5.1 Configurable API_BASE
+const API_BASE = window.STOCKLSTM_API_BASE || 'http://127.0.0.1:8000';
 
 // ── DOM refs ────────────────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
@@ -28,6 +29,14 @@ let stockChart       = null;
 let currentStockData = null;
 let currentDaysView  = 21;
 let currentTheme     = localStorage.getItem('stocklstm-theme') || 'dark';
+
+// Provide safe HTML escaping to prevent XSS (1.2)
+function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str).replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    }[tag] || tag));
+}
 
 // Apply persisted theme on load
 document.documentElement.setAttribute('data-theme', currentTheme);
@@ -56,12 +65,9 @@ predictBtn.addEventListener('click', () => {
     fetchPrediction(ticker);
 });
 
-tickerInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') predictBtn.click();
-});
-
-// ── Search Autocomplete ─────────────────────────────────────────────
+// ── Search Autocomplete & Keyboard Nav (5.3) ───────────────────────
 let searchTimeout = null;
+let highlightedIndex = -1;
 
 tickerInput.addEventListener('input', () => {
     const q = tickerInput.value.trim();
@@ -69,6 +75,46 @@ tickerInput.addEventListener('input', () => {
     if (q.length < 2) { closeDropdown(); return; }
     searchTimeout = setTimeout(() => fetchSuggestions(q), 250);
 });
+
+tickerInput.addEventListener('keydown', (e) => {
+    const items = searchDropdown.querySelectorAll('.dropdown-item');
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (!searchDropdown.classList.contains('hidden') && items.length > 0) {
+            highlightedIndex = Math.min(items.length - 1, highlightedIndex + 1);
+            updateHighlight();
+        }
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!searchDropdown.classList.contains('hidden') && items.length > 0) {
+            highlightedIndex = Math.max(-1, highlightedIndex - 1);
+            updateHighlight();
+        }
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (highlightedIndex >= 0 && items.length > highlightedIndex) {
+            items[highlightedIndex].click();
+        } else {
+            predictBtn.click();
+        }
+    } else if (e.key === 'Escape') {
+        closeDropdown();
+    }
+});
+
+function updateHighlight() {
+    const items = searchDropdown.querySelectorAll('.dropdown-item');
+    items.forEach((item, i) => {
+        if (i === highlightedIndex) {
+            item.classList.add('highlighted');
+            item.style.background = 'var(--accent-glow-subtle)'; // simple inline highlight
+            tickerInput.setAttribute('aria-activedescendant', 'dropdown-item-' + i);
+        } else {
+            item.classList.remove('highlighted');
+            item.style.background = '';
+        }
+    });
+}
 
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.input-wrapper')) closeDropdown();
@@ -85,13 +131,15 @@ async function fetchSuggestions(query) {
 
 function renderDropdown(results) {
     if (!results.length) { closeDropdown(); return; }
-    searchDropdown.innerHTML = results.map(r => `
-        <div class="dropdown-item" data-ticker="${r.ticker}">
+    
+    // XSS Fix: using escapeHtml (1.2)
+    searchDropdown.innerHTML = results.map((r, i) => `
+        <div class="dropdown-item" id="dropdown-item-${i}" data-ticker="${escapeHtml(r.ticker)}" role="option">
             <div>
-                <div class="dropdown-name">${r.name}</div>
-                <div class="dropdown-type">${r.type}</div>
+                <div class="dropdown-name">${escapeHtml(r.name)}</div>
+                <div class="dropdown-type">${escapeHtml(r.type)}</div>
             </div>
-            <div class="dropdown-ticker">${r.ticker}</div>
+            <div class="dropdown-ticker">${escapeHtml(r.ticker)}</div>
         </div>
     `).join('');
 
@@ -102,12 +150,18 @@ function renderDropdown(results) {
             fetchPrediction(item.dataset.ticker);
         });
     });
+    
     searchDropdown.classList.remove('hidden');
+    tickerInput.setAttribute('aria-expanded', 'true');
+    highlightedIndex = -1;
 }
 
 function closeDropdown() {
     searchDropdown.classList.add('hidden');
     searchDropdown.innerHTML = '';
+    tickerInput.setAttribute('aria-expanded', 'false');
+    tickerInput.setAttribute('aria-activedescendant', '');
+    highlightedIndex = -1;
 }
 
 // ── Timeframe Filters ───────────────────────────────────────────────
@@ -120,8 +174,15 @@ document.querySelectorAll('.time-btn').forEach(btn => {
     });
 });
 
-// ── Fetch Prediction ────────────────────────────────────────────────
+// ── Fetch Prediction (5.2 AbortController added) ────────────────────
+let currentController = null;
+let lastInfo = null; // Stored to accurately populate watchlist name (5.5)
+
 async function fetchPrediction(ticker) {
+    if (currentController) currentController.abort();
+    currentController = new AbortController();
+    const { signal } = currentController;
+    
     resetUI();
     showLoading(true);
     predictBtn.disabled = true;
@@ -131,8 +192,8 @@ async function fetchPrediction(ticker) {
     try {
         // Fetch prediction + stock info in parallel
         const [predRes, infoRes] = await Promise.allSettled([
-            fetch(`${API_BASE}/api/v1/predict?ticker=${ticker}&days=${days}`),
-            fetch(`${API_BASE}/api/v1/info?ticker=${ticker}`),
+            fetch(`${API_BASE}/api/v1/predict?ticker=${ticker}&days=${days}`, { signal }),
+            fetch(`${API_BASE}/api/v1/info?ticker=${ticker}`, { signal }),
         ]);
 
         // Handle prediction
@@ -142,21 +203,26 @@ async function fetchPrediction(ticker) {
             renderChart(currentStockData);
             renderMetrics(currentStockData);
             addToHistory(currentStockData);
-            toast('success', `Forecast ready for ${currentStockData.ticker}`);
+            toast('success', `Forecast ready for ${escapeHtml(currentStockData.ticker)}`);
+        } else if (predRes.status === 'fulfilled') {
+            const errData = await predRes.value.json().catch(() => ({}));
+            throw new Error(errData.detail || `Prediction failed (${predRes.value.status})`);
+        } else if (predRes.reason.name === 'AbortError') {
+            return; // Silently ignore aborts
         } else {
-            const errData = predRes.status === 'fulfilled'
-                ? await predRes.value.json().catch(() => ({}))
-                : {};
-            throw new Error(errData.detail || `Prediction failed (${predRes.value?.status || 'network error'})`);
+            throw new Error('Network error. Failed to fetch prediction.');
         }
 
-        // Handle stock info (non-critical)
+        // Handle stock info
         if (infoRes.status === 'fulfilled' && infoRes.value.ok) {
-            const info = await infoRes.value.json();
-            renderStockInfo(info);
+            lastInfo = await infoRes.value.json();
+            renderStockInfo(lastInfo);
+        } else {
+            lastInfo = null;
         }
 
     } catch (err) {
+        if (err.name === 'AbortError') return;
         console.error(err);
         const msg = err.message.includes('Failed to fetch')
             ? 'Could not connect to the backend. Make sure the server is running.'
@@ -184,8 +250,8 @@ function renderStockInfo(info) {
     };
 
     const cards = [
-        { label: 'Company', value: info.name || '—', mono: false },
-        { label: 'Sector', value: info.sector || '—', mono: false },
+        { label: 'Company', value: escapeHtml(info.name) || '—', mono: false },
+        { label: 'Sector', value: escapeHtml(info.sector) || '—', mono: false },
         { label: 'Market Cap', value: formatLargeNum(info.marketCap), mono: true },
         { label: 'P/E Ratio', value: info.peRatio ? info.peRatio.toFixed(2) : '—', mono: true },
         { label: '52W High', value: info.fiftyTwoWeekHigh ? `$${info.fiftyTwoWeekHigh.toFixed(2)}` : '—', mono: true },
@@ -207,7 +273,8 @@ function renderStockInfo(info) {
 // ── Render Stats Bar ────────────────────────────────────────────────
 function renderStats(data) {
     const lastClose = data.historical_prices.at(-1);
-    const forecast  = data.predicted_prices[0];
+    // 5.8 Ensure we show end-of-forecast price
+    const forecast  = data.predicted_prices.at(-1);
     const isUp      = forecast > lastClose;
     const change    = forecast - lastClose;
     const changePct = ((change / lastClose) * 100).toFixed(2);
@@ -215,7 +282,7 @@ function renderStats(data) {
     const changeEl = $('statChange');
     const trendEl  = $('statTrend');
 
-    $('statTicker').textContent    = data.ticker;
+    $('statTicker').textContent    = escapeHtml(data.ticker);
     $('statLastClose').textContent = `$${lastClose.toFixed(2)}`;
     $('statForecast').textContent  = `$${forecast.toFixed(2)}`;
 
@@ -231,7 +298,7 @@ function renderStats(data) {
 
 // ── Render Chart ────────────────────────────────────────────────────
 function renderChart(data) {
-    chartTitle.textContent = `${data.ticker} — Historical vs Predicted`;
+    chartTitle.textContent = `${escapeHtml(data.ticker)} — Historical vs Predicted`;
     chartContainer.classList.remove('hidden');
 
     const isDark       = currentTheme === 'dark';
@@ -265,7 +332,6 @@ function renderChart(data) {
 
     const ctx = document.getElementById('stockChart').getContext('2d');
 
-    // Gradient fills
     const histGrad = ctx.createLinearGradient(0, 0, 0, 400);
     histGrad.addColorStop(0, isDark ? 'rgba(88,166,255,0.12)' : 'rgba(59,130,246,0.08)');
     histGrad.addColorStop(1, 'transparent');
@@ -314,23 +380,12 @@ function renderChart(data) {
             interaction: { mode: 'nearest', intersect: false },
             plugins: {
                 legend: {
-                    labels: {
-                        color: legendColor,
-                        font: { size: 12, family: 'Inter' },
-                        usePointStyle: true,
-                        padding: 20,
-                    },
+                    labels: { color: legendColor, font: { size: 12, family: 'Inter' }, usePointStyle: true, padding: 20 },
                 },
                 tooltip: {
-                    backgroundColor: tooltipBg,
-                    titleColor: tooltipTitle,
-                    bodyColor: tooltipBody,
-                    borderColor: tooltipBorder,
-                    borderWidth: 1,
-                    cornerRadius: 10,
-                    padding: 12,
-                    titleFont: { family: 'Inter', weight: '600' },
-                    bodyFont: { family: 'Inter' },
+                    backgroundColor: tooltipBg, titleColor: tooltipTitle, bodyColor: tooltipBody,
+                    borderColor: tooltipBorder, borderWidth: 1, cornerRadius: 10, padding: 12,
+                    titleFont: { family: 'Inter', weight: '600' }, bodyFont: { family: 'Inter' },
                     callbacks: {
                         label: (ctx) => {
                             const val = ctx.parsed.y;
@@ -340,18 +395,8 @@ function renderChart(data) {
                 },
             },
             scales: {
-                x: {
-                    ticks: { color: tickColor, maxTicksLimit: 10, font: { family: 'Inter', size: 11 } },
-                    grid: { color: gridColor },
-                },
-                y: {
-                    ticks: {
-                        color: tickColor,
-                        font: { family: 'Inter', size: 11 },
-                        callback: (v) => `$${v.toFixed(0)}`,
-                    },
-                    grid: { color: gridColor },
-                },
+                x: { ticks: { color: tickColor, maxTicksLimit: 10, font: { family: 'Inter', size: 11 } }, grid: { color: gridColor } },
+                y: { ticks: { color: tickColor, font: { family: 'Inter', size: 11 }, callback: (v) => `$${v.toFixed(0)}` }, grid: { color: gridColor } },
             },
         },
     });
@@ -362,9 +407,16 @@ function renderChart(data) {
 // ── Render Metrics ──────────────────────────────────────────────────
 function renderMetrics(data) {
     const m = data.metrics;
-    $('metricRMSE').textContent = m && m.rmse != null ? `$${m.rmse.toFixed(2)}` : '—';
-    $('metricMAE').textContent  = m && m.mae != null  ? `$${m.mae.toFixed(2)}`  : '—';
-    $('metricDays').textContent = `${data.forecast_days} days`;
+    
+    // Support rendering full list of model metrics if available
+    $('metricRMSE').textContent = m && m.rmse != null ? m.rmse.toFixed(2) : '—';
+    $('metricMAE').textContent  = m && m.mae != null  ? m.mae.toFixed(2)  : '—';
+    
+    const metricMAPE = $('metricMAPE');
+    const metricDA = $('metricDA');
+    if (metricMAPE) metricMAPE.textContent = m && m.mape != null ? `${m.mape.toFixed(2)}%` : '—';
+    if (metricDA) metricDA.textContent = m && m.directional_accuracy != null ? `${(m.directional_accuracy * 100).toFixed(1)}%` : '—';
+    
     metricsCard.classList.remove('hidden');
 }
 
@@ -384,19 +436,16 @@ $('exportCsv').addEventListener('click', () => {
     const d = currentStockData;
     let csv = 'Date,Price,Type\n';
 
-    d.historical_dates.forEach((dt, i) => {
-        csv += `${dt},${d.historical_prices[i].toFixed(2)},Historical\n`;
-    });
-    d.future_dates.forEach((dt, i) => {
-        csv += `${dt},${d.predicted_prices[i].toFixed(2)},Predicted\n`;
-    });
+    d.historical_dates.forEach((dt, i) => csv += `${dt},${d.historical_prices[i].toFixed(2)},Historical\n`);
+    d.future_dates.forEach((dt, i) => csv += `${dt},${d.predicted_prices[i].toFixed(2)},Predicted\n`);
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const link = document.createElement('a');
     link.download = `${d.ticker}_forecast.csv`;
     link.href = URL.createObjectURL(blob);
     link.click();
-    URL.revokeObjectURL(link.href);
+    // 5.4 Object URL Revoked Before Download Completed
+    setTimeout(() => URL.revokeObjectURL(link.href), 500);
     toast('success', 'Data exported as CSV');
 });
 
@@ -410,7 +459,11 @@ function getWatchlist() {
     catch { return []; }
 }
 function saveWatchlist(list) {
-    localStorage.setItem(WL_KEY, JSON.stringify(list));
+    try {
+        localStorage.setItem(WL_KEY, JSON.stringify(list));
+    } catch (e) {
+        toast('error', 'Storage full. Please clear space to save your watchlist.');
+    }
 }
 
 $('addWatchlist').addEventListener('click', () => {
@@ -419,22 +472,22 @@ $('addWatchlist').addEventListener('click', () => {
     let list = getWatchlist();
 
     if (list.find(w => w.ticker === d.ticker)) {
-        toast('info', `${d.ticker} is already in your watchlist`);
+        toast('info', `${escapeHtml(d.ticker)} is already in your watchlist`);
         return;
     }
 
+    // 5.5 Watchlist name retrieved via reliable API response instead of fragile DOM element
+    const safeName = lastInfo && lastInfo.ticker === d.ticker ? lastInfo.name : '';
+
     list.unshift({
         ticker: d.ticker,
-        name: '',  // will be filled from info if available
+        name: safeName,
         lastPrice: d.historical_prices.at(-1),
     });
-    // Try to get the name from the info grid
-    const nameCard = infoGrid.querySelector('.info-card-value');
-    if (nameCard) list[0].name = nameCard.textContent;
 
     saveWatchlist(list);
     renderWatchlist();
-    toast('success', `${d.ticker} added to watchlist`);
+    toast('success', `${escapeHtml(d.ticker)} added to watchlist`);
 });
 
 $('clearWatchlist').addEventListener('click', () => {
@@ -451,15 +504,14 @@ function renderWatchlist() {
     }
 
     watchlistItems.innerHTML = list.map((w, i) => `
-        <div class="watchlist-item" data-ticker="${w.ticker}" data-index="${i}">
-            <span class="wl-ticker">${w.ticker}</span>
-            <span class="wl-name">${w.name || ''}</span>
+        <div class="watchlist-item" data-ticker="${escapeHtml(w.ticker)}" data-index="${i}">
+            <span class="wl-ticker">${escapeHtml(w.ticker)}</span>
+            <span class="wl-name">${escapeHtml(w.name || '')}</span>
             <span class="wl-price">$${w.lastPrice?.toFixed(2) || '—'}</span>
             <button class="wl-remove" data-index="${i}" title="Remove">✕</button>
         </div>
     `).join('');
 
-    // Click to predict
     watchlistItems.querySelectorAll('.watchlist-item').forEach(item => {
         item.addEventListener('click', (e) => {
             if (e.target.classList.contains('wl-remove')) return;
@@ -468,7 +520,6 @@ function renderWatchlist() {
         });
     });
 
-    // Remove button
     watchlistItems.querySelectorAll('.wl-remove').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -492,16 +543,19 @@ function getHistory() {
     catch { return []; }
 }
 function saveHistory(list) {
-    localStorage.setItem(HIST_KEY, JSON.stringify(list));
+    try {
+        localStorage.setItem(HIST_KEY, JSON.stringify(list));
+    } catch (e) {
+        toast('error', 'Storage full. Cannot update history.');
+    }
 }
 
 function addToHistory(data) {
     const lastClose = data.historical_prices.at(-1);
-    const forecast  = data.predicted_prices[0];
+    const forecast  = data.predicted_prices.at(-1);
     const change    = ((forecast - lastClose) / lastClose * 100).toFixed(2);
 
     let list = getHistory();
-    // Avoid exact duplicates (same ticker & same minute)
     const now = new Date().toISOString().slice(0, 16);
     list = list.filter(h => !(h.ticker === data.ticker && h.date?.startsWith(now)));
 
@@ -538,11 +592,11 @@ function renderHistory() {
         const arrow = isUp ? '▲' : '▼';
         const dateStr = new Date(h.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         return `
-            <div class="history-item" data-ticker="${h.ticker}">
-                <span class="hi-ticker">${h.ticker}</span>
+            <div class="history-item" data-ticker="${escapeHtml(h.ticker)}">
+                <span class="hi-ticker">${escapeHtml(h.ticker)}</span>
                 <span class="hi-detail">$${h.lastClose?.toFixed(2)} → $${h.forecast?.toFixed(2)} · ${h.days}d</span>
-                <span class="hi-change" style="color:${color}">${arrow} ${isUp ? '+' : ''}${h.change}%</span>
-                <span class="hi-date">${dateStr}</span>
+                <span class="hi-change" style="color:${color}">${arrow} ${isUp ? '+' : ''}${escapeHtml(h.change)}%</span>
+                <span class="hi-date">${escapeHtml(dateStr)}</span>
             </div>
         `;
     }).join('');
@@ -566,7 +620,7 @@ function toast(type, message) {
     el.className = 'toast';
     el.innerHTML = `
         <span class="toast-icon">${TOAST_ICONS[type] || 'ℹ️'}</span>
-        <span class="toast-msg">${message}</span>
+        <span class="toast-msg">${escapeHtml(message)}</span>
     `;
     container.appendChild(el);
 
@@ -608,7 +662,7 @@ function showLoading(state) {
 }
 
 function showError(msg) {
-    errorMsg.textContent = msg;
+    errorMsg.textContent = msg; // TextContent implicitly escapes HTML
     errorMsg.classList.remove('hidden');
     toast('error', msg);
 }

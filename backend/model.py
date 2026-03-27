@@ -161,7 +161,18 @@ def evaluate_model(model, X_test, y_test, scaler):
 
     # Directional accuracy
     da = None
-    if len(true_prices) > 1:
+    if preds.shape[1] > 1:
+        # Compare first vs last step in each forecast window
+        pred_last = preds[:, -1]
+        true_last = y_test[:, -1]
+        
+        pred_last_unscaled = scaler.inverse_transform(pred_last.reshape(-1, 1)).flatten()
+        true_last_unscaled = scaler.inverse_transform(true_last.reshape(-1, 1)).flatten()
+        
+        dirs_true = np.sign(true_last_unscaled - true_prices)
+        dirs_pred = np.sign(pred_last_unscaled - pred_prices)
+        da = float(np.mean(dirs_true == dirs_pred))
+    elif len(true_prices) > 1:
         dirs_true = np.sign(np.diff(true_prices))
         dirs_pred = np.sign(np.diff(pred_prices))
         da = float(np.mean(dirs_true == dirs_pred))
