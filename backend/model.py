@@ -11,6 +11,7 @@
 import logging
 import threading
 import time
+import weakref
 from pathlib import Path
 
 import numpy as np
@@ -34,8 +35,6 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
-
-import weakref
 
 # ── Per-ticker lock (2.4, Bug 3) ───────────────────────────────────────
 _training_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()

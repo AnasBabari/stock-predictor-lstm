@@ -105,12 +105,12 @@ def search(request: Request, query: str):
                     }
                 )
         return {"results": suggestions}
-    except Exception:
+    except Exception as err:
         logger.exception("Error in /api/v1/search")
         raise HTTPException(
             status_code=500,
             detail="Search failed. Please try again later.",
-        )
+        ) from err
 
 
 @app.get("/api/v1/info")
@@ -143,12 +143,12 @@ def stock_info(request: Request, ticker: str = "AAPL"):
         }
         _info_cache[ticker] = data
         return data
-    except Exception:
+    except Exception as err:
         logger.exception("Error fetching info for %s", ticker)
         raise HTTPException(
             status_code=500,
             detail="Failed to fetch stock info. Please try again later.",
-        )
+        ) from err
 
 
 @app.get("/api/v1/predict")
@@ -205,12 +205,12 @@ async def predict(
         _predict_cache[cache_key] = data
         return data
 
-    except ValueError as e:
+    except ValueError as err:
         # Expected errors like "Not enough historical data" are safe to return to client
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as err:
         logger.exception("Error predicting %s", ticker)
         raise HTTPException(
             status_code=500,
             detail="Prediction failed. Please try again later.",
-        )
+        ) from err
