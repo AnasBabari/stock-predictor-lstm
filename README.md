@@ -18,7 +18,7 @@ StockLSTM is a full-stack stock forecasting app that uses an LSTM neural network
 - Configurable forecast horizon: **3, 7, 14, or 30 days**
 - Saved model cache per ticker with **automatic staleness detection** (retrains after 7 days)
 - **EarlyStopping** callback to prevent overfitting
-- **Model evaluation metrics** (RMSE, MAE) returned with every prediction
+- **Model evaluation metrics** (RMSE, MAE, MAPE, R², DA) returned with every prediction
 
 ### Frontend
 - Interactive Chart.js line chart with gradient fills
@@ -36,158 +36,96 @@ StockLSTM is a full-stack stock forecasting app that uses an LSTM neural network
 - `GET /api/v1/predict?ticker=AAPL&days=7` — forecast with configurable horizon
 - `GET /api/v1/search?query=apple` — ticker autocomplete
 - `GET /api/v1/info?ticker=AAPL` — rich stock metadata
-- **In-memory caching** (5 min TTL) for predictions and info
+- **In-memory caching** (bounded TTLCache) for predictions and info
+- **Rate limiting** for all API endpoints 
 
-## Project Structure
+## Architecture
 
-```text
-stock-predictor-lstm/
-	backend/
-		api.py              # FastAPI app (3 endpoints + caching)
-		config.py           # Hyperparameters & settings
-		data_pipeline.py    # Data fetching & preprocessing
-		model.py            # LSTM build, train, evaluate, predict
-		requirements.txt
-		saved_models/
-	frontend/
-		index.html          # Single-page layout
-		app.js              # Application logic
-		styles.css          # Design system
-	assets/
-		screenshot.png
-	README.md
+```mermaid
+graph TD
+    UI[Frontend UI] -->|Predict Request| API[FastAPI Backend]
+    API -->|Cache Hit| C[TTLCache]
+    C -.->|Return| UI
+    
+    API -->|Cache Miss| D[Data Pipeline]
+    D -->|Fetch Data| Y[Yahoo Finance]
+    
+    D -->|Preprocessed Data| M[Model Manager]
+    M -->|Check Disk Cache| F[(File System .keras)]
+    
+    M -->|Stale/Missing| T[Train New LSTM]
+    T --> F
+    
+    M -->|Evaluate/Predict| P[Direct Multi-Step Output]
+    P --> API
+    API --> UI
 ```
 
-## Tech Stack
+## Quick Start with Docker
 
-- **Backend:** FastAPI, Uvicorn
-- **ML:** TensorFlow/Keras (2-layer LSTM), scikit-learn
-- **Data:** yfinance, NumPy, Pandas
-- **Frontend:** HTML, CSS (Inter font, CSS variables), Vanilla JavaScript, Chart.js
+The easiest way to run StockLSTM locally is via Docker Compose:
 
-## How It Works
+1. Clone the repository and navigate to the project root:
+   ```bash
+   git clone https://github.com/AnasBabari/stock-predictor-lstm.git
+   cd stock-predictor-lstm
+   ```
+2. Start the services:
+   ```bash
+   docker-compose up -d
+   ```
+3. Open your browser to `http://localhost:5500`.
 
-1. Historical stock data is downloaded from Yahoo Finance.
-2. Close prices are scaled with `MinMaxScaler`.
-3. Sliding windows of 60 timesteps are created for training.
-4. A per-ticker LSTM model is loaded from disk (if fresh) or trained with EarlyStopping.
-5. The model is evaluated on the test set (RMSE, MAE are returned to the frontend).
-6. The backend predicts the requested number of future values recursively.
-7. The frontend displays historical data, forecasted points, stock info, and metrics.
+*Note: The first prediction for a new ticker takes 2-5 minutes while the LSTM model trains and saves to the local docker volume cache. Subsequent calls and cached models load instantly.*
 
-## Local Setup
+## Local Development Setup
 
-### 1. Clone Repository
-
-```bash
-git clone https://github.com/AnasBabari/stock-predictor-lstm.git
-cd stock-predictor-lstm
-```
-
-### 2. Create and Activate Virtual Environment
-
-Windows (PowerShell):
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-macOS/Linux:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-### 3. Install Backend Dependencies
-
-```bash
-pip install -r backend/requirements.txt
-```
-
-### 4. Run Backend API
-
+### 1. Create Virtual Environment
 ```bash
 cd backend
-uvicorn api:app --reload
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\Activate.ps1
 ```
 
-Backend URL: `http://127.0.0.1:8000`
+### 2. Install Dependencies
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
 
-Interactive docs: `http://127.0.0.1:8000/docs`
+### 3. Environment Variables
+Create a `.env` file in the `backend/` directory based on `.env.example`.
+```env
+ALLOWED_ORIGINS=["http://localhost:5500","http://127.0.0.1:5500"]
+RATE_LIMIT_PREDICT=5/minute
+RATE_LIMIT_SEARCH=30/minute
+RATE_LIMIT_INFO=20/minute
+PREDICT_CACHE_TTL=300
+INFO_CACHE_TTL=3600
+CACHE_MAX_SIZE=500
+```
 
-### 5. Run Frontend
-
-Use a lightweight local server from the project root:
-
+### 4. Run Backend & Frontend
+Backend:
+```bash
+uvicorn api:app --reload
+```
+Frontend: In another terminal, from the root of the project:
 ```bash
 python -m http.server 5500
 ```
-
-Then open: `http://127.0.0.1:5500/frontend/`
+Open `http://localhost:5500/frontend/` in your browser.
 
 ## API Reference
+- `GET /api/v1/predict?ticker=AAPL&days=7`
+- `GET /api/v1/search?query=Apple`
+- `GET /api/v1/info?ticker=AAPL`
 
-### `GET /api/v1/predict`
+See interactive docs at `http://127.0.0.1:8000/docs` while the backend is running.
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `ticker` | string | `AAPL` | Stock ticker symbol |
-| `days` | int | `7` | Forecast horizon (1–30) |
-
-Returns historical dates/prices, predicted prices, and model metrics.
-
-### `GET /api/v1/search`
-
-| Param | Type | Description |
-|-------|------|-------------|
-| `query` | string | Search term (ticker or company name) |
-
-Returns up to 8 matching EQUITY/ETF results.
-
-### `GET /api/v1/info`
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `ticker` | string | `AAPL` | Stock ticker symbol |
-
-Returns name, sector, market cap, P/E, 52-week range, volume, etc.
-
-## Configuration
-
-Tune training/inference settings in `backend/config.py`:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `HISTORICAL_YEARS` | 3 | Years of training data |
-| `WINDOW_SIZE` | 60 | Sliding window timesteps |
-| `TRAIN_SPLIT` | 0.80 | Train/test split ratio |
-| `LSTM_UNITS` | 64 | Units in first LSTM layer |
-| `EPOCHS` | 25 | Max training epochs |
-| `BATCH_SIZE` | 32 | Training batch size |
-| `MODEL_MAX_AGE_DAYS` | 7 | Retrain cached models older than this |
-| `DEFAULT_FORECAST_DAYS` | 7 | Default forecast horizon |
-| `MAX_FORECAST_DAYS` | 30 | Maximum allowed forecast days |
-
-## Notes and Limitations
-
-- This project is for educational and experimentation purposes only.
-- Forecasts are based on historical price patterns and are not financial advice.
-- Initial request for a new ticker may take longer because model training runs first.
-- Models are automatically retrained when they become stale (older than `MODEL_MAX_AGE_DAYS`).
-
-## Troubleshooting
-
-- **"Not enough data for training."**
-	Use a ticker with sufficient historical data and keep `WINDOW_SIZE` reasonable.
-- **Slow first prediction for a ticker.**
-	Expected behavior: model is being trained and then cached.
-- **Frontend cannot connect to backend.**
-	Ensure backend is running on `http://127.0.0.1:8000` and CORS is enabled.
-- **Old cached model gives poor results.**
-	Delete the `.keras` file from `backend/saved_models/` or wait for auto-retrain.
+## ⚠️ Disclaimer
+> [!WARNING]
+> This project is designed purely for educational and machine learning experimentation purposes. The generated model metrics (RMSE, MAE, MAPE, R², Directional Accuracy) are computed entirely against historical test partitions. They DO NOT guarantee future live-trading performance. The stock market is highly stochastic and relies on data not represented in lagging price indicators. **Never use these predictions as financial advice or for making real-world investments.**
 
 ## License
-
 MIT

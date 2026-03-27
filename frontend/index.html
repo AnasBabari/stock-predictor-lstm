@@ -6,7 +6,7 @@
     <title>StockLSTM — AI Stock Price Predictor</title>
     <meta name="description" content="AI-powered stock price forecasting using LSTM neural networks. Predict the next 3–30 trading days for any ticker." />
     <!-- CSP: Basic policy to prevent inline script execution and unauthorized origins -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com; connect-src http://127.0.0.1:8000; img-src 'self' data: blob:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com; connect-src http://127.0.0.1:8000 http://localhost:8000; img-src 'self' data: blob:;">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
@@ -209,6 +209,16 @@
                 <div class="metric-content">
                     <span class="metric-label">MAE</span>
                     <span class="metric-value mono" id="metricMAE">—</span>
+                </div>
+            </div>
+            <div class="metric-divider"></div>
+            <div class="metric">
+                <span class="metric-icon" title="R Squared">
+                    <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"/></svg>
+                </span>
+                <div class="metric-content">
+                    <span class="metric-label">R²</span>
+                    <span class="metric-value mono" id="metricR2">—</span>
                 </div>
             </div>
             <div class="metric-divider"></div>

@@ -132,16 +132,35 @@ async function fetchSuggestions(query) {
 function renderDropdown(results) {
     if (!results.length) { closeDropdown(); return; }
     
-    // XSS Fix: using escapeHtml (1.2)
-    searchDropdown.innerHTML = results.map((r, i) => `
-        <div class="dropdown-item" id="dropdown-item-${i}" data-ticker="${escapeHtml(r.ticker)}" role="option">
-            <div>
-                <div class="dropdown-name">${escapeHtml(r.name)}</div>
-                <div class="dropdown-type">${escapeHtml(r.type)}</div>
-            </div>
-            <div class="dropdown-ticker">${escapeHtml(r.ticker)}</div>
-        </div>
-    `).join('');
+    // XSS Fix: using manual DOM structure creation
+    searchDropdown.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    results.forEach((r, i) => {
+        const item = document.createElement('div');
+        item.className = 'dropdown-item';
+        item.id = `dropdown-item-${i}`;
+        item.dataset.ticker = r.ticker;
+        item.setAttribute('role', 'option');
+
+        const leftDiv = document.createElement('div');
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'dropdown-name';
+        nameDiv.textContent = r.name;
+        const typeDiv = document.createElement('div');
+        typeDiv.className = 'dropdown-type';
+        typeDiv.textContent = r.type;
+        leftDiv.appendChild(nameDiv);
+        leftDiv.appendChild(typeDiv);
+
+        const rightDiv = document.createElement('div');
+        rightDiv.className = 'dropdown-ticker';
+        rightDiv.textContent = r.ticker;
+
+        item.appendChild(leftDiv);
+        item.appendChild(rightDiv);
+        fragment.appendChild(item);
+    });
+    searchDropdown.appendChild(fragment);
 
     searchDropdown.querySelectorAll('.dropdown-item').forEach(item => {
         item.addEventListener('click', () => {
@@ -412,6 +431,9 @@ function renderMetrics(data) {
     $('metricRMSE').textContent = m && m.rmse != null ? m.rmse.toFixed(2) : '—';
     $('metricMAE').textContent  = m && m.mae != null  ? m.mae.toFixed(2)  : '—';
     
+    const metricR2 = $('metricR2');
+    if (metricR2) metricR2.textContent = m && m.r2 != null ? m.r2.toFixed(4) : '—';
+    
     const metricMAPE = $('metricMAPE');
     const metricDA = $('metricDA');
     if (metricMAPE) metricMAPE.textContent = m && m.mape != null ? `${m.mape.toFixed(2)}%` : '—';
@@ -503,14 +525,39 @@ function renderWatchlist() {
         return;
     }
 
-    watchlistItems.innerHTML = list.map((w, i) => `
-        <div class="watchlist-item" data-ticker="${escapeHtml(w.ticker)}" data-index="${i}">
-            <span class="wl-ticker">${escapeHtml(w.ticker)}</span>
-            <span class="wl-name">${escapeHtml(w.name || '')}</span>
-            <span class="wl-price">$${w.lastPrice?.toFixed(2) || '—'}</span>
-            <button class="wl-remove" data-index="${i}" title="Remove">✕</button>
-        </div>
-    `).join('');
+    watchlistItems.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    list.forEach((w, i) => {
+        const item = document.createElement('div');
+        item.className = 'watchlist-item';
+        item.dataset.ticker = w.ticker;
+        item.dataset.index = i;
+
+        const tSpan = document.createElement('span');
+        tSpan.className = 'wl-ticker';
+        tSpan.textContent = w.ticker;
+
+        const nSpan = document.createElement('span');
+        nSpan.className = 'wl-name';
+        nSpan.textContent = w.name || '';
+
+        const pSpan = document.createElement('span');
+        pSpan.className = 'wl-price';
+        pSpan.textContent = w.lastPrice ? `$${w.lastPrice.toFixed(2)}` : '—';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'wl-remove';
+        removeBtn.dataset.index = i;
+        removeBtn.title = 'Remove';
+        removeBtn.textContent = '✕';
+
+        item.appendChild(tSpan);
+        item.appendChild(nSpan);
+        item.appendChild(pSpan);
+        item.appendChild(removeBtn);
+        fragment.appendChild(item);
+    });
+    watchlistItems.appendChild(fragment);
 
     watchlistItems.querySelectorAll('.watchlist-item').forEach(item => {
         item.addEventListener('click', (e) => {
@@ -586,20 +633,42 @@ function renderHistory() {
         return;
     }
 
-    historyItems.innerHTML = list.map(h => {
+    historyItems.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    list.forEach(h => {
         const isUp = parseFloat(h.change) >= 0;
         const color = isUp ? 'var(--bullish)' : 'var(--bearish)';
         const arrow = isUp ? '▲' : '▼';
         const dateStr = new Date(h.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        return `
-            <div class="history-item" data-ticker="${escapeHtml(h.ticker)}">
-                <span class="hi-ticker">${escapeHtml(h.ticker)}</span>
-                <span class="hi-detail">$${h.lastClose?.toFixed(2)} → $${h.forecast?.toFixed(2)} · ${h.days}d</span>
-                <span class="hi-change" style="color:${color}">${arrow} ${isUp ? '+' : ''}${escapeHtml(h.change)}%</span>
-                <span class="hi-date">${escapeHtml(dateStr)}</span>
-            </div>
-        `;
-    }).join('');
+
+        const item = document.createElement('div');
+        item.className = 'history-item';
+        item.dataset.ticker = h.ticker;
+
+        const tSpan = document.createElement('span');
+        tSpan.className = 'hi-ticker';
+        tSpan.textContent = h.ticker;
+
+        const dSpan = document.createElement('span');
+        dSpan.className = 'hi-detail';
+        dSpan.textContent = `$${h.lastClose?.toFixed(2)} → $${h.forecast?.toFixed(2)} · ${h.days}d`;
+
+        const cSpan = document.createElement('span');
+        cSpan.className = 'hi-change';
+        cSpan.style.color = color;
+        cSpan.textContent = `${arrow} ${isUp ? '+' : ''}${h.change}%`;
+
+        const dateSpan = document.createElement('span');
+        dateSpan.className = 'hi-date';
+        dateSpan.textContent = dateStr;
+
+        item.appendChild(tSpan);
+        item.appendChild(dSpan);
+        item.appendChild(cSpan);
+        item.appendChild(dateSpan);
+        fragment.appendChild(item);
+    });
+    historyItems.appendChild(fragment);
 
     historyItems.querySelectorAll('.history-item').forEach(item => {
         item.addEventListener('click', () => {
@@ -618,10 +687,18 @@ function toast(type, message) {
     const container = $('toastContainer');
     const el = document.createElement('div');
     el.className = 'toast';
-    el.innerHTML = `
-        <span class="toast-icon">${TOAST_ICONS[type] || 'ℹ️'}</span>
-        <span class="toast-msg">${escapeHtml(message)}</span>
-    `;
+    
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'toast-icon';
+    iconSpan.textContent = TOAST_ICONS[type] || 'ℹ️';
+
+    const msgSpan = document.createElement('span');
+    msgSpan.className = 'toast-msg';
+    msgSpan.textContent = message;
+
+    el.appendChild(iconSpan);
+    el.appendChild(msgSpan);
+    
     container.appendChild(el);
 
     setTimeout(() => {

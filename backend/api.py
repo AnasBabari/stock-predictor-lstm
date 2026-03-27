@@ -15,18 +15,20 @@ import logging
 import re
 from datetime import timedelta
 
+import pandas_market_calendars as mcal
+import yfinance as yf  # type: ignore[import-untyped]
 from cachetools import TTLCache
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
-import yfinance as yf  # type: ignore[import-untyped]
 
 from config import DEFAULT_FORECAST_DAYS, MAX_FORECAST_DAYS, settings
 from data_pipeline import get_pipeline
-from model import load_or_train, predict_future, evaluate_model
+from model import evaluate_model, load_or_train, predict_future
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
 logging.basicConfig(
@@ -62,10 +64,12 @@ app.add_middleware(
 
 # ── Bounded caches (2.3) ────────────────────────────────────────────
 _predict_cache: TTLCache = TTLCache(
-    maxsize=settings.cache_max_size, ttl=settings.cache_ttl,
+    maxsize=settings.cache_max_size,
+    ttl=settings.cache_ttl,
 )
 _info_cache: TTLCache = TTLCache(
-    maxsize=settings.cache_max_size, ttl=settings.cache_ttl,
+    maxsize=settings.cache_max_size,
+    ttl=settings.cache_ttl,
 )
 
 
@@ -93,11 +97,13 @@ def search(request: Request, query: str):
         suggestions = []
         for r in results.quotes:
             if r.get("quoteType") in ("EQUITY", "ETF"):
-                suggestions.append({
-                    "ticker": r.get("symbol", ""),
-                    "name": r.get("longname") or r.get("shortname", ""),
-                    "type": r.get("quoteType", ""),
-                })
+                suggestions.append(
+                    {
+                        "ticker": r.get("symbol", ""),
+                        "name": r.get("longname") or r.get("shortname", ""),
+                        "type": r.get("quoteType", ""),
+                    }
+                )
         return {"results": suggestions}
     except Exception:
         logger.exception("Error in /api/v1/search")
@@ -146,8 +152,8 @@ def stock_info(request: Request, ticker: str = "AAPL"):
 
 
 @app.get("/api/v1/predict")
-@limiter.limit("10/minute")
-def predict(
+@limiter.limit("5/minute")
+async def predict(
     request: Request,
     ticker: str = "AAPL",
     days: int = Query(default=DEFAULT_FORECAST_DAYS, ge=1, le=MAX_FORECAST_DAYS),
@@ -165,8 +171,8 @@ def predict(
         pipeline_data, closing_prices, historical_dates = get_pipeline(ticker)
         X_train, X_test, y_train, y_test, scaler = pipeline_data
 
-        # Model (with per-ticker lock)
-        model = load_or_train(ticker, X_train, y_train, X_test, y_test)
+        # Model (with per-ticker lock) - run async to avoid blocking
+        model = await run_in_threadpool(load_or_train, ticker, X_train, y_train, X_test, y_test)
 
         # Metrics (3.6 — MAPE, R², directional accuracy)
         metrics = evaluate_model(model, X_test, y_test, scaler)
@@ -177,14 +183,12 @@ def predict(
         # Dates — reuse the index from the same download (2.2)
         hist_dates = historical_dates.strftime("%Y-%m-%d").tolist()
 
-        future_dates = []
         cur = historical_dates[-1]
-        added = 0
-        while added < days:
-            cur += timedelta(days=1)
-            if cur.weekday() < 5:
-                future_dates.append(cur.strftime("%Y-%m-%d"))
-                added += 1
+        nyse = mcal.get_calendar("NYSE")
+        schedule = nyse.schedule(
+            start_date=cur + timedelta(days=1), end_date=cur + timedelta(days=days * 3 + 10)
+        )
+        future_dates = [d.strftime("%Y-%m-%d") for d in schedule.index if d > cur][:days]
 
         historical_prices = [float(p[0]) for p in closing_prices]
 

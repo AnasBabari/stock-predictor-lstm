@@ -8,7 +8,8 @@
 import numpy as np
 import yfinance as yf  # type: ignore[import-untyped]
 from sklearn.preprocessing import MinMaxScaler  # type: ignore[import-untyped]
-from config import HISTORICAL_YEARS, WINDOW_SIZE, TRAIN_SPLIT, MAX_FORECAST_DAYS
+
+from config import HISTORICAL_YEARS, MAX_FORECAST_DAYS, TRAIN_SPLIT, WINDOW_SIZE
 
 
 def fetch_data(ticker: str):
@@ -18,8 +19,7 @@ def fetch_data(ticker: str):
     min_rows = WINDOW_SIZE + MAX_FORECAST_DAYS + 10
     if len(data) < min_rows:
         raise ValueError(
-            f"Not enough historical data for {ticker}. "
-            f"Need at least {min_rows} trading days."
+            f"Not enough historical data for {ticker}. " f"Need at least {min_rows} trading days."
         )
     closing_prices = data["Close"].values.reshape(-1, 1)
     return closing_prices, data.index
@@ -51,8 +51,8 @@ def preprocess(closing_prices, forecast_days=MAX_FORECAST_DAYS):
     # ── Create multi-step windows (3.2) ──────────────────────────────
     X, y = [], []
     for i in range(WINDOW_SIZE, WINDOW_SIZE + n_samples):
-        X.append(scaled[i - WINDOW_SIZE:i, 0])
-        y.append(scaled[i:i + forecast_days, 0])
+        X.append(scaled[i - WINDOW_SIZE : i, 0])
+        y.append(scaled[i : i + forecast_days, 0])
 
     X, y = np.array(X), np.array(y)
     X = X.reshape((X.shape[0], X.shape[1], 1))

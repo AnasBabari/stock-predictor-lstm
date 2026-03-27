@@ -14,44 +14,56 @@ import time
 from pathlib import Path
 
 import numpy as np
-from tensorflow.keras.models import Sequential, load_model  # type: ignore[import-untyped]
-from tensorflow.keras.layers import LSTM, Dense, Dropout  # type: ignore[import-untyped]
-from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
 from sklearn.metrics import (  # type: ignore[import-untyped]
-    mean_squared_error,
     mean_absolute_error,
+    mean_squared_error,
     r2_score,
 )
+from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
+from tensorflow.keras.layers import LSTM, Dense, Dropout  # type: ignore[import-untyped]
+from tensorflow.keras.models import Sequential, load_model  # type: ignore[import-untyped]
+
 from config import (
-    LSTM_UNITS, EPOCHS, BATCH_SIZE, MODEL_DIR,
-    WINDOW_SIZE, MODEL_MAX_AGE_DAYS, MAX_FORECAST_DAYS,
+    BATCH_SIZE,
+    EPOCHS,
+    LSTM_UNITS,
+    MAX_FORECAST_DAYS,
+    MODEL_DIR,
+    MODEL_MAX_AGE_DAYS,
+    WINDOW_SIZE,
 )
 
 logger = logging.getLogger(__name__)
 
-# ── Per-ticker lock (2.4) ────────────────────────────────────────────
-_training_locks: dict[str, threading.Lock] = {}
+import weakref
+
+# ── Per-ticker lock (2.4, Bug 3) ───────────────────────────────────────
+_training_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 _locks_lock = threading.Lock()
 
 
 def _get_ticker_lock(ticker: str) -> threading.Lock:
     with _locks_lock:
-        if ticker not in _training_locks:
-            _training_locks[ticker] = threading.Lock()
-        return _training_locks[ticker]
+        lock = _training_locks.get(ticker)
+        if lock is None:
+            lock = threading.Lock()
+            _training_locks[ticker] = lock
+        return lock
 
 
 # ── Build ────────────────────────────────────────────────────────────
 def build_model(forecast_days: int = MAX_FORECAST_DAYS) -> Sequential:
     """Two-layer LSTM with dropout and direct multi-step output (3.2)."""
-    model = Sequential([
-        LSTM(LSTM_UNITS, return_sequences=True, input_shape=(WINDOW_SIZE, 1)),
-        Dropout(0.25),
-        LSTM(LSTM_UNITS // 2, return_sequences=False),
-        Dropout(0.25),
-        Dense(32, activation="relu"),
-        Dense(forecast_days),
-    ])
+    model = Sequential(
+        [
+            LSTM(LSTM_UNITS, return_sequences=True, input_shape=(WINDOW_SIZE, 1)),
+            Dropout(0.25),
+            LSTM(LSTM_UNITS // 2, return_sequences=False),
+            Dropout(0.25),
+            Dense(32, activation="relu"),
+            Dense(forecast_days),
+        ]
+    )
     model.compile(optimizer="adam", loss="mean_squared_error")
     return model
 
@@ -68,10 +80,13 @@ def train_model(X_train, y_train, X_test, y_test, ticker: str):
     )
     logger.info(
         "Training model for %s (%d samples, %d-step output)…",
-        ticker, len(X_train), forecast_days,
+        ticker,
+        len(X_train),
+        forecast_days,
     )
     model.fit(
-        X_train, y_train,
+        X_train,
+        y_train,
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
         validation_data=(X_test, y_test),
@@ -108,16 +123,18 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test):
                 expected_out = y_train.shape[1]
                 if model.output_shape[-1] != expected_out:
                     logger.info(
-                        "Model output shape mismatch for %s "
-                        "(got %s, need %s) — retraining.",
-                        ticker, model.output_shape[-1], expected_out,
+                        "Model output shape mismatch for %s " "(got %s, need %s) — retraining.",
+                        ticker,
+                        model.output_shape[-1],
+                        expected_out,
                     )
                     return train_model(X_train, y_train, X_test, y_test, ticker)
                 logger.info("Loaded cached model for %s", ticker)
                 return model
             except Exception:
                 logger.warning(
-                    "Failed to load model for %s, retraining…", ticker,
+                    "Failed to load model for %s, retraining…",
+                    ticker,
                     exc_info=True,
                 )
         return train_model(X_train, y_train, X_test, y_test, ticker)
@@ -131,8 +148,11 @@ def evaluate_model(model, X_test, y_test, scaler):
     (first output step) for comparability.
     """
     empty = {
-        "rmse": None, "mae": None, "mape": None,
-        "r2": None, "directional_accuracy": None,
+        "rmse": None,
+        "mae": None,
+        "mape": None,
+        "r2": None,
+        "directional_accuracy": None,
     }
     if len(X_test) == 0 or len(y_test) == 0:
         return empty
@@ -150,10 +170,12 @@ def evaluate_model(model, X_test, y_test, scaler):
     # MAPE (skip zeros)
     nonzero = true_prices != 0
     mape = (
-        float(np.mean(np.abs(
-            (true_prices[nonzero] - pred_prices[nonzero]) / true_prices[nonzero]
-        )) * 100)
-        if np.any(nonzero) else None
+        float(
+            np.mean(np.abs((true_prices[nonzero] - pred_prices[nonzero]) / true_prices[nonzero]))
+            * 100
+        )
+        if np.any(nonzero)
+        else None
     )
 
     # R²
@@ -165,10 +187,10 @@ def evaluate_model(model, X_test, y_test, scaler):
         # Compare first vs last step in each forecast window
         pred_last = preds[:, -1]
         true_last = y_test[:, -1]
-        
+
         pred_last_unscaled = scaler.inverse_transform(pred_last.reshape(-1, 1)).flatten()
         true_last_unscaled = scaler.inverse_transform(true_last.reshape(-1, 1)).flatten()
-        
+
         dirs_true = np.sign(true_last_unscaled - true_prices)
         dirs_pred = np.sign(pred_last_unscaled - pred_prices)
         da = float(np.mean(dirs_true == dirs_pred))
@@ -199,6 +221,4 @@ def predict_future(model, closing_prices, scaler, days: int = 7):
     preds_scaled = model.predict(input_seq, verbose=0)[0]  # (MAX_FORECAST_DAYS,)
     preds_scaled = preds_scaled[:days]
 
-    return scaler.inverse_transform(
-        preds_scaled.reshape(-1, 1)
-    ).flatten().tolist()
+    return scaler.inverse_transform(preds_scaled.reshape(-1, 1)).flatten().tolist()

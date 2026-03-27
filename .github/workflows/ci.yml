@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Format check (ruff)
+        run: ruff format --check .
+
+      - name: Type check (mypy)
+        run: mypy api.py model.py data_pipeline.py config.py --ignore-missing-imports
+
+      - name: Security scan (bandit)
+        run: bandit -r . -x tests/,venv/ -ll  # -ll = medium severity and above only
+
+      - name: Tests
+        run: pytest tests/ -v --cov=. --cov-report=term-missing --cov-fail-under=70
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: backend/htmlcov/
