@@ -21,4 +21,5 @@ def trained_model(preprocessed):
     from model import train_model
 
     X_train, X_test, y_train, y_test, scaler = preprocessed
-    return train_model(X_train, y_train, X_test, y_test, ticker="TEST"), preprocessed
+    model, _ = train_model(X_train, y_train, X_test, y_test, ticker="TEST", scaler=scaler)
+    return model, preprocessed

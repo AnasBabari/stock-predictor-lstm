@@ -14,6 +14,7 @@ import time
 import weakref
 from pathlib import Path
 
+import joblib  # type: ignore[import-untyped]
 import numpy as np
 from sklearn.metrics import (  # type: ignore[import-untyped]
     mean_absolute_error,
@@ -21,7 +22,7 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
     r2_score,
 )
 from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
-from tensorflow.keras.layers import LSTM, Dense, Dropout  # type: ignore[import-untyped]
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Input  # type: ignore[import-untyped]
 from tensorflow.keras.models import Sequential, load_model  # type: ignore[import-untyped]
 
 from config import (
@@ -55,7 +56,8 @@ def build_model(forecast_days: int = MAX_FORECAST_DAYS) -> Sequential:
     """Two-layer LSTM with dropout and direct multi-step output (3.2)."""
     model = Sequential(
         [
-            LSTM(LSTM_UNITS, return_sequences=True, input_shape=(WINDOW_SIZE, 1)),
+            Input(shape=(WINDOW_SIZE, 1)),
+            LSTM(LSTM_UNITS, return_sequences=True),
             Dropout(0.25),
             LSTM(LSTM_UNITS // 2, return_sequences=False),
             Dropout(0.25),
@@ -68,8 +70,8 @@ def build_model(forecast_days: int = MAX_FORECAST_DAYS) -> Sequential:
 
 
 # ── Train ────────────────────────────────────────────────────────────
-def train_model(X_train, y_train, X_test, y_test, ticker: str):
-    """Train with explicit validation data (3.3), silent output (3.7)."""
+def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None):
+    """Train with explicit validation data (3.3), silent output (3.7), and scaler persistence."""
     forecast_days = y_train.shape[1]
     model = build_model(forecast_days=forecast_days)
     early_stop = EarlyStopping(
@@ -93,10 +95,13 @@ def train_model(X_train, y_train, X_test, y_test, ticker: str):
         verbose=0,
     )
     model_path = Path(MODEL_DIR) / f"{ticker}_model.keras"
+    scaler_path = Path(MODEL_DIR) / f"{ticker}_scaler.joblib"
     model_path.parent.mkdir(parents=True, exist_ok=True)
     model.save(str(model_path))
-    logger.info("Model saved → %s", model_path)
-    return model
+    if scaler is not None:
+        joblib.dump(scaler, str(scaler_path))
+    logger.info("Model and scaler saved → %s", model_path)
+    return model, scaler
 
 
 # ── Staleness check ──────────────────────────────────────────────────
@@ -109,15 +114,17 @@ def _is_stale(path: Path) -> bool:
 
 
 # ── Load or train ────────────────────────────────────────────────────
-def load_or_train(ticker: str, X_train, y_train, X_test, y_test):
-    """Load a cached model or train a new one, with per-ticker locking (2.4)."""
-    path = Path(MODEL_DIR) / f"{ticker}_model.keras"
+def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None):
+    """Load a cached model & scaler or train a new pair, with per-ticker locking (2.4)."""
+    model_path = Path(MODEL_DIR) / f"{ticker}_model.keras"
+    scaler_path = Path(MODEL_DIR) / f"{ticker}_scaler.joblib"
     lock = _get_ticker_lock(ticker)
 
     with lock:
-        if path.exists() and not _is_stale(path):
+        if model_path.exists() and scaler_path.exists() and not _is_stale(model_path):
             try:
-                model = load_model(str(path))
+                model = load_model(str(model_path))
+                loaded_scaler = joblib.load(str(scaler_path))
                 # Verify output shape matches (old Dense(1) models get retrained)
                 expected_out = y_train.shape[1]
                 if model.output_shape[-1] != expected_out:
@@ -127,16 +134,16 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test):
                         model.output_shape[-1],
                         expected_out,
                     )
-                    return train_model(X_train, y_train, X_test, y_test, ticker)
-                logger.info("Loaded cached model for %s", ticker)
-                return model
+                    return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler)
+                logger.info("Loaded cached model & scaler for %s", ticker)
+                return model, loaded_scaler
             except Exception:
                 logger.warning(
-                    "Failed to load model for %s, retraining…",
+                    "Failed to load model/scaler for %s, retraining…",
                     ticker,
                     exc_info=True,
                 )
-        return train_model(X_train, y_train, X_test, y_test, ticker)
+        return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler)
 
 
 # ── Evaluate (3.6) ──────────────────────────────────────────────────

@@ -172,13 +172,20 @@ async def predict(
         X_train, X_test, y_train, y_test, scaler = pipeline_data
 
         # Model (with per-ticker lock) - run async to avoid blocking
-        model = await run_in_threadpool(load_or_train, ticker, X_train, y_train, X_test, y_test)
+        model, model_scaler = await run_in_threadpool(
+            load_or_train, ticker, X_train, y_train, X_test, y_test, scaler
+        )
+
+        # If a cached model/scaler was loaded, re-preprocess with original model_scaler
+        if model_scaler is not scaler:
+            from data_pipeline import preprocess
+            X_train, X_test, y_train, y_test, model_scaler = preprocess(closing_prices, scaler=model_scaler)
 
         # Metrics (3.6 — MAPE, R², directional accuracy)
-        metrics = evaluate_model(model, X_test, y_test, scaler)
+        metrics = evaluate_model(model, X_test, y_test, model_scaler)
 
         # Direct multi-step predictions (3.2)
-        predictions = predict_future(model, closing_prices, scaler, days=days)
+        predictions = predict_future(model, closing_prices, model_scaler, days=days)
 
         # Dates — reuse the index from the same download (2.2)
         hist_dates = historical_dates.strftime("%Y-%m-%d").tolist()

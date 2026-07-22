@@ -9,6 +9,7 @@ env/
 
 # Models & Data
 backend/saved_models/*.keras
+backend/saved_models/*.joblib
 backend/saved_models/*.h5
 *.csv
 *.dat

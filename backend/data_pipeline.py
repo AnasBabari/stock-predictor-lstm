@@ -14,7 +14,7 @@ from config import HISTORICAL_YEARS, MAX_FORECAST_DAYS, TRAIN_SPLIT, WINDOW_SIZE
 
 def fetch_data(ticker: str):
     """Download historical prices. Returns (closing_prices, date_index)."""
-    data = yf.download(ticker, period=f"{HISTORICAL_YEARS}y", progress=False)
+    data = yf.download(ticker, period=f"{HISTORICAL_YEARS}y", progress=False, auto_adjust=True)
     data = data.dropna()
     min_rows = WINDOW_SIZE + MAX_FORECAST_DAYS + 10
     if len(data) < min_rows:
@@ -25,13 +25,12 @@ def fetch_data(ticker: str):
     return closing_prices, data.index
 
 
-def preprocess(closing_prices, forecast_days=MAX_FORECAST_DAYS):
+def preprocess(closing_prices, forecast_days=MAX_FORECAST_DAYS, scaler=None):
     """
     Build windowed train/test data with proper scaler discipline.
 
     Key fix (3.1): the MinMaxScaler is fit ONLY on the training portion
-    of raw prices, preventing future-price leakage into the scaler's
-    data_min_ / data_max_.
+    of raw prices (or re-uses an existing loaded scaler), preventing future-price leakage.
 
     Key fix (3.2): targets are multi-step — each sample's y is the next
     `forecast_days` scaled values, enabling direct (non-recursive) output.
@@ -43,9 +42,10 @@ def preprocess(closing_prices, forecast_days=MAX_FORECAST_DAYS):
     split = int(n_samples * TRAIN_SPLIT)
     split_raw_idx = split + WINDOW_SIZE  # boundary in the raw price array
 
-    # ── Fit scaler on training data only (3.1) ───────────────────────
-    scaler = MinMaxScaler()
-    scaler.fit(closing_prices[:split_raw_idx])
+    # ── Fit scaler on training data only (3.1) or reuse existing ────
+    if scaler is None:
+        scaler = MinMaxScaler()
+        scaler.fit(closing_prices[:split_raw_idx])
     scaled = scaler.transform(closing_prices)
 
     # ── Create multi-step windows (3.2) ──────────────────────────────

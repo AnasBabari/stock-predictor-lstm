@@ -81,3 +81,22 @@ def test_mape_is_percentage(trained_model):
     metrics = evaluate_model(model, X_test, y_test, scaler)
     if metrics["mape"] is not None:
         assert metrics["mape"] >= 0
+
+
+def test_scaler_persistence_and_loading(preprocessed, tmp_path, monkeypatch):
+    import model as model_module
+    from model import load_or_train, train_model
+
+    monkeypatch.setattr(model_module, "MODEL_DIR", str(tmp_path))
+    X_train, X_test, y_train, y_test, scaler = preprocessed
+
+    # Train model & scaler
+    trained_m, trained_s = train_model(X_train, y_train, X_test, y_test, ticker="PERSIST_TEST", scaler=scaler)
+    assert (tmp_path / "PERSIST_TEST_model.keras").exists()
+    assert (tmp_path / "PERSIST_TEST_scaler.joblib").exists()
+
+    # Load from cache
+    loaded_m, loaded_s = load_or_train("PERSIST_TEST", X_train, y_train, X_test, y_test, scaler=scaler)
+    assert loaded_s is not None
+    assert getattr(loaded_s, "data_min_", None) is not None
+

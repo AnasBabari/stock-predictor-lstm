@@ -49,13 +49,15 @@ def test_validate_ticker_accepts_valid():
         patch("api.run_in_threadpool") as mock_thread,
     ):
 
+        mock_scaler = MagicMock()
+
         async def mock_run(*args, **kwargs):
-            return mock_model()
+            return mock_model(), mock_scaler
 
         mock_thread.side_effect = mock_run
 
         mock_pipe.return_value = (
-            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
+            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler),
             _make_prices(100),
             _make_dates(100),
         )
@@ -80,13 +82,15 @@ def test_predict_response_schema():
         patch("api.run_in_threadpool") as mock_thread,
     ):
 
+        mock_scaler = MagicMock()
+
         async def mock_run(*args, **kwargs):
-            return mock_model()
+            return mock_model(), mock_scaler
 
         mock_thread.side_effect = mock_run
 
         mock_pipe.return_value = (
-            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()),
+            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler),
             _make_prices(100),
             _make_dates(100),
         )
