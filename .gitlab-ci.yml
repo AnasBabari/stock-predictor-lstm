@@ -1,0 +1,141 @@
+# StockLSTM GitLab CI/CD Pipeline
+# Standardized multi-stage pipeline for building, testing, scanning, and deploying StockLSTM.
+
+default:
+  image: python:3.11-slim
+  interruptible: true
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  FF_USE_FASTZIP: "true"
+
+stages:
+  - lint
+  - test
+  - security
+  - build
+  - deploy
+
+# ── Dependency Caching ────────────────────────────────────────────────
+cache:
+  key:
+    files:
+      - backend/requirements.txt
+      - backend/requirements-dev.txt
+  paths:
+    - .cache/pip
+
+# ── Stage: Lint ───────────────────────────────────────────────────────
+lint:backend:
+  stage: lint
+  script:
+    - pip install --upgrade pip
+    - pip install ruff mypy
+    - cd backend
+    - ruff check .
+    - mypy .
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+# ── Stage: Test ───────────────────────────────────────────────────────
+test:backend:
+  stage: test
+  needs: ["lint:backend"]
+  script:
+    - pip install --upgrade pip
+    - pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+    - cd backend
+    - pytest --junitxml=report.xml --cov=. --cov-report=xml:coverage.xml --cov-report=term
+  coverage: '/TOTAL.+ (\d+\%)/'
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - backend/report.xml
+      - backend/coverage.xml
+    reports:
+      junit: backend/report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: backend/coverage.xml
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+# ── Stage: Security ───────────────────────────────────────────────────
+security:sast:
+  stage: security
+  needs: ["test:backend"]
+  script:
+    - pip install bandit
+    - bandit -r backend/ -ll -ii
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+# ── Stage: Build Docker Images ─────────────────────────────────────────
+.docker_build_template:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - name: docker:24.0.5-dind
+      alias: docker
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+build:backend:
+  extends: .docker_build_template
+  needs: ["test:backend", "security:sast"]
+  script:
+    - IMAGE_TAG="$CI_REGISTRY_IMAGE/backend:$CI_COMMIT_SHA"
+    - LATEST_TAG="$CI_REGISTRY_IMAGE/backend:latest"
+    - docker pull "$LATEST_TAG" || true
+    - docker build --cache-from "$LATEST_TAG" -t "$IMAGE_TAG" -t "$LATEST_TAG" ./backend
+    - docker push "$IMAGE_TAG"
+    - docker push "$LATEST_TAG"
+
+build:frontend:
+  extends: .docker_build_template
+  needs: ["test:backend", "security:sast"]
+  script:
+    - IMAGE_TAG="$CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHA"
+    - LATEST_TAG="$CI_REGISTRY_IMAGE/frontend:latest"
+    - docker pull "$LATEST_TAG" || true
+    - docker build --cache-from "$LATEST_TAG" -t "$IMAGE_TAG" -t "$LATEST_TAG" ./frontend
+    - docker push "$IMAGE_TAG"
+    - docker push "$LATEST_TAG"
+
+# ── Stage: Deploy ─────────────────────────────────────────────────────
+deploy:staging:
+  stage: deploy
+  needs: ["build:backend", "build:frontend"]
+  environment:
+    name: staging
+    url: https://staging.stocklstm.internal
+  script:
+    - echo "Deploying commit $CI_COMMIT_SHA to Staging environment..."
+    # Example deployment hook:
+    # - docker-compose -f docker-compose.yml up -d --remove-orphans
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+deploy:production:
+  stage: deploy
+  needs: ["build:backend", "build:frontend"]
+  environment:
+    name: production
+    url: https://stocklstm.com
+  script:
+    - echo "Deploying commit $CI_COMMIT_SHA to Production environment..."
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
