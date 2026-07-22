@@ -48,7 +48,6 @@ def test_validate_ticker_accepts_valid():
         patch("api.predict_future") as mock_pred,
         patch("api.run_in_threadpool") as mock_thread,
     ):
-
         mock_scaler = MagicMock()
 
         async def mock_run(*args, **kwargs):
@@ -81,7 +80,6 @@ def test_predict_response_schema():
         patch("api.predict_future") as mock_pred,
         patch("api.run_in_threadpool") as mock_thread,
     ):
-
         mock_scaler = MagicMock()
 
         async def mock_run(*args, **kwargs):

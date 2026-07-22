@@ -28,9 +28,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff mypy
 
-      - name: Lint with Ruff
+      - name: Lint and Format check with Ruff
         run: |
           cd backend
+          ruff format --check .
           ruff check .
 
       - name: Type check with Mypy

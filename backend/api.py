@@ -179,7 +179,10 @@ async def predict(
         # If a cached model/scaler was loaded, re-preprocess with original model_scaler
         if model_scaler is not scaler:
             from data_pipeline import preprocess
-            X_train, X_test, y_train, y_test, model_scaler = preprocess(closing_prices, scaler=model_scaler)
+
+            X_train, X_test, y_train, y_test, model_scaler = preprocess(
+                closing_prices, scaler=model_scaler
+            )
 
         # Metrics (3.6 — MAPE, R², directional accuracy)
         metrics = evaluate_model(model, X_test, y_test, model_scaler)

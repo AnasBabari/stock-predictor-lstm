@@ -129,7 +129,7 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None):
                 expected_out = y_train.shape[1]
                 if model.output_shape[-1] != expected_out:
                     logger.info(
-                        "Model output shape mismatch for %s " "(got %s, need %s) — retraining.",
+                        "Model output shape mismatch for %s (got %s, need %s) — retraining.",
                         ticker,
                         model.output_shape[-1],
                         expected_out,

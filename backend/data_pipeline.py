@@ -19,7 +19,7 @@ def fetch_data(ticker: str):
     min_rows = WINDOW_SIZE + MAX_FORECAST_DAYS + 10
     if len(data) < min_rows:
         raise ValueError(
-            f"Not enough historical data for {ticker}. " f"Need at least {min_rows} trading days."
+            f"Not enough historical data for {ticker}. Need at least {min_rows} trading days."
         )
     closing_prices = data["Close"].values.reshape(-1, 1)
     return closing_prices, data.index
