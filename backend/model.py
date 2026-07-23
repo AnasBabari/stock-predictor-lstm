@@ -313,3 +313,21 @@ def predict_future(model, closing_prices, scaler, days: int = 7):
     preds_scaled = preds_scaled[:days]
 
     return scaler.inverse_transform(preds_scaled.reshape(-1, 1)).flatten().tolist()
+
+
+def predict_direction(model, closing_prices, scaler, days: int = 7):
+    """
+    Directional multi-step prediction using Attention model.
+    """
+    log_returns = np.log(closing_prices[1:] / closing_prices[:-1])
+    last_window = log_returns[-WINDOW_SIZE:]
+    scaled = scaler.transform(last_window)
+    input_seq = scaled.reshape(1, WINDOW_SIZE, 1)
+
+    probabilities, attention_weights = model.predict(input_seq, verbose=0)
+    probabilities = probabilities[0][:days]
+
+    probs_list = [float(p) for p in probabilities]
+    directions = ["Up" if p > 0.5 else "Down" for p in probs_list]
+
+    return directions, probs_list, attention_weights.flatten().tolist()

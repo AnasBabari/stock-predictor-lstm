@@ -27,8 +27,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from config import DEFAULT_FORECAST_DAYS, MAX_FORECAST_DAYS, settings
-from data_pipeline import get_pipeline
-from model import evaluate_model, load_or_train, predict_future
+from data_pipeline import get_pipeline, fetch_data, prepare_return_data
+from model import evaluate_model, load_or_train, predict_future, predict_direction, load_metrics
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
 logging.basicConfig(
@@ -220,6 +220,71 @@ async def predict(
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
         logger.exception("Error predicting %s", ticker)
+        raise HTTPException(
+            status_code=500,
+            detail="Prediction failed. Please try again later.",
+        ) from err
+
+
+@app.get("/api/v1/predict/direction")
+@limiter.limit("5/minute")
+async def predict_direction_endpoint(
+    request: Request,
+    ticker: str = "AAPL",
+    days: int = Query(default=DEFAULT_FORECAST_DAYS, ge=1, le=MAX_FORECAST_DAYS),
+):
+    ticker = validate_ticker(ticker)
+
+    cache_key = f"dir_{ticker}_{days}"
+    cached = _predict_cache.get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        closing_prices, historical_dates = fetch_data(ticker)
+        
+        X_train, X_test, y_train, y_test, scaler = prepare_return_data(closing_prices, forecast_days=days)
+
+        model, model_scaler = await run_in_threadpool(
+            load_or_train, ticker, X_train, y_train, X_test, y_test, scaler, model_type="attention"
+        )
+
+        if model_scaler is not scaler:
+            X_train, X_test, y_train, y_test, model_scaler = prepare_return_data(
+                closing_prices, forecast_days=days, scaler=model_scaler
+            )
+
+        directions, probabilities, attention_weights = predict_direction(model, closing_prices, model_scaler, days=days)
+        
+        metrics = load_metrics(ticker, model_type="attention")
+
+        hist_dates = historical_dates.strftime("%Y-%m-%d").tolist()
+        cur = historical_dates[-1]
+        nyse = mcal.get_calendar("NYSE")
+        schedule = nyse.schedule(
+            start_date=cur + timedelta(days=1), end_date=cur + timedelta(days=days * 3 + 10)
+        )
+        future_dates = [d.strftime("%Y-%m-%d") for d in schedule.index if d > cur][:days]
+
+        data = {
+            "ticker": ticker,
+            "forecast_days": days,
+            "future_dates": future_dates,
+            "directions": directions,
+            "probabilities": probabilities,
+            "attention_weights": attention_weights,
+            "metrics": metrics,
+            "sentiment": 0.0,
+            "sentiment_source": "mock"
+        }
+
+        _predict_cache[cache_key] = data
+        return data
+
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except Exception as err:
+        logger.exception("Error predicting direction %s", ticker)
         raise HTTPException(
             status_code=500,
             detail="Prediction failed. Please try again later.",
