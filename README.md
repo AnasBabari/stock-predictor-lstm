@@ -126,7 +126,28 @@ cp backend/.env.example backend/.env
 
 ## 🧠 Scaler & Model Persistence
 
-Models (`.keras`) and fitted `MinMaxScaler` instances (`.joblib`) are serialized together in `backend/saved_models/`. Reusing the exact fitted scaler instance during inference ensures input preprocessing matches training data and prevents prediction drift caused by refitting on new market data.
+Models (`.keras`) and fitted `MinMaxScaler` instances (`.joblib`) are serialized together in `backend/saved_models/`. Reusing the exact fitted scaler instance during inference ensures input preprocessing matches training data and prevents prediction drift caused by refitting on new market data. The preprocessing pipeline is designed to prevent look-ahead bias by fitting transformations only on the training partition before applying them to validation and test data.
+
+---
+
+## 🏛 Architecture & Model Design
+
+```mermaid
+graph TD
+    React[React Frontend] -->|GET /predict/direction| FastAPI[FastAPI Backend]
+    FastAPI --> ModelManager[Model Manager]
+    FastAPI --> NewsService[News Aggregator]
+    ModelManager --> AttentionLSTM[Attention-LSTM Model]
+    ModelManager --> Metrics[Metrics Store]
+    NewsService --> VADER[VADER + Financial Lexicon]
+    VADER --> YFinance[yfinance News]
+```
+
+### Multi-Output Direction Forecasting
+For binary directional prediction, the Attention-LSTM model employs a **direct multi-output architecture**. Rather than performing recursive or rolling one-step predictions, the network's final layer (`Dense(forecast_days, activation="sigmoid")`) predicts all target forecast days simultaneously in a single forward pass.
+
+### Probability & Calibration
+Probabilities returned by `/api/v1/predict/direction` represent **raw sigmoid model outputs** ($> 0.5 \rightarrow \text{Up}$, $\le 0.5 \rightarrow \text{Down}$). They indicate relative model confidence along the sigmoid curve rather than calibrated Bayesian probabilities.
 
 ---
 
@@ -187,7 +208,8 @@ graph LR
 
 | Endpoint | Method | Parameters | Description |
 | :--- | :--- | :--- | :--- |
-| `/api/v1/predict` | `GET` | `ticker` (str), `days` (int, default: 7) | Generates LSTM forecasts and evaluation metrics |
+| `/api/v1/predict` | `GET` | `ticker` (str), `days` (int, default: 7) | Generates regression price forecasts and evaluation metrics |
+| `/api/v1/predict/direction` | `GET` | `ticker` (str), `days` (int, default: 7) | Directional Attention-LSTM forecasts, timestamped attention weights, metrics (F1, Precision, Recall), and news sentiment |
 | `/api/v1/search` | `GET` | `query` (str) | Returns stock ticker autocomplete suggestions |
 | `/api/v1/info` | `GET` | `ticker` (str) | Retrieves stock fundamental metadata |
 

@@ -13,8 +13,9 @@ def test_positive_headlines(mock_ticker):
     result = get_financial_sentiment('AAPL')
     
     assert "sentiment" in result
-    assert result["sentiment"] > 0.0
-    assert result["sentiment_source"] == "yfinance_vader"
+    assert result["sentiment"]["score"] > 0.0
+    assert result["sentiment"]["status"] == "live"
+    assert result["sentiment"]["provider"] == "yfinance"
 
 @patch('news_aggregator.yf.Ticker')
 def test_negative_headlines(mock_ticker):
@@ -28,8 +29,9 @@ def test_negative_headlines(mock_ticker):
     result = get_financial_sentiment('AAPL')
     
     assert "sentiment" in result
-    assert result["sentiment"] < 0.0
-    assert result["sentiment_source"] == "yfinance_vader"
+    assert result["sentiment"]["score"] < 0.0
+    assert result["sentiment"]["status"] == "live"
+    assert result["sentiment"]["provider"] == "yfinance"
 
 @patch('news_aggregator.yf.Ticker')
 def test_fallback_on_no_news(mock_ticker):
@@ -39,8 +41,8 @@ def test_fallback_on_no_news(mock_ticker):
     
     result = get_financial_sentiment('AAPL')
     
-    assert result["sentiment"] == 0.0
-    assert result["sentiment_source"] == "fallback"
+    assert result["sentiment"]["score"] == 0.0
+    assert result["sentiment"]["status"] == "fallback"
 
 @patch('news_aggregator.yf.Ticker')
 def test_fallback_on_exception(mock_ticker):
@@ -48,5 +50,5 @@ def test_fallback_on_exception(mock_ticker):
     
     result = get_financial_sentiment('AAPL')
     
-    assert result["sentiment"] == 0.0
-    assert result["sentiment_source"] == "fallback"
+    assert result["sentiment"]["score"] == 0.0
+    assert result["sentiment"]["status"] == "fallback"

@@ -54,7 +54,14 @@ def get_financial_sentiment(ticker: str) -> dict:
         news = ticker_obj.news
         
         if not news:
-            return {"sentiment": 0.0, "sentiment_source": "fallback"}
+            return {
+                "sentiment": {
+                    "score": 0.0,
+                    "status": "fallback",
+                    "provider": "yfinance",
+                    "method": "vader_financial",
+                }
+            }
             
         total_score = 0.0
         count = 0
@@ -67,11 +74,32 @@ def get_financial_sentiment(ticker: str) -> dict:
                 count += 1
                 
         if count == 0:
-            return {"sentiment": 0.0, "sentiment_source": "fallback"}
-            
+            return {
+                "sentiment": {
+                    "score": 0.0,
+                    "status": "fallback",
+                    "provider": "yfinance",
+                    "method": "vader_financial",
+                }
+            }
+
         average_score = total_score / count
-        return {"sentiment": average_score, "sentiment_source": "yfinance_vader"}
+        return {
+            "sentiment": {
+                "score": round(average_score, 4),
+                "status": "live",
+                "provider": "yfinance",
+                "method": "vader_financial",
+            }
+        }
         
     except Exception as e:
         logger.exception("Error fetching news sentiment for %s", ticker)
-        return {"sentiment": 0.0, "sentiment_source": "fallback"}
+        return {
+            "sentiment": {
+                "score": 0.0,
+                "status": "fallback",
+                "provider": "yfinance",
+                "method": "vader_financial",
+            }
+        }

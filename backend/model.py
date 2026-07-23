@@ -23,6 +23,7 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
     r2_score,
     precision_score,
     recall_score,
+    f1_score,
     accuracy_score,
 )
 from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
@@ -157,6 +158,7 @@ def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None, mode
         
         precision = float(precision_score(true_first, pred_first, zero_division=0))
         recall = float(recall_score(true_first, pred_first, zero_division=0))
+        f1 = float(f1_score(true_first, pred_first, zero_division=0))
         
         majority_class = int(np.bincount(true_first).argmax()) if len(true_first) > 0 else 0
         naive_preds = np.full_like(true_first, majority_class)
@@ -165,6 +167,7 @@ def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None, mode
         metrics = {
             "precision": precision,
             "recall": recall,
+            "f1": f1,
             "naive_baseline": naive_baseline
         }
         

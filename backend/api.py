@@ -26,7 +26,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from config import DEFAULT_FORECAST_DAYS, MAX_FORECAST_DAYS, settings
+from config import DEFAULT_FORECAST_DAYS, MAX_FORECAST_DAYS, WINDOW_SIZE, settings
 from data_pipeline import get_pipeline, fetch_data, prepare_return_data
 from model import evaluate_model, load_or_train, predict_future, predict_direction, load_metrics
 from news_aggregator import get_financial_sentiment
@@ -267,6 +267,12 @@ async def predict_direction_endpoint(
         )
         future_dates = [d.strftime("%Y-%m-%d") for d in schedule.index if d > cur][:days]
 
+        past_dates = historical_dates[-WINDOW_SIZE:].strftime("%Y-%m-%d").tolist()
+        formatted_attention = [
+            {"index": idx, "date": d, "weight": float(w)}
+            for idx, (d, w) in enumerate(zip(past_dates, attention_weights))
+        ]
+
         sentiment_data = get_financial_sentiment(ticker)
 
         data = {
@@ -275,10 +281,14 @@ async def predict_direction_endpoint(
             "future_dates": future_dates,
             "directions": directions,
             "probabilities": probabilities,
-            "attention_weights": attention_weights,
+            "attention_weights": formatted_attention,
             "metrics": metrics,
-            "sentiment": sentiment_data.get("sentiment", 0.0),
-            "sentiment_source": sentiment_data.get("sentiment_source", "fallback")
+            "sentiment": sentiment_data.get("sentiment", {
+                "score": 0.0,
+                "status": "fallback",
+                "provider": "yfinance",
+                "method": "vader_financial",
+            }),
         }
 
         _predict_cache[cache_key] = data

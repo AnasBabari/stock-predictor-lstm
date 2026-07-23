@@ -166,8 +166,15 @@ def test_predict_direction_schema():
         mock_fetch.return_value = (_make_prices(100), _make_dates(100))
         mock_prep.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler)
         mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.1] * 60)
-        mock_metrics.return_value = {"precision": 0.8, "recall": 0.7, "naive_baseline": 0.5}
-        mock_sentiment.return_value = {"sentiment": 0.5, "sentiment_source": "yfinance_vader"}
+        mock_metrics.return_value = {"precision": 0.8, "recall": 0.7, "f1": 0.75, "naive_baseline": 0.5}
+        mock_sentiment.return_value = {
+            "sentiment": {
+                "score": 0.5,
+                "status": "live",
+                "provider": "yfinance",
+                "method": "vader_financial",
+            }
+        }
 
         res = client.get("/api/v1/predict/direction?ticker=AAPL&days=7")
         body = res.json()
@@ -181,10 +188,58 @@ def test_predict_direction_schema():
             "attention_weights",
             "metrics",
             "sentiment",
-            "sentiment_source",
         }
         assert body["forecast_days"] == 7
         assert len(body["directions"]) == 7
         assert len(body["probabilities"]) == 7
-        assert body["sentiment"] == 0.5
-        assert body["sentiment_source"] == "yfinance_vader"
+        assert body["sentiment"]["score"] == 0.5
+        assert body["sentiment"]["status"] == "live"
+
+
+def test_predict_direction_attention_alignment():
+    with (
+        patch("api.fetch_data") as mock_fetch,
+        patch("api.prepare_return_data") as mock_prep,
+        patch("api.load_or_train") as mock_model,
+        patch("api.predict_direction") as mock_pred,
+        patch("api.load_metrics") as mock_metrics,
+        patch("api.run_in_threadpool") as mock_thread,
+        patch("api.get_financial_sentiment") as mock_sentiment,
+    ):
+        mock_scaler = MagicMock()
+
+        async def mock_run(*args, **kwargs):
+            return mock_model(), mock_scaler
+
+        mock_thread.side_effect = mock_run
+
+        mock_fetch.return_value = (_make_prices(100), _make_dates(100))
+        mock_prep.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler)
+        mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.05] * 60)
+        mock_metrics.return_value = {"precision": 0.8, "recall": 0.7, "f1": 0.75, "naive_baseline": 0.5}
+        mock_sentiment.return_value = {
+            "sentiment": {
+                "score": 0.0,
+                "status": "fallback",
+                "provider": "yfinance",
+                "method": "vader_financial",
+            }
+        }
+
+        res = client.get("/api/v1/predict/direction?ticker=AAPL&days=7")
+        body = res.json()
+        attn = body["attention_weights"]
+        
+        # 1. Correct length matching WINDOW_SIZE (60)
+        assert len(attn) == 60
+        
+        # 2. Sequential indexing & numeric weight types
+        for idx, item in enumerate(attn):
+            assert item["index"] == idx
+            assert isinstance(item["weight"], (int, float))
+            assert isinstance(item["date"], str)
+
+        # 3. Dates ordered oldest -> newest
+        dates = [item["date"] for item in attn]
+        assert dates == sorted(dates)
+
