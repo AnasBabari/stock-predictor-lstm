@@ -112,6 +112,9 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     needs: [test, security]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     steps:
