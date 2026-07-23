@@ -1,98 +1,60 @@
 # StockLSTM — AI Stock Price Predictor
 
-StockLSTM is a modern, full-stack stock price forecasting application powered by **FastAPI**, **Vite + React**, and **LSTM Deep Learning Neural Networks**. It fetches historical price data from Yahoo Finance, trains or loads cached LSTM models, predicts the next 3–30 trading days of closing prices, and renders interactive, customizable visualizations.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18.0+-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![TensorFlow](https://img.shields.io/badge/TensorFlow-2.15+-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/)
+[![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![CI/CD](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/main.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions)
+
+StockLSTM is a stock price forecasting application built with **FastAPI**, **React**, **Vite**, and **TensorFlow**. It fetches historical price data from Yahoo Finance, trains or loads cached LSTM neural network models, predicts future closing prices (3 to 30 trading days), and presents interactive visualizations.
 
 ---
 
-## 📸 Overview & Features
+## Features
 
-### Core Capabilities
-- **Neural Network Forecasting**: Multi-step stock price prediction (3, 7, 14, or 30 trading days) using 2-layer LSTM models built with Keras & TensorFlow.
-- **Scaler & Model Persistence**: Serializes fitted `MinMaxScaler` objects alongside trained `.keras` models to eliminate data scaling drift during inference.
-- **Automatic Staleness Detection**: Disk-cached models automatically retrain if historical data is older than 7 days.
-- **Model Evaluation Metrics**: Computes and returns RMSE, MAE, MAPE, R², and Directional Accuracy (DA) against test data partitions.
-- **Vite + React Frontend**: High-performance React single-page application (SPA) with dynamic imports and modular components.
-- **Interactive Charting**: Code-split Chart.js line charts with gradient fills, timeframe selectors (`1W`, `1M`, `3M`, `6M`, `1Y`), and PNG/CSV data exports.
-- **Rich Company Overview & Autocomplete**: Instant search autocomplete and real-time metadata dashboard (Market Cap, P/E ratio, 52-week High/Low, Volume).
-- **Watchlist & History**: Persists user watchlists and past predictions across browser sessions using local storage.
-
----
-
-## ⚙️ Prerequisites
-
-Before running StockLSTM, ensure you have the following installed:
-
-- **Python**: `v3.11` or higher
-- **Node.js**: `v20.0.0` or higher (with `npm`)
-- **Docker & Docker Compose**: Needed for containerized deployment (Docker `v24+`)
+- **LSTM Forecasting**: Multi-step stock price prediction (3, 7, 14, or 30 trading days) using 2-layer LSTM models.
+- **Model Evaluation Metrics**: Computes RMSE, MAE, MAPE, R², and Directional Accuracy. Evaluation metrics are computed on a held-out test split from the downloaded historical data.
+- **Scaler & Model Persistence**: Serializes fitted `MinMaxScaler` objects alongside trained `.keras` models to ensure preprocessing during inference matches training.
+- **Automatic Staleness Detection**: Retrains cached models automatically when historical price data exceeds 7 days.
+- **React Frontend**: Single-page application built with Vite, CSS variables, and modular component architecture.
+- **Interactive Charts**: Line charts powered by Chart.js with dynamic timeframe selection (`1W`, `1M`, `3M`, `6M`, `1Y`) and CSV/PNG export options.
+- **Company Overview & Autocomplete**: Real-time ticker search autocomplete and metadata dashboard (Market Cap, P/E ratio, 52-week High/Low, Volume).
+- **Watchlist & History**: Persists user watchlists and past predictions using browser local storage.
 
 ---
 
-## 🏗 Project Structure
+## 📸 Screenshots
 
-```text
-stock-predictor-lstm/
-├── .github/
-│   └── workflows/
-│       └── main.yml           # Multi-stage GitHub Actions CI/CD Pipeline
-├── backend/
-│   ├── api.py                 # FastAPI endpoints, CORS, rate limiting, TTLCache
-│   ├── data_pipeline.py       # YFinance downloader, scaler preprocessor, sequence windowing
-│   ├── model.py                # LSTM architecture, model/scaler persistence & training lock
-│   ├── requirements.txt       # Production dependencies
-│   ├── requirements-dev.txt   # Testing & linting dependencies (pytest, ruff, mypy, bandit)
-│   ├── saved_models/          # Cached .keras models and .joblib scalers
-│   └── tests/                 # Unit & integration test suite
-├── frontend/
-│   ├── Dockerfile             # Multi-stage Docker build (Node build -> Nginx serve)
-│   ├── package.json           # Frontend dependencies (React, Vite, Chart.js)
-│   ├── vite.config.js         # Vite configuration and dev server proxy
-│   └── src/
-│       ├── main.jsx           # React application entry point
-│       ├── App.jsx            # State management, API integration, theme persistence
-│       ├── styles.css         # Glassmorphism design system & CSS variables
-│       └── components/        # Modular React components
-├── docker-compose.yml         # Container orchestration configuration
-└── README.md
-```
+| Hero Dashboard | Prediction Chart |
+| :---: | :---: |
+| ![Hero Dashboard](docs/images/hero_dashboard.png) | ![Prediction Chart](docs/images/prediction_chart.png) |
+
+| Company Overview | Dark Mode |
+| :---: | :---: |
+| ![Company Overview](docs/images/company_overview.png) | ![Dark Mode](docs/images/dark_mode.png) |
 
 ---
 
-## 🧠 Technical Highlight: Why Scaler Persistence Matters
+## 🚀 Quick Start with Docker
 
-In machine learning pipelines for time-series forecasting, input features are normalized (typically using `MinMaxScaler` to scale prices into $[0, 1]$) prior to training the neural network.
+Run the full-stack application locally using Docker Compose:
 
-```
-       Training Phase:                          Inference Phase:
-Raw Prices ──> Fit & Transform ──> Train LSTM ──> Saved Model (.keras)
-                     │
-              Save Scaler (.joblib) ───────────> Load Scaler & Inverse Transform
-```
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/AnasBabari/stock-predictor-lstm.git
+   cd stock-predictor-lstm
+   ```
 
-### The Problem: Scaler State Drift
-If the `MinMaxScaler` is fit dynamically on live incoming data during inference rather than loaded from the exact fitted instance used during training:
-1. **Min/Max Mismatch**: The historical minimum and maximum bounds will shift relative to recent market fluctuations.
-2. **Feature Distortion**: Rescaling inputs with a newly fitted scaler distorts the normalized values fed into the LSTM layer.
-3. **Prediction Error**: Re-inverting predicted outputs using an incorrect scale produces significant forecast drift.
+2. Build and start containers:
+   ```bash
+   docker compose up --build
+   ```
 
-### The Solution
-StockLSTM serializes both the trained model (`<ticker>_model.keras`) and its corresponding scaler state (`<ticker>_scaler.joblib`) together. During inference, `model.py` and `api.py` retrieve the exact original scaler to transform inputs and inverse-transform prediction arrays, ensuring absolute numerical consistency.
+3. Open your browser and navigate to `http://localhost:5500`.
 
----
-
-## 🔐 Environment Variables
-
-Configuration settings are loaded via environment variables in the `backend/` directory. Create a `.env` file based on `.env.example`:
-
-| Environment Variable | Default Value | Description |
-| :--- | :--- | :--- |
-| `ALLOWED_ORIGINS` | `["http://localhost:5500","http://127.0.0.1:5500"]` | JSON array of CORS allowed origins |
-| `RATE_LIMIT_PREDICT` | `5/minute` | Rate limit for `/api/v1/predict` endpoint |
-| `RATE_LIMIT_SEARCH` | `30/minute` | Rate limit for `/api/v1/search` endpoint |
-| `RATE_LIMIT_INFO` | `20/minute` | Rate limit for `/api/v1/info` endpoint |
-| `PREDICT_CACHE_TTL` | `300` | Prediction in-memory TTLCache expiration (seconds) |
-| `INFO_CACHE_TTL` | `3600` | Stock info TTLCache expiration (seconds) |
-| `CACHE_MAX_SIZE` | `500` | Maximum number of cached items in TTLCache |
+*Note: Initial predictions for new tickers train an LSTM model on demand. Subsequent predictions load cached models immediately.*
 
 ---
 
@@ -116,12 +78,17 @@ source venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 ```
 
+Create your environment file from `.env.example`:
+```bash
+cp .env.example .env
+```
+
 Start the backend server using Uvicorn:
 
 ```bash
 uvicorn api:app --reload --port 8000
 ```
-The API will be available at `http://127.0.0.1:8000`. Interactive Swagger API documentation can be accessed at `http://127.0.0.1:8000/docs`.
+The API will be available at `http://127.0.0.1:8000`. Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
 
 ### 2. Frontend Setup
 
@@ -129,79 +96,107 @@ In a separate terminal, navigate to the `frontend` directory, install Node packa
 
 ```bash
 cd frontend
+# cp .env.example .env  # Uncomment if you need to configure custom API URLs
 npm install
 npm run dev
 ```
-The frontend application will be live at `http://localhost:5500` with automatic hot module replacement (HMR).
+The frontend application will run at `http://localhost:5500`.
 
 ---
 
-## 🐳 Quick Start with Docker
+## 🔐 Environment Variables
 
-You can run the full-stack application locally using Docker Compose:
+Before running the backend, create a `.env` file by copying `.env.example`:
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/AnasBabari/stock-predictor-lstm.git
-   cd stock-predictor-lstm
-   ```
+```bash
+cp backend/.env.example backend/.env
+```
 
-2. Build and start containers in detached mode:
-   ```bash
-   docker-compose up -d --build
-   ```
-
-3. Open your browser and navigate to `http://localhost:5500`.
-
-*Note: Initial predictions for new tickers train an LSTM model on demand, taking 15–45 seconds. Subsequent predictions for cached tickers load instantly.*
+| Environment Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `ALLOWED_ORIGINS` | `["http://localhost:5500","http://127.0.0.1:5500"]` | JSON array of CORS allowed origins |
+| `RATE_LIMIT_PREDICT` | `5/minute` | Rate limit for `/api/v1/predict` endpoint |
+| `RATE_LIMIT_SEARCH` | `30/minute` | Rate limit for `/api/v1/search` endpoint |
+| `RATE_LIMIT_INFO` | `20/minute` | Rate limit for `/api/v1/info` endpoint |
+| `PREDICT_CACHE_TTL` | `300` | Prediction cache TTL in seconds |
+| `INFO_CACHE_TTL` | `3600` | Stock info cache TTL in seconds |
+| `CACHE_MAX_SIZE` | `500` | Maximum items in in-memory cache |
 
 ---
 
-## 🚀 CI/CD Pipeline & Container Publishing
+## 🧠 Scaler & Model Persistence
 
-StockLSTM uses a multi-stage **GitHub Actions** workflow ([`main.yml`](file:///.github/workflows/main.yml)) triggered on pushes and pull requests to `main` and `develop`.
+Models (`.keras`) and fitted `MinMaxScaler` instances (`.joblib`) are serialized together in `backend/saved_models/`. Reusing the exact fitted scaler instance during inference ensures input preprocessing matches training data and prevents prediction drift caused by refitting on new market data.
+
+---
+
+## 🏗 Project Structure
+
+```text
+stock-predictor-lstm/
+├── .github/
+│   └── workflows/
+│       └── main.yml           # GitHub Actions CI/CD Pipeline
+├── backend/
+│   ├── api.py                 # FastAPI endpoints & middleware
+│   ├── data_pipeline.py       # YFinance data retrieval & feature scaling
+│   ├── model.py                # LSTM model architecture & persistence
+│   ├── requirements.txt       # Production dependencies
+│   ├── requirements-dev.txt   # Development & test dependencies
+│   ├── saved_models/          # Model (.keras) and scaler (.joblib) artifacts
+│   └── tests/                 # Unit and integration tests
+├── frontend/
+│   ├── Dockerfile             # Multi-stage build (Node -> Nginx)
+│   ├── package.json           # React & Vite dependencies
+│   ├── vite.config.js         # Vite configuration & API proxy
+│   └── src/
+│       ├── main.jsx           # Application entry point
+│       ├── App.jsx            # Main container & state management
+│       ├── styles.css         # UI styles and CSS variables
+│       └── components/        # UI components
+├── docs/
+│   └── images/                # Application screenshots
+├── docker-compose.yml         # Container orchestration
+└── README.md
+```
+
+---
+
+## 🚀 CI/CD Pipeline
+
+StockLSTM uses **GitHub Actions** ([`main.yml`](file:///.github/workflows/main.yml)) for continuous integration and automated container builds on pushes to `main` and `develop`.
 
 ```mermaid
 graph LR
     Lint[1. Lint & Type Check] --> Test[2. Unit Tests]
-    Test --> Security[3. SAST Security Scan]
+    Test --> Security[3. Security Scan]
     Security --> Build[4. Docker Build & Push]
-    Build --> Deploy[5. Staging / Prod Deploy]
 ```
 
-### Workflow Jobs
-1. **Lint**: Validates Python formatting with `ruff` and enforces static typing with `mypy`.
-2. **Test**: Executes `pytest` with coverage report generation.
-3. **Security**: Runs static security analysis using `bandit`.
-4. **Build & Publish**: Builds container images via Docker Buildx and publishes them to **GitHub Container Registry (GHCR)** under:
+### Pipeline Steps
+1. **Lint & Type Check**: Checks formatting with `ruff`, runs static typing with `mypy`, and scans React components.
+2. **Unit Tests**: Runs backend tests with `pytest` and exports coverage reports.
+3. **Security Scan**: Performs static code security analysis using `bandit`.
+4. **Docker Build & Push**: Builds container images with Docker Buildx and pushes them to GitHub Container Registry (GHCR):
    - `ghcr.io/anasbabari/stock-predictor-lstm/backend:latest`
    - `ghcr.io/anasbabari/stock-predictor-lstm/frontend:latest`
-5. **Deploy**: Triggers deployment pipelines to Staging (`develop` branch) or Production (`main` branch).
 
 ---
 
 ## 📡 API Reference
 
-### `GET /api/v1/predict`
-Generates LSTM predictions for a stock ticker.
-- **Parameters**: `ticker` (string, required), `days` (int, default: 7)
-- **Response**: Historical prices, predicted prices, future dates, and model metrics (`rmse`, `mae`, `r2`, `mape`, `directional_accuracy`).
-
-### `GET /api/v1/search`
-Searches for company names or tickers for autocomplete suggestions.
-- **Parameters**: `query` (string, required)
-
-### `GET /api/v1/info`
-Fetches fundamental metadata for a given company.
-- **Parameters**: `ticker` (string, required)
-- **Response**: Market cap, P/E ratio, 52-week range, volume, sector.
+| Endpoint | Method | Parameters | Description |
+| :--- | :--- | :--- | :--- |
+| `/api/v1/predict` | `GET` | `ticker` (str), `days` (int, default: 7) | Generates LSTM forecasts and evaluation metrics |
+| `/api/v1/search` | `GET` | `query` (str) | Returns stock ticker autocomplete suggestions |
+| `/api/v1/info` | `GET` | `ticker` (str) | Retrieves stock fundamental metadata |
 
 ---
 
 ## ⚠️ Disclaimer
 
 > [!WARNING]
-> This application is strictly for **educational and research purposes**. Stock market prices are influenced by unobservable factors, news, and systemic events not captured by historical price sequences alone. The generated predictions and model evaluation metrics **must never be used as financial or investment advice**.
+> This project is for **educational and research purposes only**. Stock price forecasts generated by machine learning models should not be used as financial or investment advice.
 
 ---
 

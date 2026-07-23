@@ -12,7 +12,7 @@ import Watchlist from './components/Watchlist';
 import PredictionHistory from './components/PredictionHistory';
 import ToastContainer from './components/ToastContainer';
 
-const API_BASE = window.STOCKLSTM_API_BASE || 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const THEME_KEY = 'stocklstm-theme:v1';
 const WL_KEY = 'stocklstm-watchlist:v1';
 const HIST_KEY = 'stocklstm-history:v1';
