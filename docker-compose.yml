@@ -16,11 +16,9 @@ services:
       retries: 3
 
   frontend:
-    image: nginx:alpine
+    build: ./frontend
     ports:
       - "5500:80"
-    volumes:
-      - ./frontend:/usr/share/nginx/html:ro
     depends_on:
       backend:
         condition: service_healthy
