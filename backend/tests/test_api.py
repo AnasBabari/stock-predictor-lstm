@@ -154,6 +154,7 @@ def test_predict_direction_schema():
         patch("api.predict_direction") as mock_pred,
         patch("api.load_metrics") as mock_metrics,
         patch("api.run_in_threadpool") as mock_thread,
+        patch("api.get_financial_sentiment") as mock_sentiment,
     ):
         mock_scaler = MagicMock()
 
@@ -166,6 +167,7 @@ def test_predict_direction_schema():
         mock_prep.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler)
         mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.1] * 60)
         mock_metrics.return_value = {"precision": 0.8, "recall": 0.7, "naive_baseline": 0.5}
+        mock_sentiment.return_value = {"sentiment": 0.5, "sentiment_source": "yfinance_vader"}
 
         res = client.get("/api/v1/predict/direction?ticker=AAPL&days=7")
         body = res.json()
@@ -184,5 +186,5 @@ def test_predict_direction_schema():
         assert body["forecast_days"] == 7
         assert len(body["directions"]) == 7
         assert len(body["probabilities"]) == 7
-        assert body["sentiment"] == 0.0
-        assert body["sentiment_source"] == "mock"
+        assert body["sentiment"] == 0.5
+        assert body["sentiment_source"] == "yfinance_vader"

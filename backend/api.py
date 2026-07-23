@@ -29,6 +29,7 @@ from slowapi.util import get_remote_address
 from config import DEFAULT_FORECAST_DAYS, MAX_FORECAST_DAYS, settings
 from data_pipeline import get_pipeline, fetch_data, prepare_return_data
 from model import evaluate_model, load_or_train, predict_future, predict_direction, load_metrics
+from news_aggregator import get_financial_sentiment
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
 logging.basicConfig(
@@ -266,6 +267,8 @@ async def predict_direction_endpoint(
         )
         future_dates = [d.strftime("%Y-%m-%d") for d in schedule.index if d > cur][:days]
 
+        sentiment_data = get_financial_sentiment(ticker)
+
         data = {
             "ticker": ticker,
             "forecast_days": days,
@@ -274,8 +277,8 @@ async def predict_direction_endpoint(
             "probabilities": probabilities,
             "attention_weights": attention_weights,
             "metrics": metrics,
-            "sentiment": 0.0,
-            "sentiment_source": "mock"
+            "sentiment": sentiment_data.get("sentiment", 0.0),
+            "sentiment_source": sentiment_data.get("sentiment_source", "fallback")
         }
 
         _predict_cache[cache_key] = data
