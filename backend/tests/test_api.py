@@ -239,7 +239,8 @@ def test_predict_direction_attention_alignment():
             assert isinstance(item["weight"], (int, float))
             assert isinstance(item["date"], str)
 
-        # 3. Dates ordered oldest -> newest
+        # 3. Dates ordered oldest -> newest with no duplicate dates
         dates = [item["date"] for item in attn]
         assert dates == sorted(dates)
+        assert len(set(dates)) == len(dates)
 

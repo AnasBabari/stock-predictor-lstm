@@ -1,4 +1,12 @@
-import React from 'react';
+function formatHistoryDate(dateInput) {
+  if (!dateInput) return '';
+  const parsed = new Date(dateInput);
+  if (isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+}
 
 export default function PredictionHistory({ items, onSelectTicker, onClearAll }) {
   return (
@@ -35,10 +43,7 @@ export default function PredictionHistory({ items, onSelectTicker, onClearAll })
             const isUp = parseFloat(h.change) >= 0;
             const color = isUp ? 'var(--bullish)' : 'var(--bearish)';
             const arrow = isUp ? '▲' : '▼';
-            const dateStr = new Date(h.date).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            });
+            const dateStr = formatHistoryDate(h.date);
 
             return (
               <button
