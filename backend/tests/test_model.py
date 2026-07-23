@@ -94,8 +94,8 @@ def test_scaler_persistence_and_loading(preprocessed, tmp_path, monkeypatch):
     trained_m, trained_s = train_model(
         X_train, y_train, X_test, y_test, ticker="PERSIST_TEST", scaler=scaler
     )
-    assert (tmp_path / "PERSIST_TEST_model.keras").exists()
-    assert (tmp_path / "PERSIST_TEST_scaler.joblib").exists()
+    assert (tmp_path / "PERSIST_TEST_lstm_model.keras").exists()
+    assert (tmp_path / "PERSIST_TEST_lstm_scaler.joblib").exists()
 
     # Load from cache
     loaded_m, loaded_s = load_or_train(
@@ -122,3 +122,64 @@ def test_build_attention_lstm_model_outputs():
     
     # Check shape: (batch_size, sequence_length, sequence_length)
     assert attention_weights_shape == (None, WINDOW_SIZE, WINDOW_SIZE), f"Expected attention weights shape (None, {WINDOW_SIZE}, {WINDOW_SIZE}), got {attention_weights_shape}"
+
+
+def test_train_model_attention_caching_and_metrics(preprocessed, tmp_path, monkeypatch):
+    import json
+    import model as model_module
+    from model import train_model, load_metrics
+
+    monkeypatch.setattr(model_module, "MODEL_DIR", str(tmp_path))
+    X_train, X_test, y_train, y_test, scaler = preprocessed
+
+    # We need to make y_train, y_test binary for attention to work properly
+    import numpy as np
+    y_train_bin = (y_train > np.median(y_train)).astype(int)
+    y_test_bin = (y_test > np.median(y_test)).astype(int)
+
+    trained_m, trained_s = train_model(
+        X_train, y_train_bin, X_test, y_test_bin, ticker="ATTN_TEST", scaler=scaler, model_type="attention"
+    )
+    
+    assert (tmp_path / "ATTN_TEST_attention_model.keras").exists()
+    assert (tmp_path / "ATTN_TEST_attention_scaler.joblib").exists()
+    
+    metrics_path = tmp_path / "ATTN_TEST_attention_metrics.json"
+    assert metrics_path.exists()
+    
+    with open(metrics_path, "r") as f:
+        metrics = json.load(f)
+        
+    assert "precision" in metrics
+    assert "recall" in metrics
+    assert "naive_baseline" in metrics
+    
+    loaded_metrics = load_metrics("ATTN_TEST", model_type="attention")
+    assert loaded_metrics == metrics
+
+
+def test_load_or_train_graceful_overwrite(preprocessed, tmp_path, monkeypatch):
+    import model as model_module
+    from model import load_or_train
+
+    monkeypatch.setattr(model_module, "MODEL_DIR", str(tmp_path))
+    X_train, X_test, y_train, y_test, scaler = preprocessed
+
+    # Create a corrupted model file
+    model_path = tmp_path / "CORRUPT_lstm_model.keras"
+    scaler_path = tmp_path / "CORRUPT_lstm_scaler.joblib"
+    
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_text("this is not a valid keras model")
+    
+    import joblib
+    joblib.dump(scaler, str(scaler_path))
+    
+    # load_or_train should catch the Exception loading the corrupt model and retrain
+    loaded_m, loaded_s = load_or_train(
+        "CORRUPT", X_train, y_train, X_test, y_test, scaler=scaler, model_type="lstm"
+    )
+    
+    assert loaded_m is not None
+    # Now the model file should be valid
+    assert model_path.exists()

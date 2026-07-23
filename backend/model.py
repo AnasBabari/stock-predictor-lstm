@@ -8,6 +8,7 @@
 #   2.4  Per-ticker lock to prevent concurrent training races
 #   6.7  pathlib for cross-platform path construction
 
+import json
 import logging
 import threading
 import time
@@ -20,6 +21,9 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
     mean_absolute_error,
     mean_squared_error,
     r2_score,
+    precision_score,
+    recall_score,
+    accuracy_score,
 )
 from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Attention, GlobalAveragePooling1D  # type: ignore[import-untyped]
@@ -93,11 +97,28 @@ def build_attention_lstm_model(forecast_days: int = MAX_FORECAST_DAYS) -> Model:
     return model
 
 
+# ── Load metrics helper ──────────────────────────────────────────────
+def load_metrics(ticker: str, model_type: str = "attention") -> dict:
+    metrics_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_metrics.json"
+    if metrics_path.exists():
+        try:
+            with open(metrics_path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning("Failed to load metrics for %s: %s", ticker, e)
+    return {}
+
+
 # ── Train ────────────────────────────────────────────────────────────
-def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None):
+def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None, model_type: str = "lstm"):
     """Train with explicit validation data (3.3), silent output (3.7), and scaler persistence."""
     forecast_days = y_train.shape[1]
-    model = build_model(forecast_days=forecast_days)
+    
+    if model_type == "attention":
+        model = build_attention_lstm_model(forecast_days=forecast_days)
+    else:
+        model = build_model(forecast_days=forecast_days)
+        
     early_stop = EarlyStopping(
         monitor="val_loss",
         patience=5,
@@ -118,13 +139,39 @@ def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None):
         callbacks=[early_stop],
         verbose=0,
     )
-    model_path = Path(MODEL_DIR) / f"{ticker}_model.keras"
-    scaler_path = Path(MODEL_DIR) / f"{ticker}_scaler.joblib"
+    model_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_model.keras"
+    scaler_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_scaler.joblib"
     model_path.parent.mkdir(parents=True, exist_ok=True)
     model.save(str(model_path))
     if scaler is not None:
         joblib.dump(scaler, str(scaler_path))
     logger.info("Model and scaler saved → %s", model_path)
+    
+    if model_type == "attention":
+        preds = model.predict(X_test, verbose=0)
+        if isinstance(preds, (list, tuple)):
+            preds = preds[0]
+            
+        pred_first = (preds[:, 0] > 0.5).astype(int)
+        true_first = y_test[:, 0].astype(int)
+        
+        precision = float(precision_score(true_first, pred_first, zero_division=0))
+        recall = float(recall_score(true_first, pred_first, zero_division=0))
+        
+        majority_class = int(np.bincount(true_first).argmax()) if len(true_first) > 0 else 0
+        naive_preds = np.full_like(true_first, majority_class)
+        naive_baseline = float(accuracy_score(true_first, naive_preds)) if len(true_first) > 0 else 0.0
+        
+        metrics = {
+            "precision": precision,
+            "recall": recall,
+            "naive_baseline": naive_baseline
+        }
+        
+        metrics_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_metrics.json"
+        with open(metrics_path, "w") as f:
+            json.dump(metrics, f)
+            
     return model, scaler
 
 
@@ -138,10 +185,10 @@ def _is_stale(path: Path) -> bool:
 
 
 # ── Load or train ────────────────────────────────────────────────────
-def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None):
+def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None, model_type: str = "lstm"):
     """Load a cached model & scaler or train a new pair, with per-ticker locking (2.4)."""
-    model_path = Path(MODEL_DIR) / f"{ticker}_model.keras"
-    scaler_path = Path(MODEL_DIR) / f"{ticker}_scaler.joblib"
+    model_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_model.keras"
+    scaler_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_scaler.joblib"
     lock = _get_ticker_lock(ticker)
 
     with lock:
@@ -149,16 +196,22 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None):
             try:
                 model = load_model(str(model_path))
                 loaded_scaler = joblib.load(str(scaler_path))
-                # Verify output shape matches (old Dense(1) models get retrained)
+                
+                # Verify output shape matches
                 expected_out = y_train.shape[1]
-                if model.output_shape[-1] != expected_out:
+                if isinstance(model.output_shape, list):
+                    actual_out = model.output_shape[0][-1]
+                else:
+                    actual_out = model.output_shape[-1]
+                
+                if actual_out != expected_out:
                     logger.info(
                         "Model output shape mismatch for %s (got %s, need %s) — retraining.",
                         ticker,
-                        model.output_shape[-1],
+                        actual_out,
                         expected_out,
                     )
-                    return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler)
+                    return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler, model_type=model_type)
                 logger.info("Loaded cached model & scaler for %s", ticker)
                 return model, loaded_scaler
             except Exception:
@@ -167,7 +220,8 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None):
                     ticker,
                     exc_info=True,
                 )
-        return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler)
+                
+        return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler, model_type=model_type)
 
 
 # ── Evaluate (3.6) ──────────────────────────────────────────────────
@@ -188,6 +242,9 @@ def evaluate_model(model, X_test, y_test, scaler):
         return empty
 
     preds = model.predict(X_test, verbose=0)  # (n, forecast_days)
+    if isinstance(preds, (list, tuple)):
+        preds = preds[0]
+        
     pred_first = preds[:, 0]
     true_first = y_test[:, 0]
 
@@ -248,7 +305,11 @@ def predict_future(model, closing_prices, scaler, days: int = 7):
     scaled = scaler.transform(last_window)
     input_seq = scaled.reshape(1, WINDOW_SIZE, 1)
 
-    preds_scaled = model.predict(input_seq, verbose=0)[0]  # (MAX_FORECAST_DAYS,)
+    preds = model.predict(input_seq, verbose=0)
+    if isinstance(preds, (list, tuple)):
+        preds_scaled = preds[0][0]
+    else:
+        preds_scaled = preds[0]  # (MAX_FORECAST_DAYS,)
     preds_scaled = preds_scaled[:days]
 
     return scaler.inverse_transform(preds_scaled.reshape(-1, 1)).flatten().tolist()
