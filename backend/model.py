@@ -22,8 +22,8 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
     r2_score,
 )
 from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Input  # type: ignore[import-untyped]
-from tensorflow.keras.models import Sequential, load_model  # type: ignore[import-untyped]
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Attention, GlobalAveragePooling1D  # type: ignore[import-untyped]
+from tensorflow.keras.models import Sequential, load_model, Model  # type: ignore[import-untyped]
 
 from config import (
     BATCH_SIZE,
@@ -66,6 +66,30 @@ def build_model(forecast_days: int = MAX_FORECAST_DAYS) -> Sequential:
         ]
     )
     model.compile(optimizer="adam", loss="mean_squared_error")
+    return model
+
+
+def build_attention_lstm_model(forecast_days: int = MAX_FORECAST_DAYS) -> Model:
+    """LSTM with Attention mechanism for binary classification."""
+    inputs = Input(shape=(WINDOW_SIZE, 1))
+    
+    # LSTM returns sequences so Attention can act on each time step
+    lstm_out = LSTM(LSTM_UNITS, return_sequences=True)(inputs)
+    lstm_out = Dropout(0.25)(lstm_out)
+    
+    # Self-attention over the LSTM sequence outputs
+    attention_out, attention_weights = Attention()([lstm_out, lstm_out], return_attention_scores=True)
+    
+    # Pool sequence to a single vector per batch item
+    pooled = GlobalAveragePooling1D()(attention_out)
+    
+    # Final dense layer for binary classification
+    predictions = Dense(forecast_days, activation="sigmoid")(pooled)
+    
+    # Model with two outputs: predictions and attention weights
+    model = Model(inputs=inputs, outputs=[predictions, attention_weights])
+    model.compile(optimizer="adam", loss=["binary_crossentropy", None])
+    
     return model
 
 

@@ -103,3 +103,22 @@ def test_scaler_persistence_and_loading(preprocessed, tmp_path, monkeypatch):
     )
     assert loaded_s is not None
     assert getattr(loaded_s, "data_min_", None) is not None
+
+
+def test_build_attention_lstm_model_outputs():
+    from model import build_attention_lstm_model
+    from config import WINDOW_SIZE
+
+    m = build_attention_lstm_model(forecast_days=7)
+    
+    # Ensure it's a multi-output functional Model, not a Sequential
+    assert len(m.outputs) == 2, "Model should return exactly 2 outputs"
+    
+    predictions_shape = m.outputs[0].shape
+    attention_weights_shape = m.outputs[1].shape
+    
+    # Check shape: (batch_size, forecast_days)
+    assert predictions_shape == (None, 7), f"Expected predictions shape (None, 7), got {predictions_shape}"
+    
+    # Check shape: (batch_size, sequence_length, sequence_length)
+    assert attention_weights_shape == (None, WINDOW_SIZE, WINDOW_SIZE), f"Expected attention weights shape (None, {WINDOW_SIZE}, {WINDOW_SIZE}), got {attention_weights_shape}"
