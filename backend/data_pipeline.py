@@ -67,3 +67,39 @@ def get_pipeline(ticker: str):
     """Full pipeline: fetch → preprocess → (pipeline_data, raw_prices, dates)."""
     closing_prices, dates = fetch_data(ticker)
     return preprocess(closing_prices), closing_prices, dates
+
+
+def prepare_return_data(closing_prices, forecast_days=MAX_FORECAST_DAYS, scaler=None):
+    """
+    Prepare data using log returns and binary targets for the additive endpoint.
+    """
+    # Calculate daily log returns
+    log_returns = np.log(closing_prices[1:] / closing_prices[:-1])
+    
+    n_samples = len(log_returns) - WINDOW_SIZE - forecast_days + 1
+    if n_samples <= 0:
+        raise ValueError("Not enough data for training after windowing.")
+
+    split = int(n_samples * TRAIN_SPLIT)
+    split_raw_idx = split + WINDOW_SIZE
+
+    # ── Fit scaler on training data only to prevent look-ahead bias ────
+    if scaler is None:
+        scaler = MinMaxScaler()
+        scaler.fit(log_returns[:split_raw_idx])
+        
+    scaled_returns = scaler.transform(log_returns)
+    
+    X, y = [], []
+    for i in range(WINDOW_SIZE, WINDOW_SIZE + n_samples):
+        X.append(scaled_returns[i - WINDOW_SIZE : i, 0])
+        future_returns = log_returns[i : i + forecast_days, 0]
+        y.append((future_returns > 0.0).astype(int))
+        
+    X, y = np.array(X), np.array(y)
+    X = X.reshape((X.shape[0], X.shape[1], 1))
+    
+    X_train, X_test = X[:split], X[split:]
+    y_train, y_test = y[:split], y[split:]
+    
+    return X_train, X_test, y_train, y_test, scaler

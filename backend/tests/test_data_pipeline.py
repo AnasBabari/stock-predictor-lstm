@@ -53,3 +53,44 @@ def test_preprocess_insufficient_data():
     tiny = np.linspace(1, 10, 5).reshape(-1, 1)
     with pytest.raises(ValueError):
         preprocess(tiny)
+
+
+def test_prepare_return_data_lookahead_bias(synthetic_prices):
+    """Ensure the scaler is fitted only on training data, preventing look-ahead bias."""
+    from data_pipeline import prepare_return_data
+    import numpy as np
+
+    log_returns = np.log(synthetic_prices[1:] / synthetic_prices[:-1])
+    
+    X_train, X_test, y_train, y_test, scaler = prepare_return_data(
+        synthetic_prices, forecast_days=MAX_FORECAST_DAYS
+    )
+    
+    n_samples = len(log_returns) - WINDOW_SIZE - MAX_FORECAST_DAYS + 1
+    split = int(n_samples * TRAIN_SPLIT)
+    train_max = log_returns[: split + WINDOW_SIZE].max()
+    
+    assert scaler.data_max_[0] <= train_max + 1e-6
+
+
+def test_prepare_return_data_shapes_and_values(synthetic_prices):
+    """Test features shape and ensure targets are binary for next N days."""
+    from data_pipeline import prepare_return_data
+    import numpy as np
+
+    X_train, X_test, y_train, y_test, scaler = prepare_return_data(
+        synthetic_prices, forecast_days=MAX_FORECAST_DAYS
+    )
+    
+    # X shape check
+    assert X_train.ndim == 3
+    assert X_train.shape[1] == WINDOW_SIZE
+    assert X_train.shape[2] == 1
+    
+    # y shape check
+    assert y_train.ndim == 2
+    assert y_train.shape[1] == MAX_FORECAST_DAYS
+    
+    # y values should be binary
+    assert set(np.unique(y_train)).issubset({0, 1})
+    assert set(np.unique(y_test)).issubset({0, 1})
