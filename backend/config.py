@@ -3,6 +3,7 @@
 import tomllib
 from pathlib import Path
 
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
 
@@ -19,6 +20,12 @@ def get_app_version() -> str:
 
 
 APP_VERSION = get_app_version()
+
+
+class ValidationConfig(BaseModel):
+    method: str = "expanding"
+    folds: int = 5
+    test_size: float = 0.2
 
 
 class Settings(BaseSettings):
@@ -41,6 +48,8 @@ class Settings(BaseSettings):
     ]
     cache_ttl: int = 300
     cache_max_size: int = 256
+    model_type: str = "bilstm_attention_direction"
+    validation: ValidationConfig = ValidationConfig()
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
@@ -59,3 +68,32 @@ MODEL_DIR = settings.model_dir
 MODEL_MAX_AGE_DAYS = settings.model_max_age_days
 DEFAULT_FORECAST_DAYS = settings.default_forecast_days
 MAX_FORECAST_DAYS = settings.max_forecast_days
+MODEL_TYPE = settings.model_type
+VALIDATION_CONFIG = settings.validation
+
+# Feature Schema Versioning & Centralized Config
+SCHEMA_VERSION = 2
+
+FEATURE_CONFIG = {
+    "base": ["Open", "High", "Low", "Close", "Volume"],
+    "technical": [
+        "SMA_20",
+        "EMA_20",
+        "RSI_14",
+        "MACD",
+        "MACD_Signal",
+        "BB_Upper",
+        "BB_Lower",
+        "ATR_14",
+        "OBV",
+    ],
+    "market": ["SPY_Return_1D", "QQQ_Return_1D", "VIX_Return_1D", "TNX_Return_1D"],
+    "calendar": ["Month_Sin", "Month_Cos", "Day_Sin", "Day_Cos"],
+}
+
+FEATURES: list[str] = (
+    FEATURE_CONFIG["base"]
+    + FEATURE_CONFIG["technical"]
+    + FEATURE_CONFIG["market"]
+    + FEATURE_CONFIG["calendar"]
+)

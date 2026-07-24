@@ -18,6 +18,19 @@ def _make_dates(n):
     return pd.date_range("2023-01-01", periods=n, freq="B")
 
 
+def _make_mock_feature_df(n):
+    import numpy as np
+    import pandas as pd
+
+    from config import FEATURES
+
+    dates = _make_dates(n)
+    df = pd.DataFrame(index=dates)
+    for f in FEATURES:
+        df[f] = np.random.rand(n)
+    return df
+
+
 def test_health():
     res = client.get("/health")
     assert res.status_code == 200
@@ -57,6 +70,7 @@ def test_validate_ticker_rejects_too_long():
 def test_validate_ticker_accepts_valid():
     with (
         patch("api.get_pipeline") as mock_pipe,
+        patch("api.fetch_data") as mock_fetch,
         patch("api.load_or_train") as mock_model,
         patch("api.evaluate_model") as mock_eval,
         patch("api.predict_future") as mock_pred,
@@ -69,10 +83,18 @@ def test_validate_ticker_accepts_valid():
 
         mock_thread.side_effect = mock_run
 
+        mock_df = _make_mock_feature_df(100)
         mock_pipe.return_value = (
-            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler),
+            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler, [], []),
             _make_prices(100),
             _make_dates(100),
+            {"feature_count": 21},
+        )
+        mock_fetch.return_value = (
+            mock_df,
+            _make_prices(100),
+            _make_dates(100),
+            {"feature_count": 21},
         )
         mock_eval.return_value = {
             "rmse": 1.0,
@@ -89,6 +111,7 @@ def test_validate_ticker_accepts_valid():
 def test_predict_response_schema():
     with (
         patch("api.get_pipeline") as mock_pipe,
+        patch("api.fetch_data") as mock_fetch,
         patch("api.load_or_train") as mock_model,
         patch("api.evaluate_model") as mock_eval,
         patch("api.predict_future") as mock_pred,
@@ -101,10 +124,18 @@ def test_predict_response_schema():
 
         mock_thread.side_effect = mock_run
 
+        mock_df = _make_mock_feature_df(100)
         mock_pipe.return_value = (
-            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler),
+            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler, [], []),
             _make_prices(100),
             _make_dates(100),
+            {"feature_count": 21},
+        )
+        mock_fetch.return_value = (
+            mock_df,
+            _make_prices(100),
+            _make_dates(100),
+            {"feature_count": 21},
         )
         mock_eval.return_value = {
             "rmse": 1.0,
@@ -177,8 +208,22 @@ def test_predict_direction_schema():
 
         mock_thread.side_effect = mock_run
 
-        mock_fetch.return_value = (_make_prices(100), _make_dates(100))
-        mock_prep.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler)
+        mock_df = _make_mock_feature_df(100)
+        mock_fetch.return_value = (
+            mock_df,
+            _make_prices(100),
+            _make_dates(100),
+            {"feature_count": 21},
+        )
+        mock_prep.return_value = (
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            mock_scaler,
+            [],
+            [],
+        )
         mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.1] * 60)
         mock_metrics.return_value = {
             "precision": 0.8,
@@ -232,8 +277,22 @@ def test_predict_direction_attention_alignment():
 
         mock_thread.side_effect = mock_run
 
-        mock_fetch.return_value = (_make_prices(100), _make_dates(100))
-        mock_prep.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler)
+        mock_df = _make_mock_feature_df(100)
+        mock_fetch.return_value = (
+            mock_df,
+            _make_prices(100),
+            _make_dates(100),
+            {"feature_count": 21},
+        )
+        mock_prep.return_value = (
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            mock_scaler,
+            [],
+            [],
+        )
         mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.05] * 60)
         mock_metrics.return_value = {
             "precision": 0.8,
@@ -267,3 +326,61 @@ def test_predict_direction_attention_alignment():
         dates = [item["date"] for item in attn]
         assert dates == sorted(dates)
         assert len(set(dates)) == len(dates)
+
+
+def test_diagnostics_404_when_not_trained():
+    """Phase 3: diagnostics endpoint returns 404 if no walk-forward data exists."""
+    with (
+        patch("api.load_cross_validation") as mock_cv,
+        patch("api.load_validation_results") as mock_vr,
+        patch("api.load_metadata") as mock_meta,
+    ):
+        mock_cv.return_value = {}
+        mock_vr.return_value = []
+        mock_meta.return_value = {}
+
+        res = client.get("/api/v1/diagnostics/AAPL")
+        assert res.status_code == 404
+        assert "Train the model first" in res.json()["detail"]
+
+
+def test_diagnostics_returns_cv_and_folds():
+    """Phase 3: diagnostics endpoint returns cross_validation and fold_results."""
+    with (
+        patch("api.load_cross_validation") as mock_cv,
+        patch("api.load_validation_results") as mock_vr,
+        patch("api.load_metadata") as mock_meta,
+    ):
+        mock_cv.return_value = {
+            "folds": 5,
+            "folds_completed": 5,
+            "average_rmse": 2.34,
+            "std_rmse": 0.12,
+        }
+        mock_vr.return_value = [
+            {
+                "fold": 1,
+                "train_start": "2020-01-01",
+                "validation_start": "2021-01-01",
+                "actuals": [100.0, 101.0],
+                "predictions": [99.5, 101.5],
+                "residuals": [
+                    {"date": "2021-01-05", "actual": 100.0, "residual": 0.5, "absolute_error": 0.5}
+                ],
+            }
+        ]
+        mock_meta.return_value = {
+            "schema_version": 2,
+            "validation_method": "expanding",
+            "validation_folds": 5,
+        }
+
+        res = client.get("/api/v1/diagnostics/AAPL?model_type=bilstm_attention_direction")
+        body = res.json()
+        assert res.status_code == 200
+        assert "cross_validation" in body
+        assert "fold_results" in body
+        assert "model_metadata" in body
+        assert body["cross_validation"]["folds_completed"] == 5
+        assert len(body["fold_results"]) == 1
+        assert body["model_metadata"]["validation_method"] == "expanding"

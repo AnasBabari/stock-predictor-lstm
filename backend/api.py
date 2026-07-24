@@ -1,14 +1,14 @@
 """StockLSTM API — FastAPI backend for stock price prediction.
 
 Fixes applied:
-    1.1  CORS restricted to explicit origins
-    1.4  Ticker input validation (regex, path-traversal safe)
-    1.6  Internal errors sanitised — generic messages to client
-    2.2  Single yfinance download per predict (dates from pipeline)
-    2.3  Bounded TTL cache via cachetools
-    2.5  Rate limiting via slowapi
-    2.6  /health endpoint
-    2.7  Structured logging
+    1.1 CORS restricted to explicit origins
+    1.4 Ticker input validation (regex, path-traversal safe)
+    1.6 Internal errors sanitised — generic messages to client
+    2.2 Single yfinance download per predict (dates from pipeline)
+    2.3 Bounded TTL cache via cachetools
+    2.5 Rate limiting via slowapi
+    2.6 /health endpoint
+    2.7 Structured logging
 """
 
 import logging
@@ -34,16 +34,21 @@ from slowapi.util import get_remote_address
 from config import (
     APP_VERSION,
     DEFAULT_FORECAST_DAYS,
+    FEATURES,
     MAX_FORECAST_DAYS,
+    SCHEMA_VERSION,
     WINDOW_SIZE,
     settings,
 )
-from data_pipeline import fetch_data, get_pipeline, prepare_return_data
+from data_pipeline import fetch_data, get_pipeline, prepare_return_data, preprocess
 from model import (
     evaluate_model,
     get_manifest,
+    load_cross_validation,
+    load_metadata,
     load_metrics,
     load_or_train,
+    load_validation_results,
     predict_direction,
     predict_future,
 )
@@ -105,13 +110,17 @@ def get_runtime_metadata(ticker: str, model_type: str = "lstm") -> dict:
         except Exception:
             git_commit = "unknown"
 
+    saved_meta = load_metadata(ticker, model_type)
+
     return {
         "model_version": APP_VERSION,
+        "schema_version": saved_meta.get("schema_version", SCHEMA_VERSION),
         "git_commit": git_commit,
         "tensorflow_version": tf.__version__,
         "python_version": sys.version.split()[0],
         "sklearn_version": sklearn.__version__,
         "window_size": WINDOW_SIZE,
+        "feature_count": saved_meta.get("feature_count", len(FEATURES)),
         "architecture": "attention_lstm" if model_type == "attention" else "lstm",
     }
 
@@ -218,37 +227,29 @@ async def predict(
 ):
     ticker = validate_ticker(ticker)
 
-    # Cache lookup
     cache_key = f"{ticker}_{days}"
     cached = _predict_cache.get(cache_key)
     if cached:
         return cached
 
     try:
-        # Single download provides prices + dates (2.2)
-        pipeline_data, closing_prices, historical_dates = get_pipeline(ticker)
-        X_train, X_test, y_train, y_test, scaler = pipeline_data
+        pipeline_data, closing_prices, historical_dates, feature_metadata = get_pipeline(ticker)
+        X_train, X_test, y_train, y_test, scaler, _, _ = pipeline_data
+        feature_df, _, _, _ = fetch_data(ticker)
 
-        # Model (with per-ticker lock) - run async to avoid blocking
+        # Model load or train with atomic fail-safe (passes feature_df for walk-forward)
         model, model_scaler = await run_in_threadpool(
-            load_or_train, ticker, X_train, y_train, X_test, y_test, scaler
+            load_or_train, ticker, X_train, y_train, X_test, y_test, scaler, "lstm", feature_df
         )
 
-        # If a cached model/scaler was loaded, re-preprocess with original model_scaler
         if model_scaler is not scaler:
-            from data_pipeline import preprocess
-
-            X_train, X_test, y_train, y_test, model_scaler = preprocess(
-                closing_prices, scaler=model_scaler
+            X_train, X_test, y_train, y_test, model_scaler, _, _ = preprocess(
+                feature_df, scaler=model_scaler
             )
 
-        # Metrics (3.6 — MAPE, R², directional accuracy)
         metrics = evaluate_model(model, X_test, y_test, model_scaler)
+        predictions = predict_future(model, feature_df, model_scaler, days=days)
 
-        # Direct multi-step predictions (3.2)
-        predictions = predict_future(model, closing_prices, model_scaler, days=days)
-
-        # Dates — reuse the index from the same download (2.2)
         hist_dates = historical_dates.strftime("%Y-%m-%d").tolist()
 
         cur = historical_dates[-1]
@@ -275,7 +276,6 @@ async def predict(
         return data
 
     except ValueError as err:
-        # Expected errors like "Not enough historical data" are safe to return to client
         raise HTTPException(status_code=400, detail=str(err)) from err
     except Exception as err:
         logger.exception("Error predicting %s", ticker)
@@ -300,28 +300,28 @@ async def predict_direction_endpoint(
         return cached
 
     try:
-        closing_prices, historical_dates = fetch_data(ticker)
+        feature_df, closing_prices, historical_dates, feature_metadata = fetch_data(ticker)
 
-        X_train, X_test, y_train, y_test, scaler = prepare_return_data(
-            closing_prices, forecast_days=days
+        X_train, X_test, y_train, y_test, scaler, _, _ = prepare_return_data(
+            feature_df, forecast_days=days
         )
 
+        model_type = "bilstm_attention_direction"
         model, model_scaler = await run_in_threadpool(
-            load_or_train, ticker, X_train, y_train, X_test, y_test, scaler, model_type="attention"
+            load_or_train, ticker, X_train, y_train, X_test, y_test, scaler, model_type, feature_df
         )
 
         if model_scaler is not scaler:
-            X_train, X_test, y_train, y_test, model_scaler = prepare_return_data(
-                closing_prices, forecast_days=days, scaler=model_scaler
+            X_train, X_test, y_train, y_test, model_scaler, _, _ = prepare_return_data(
+                feature_df, forecast_days=days, scaler=model_scaler
             )
 
         directions, probabilities, attention_weights = predict_direction(
-            model, closing_prices, model_scaler, days=days
+            model, feature_df, model_scaler, days=days
         )
 
-        metrics = load_metrics(ticker, model_type="attention")
+        metrics = load_metrics(ticker, model_type=model_type)
 
-        historical_dates.strftime("%Y-%m-%d").tolist()
         cur = historical_dates[-1]
         nyse = mcal.get_calendar("NYSE")
         schedule = nyse.schedule(
@@ -354,7 +354,7 @@ async def predict_direction_endpoint(
                     "method": "vader_financial",
                 },
             ),
-            "metadata": get_runtime_metadata(ticker, "attention"),
+            "metadata": get_runtime_metadata(ticker, model_type),
         }
 
         _predict_cache[cache_key] = data
@@ -367,4 +367,55 @@ async def predict_direction_endpoint(
         raise HTTPException(
             status_code=500,
             detail="Prediction failed. Please try again later.",
+        ) from err
+
+
+@app.get("/api/v1/diagnostics/{ticker}")
+@limiter.limit("10/minute")
+async def diagnostics(
+    request: Request,
+    ticker: str,
+    model_type: str = Query(default="bilstm_attention_direction"),
+):
+    """
+    Return walk-forward validation diagnostics for a trained ticker model.
+
+    Includes per-fold residuals, actuals, predictions, and cross-validation summary.
+    """
+    ticker = validate_ticker(ticker)
+
+    try:
+        cv_summary = load_cross_validation(ticker, model_type)
+        fold_results = load_validation_results(ticker, model_type)
+        metadata = load_metadata(ticker, model_type)
+
+        if not cv_summary and not fold_results:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No diagnostics found for {ticker}/{model_type}. Train the model first.",
+            )
+
+        return {
+            "ticker": ticker,
+            "model_type": model_type,
+            "cross_validation": cv_summary,
+            "fold_results": fold_results,
+            "model_metadata": {
+                "schema_version": metadata.get("schema_version"),
+                "feature_count": metadata.get("feature_count"),
+                "dataset_fingerprint": metadata.get("dataset_fingerprint"),
+                "training_duration_seconds": metadata.get("training_duration_seconds"),
+                "created_at": metadata.get("created_at"),
+                "validation_method": metadata.get("validation_method"),
+                "validation_folds": metadata.get("validation_folds"),
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as err:
+        logger.exception("Error fetching diagnostics for %s", ticker)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch diagnostics. Please try again later.",
         ) from err
