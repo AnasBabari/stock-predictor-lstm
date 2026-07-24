@@ -7,8 +7,11 @@ import hashlib
 import json
 import logging
 import shutil
+import subprocess
+import sys
 import threading
 import time
+import tracemalloc
 import weakref
 from pathlib import Path
 
@@ -56,6 +59,97 @@ from config import (
 from data_pipeline import create_direction_sequences, create_sequences
 
 logger = logging.getLogger(__name__)
+
+
+# ── Git / environment helpers ────────────────────────────────────────
+def _get_git_commit() -> str:
+    """Return the short HEAD git commit hash, or 'unknown' on failure."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def _get_model_profile(model, model_path: Path) -> dict:
+    """Collect parameter count, saved file size, and peak memory usage."""
+
+    param_count = int(model.count_params())
+    trainable = int(sum(tf.keras.backend.count_params(w) for w in model.trainable_weights))
+    size_bytes = model_path.stat().st_size if model_path.exists() else 0
+    try:
+        current, peak = tracemalloc.get_traced_memory()
+        peak_mb = round(peak / 1024 / 1024, 2)
+    except Exception:
+        peak_mb = None
+    return {
+        "parameter_count": param_count,
+        "trainable_parameters": trainable,
+        "model_size_bytes": size_bytes,
+        "peak_memory_mb": peak_mb,
+    }
+
+
+def _compute_residual_diagnostics(all_residuals: list[float]) -> dict:
+    """Compute standard forecasting residual diagnostics from pooled fold residuals.
+
+    Implemented in pure NumPy (no statsmodels) to avoid an extra dependency.
+    Durbin-Watson:  dw = sum(diff(r)^2) / sum(r^2)
+    Ljung-Box (lag 10): Q = n*(n+2) * sum(rho_k^2 / (n-k) for k=1..10)
+    """
+    import scipy.stats as scipy_stats  # already a transitive dep via sklearn
+
+    r = np.array(all_residuals, dtype=float)
+    n = len(r)
+    if n < 8:
+        return {"error": "insufficient_residuals", "n": n}
+
+    # Durbin-Watson
+    denom = float(np.sum(r**2))
+    dw = float(np.sum(np.diff(r) ** 2) / denom) if denom != 0.0 else 0.0
+
+    skew = float(scipy_stats.skew(r))
+    kurt = float(scipy_stats.kurtosis(r))  # excess kurtosis
+    sw_stat, sw_p = scipy_stats.shapiro(r[:5000])  # shapiro max-5000 limit
+
+    # Ljung-Box at lag 10 (numpy implementation)
+    lags = 10
+    r_demeaned = r - np.mean(r)
+    c0 = float(np.dot(r_demeaned, r_demeaned))
+    lb_stat: float
+    lb_p: float
+    if c0 == 0.0 or n <= lags:
+        lb_stat = 0.0
+        lb_p = 1.0
+    else:
+        acf_vals = np.array(
+            [np.dot(r_demeaned[k:], r_demeaned[: n - k]) / c0 for k in range(1, lags + 1)]
+        )
+        lb_stat = float(
+            n * (n + 2) * np.sum(acf_vals**2 / np.array([n - k for k in range(1, lags + 1)]))
+        )
+        import scipy.stats as _chi2
+
+        lb_p = float(1.0 - _chi2.chi2.cdf(lb_stat, df=lags))
+
+    return {
+        "n_residuals": n,
+        "durbin_watson": round(dw, 4),
+        "mean": round(float(np.mean(r)), 4),
+        "std": round(float(np.std(r)), 4),
+        "skewness": round(skew, 4),
+        "kurtosis": round(kurt, 4),
+        "shapiro_wilk_stat": round(float(sw_stat), 4),
+        "shapiro_wilk_p": round(float(sw_p), 4),
+        "ljung_box_stat": round(lb_stat, 4),
+        "ljung_box_p": round(lb_p, 4),
+        "is_normal": bool(sw_p > 0.05),
+        "has_autocorrelation": bool(lb_p < 0.05),
+    }
+
 
 # ── Per-ticker lock ───────────────────────────────────────────────────
 _training_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
@@ -568,6 +662,21 @@ def _run_walk_forward_validation(
 
     # ── Aggregate cross-validation summary ───────────────────────────
     cv_summary = _aggregate_cv_metrics(all_fold_metrics, n_folds)
+
+    # ── Pool residuals for diagnostics (regression only) ─────────────
+    if not is_dir and fold_results:
+        all_residuals: list[float] = []
+        for fr in fold_results:
+            for row in fr.get("residuals", []):
+                v = row.get("residual")
+                if v is not None:
+                    all_residuals.append(float(v))
+        if all_residuals:
+            try:
+                cv_summary["residual_diagnostics"] = _compute_residual_diagnostics(all_residuals)
+            except Exception as _rd_exc:
+                logger.warning("residual_diagnostics failed: %s", _rd_exc)
+
     return fold_results, cv_summary
 
 
@@ -616,6 +725,8 @@ def train_model(
     """
     forecast_days = y_train.shape[1]
     num_features = X_train.shape[2]
+
+    tracemalloc.start()
 
     # ── Walk-Forward Validation ───────────────────────────────────────
     fold_results: list = []
@@ -736,6 +847,7 @@ def train_model(
 
     try:
         final_model.save(str(tmp_dir / "model.keras"))
+        model_saved_path = tmp_dir / "model.keras"
         if scaler is not None:
             joblib.dump(scaler, str(tmp_dir / "scaler.joblib"))
 
@@ -759,7 +871,28 @@ def train_model(
             "app_version": APP_VERSION,
             "tensorflow_version": tf.__version__,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "hyperparameters": {
+                "optimizer": "adam",
+                "learning_rate": 0.001,
+                "batch_size": BATCH_SIZE,
+                "epochs_max": EPOCHS,
+                "epochs_trained": len(history.history["loss"]) if history else 0,
+                "patience": 10,
+                "dropout": 0.25,
+                "lstm_units": LSTM_UNITS,
+                "window_size": WINDOW_SIZE,
+                "forecast_days": MAX_FORECAST_DAYS,
+            },
+            "environment": {
+                "python_version": sys.version.split()[0],
+                "tensorflow_version": tf.__version__,
+                "numpy_version": np.__version__,
+                "sklearn_version": __import__("sklearn").__version__,
+                "git_commit": _get_git_commit(),
+            },
         }
+        meta["model_profile"] = _get_model_profile(final_model, model_saved_path)
+        tracemalloc.stop()
         with open(tmp_dir / "metadata.json", "w") as f:
             json.dump(meta, f, indent=2)
 

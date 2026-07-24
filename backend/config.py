@@ -23,8 +23,17 @@ APP_VERSION = get_app_version()
 
 
 class ValidationConfig(BaseModel):
-    method: str = "expanding"
+    """Configurable walk-forward validation strategy.
+
+    Supports 'expanding', 'rolling', and 'anchored' methods so future
+    strategy comparisons require no code changes — only config changes.
+    """
+
+    method: str = "expanding"  # "expanding" | "rolling" | "anchored"
     folds: int = 5
+    min_train_size: int = 500  # minimum rows required in any training fold
+    horizon: int = 30  # validation window size per fold (days)
+    seed: int = 42  # global random seed for reproducibility
     test_size: float = 0.2
 
 
@@ -70,6 +79,7 @@ DEFAULT_FORECAST_DAYS = settings.default_forecast_days
 MAX_FORECAST_DAYS = settings.max_forecast_days
 MODEL_TYPE = settings.model_type
 VALIDATION_CONFIG = settings.validation
+VALIDATION_SEED = settings.validation.seed
 
 # Feature Schema Versioning & Centralized Config
 SCHEMA_VERSION = 2
