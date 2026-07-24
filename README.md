@@ -46,6 +46,21 @@ Run the full-stack application locally using Docker Compose:
 
 ---
 
+## 🌐 Deployment & Configuration Management
+
+### Live Production Deployment
+- **Frontend (Vercel)**: Deployed automatically via Vercel GitHub integration. The frontend interacts with the FastAPI backend using `VITE_API_BASE_URL`.
+- **Backend (Render)**: Provisioned using `render.yaml` with persistent disk storage (`/saved_models`) to preserve cached TensorFlow models across container restarts.
+
+> [!NOTE]
+> **Storage & Horizontal Scaling**: Model artifacts currently persist to local disk volumes (`/saved_models`). While optimal for single-instance deployments, scaling horizontally across multiple backend instances would require migrating model caching to cloud object storage (e.g., AWS S3 or Google Cloud Storage).
+
+### Environment Secrets & Configuration
+Production configurations and API secrets are managed strictly through platform environment variables (Render Environment Variables and Vercel Project Settings). No credentials or secrets are committed to the codebase.
+
+
+---
+
 ## 💻 Local Development Setup
 
 ### 1. Backend Setup
@@ -203,10 +218,14 @@ graph LR
 
 | Endpoint | Method | Parameters | Description |
 | :--- | :--- | :--- | :--- |
-| `/api/v1/predict` | `GET` | `ticker` (str), `days` (int, default: 7) | Generates regression price forecasts and evaluation metrics |
-| `/api/v1/predict/direction` | `GET` | `ticker` (str), `days` (int, default: 7) | Directional Attention-LSTM forecasts, timestamped attention weights, metrics (F1, Precision, Recall), and news sentiment |
+| `/health` | `GET` | None | O(1) Liveness probe returning process status and version |
+| `/ready` | `GET` | None | O(1) Readiness probe verifying backend dependency health |
+| `/models` | `GET` | None | Returns manifest of trained and cached model artifacts |
+| `/api/v1/predict` | `GET` | `ticker` (str), `days` (int, default: 7) | Generates regression price forecasts, evaluation metrics, and runtime metadata |
+| `/api/v1/predict/direction` | `GET` | `ticker` (str), `days` (int, default: 7) | Directional Attention-LSTM forecasts, timestamped attention weights, metrics (F1, Precision, Recall), sentiment, and metadata |
 | `/api/v1/search` | `GET` | `query` (str) | Returns stock ticker autocomplete suggestions |
 | `/api/v1/info` | `GET` | `ticker` (str) | Retrieves stock fundamental metadata |
+
 
 ---
 

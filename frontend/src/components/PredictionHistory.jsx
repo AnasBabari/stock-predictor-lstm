@@ -45,6 +45,9 @@ export default function PredictionHistory({ items, onSelectTicker, onClearAll })
             const arrow = isUp ? '▲' : '▼';
             const dateStr = formatHistoryDate(h.date);
 
+            const formattedLast = typeof h.lastClose === 'number' ? `$${h.lastClose.toFixed(2)}` : (h.lastClose || '—');
+            const formattedForecast = typeof h.forecast === 'number' ? `$${h.forecast.toFixed(2)}` : (h.forecast || '—');
+
             return (
               <button
                 type="button"
@@ -54,7 +57,7 @@ export default function PredictionHistory({ items, onSelectTicker, onClearAll })
               >
                 <span className="hi-ticker">{h.ticker}</span>
                 <span className="hi-detail">
-                  ${h.lastClose?.toFixed(2)} → ${h.forecast?.toFixed(2)} · {h.days}d
+                  {formattedLast} → {formattedForecast} · {h.days}d
                 </span>
                 <span className="hi-change" style={{ color }}>
                   {arrow} {isUp ? '+' : ''}
@@ -63,6 +66,7 @@ export default function PredictionHistory({ items, onSelectTicker, onClearAll })
                 <span className="hi-date">{dateStr}</span>
               </button>
             );
+
           })
         )}
       </div>

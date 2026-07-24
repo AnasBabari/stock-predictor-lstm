@@ -21,7 +21,21 @@ def _make_dates(n):
 def test_health():
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json() == {"status": "ok"}
+    assert res.json()["status"] == "ok"
+    assert "version" in res.json()
+
+
+def test_ready():
+    res = client.get("/ready")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ready"
+    assert "dependencies" in res.json()
+
+
+def test_models():
+    res = client.get("/models")
+    assert res.status_code == 200
+    assert "manifest" in res.json()
 
 
 def test_validate_ticker_rejects_path_traversal():

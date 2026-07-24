@@ -12,10 +12,15 @@ Fixes applied:
 """
 
 import logging
+import os
 import re
+import subprocess
+import sys
 from datetime import timedelta
 
 import pandas_market_calendars as mcal
+import sklearn  # type: ignore[import-untyped]
+import tensorflow as tf  # type: ignore[import-untyped]
 import yfinance as yf  # type: ignore[import-untyped]
 from cachetools import TTLCache
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -26,9 +31,22 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from config import DEFAULT_FORECAST_DAYS, MAX_FORECAST_DAYS, WINDOW_SIZE, settings
+from config import (
+    APP_VERSION,
+    DEFAULT_FORECAST_DAYS,
+    MAX_FORECAST_DAYS,
+    WINDOW_SIZE,
+    settings,
+)
 from data_pipeline import fetch_data, get_pipeline, prepare_return_data
-from model import evaluate_model, load_metrics, load_or_train, predict_direction, predict_future
+from model import (
+    evaluate_model,
+    get_manifest,
+    load_metrics,
+    load_or_train,
+    predict_direction,
+    predict_future,
+)
 from news_aggregator import get_financial_sentiment
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
@@ -39,7 +57,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── App ──────────────────────────────────────────────────────────────
-app = FastAPI(title="StockLSTM API", version="3.0")
+app = FastAPI(title="StockLSTM API", version=APP_VERSION)
+
 
 # Rate limiter (2.5)
 limiter = Limiter(key_func=get_remote_address)
@@ -75,6 +94,28 @@ _info_cache: TTLCache = TTLCache(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
+def get_runtime_metadata(ticker: str, model_type: str = "lstm") -> dict:
+    """Gather dynamic runtime environment and model metadata."""
+    git_commit = os.environ.get("GIT_COMMIT")
+    if not git_commit:
+        try:
+            git_commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+            ).strip()[:7]
+        except Exception:
+            git_commit = "unknown"
+
+    return {
+        "model_version": APP_VERSION,
+        "git_commit": git_commit,
+        "tensorflow_version": tf.__version__,
+        "python_version": sys.version.split()[0],
+        "sklearn_version": sklearn.__version__,
+        "window_size": WINDOW_SIZE,
+        "architecture": "attention_lstm" if model_type == "attention" else "lstm",
+    }
+
+
 def validate_ticker(ticker: str) -> str:
     """Sanitise and validate a ticker symbol (1.4)."""
     ticker = ticker.strip().upper()
@@ -86,8 +127,24 @@ def validate_ticker(ticker: str) -> str:
 # ── Endpoints ────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    """Liveness probe (2.6)."""
-    return {"status": "ok"}
+    """O(1) Liveness probe."""
+    return {"status": "ok", "version": APP_VERSION}
+
+
+@app.get("/ready")
+def ready():
+    """O(1) Readiness probe."""
+    return {
+        "status": "ready",
+        "version": APP_VERSION,
+        "dependencies": {"yfinance": True},
+    }
+
+
+@app.get("/models")
+def list_models():
+    """Return manifest of trained/cached models."""
+    return {"version": APP_VERSION, "manifest": get_manifest()}
 
 
 @app.get("/api/v1/search")
@@ -211,6 +268,7 @@ async def predict(
             "predicted_prices": [float(p) for p in predictions],
             "forecast_days": days,
             "metrics": metrics,
+            "metadata": get_runtime_metadata(ticker, "lstm"),
         }
 
         _predict_cache[cache_key] = data
@@ -296,6 +354,7 @@ async def predict_direction_endpoint(
                     "method": "vader_financial",
                 },
             ),
+            "metadata": get_runtime_metadata(ticker, "attention"),
         }
 
         _predict_cache[cache_key] = data

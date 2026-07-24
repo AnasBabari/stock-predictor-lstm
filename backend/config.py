@@ -1,6 +1,24 @@
 """Application configuration with environment variable support (4.2)."""
 
+import tomllib
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
+
+
+def get_app_version() -> str:
+    pyproject_path = Path(__file__).parent / "pyproject.toml"
+    if pyproject_path.exists():
+        try:
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+                return data.get("project", {}).get("version", "1.1.0")
+        except Exception:
+            pass
+    return "1.1.0"
+
+
+APP_VERSION = get_app_version()
 
 
 class Settings(BaseSettings):

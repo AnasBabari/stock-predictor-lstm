@@ -38,6 +38,7 @@ from tensorflow.keras.layers import (  # type: ignore[import-untyped]
 from tensorflow.keras.models import Model, Sequential, load_model  # type: ignore[import-untyped]
 
 from config import (
+    APP_VERSION,
     BATCH_SIZE,
     EPOCHS,
     LSTM_UNITS,
@@ -48,6 +49,7 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 # ── Per-ticker lock (2.4, Bug 3) ───────────────────────────────────────
 _training_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
@@ -188,10 +190,53 @@ def train_model(
         with open(metrics_path, "w") as f:
             json.dump(metrics, f)
 
+    update_manifest(ticker, model_type, {"status": "trained"})
     return model, scaler
 
 
+def update_manifest(ticker: str, model_type: str, metadata: dict | None = None) -> None:
+    """Automatically generate or update saved_models/manifest.json."""
+    manifest_path = Path(MODEL_DIR) / "manifest.json"
+    manifest = {}
+    if manifest_path.exists():
+        try:
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+        except Exception:
+            manifest = {}
+
+    key = f"{ticker}_{model_type}"
+    manifest[key] = {
+        "ticker": ticker,
+        "model_type": model_type,
+        "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "version": APP_VERSION,
+        "metadata": metadata or {},
+    }
+
+    try:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(manifest_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+    except Exception:
+        logger.warning("Failed to update manifest.json", exc_info=True)
+
+
+def get_manifest() -> dict:
+    """Return the contents of saved_models/manifest.json."""
+    manifest_path = Path(MODEL_DIR) / "manifest.json"
+    if manifest_path.exists():
+        try:
+            with open(manifest_path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
 # ── Staleness check ──────────────────────────────────────────────────
+
+
 def _is_stale(path: Path) -> bool:
     """Return True if the saved model is older than MODEL_MAX_AGE_DAYS."""
     if not path.exists():
