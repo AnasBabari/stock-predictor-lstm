@@ -18,6 +18,10 @@ def fetch_data(ticker: str):
     Returns (feature_df, closing_prices, dates, feature_metadata).
     """
     data = yf.download(ticker, period=f"{HISTORICAL_YEARS}y", progress=False, auto_adjust=True)
+
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+
     data = data.dropna()
     min_rows = WINDOW_SIZE + MAX_FORECAST_DAYS + 30  # account for 20-day rolling window NaNs
     if len(data) < min_rows:
@@ -27,7 +31,7 @@ def fetch_data(ticker: str):
 
     # Build features & metadata
     feature_df, feature_metadata = build_features(data, FEATURES)
-    closing_prices = feature_df["Close"].values.reshape(-1, 1)
+    closing_prices = feature_df["Close"].to_numpy()
 
     return feature_df, closing_prices, feature_df.index, feature_metadata
 

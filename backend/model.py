@@ -1137,8 +1137,8 @@ def predict_future(model, feature_df, scaler, days: int = 7):
     input_seq = scaled_window.reshape(1, WINDOW_SIZE, len(FEATURES))
 
     preds = model.predict(input_seq, verbose=0)
-    preds_scaled = preds[0][0] if isinstance(preds, (list, tuple)) else preds[0]
-    preds_scaled = preds_scaled[:days]
+    preds_scaled = preds[0] if isinstance(preds, (list, tuple)) else preds[0]
+    preds_scaled = np.squeeze(preds_scaled)[:days]
 
     return _unscale_close(preds_scaled, scaler).tolist()
 

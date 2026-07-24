@@ -21,19 +21,37 @@ def add_market_context(df: pd.DataFrame, period: str = "5y") -> pd.DataFrame:
 
     for ticker, feature_name in MARKET_TICKERS.items():
         try:
-            m_data = yf.download(ticker, period=period, progress=False, auto_adjust=True)
-            if not m_data.empty and "Close" in m_data.columns:
-                m_close = m_data["Close"]
-                # Align on primary df index with left join & ffill for holidays
-                aligned_close = m_close.reindex(df.index).ffill().bfill()
-                # Compute 1-day log return
-                returns = np.log(aligned_close / aligned_close.shift(1)).fillna(0.0)
-                # Handle single-column Series squeeze if needed
-                if isinstance(returns, pd.DataFrame):
-                    returns = returns.iloc[:, 0]
-                result[feature_name] = returns
-            else:
+            m_data = yf.download(
+                ticker,
+                period=period,
+                progress=False,
+                auto_adjust=True,
+            )
+
+            if isinstance(m_data.columns, pd.MultiIndex):
+                m_data.columns = m_data.columns.get_level_values(0)
+
+            if m_data.empty:
                 result[feature_name] = 0.0
+                continue
+
+            if "Close" not in m_data.columns:
+                result[feature_name] = 0.0
+                continue
+
+            m_close = m_data["Close"]
+            if isinstance(m_close, pd.DataFrame):
+                m_close = m_close.iloc[:, 0]
+
+            aligned_close = m_close.reindex(df.index).ffill().bfill()
+
+            returns = np.log(aligned_close / aligned_close.shift(1)).fillna(0.0)
+
+            if isinstance(returns, pd.DataFrame):
+                returns = returns.iloc[:, 0]
+
+            result[feature_name] = returns
+
         except Exception:
             result[feature_name] = 0.0
 

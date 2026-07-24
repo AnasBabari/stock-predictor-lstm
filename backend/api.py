@@ -16,6 +16,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 from datetime import timedelta
 
 import pandas_market_calendars as mcal
@@ -259,7 +260,7 @@ async def predict(
         )
         future_dates = [d.strftime("%Y-%m-%d") for d in schedule.index if d > cur][:days]
 
-        historical_prices = [float(p[0]) for p in closing_prices]
+        historical_prices = closing_prices.astype(float).tolist()
 
         data = {
             "ticker": ticker,
@@ -276,7 +277,13 @@ async def predict(
         return data
 
     except ValueError as err:
-        raise HTTPException(status_code=400, detail=str(err)) from err
+        traceback.print_exc()
+        logger.exception("ValueError while predicting %s", ticker)
+        raise HTTPException(
+            status_code=400,
+            detail=str(err),
+        ) from err
+
     except Exception as err:
         logger.exception("Error predicting %s", ticker)
         raise HTTPException(
