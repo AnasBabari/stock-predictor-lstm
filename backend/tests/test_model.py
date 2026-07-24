@@ -124,9 +124,9 @@ def test_build_attention_lstm_model_outputs():
     ), f"Expected predictions shape (None, 7), got {predictions_shape}"
 
     # Check shape: (batch_size, sequence_length, sequence_length)
-    assert (
-        attention_weights_shape == (None, WINDOW_SIZE, WINDOW_SIZE)
-    ), f"Expected attention weights shape (None, {WINDOW_SIZE}, {WINDOW_SIZE}), got {attention_weights_shape}"
+    assert attention_weights_shape == (None, WINDOW_SIZE, WINDOW_SIZE), (
+        f"Expected attention weights shape (None, {WINDOW_SIZE}, {WINDOW_SIZE}), got {attention_weights_shape}"
+    )
 
 
 def test_train_model_attention_caching_and_metrics(preprocessed, tmp_path, monkeypatch):
