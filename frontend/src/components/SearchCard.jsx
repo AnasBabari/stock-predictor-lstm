@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ForecastTypeToggle from './ForecastTypeToggle';
 
 export default function SearchCard({
   ticker,
   setTicker,
   forecastDays,
   setForecastDays,
+  forecastType,
+  onForecastTypeChange,
   onPredict,
   isLoading,
   apiBase,
@@ -56,7 +59,7 @@ export default function SearchCard({
     if (!dropdownOpen || suggestions.length === 0) {
       if (e.key === 'Enter') {
         e.preventDefault();
-        onPredict(ticker);
+        onPredict(ticker, forecastType);
       }
       return;
     }
@@ -74,9 +77,9 @@ export default function SearchCard({
         setTicker(item.ticker);
         setDropdownOpen(false);
         setSuggestions([]);
-        onPredict(item.ticker);
+        onPredict(item.ticker, forecastType);
       } else {
-        onPredict(ticker);
+        onPredict(ticker, forecastType);
       }
     } else if (e.key === 'Escape') {
       setDropdownOpen(false);
@@ -88,7 +91,7 @@ export default function SearchCard({
     setTicker(item.ticker);
     setDropdownOpen(false);
     setSuggestions([]);
-    onPredict(item.ticker);
+    onPredict(item.ticker, forecastType);
   };
 
   useEffect(() => {
@@ -108,6 +111,7 @@ export default function SearchCard({
 
   return (
     <section className="input-card glow-border" id="inputCard">
+      <ForecastTypeToggle value={forecastType} onChange={onForecastTypeChange} />
       <div className="input-row">
         <div className="input-wrapper" ref={searchWrapperRef}>
           <label htmlFor="tickerInput" className="sr-only">
@@ -188,7 +192,7 @@ export default function SearchCard({
           type="button"
           id="predictBtn"
           className="predict-btn"
-          onClick={() => onPredict(ticker)}
+          onClick={() => onPredict(ticker, forecastType)}
           disabled={isLoading}
         >
           <span className="btn-text">Predict</span>

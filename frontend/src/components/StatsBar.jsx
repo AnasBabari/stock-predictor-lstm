@@ -1,8 +1,27 @@
 import React, { useMemo } from 'react';
 
-export default function StatsBar({ stockData }) {
+export default function StatsBar({ stockData, forecastType }) {
   const stats = useMemo(() => {
-    if (!stockData || !stockData.historical_prices || !stockData.predicted_prices) {
+    if (!stockData) {
+      return null;
+    }
+
+    if (forecastType === 'trend') {
+      const firstDirection = stockData.directions?.[0] || '—';
+      const firstProbability = stockData.probabilities?.[0];
+
+      return {
+        ticker: stockData.ticker,
+        forecastLabel: 'Trend Forecast',
+        lastClose: '—',
+        forecast: firstDirection,
+        changeText: firstProbability != null ? `${(firstProbability * 100).toFixed(1)}%` : '—',
+        trendText: firstDirection,
+        isUp: firstDirection === 'Up',
+      };
+    }
+
+    if (!stockData.historical_prices || !stockData.predicted_prices) {
       return null;
     }
 
@@ -14,13 +33,14 @@ export default function StatsBar({ stockData }) {
 
     return {
       ticker: stockData.ticker,
+      forecastLabel: 'Price Forecast',
       lastClose: `$${lastClose.toFixed(2)}`,
       forecast: `$${forecast.toFixed(2)}`,
       changeText: `${isUp ? '+' : ''}${changePct}%`,
       trendText: isUp ? '▲ Bullish' : '▼ Bearish',
       isUp,
     };
-  }, [stockData]);
+  }, [forecastType, stockData]);
 
   if (!stats) return null;
 
@@ -33,6 +53,10 @@ export default function StatsBar({ stockData }) {
         <span className="stat-value mono">{stats.ticker}</span>
       </div>
       <div className="stat">
+        <span className="stat-label">Forecast Type</span>
+        <span className="stat-value mono">{stats.forecastLabel}</span>
+      </div>
+      <div className="stat">
         <span className="stat-label">Last Close</span>
         <span className="stat-value mono">{stats.lastClose}</span>
       </div>
@@ -41,7 +65,7 @@ export default function StatsBar({ stockData }) {
         <span className="stat-value mono">{stats.forecast}</span>
       </div>
       <div className="stat">
-        <span className="stat-label">Change</span>
+        <span className="stat-label">Change / Confidence</span>
         <span className="stat-value mono" style={{ color }}>
           {stats.changeText}
         </span>

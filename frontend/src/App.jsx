@@ -8,6 +8,7 @@ import StockInfoGrid from './components/StockInfoGrid';
 import StatsBar from './components/StatsBar';
 import StockChart from './components/StockChart';
 import MetricsCard from './components/MetricsCard';
+import ForecastChartActions from './components/ForecastChartActions';
 import Watchlist from './components/Watchlist';
 import PredictionHistory from './components/PredictionHistory';
 import ToastContainer from './components/ToastContainer';
@@ -17,6 +18,10 @@ const THEME_KEY = 'stocklstm-theme:v1';
 const WL_KEY = 'stocklstm-watchlist:v1';
 const HIST_KEY = 'stocklstm-history:v1';
 const MAX_HISTORY = 15;
+const FORECAST_TYPES = {
+  PRICE: 'price',
+  TREND: 'trend',
+};
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
@@ -26,9 +31,10 @@ export default function App() {
   const [ticker, setTicker] = useState('');
   const [forecastDays, setForecastDays] = useState(7);
   const [daysView, setDaysView] = useState(21);
+  const [forecastType, setForecastType] = useState(FORECAST_TYPES.PRICE);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [stockData, setStockData] = useState(null);
+  const [predictionData, setPredictionData] = useState(null);
   const [stockInfo, setStockInfo] = useState(null);
   const [toasts, setToasts] = useState([]);
 
@@ -49,6 +55,20 @@ export default function App() {
   });
 
   const abortControllerRef = useRef(null);
+  const requestIdRef = useRef(0);
+  const forecastCacheRef = useRef({
+    [FORECAST_TYPES.PRICE]: null,
+    [FORECAST_TYPES.TREND]: null,
+  });
+  const chartRef = useRef(null);
+
+  const abortActiveRequest = useCallback(() => {
+    requestIdRef.current += 1;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -75,6 +95,14 @@ export default function App() {
     }
   }, [history]);
 
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   }, []);
@@ -87,8 +115,33 @@ export default function App() {
     }, 3000);
   }, []);
 
+  const fetchPredictionData = useCallback(
+    async (symbol, days, type, signal) => {
+      const endpoint =
+        type === FORECAST_TYPES.TREND ? '/api/v1/predict/direction' : '/api/v1/predict';
+      const res = await fetch(`${API_BASE}${endpoint}?ticker=${symbol}&days=${days}`, { signal });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Prediction failed (${res.status})`);
+      }
+
+      return res.json();
+    },
+    []
+  );
+
+  const fetchStockInfo = useCallback(
+    async (symbol, signal) => {
+      const res = await fetch(`${API_BASE}/api/v1/info?ticker=${symbol}`, { signal });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    []
+  );
+
   const handlePredict = useCallback(
-    async (tickerToPredict) => {
+    async (tickerToPredict, requestedType = forecastType) => {
       const symbol = (tickerToPredict || '').trim().toUpperCase();
       if (!symbol) {
         setErrorMsg('Please enter a ticker symbol.');
@@ -96,61 +149,63 @@ export default function App() {
         return;
       }
 
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
+      abortActiveRequest();
+      const requestId = requestIdRef.current;
       abortControllerRef.current = new AbortController();
       const { signal } = abortControllerRef.current;
 
       setErrorMsg('');
       setIsLoading(true);
+      setPredictionData(null);
 
       try {
         const [predRes, infoRes] = await Promise.allSettled([
-          fetch(`${API_BASE}/api/v1/predict?ticker=${symbol}&days=${forecastDays}`, { signal }),
-          fetch(`${API_BASE}/api/v1/info?ticker=${symbol}`, { signal }),
+          fetchPredictionData(symbol, forecastDays, requestedType, signal),
+          fetchStockInfo(symbol, signal),
         ]);
 
-        if (predRes.status === 'fulfilled' && predRes.value.ok) {
-          const fetchedData = await predRes.value.json();
-          setStockData(fetchedData);
-
-          const lastClose = fetchedData.historical_prices[fetchedData.historical_prices.length - 1];
-          const forecast = fetchedData.predicted_prices[fetchedData.predicted_prices.length - 1];
-          const changePct = (((forecast - lastClose) / lastClose) * 100).toFixed(2);
-
-          const newHistoryItem = {
-            ticker: fetchedData.ticker,
-            lastClose,
-            forecast,
-            change: changePct,
-            days: fetchedData.forecast_days,
-            date: new Date().toISOString(),
-          };
-
-          setHistory((prev) => {
-            const nowIso = newHistoryItem.date.slice(0, 16);
-            const filtered = prev.filter(
-              (h) => !(h.ticker === fetchedData.ticker && h.date?.startsWith(nowIso))
-            );
-            return [newHistoryItem, ...filtered].slice(0, MAX_HISTORY);
-          });
-
-          addToast('success', `Forecast ready for ${fetchedData.ticker}`);
-        } else if (predRes.status === 'fulfilled') {
-          const errData = await predRes.value.json().catch(() => ({}));
-          throw new Error(errData.detail || `Prediction failed (${predRes.value.status})`);
-        } else if (predRes.reason.name === 'AbortError') {
+        if (requestIdRef.current !== requestId) {
           return;
+        }
+
+        if (predRes.status === 'fulfilled') {
+          const fetchedData = predRes.value;
+          forecastCacheRef.current[requestedType] = fetchedData;
+          setPredictionData(fetchedData);
+
+          if (requestedType === FORECAST_TYPES.PRICE && fetchedData.historical_prices?.length) {
+            const lastClose = fetchedData.historical_prices[fetchedData.historical_prices.length - 1];
+            const forecast = fetchedData.predicted_prices[fetchedData.predicted_prices.length - 1];
+            const changePct = (((forecast - lastClose) / lastClose) * 100).toFixed(2);
+
+            const newHistoryItem = {
+              ticker: fetchedData.ticker,
+              lastClose,
+              forecast,
+              change: changePct,
+              days: fetchedData.forecast_days,
+              date: new Date().toISOString(),
+            };
+
+            setHistory((prev) => {
+              const nowIso = newHistoryItem.date.slice(0, 16);
+              const filtered = prev.filter(
+                (h) => !(h.ticker === fetchedData.ticker && h.date?.startsWith(nowIso))
+              );
+              return [newHistoryItem, ...filtered].slice(0, MAX_HISTORY);
+            });
+          }
+
+          addToast(
+            'success',
+            `${requestedType === FORECAST_TYPES.TREND ? 'Trend' : 'Price'} forecast ready for ${fetchedData.ticker}`
+          );
         } else {
           throw new Error('Network error. Failed to fetch prediction.');
         }
 
-        if (infoRes.status === 'fulfilled' && infoRes.value.ok) {
-          const fetchedInfo = await infoRes.value.json();
-          setStockInfo(fetchedInfo);
-        } else {
-          setStockInfo(null);
+        if (infoRes.status === 'fulfilled' && infoRes.value) {
+          setStockInfo(infoRes.value);
         }
       } catch (err) {
         if (err.name === 'AbortError') return;
@@ -162,15 +217,93 @@ export default function App() {
         setErrorMsg(msg);
         addToast('error', msg);
       } finally {
-        setIsLoading(false);
+        if (requestIdRef.current === requestId) {
+          setIsLoading(false);
+        }
       }
     },
-    [forecastDays, addToast]
+    [abortActiveRequest, addToast, fetchPredictionData, fetchStockInfo, forecastDays, forecastType]
   );
+
+  const handleForecastTypeChange = useCallback(
+    (nextType) => {
+      if (nextType === forecastType) return;
+      abortActiveRequest();
+      setForecastType(nextType);
+      setPredictionData(null);
+      setErrorMsg('');
+      setIsLoading(false);
+    },
+    [abortActiveRequest, forecastType]
+  );
+
+  const handleExportCompleteAnalysis = useCallback(async () => {
+    const tickerSymbol = (ticker || '').trim().toUpperCase();
+    if (!tickerSymbol) {
+      setErrorMsg('Please enter a ticker symbol.');
+      addToast('error', 'Please enter a ticker symbol.');
+      return;
+    }
+
+    const cachedPrice = forecastCacheRef.current[FORECAST_TYPES.PRICE];
+    const cachedTrend = forecastCacheRef.current[FORECAST_TYPES.TREND];
+
+    const ensureForecast = async (type) => {
+      if (forecastCacheRef.current[type]) {
+        return forecastCacheRef.current[type];
+      }
+
+      const controller = new AbortController();
+      const data = await fetchPredictionData(tickerSymbol, forecastDays, type, controller.signal);
+      forecastCacheRef.current[type] = data;
+      return data;
+    };
+
+    try {
+      setIsLoading(true);
+      const [priceData, trendData] = await Promise.all([
+        cachedPrice ? Promise.resolve(cachedPrice) : ensureForecast(FORECAST_TYPES.PRICE),
+        cachedTrend ? Promise.resolve(cachedTrend) : ensureForecast(FORECAST_TYPES.TREND),
+      ]);
+
+      if (!priceData || !trendData) {
+        throw new Error('Both forecast types are required to export the complete analysis.');
+      }
+
+      const metadata = {
+        ticker: tickerSymbol,
+        generated_at: new Date().toISOString(),
+        forecast_days: forecastDays,
+        window_size: 60,
+        price_model: 'LSTM',
+        price_model_version: 'v1',
+        direction_model: 'Attention-LSTM',
+        direction_model_version: 'v1',
+        backend_api_version: '3.0',
+      };
+
+      const { exportCompleteAnalysis } = await import('./utils/exportService');
+      await exportCompleteAnalysis({
+        priceData,
+        directionData: trendData,
+        metadata,
+      });
+      addToast('success', 'Complete analysis exported as ZIP');
+    } catch (err) {
+      const msg = err.message || 'Failed to export complete analysis.';
+      setErrorMsg(msg);
+      addToast('error', msg);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [addToast, fetchPredictionData, forecastDays, ticker]);
 
   const handleAddWatchlist = useCallback(
     (data) => {
-      if (!data) return;
+      if (!data || forecastType !== FORECAST_TYPES.PRICE || !data.historical_prices?.length) {
+        addToast('info', 'Watchlist requires a price forecast result');
+        return;
+      }
       if (watchlist.some((w) => w.ticker === data.ticker)) {
         addToast('info', `${data.ticker} is already in your watchlist`);
         return;
@@ -186,7 +319,7 @@ export default function App() {
       setWatchlist((prev) => [newWatchItem, ...prev]);
       addToast('success', `${data.ticker} added to watchlist`);
     },
-    [watchlist, stockInfo, addToast]
+    [watchlist, stockInfo, addToast, forecastType]
   );
 
   const handleRemoveWatchlist = useCallback(
@@ -240,6 +373,8 @@ export default function App() {
           setTicker={setTicker}
           forecastDays={forecastDays}
           setForecastDays={setForecastDays}
+          forecastType={forecastType}
+          onForecastTypeChange={handleForecastTypeChange}
           onPredict={handlePredict}
           isLoading={isLoading}
           apiBase={API_BASE}
@@ -251,18 +386,28 @@ export default function App() {
 
         <StockInfoGrid info={stockInfo} />
 
-        <StatsBar stockData={stockData} />
+        <StatsBar stockData={predictionData} forecastType={forecastType} />
 
-        <StockChart
-          stockData={stockData}
-          daysView={daysView}
-          setDaysView={setDaysView}
-          theme={theme}
-          onAddWatchlist={handleAddWatchlist}
-          onToast={addToast}
-        />
+        <div className="chart-panel">
+          <StockChart
+            ref={chartRef}
+            stockData={predictionData}
+            forecastType={forecastType}
+            daysView={daysView}
+            setDaysView={setDaysView}
+            theme={theme}
+          />
+          <ForecastChartActions
+            chartRef={chartRef}
+            stockData={predictionData}
+            forecastType={forecastType}
+            onAddWatchlist={handleAddWatchlist}
+            onToast={addToast}
+            onExportCompleteAnalysis={handleExportCompleteAnalysis}
+          />
+        </div>
 
-        <MetricsCard stockData={stockData} />
+        <MetricsCard stockData={predictionData} forecastType={forecastType} />
 
         <div className="bottom-panels">
           <Watchlist
