@@ -27,8 +27,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from config import DEFAULT_FORECAST_DAYS, MAX_FORECAST_DAYS, WINDOW_SIZE, settings
-from data_pipeline import get_pipeline, fetch_data, prepare_return_data
-from model import evaluate_model, load_or_train, predict_future, predict_direction, load_metrics
+from data_pipeline import fetch_data, get_pipeline, prepare_return_data
+from model import evaluate_model, load_metrics, load_or_train, predict_direction, predict_future
 from news_aggregator import get_financial_sentiment
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
@@ -243,7 +243,7 @@ async def predict_direction_endpoint(
 
     try:
         closing_prices, historical_dates = fetch_data(ticker)
-        
+
         X_train, X_test, y_train, y_test, scaler = prepare_return_data(closing_prices, forecast_days=days)
 
         model, model_scaler = await run_in_threadpool(
@@ -256,10 +256,10 @@ async def predict_direction_endpoint(
             )
 
         directions, probabilities, attention_weights = predict_direction(model, closing_prices, model_scaler, days=days)
-        
+
         metrics = load_metrics(ticker, model_type="attention")
 
-        hist_dates = historical_dates.strftime("%Y-%m-%d").tolist()
+        historical_dates.strftime("%Y-%m-%d").tolist()
         cur = historical_dates[-1]
         nyse = mcal.get_calendar("NYSE")
         schedule = nyse.schedule(
@@ -270,7 +270,7 @@ async def predict_direction_endpoint(
         past_dates = historical_dates[-WINDOW_SIZE:].strftime("%Y-%m-%d").tolist()
         formatted_attention = [
             {"index": idx, "date": d, "weight": float(w)}
-            for idx, (d, w) in enumerate(zip(past_dates, attention_weights))
+            for idx, (d, w) in enumerate(zip(past_dates, attention_weights, strict=False))
         ]
 
         sentiment_data = get_financial_sentiment(ticker)

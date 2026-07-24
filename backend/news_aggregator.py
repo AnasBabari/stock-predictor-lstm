@@ -1,7 +1,8 @@
 import logging
+
 import nltk
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import yfinance as yf
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -12,12 +13,12 @@ def get_financial_sentiment(ticker: str) -> dict:
         except LookupError:
             nltk.download('vader_lexicon', quiet=True)
             analyzer = SentimentIntensityAnalyzer()
-            
+
         custom_dict = {
-            "guidance cut": -2.0, 
-            "missed estimates": -1.5, 
-            "beat expectations": 2.0, 
-            "upgrade": 1.5, 
+            "guidance cut": -2.0,
+            "missed estimates": -1.5,
+            "beat expectations": 2.0,
+            "upgrade": 1.5,
             "downgrade": -1.5,
             "bullish": 2.0,
             "bearish": -2.0,
@@ -47,12 +48,12 @@ def get_financial_sentiment(ticker: str) -> dict:
             "slumps": -1.5,
             "soars": 1.5
         }
-        
+
         analyzer.lexicon.update(custom_dict)
-        
+
         ticker_obj = yf.Ticker(ticker)
         news = ticker_obj.news
-        
+
         if not news:
             return {
                 "sentiment": {
@@ -62,17 +63,17 @@ def get_financial_sentiment(ticker: str) -> dict:
                     "method": "vader_financial",
                 }
             }
-            
+
         total_score = 0.0
         count = 0
-        
+
         for article in news:
             title = article.get("title")
             if title:
                 score = analyzer.polarity_scores(title)
                 total_score += score["compound"]
                 count += 1
-                
+
         if count == 0:
             return {
                 "sentiment": {
@@ -92,8 +93,8 @@ def get_financial_sentiment(ticker: str) -> dict:
                 "method": "vader_financial",
             }
         }
-        
-    except Exception as e:
+
+    except Exception:
         logger.exception("Error fetching news sentiment for %s", ticker)
         return {
             "sentiment": {

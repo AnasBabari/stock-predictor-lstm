@@ -106,28 +106,29 @@ def test_scaler_persistence_and_loading(preprocessed, tmp_path, monkeypatch):
 
 
 def test_build_attention_lstm_model_outputs():
-    from model import build_attention_lstm_model
     from config import WINDOW_SIZE
+    from model import build_attention_lstm_model
 
     m = build_attention_lstm_model(forecast_days=7)
-    
+
     # Ensure it's a multi-output functional Model, not a Sequential
     assert len(m.outputs) == 2, "Model should return exactly 2 outputs"
-    
+
     predictions_shape = m.outputs[0].shape
     attention_weights_shape = m.outputs[1].shape
-    
+
     # Check shape: (batch_size, forecast_days)
     assert predictions_shape == (None, 7), f"Expected predictions shape (None, 7), got {predictions_shape}"
-    
+
     # Check shape: (batch_size, sequence_length, sequence_length)
     assert attention_weights_shape == (None, WINDOW_SIZE, WINDOW_SIZE), f"Expected attention weights shape (None, {WINDOW_SIZE}, {WINDOW_SIZE}), got {attention_weights_shape}"
 
 
 def test_train_model_attention_caching_and_metrics(preprocessed, tmp_path, monkeypatch):
     import json
+
     import model as model_module
-    from model import train_model, load_metrics
+    from model import load_metrics, train_model
 
     monkeypatch.setattr(model_module, "MODEL_DIR", str(tmp_path))
     X_train, X_test, y_train, y_test, scaler = preprocessed
@@ -140,20 +141,20 @@ def test_train_model_attention_caching_and_metrics(preprocessed, tmp_path, monke
     trained_m, trained_s = train_model(
         X_train, y_train_bin, X_test, y_test_bin, ticker="ATTN_TEST", scaler=scaler, model_type="attention"
     )
-    
+
     assert (tmp_path / "ATTN_TEST_attention_model.keras").exists()
     assert (tmp_path / "ATTN_TEST_attention_scaler.joblib").exists()
-    
+
     metrics_path = tmp_path / "ATTN_TEST_attention_metrics.json"
     assert metrics_path.exists()
-    
-    with open(metrics_path, "r") as f:
+
+    with open(metrics_path) as f:
         metrics = json.load(f)
-        
+
     assert "precision" in metrics
     assert "recall" in metrics
     assert "naive_baseline" in metrics
-    
+
     loaded_metrics = load_metrics("ATTN_TEST", model_type="attention")
     assert loaded_metrics == metrics
 
@@ -168,18 +169,18 @@ def test_load_or_train_graceful_overwrite(preprocessed, tmp_path, monkeypatch):
     # Create a corrupted model file
     model_path = tmp_path / "CORRUPT_lstm_model.keras"
     scaler_path = tmp_path / "CORRUPT_lstm_scaler.joblib"
-    
+
     model_path.parent.mkdir(parents=True, exist_ok=True)
     model_path.write_text("this is not a valid keras model")
-    
+
     import joblib
     joblib.dump(scaler, str(scaler_path))
-    
+
     # load_or_train should catch the Exception loading the corrupt model and retrain
     loaded_m, loaded_s = load_or_train(
         "CORRUPT", X_train, y_train, X_test, y_test, scaler=scaler, model_type="lstm"
     )
-    
+
     assert loaded_m is not None
     # Now the model file should be valid
     assert model_path.exists()

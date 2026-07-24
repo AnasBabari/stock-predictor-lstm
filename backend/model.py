@@ -18,17 +18,24 @@ from pathlib import Path
 import joblib  # type: ignore[import-untyped]
 import numpy as np
 from sklearn.metrics import (  # type: ignore[import-untyped]
+    accuracy_score,
+    f1_score,
     mean_absolute_error,
     mean_squared_error,
-    r2_score,
     precision_score,
+    r2_score,
     recall_score,
-    f1_score,
-    accuracy_score,
 )
 from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Attention, GlobalAveragePooling1D  # type: ignore[import-untyped]
-from tensorflow.keras.models import Sequential, load_model, Model  # type: ignore[import-untyped]
+from tensorflow.keras.layers import (  # type: ignore[import-untyped]
+    LSTM,
+    Attention,
+    Dense,
+    Dropout,
+    GlobalAveragePooling1D,
+    Input,
+)
+from tensorflow.keras.models import Model, Sequential, load_model  # type: ignore[import-untyped]
 
 from config import (
     BATCH_SIZE,
@@ -77,24 +84,24 @@ def build_model(forecast_days: int = MAX_FORECAST_DAYS) -> Sequential:
 def build_attention_lstm_model(forecast_days: int = MAX_FORECAST_DAYS) -> Model:
     """LSTM with Attention mechanism for binary classification."""
     inputs = Input(shape=(WINDOW_SIZE, 1))
-    
+
     # LSTM returns sequences so Attention can act on each time step
     lstm_out = LSTM(LSTM_UNITS, return_sequences=True)(inputs)
     lstm_out = Dropout(0.25)(lstm_out)
-    
+
     # Self-attention over the LSTM sequence outputs
     attention_out, attention_weights = Attention()([lstm_out, lstm_out], return_attention_scores=True)
-    
+
     # Pool sequence to a single vector per batch item
     pooled = GlobalAveragePooling1D()(attention_out)
-    
+
     # Final dense layer for binary classification
     predictions = Dense(forecast_days, activation="sigmoid")(pooled)
-    
+
     # Model with two outputs: predictions and attention weights
     model = Model(inputs=inputs, outputs=[predictions, attention_weights])
     model.compile(optimizer="adam", loss=["binary_crossentropy", None])
-    
+
     return model
 
 
@@ -103,7 +110,7 @@ def load_metrics(ticker: str, model_type: str = "attention") -> dict:
     metrics_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_metrics.json"
     if metrics_path.exists():
         try:
-            with open(metrics_path, "r") as f:
+            with open(metrics_path) as f:
                 return json.load(f)
         except Exception as e:
             logger.warning("Failed to load metrics for %s: %s", ticker, e)
@@ -114,12 +121,12 @@ def load_metrics(ticker: str, model_type: str = "attention") -> dict:
 def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None, model_type: str = "lstm"):
     """Train with explicit validation data (3.3), silent output (3.7), and scaler persistence."""
     forecast_days = y_train.shape[1]
-    
+
     if model_type == "attention":
         model = build_attention_lstm_model(forecast_days=forecast_days)
     else:
         model = build_model(forecast_days=forecast_days)
-        
+
     early_stop = EarlyStopping(
         monitor="val_loss",
         patience=5,
@@ -147,34 +154,34 @@ def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None, mode
     if scaler is not None:
         joblib.dump(scaler, str(scaler_path))
     logger.info("Model and scaler saved → %s", model_path)
-    
+
     if model_type == "attention":
         preds = model.predict(X_test, verbose=0)
-        if isinstance(preds, (list, tuple)):
+        if isinstance(preds, list | tuple):
             preds = preds[0]
-            
+
         pred_first = (preds[:, 0] > 0.5).astype(int)
         true_first = y_test[:, 0].astype(int)
-        
+
         precision = float(precision_score(true_first, pred_first, zero_division=0))
         recall = float(recall_score(true_first, pred_first, zero_division=0))
         f1 = float(f1_score(true_first, pred_first, zero_division=0))
-        
+
         majority_class = int(np.bincount(true_first).argmax()) if len(true_first) > 0 else 0
         naive_preds = np.full_like(true_first, majority_class)
         naive_baseline = float(accuracy_score(true_first, naive_preds)) if len(true_first) > 0 else 0.0
-        
+
         metrics = {
             "precision": precision,
             "recall": recall,
             "f1": f1,
             "naive_baseline": naive_baseline
         }
-        
+
         metrics_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_metrics.json"
         with open(metrics_path, "w") as f:
             json.dump(metrics, f)
-            
+
     return model, scaler
 
 
@@ -199,14 +206,14 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None, mo
             try:
                 model = load_model(str(model_path))
                 loaded_scaler = joblib.load(str(scaler_path))
-                
+
                 # Verify output shape matches
                 expected_out = y_train.shape[1]
                 if isinstance(model.output_shape, list):
                     actual_out = model.output_shape[0][-1]
                 else:
                     actual_out = model.output_shape[-1]
-                
+
                 if actual_out != expected_out:
                     logger.info(
                         "Model output shape mismatch for %s (got %s, need %s) — retraining.",
@@ -223,7 +230,7 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None, mo
                     ticker,
                     exc_info=True,
                 )
-                
+
         return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler, model_type=model_type)
 
 
@@ -245,9 +252,9 @@ def evaluate_model(model, X_test, y_test, scaler):
         return empty
 
     preds = model.predict(X_test, verbose=0)  # (n, forecast_days)
-    if isinstance(preds, (list, tuple)):
+    if isinstance(preds, list | tuple):
         preds = preds[0]
-        
+
     pred_first = preds[:, 0]
     true_first = y_test[:, 0]
 
@@ -309,10 +316,7 @@ def predict_future(model, closing_prices, scaler, days: int = 7):
     input_seq = scaled.reshape(1, WINDOW_SIZE, 1)
 
     preds = model.predict(input_seq, verbose=0)
-    if isinstance(preds, (list, tuple)):
-        preds_scaled = preds[0][0]
-    else:
-        preds_scaled = preds[0]  # (MAX_FORECAST_DAYS,)
+    preds_scaled = preds[0][0] if isinstance(preds, list | tuple) else preds[0]
     preds_scaled = preds_scaled[:days]
 
     return scaler.inverse_transform(preds_scaled.reshape(-1, 1)).flatten().tolist()

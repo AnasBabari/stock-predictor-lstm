@@ -229,14 +229,14 @@ def test_predict_direction_attention_alignment():
         res = client.get("/api/v1/predict/direction?ticker=AAPL&days=7")
         body = res.json()
         attn = body["attention_weights"]
-        
+
         # 1. Correct length matching WINDOW_SIZE (60)
         assert len(attn) == 60
-        
+
         # 2. Sequential indexing & numeric weight types
         for idx, item in enumerate(attn):
             assert item["index"] == idx
-            assert isinstance(item["weight"], (int, float))
+            assert isinstance(item["weight"], int | float)
             assert isinstance(item["date"], str)
 
         # 3. Dates ordered oldest -> newest with no duplicate dates
