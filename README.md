@@ -19,7 +19,7 @@ StockLSTM is a stock price forecasting application built with **FastAPI**, **Rea
 - **Scaler & Model Persistence**: Serializes fitted `MinMaxScaler` objects alongside trained `.keras` models to ensure preprocessing during inference matches training.
 - **Automatic Staleness Detection**: Retrains cached models automatically when historical price data exceeds 7 days.
 - **React Frontend**: Single-page application built with Vite, CSS variables, and modular component architecture.
-- **Interactive Charts**: Line charts powered by Chart.js with dynamic timeframe selection (`1W`, `1M`, `3M`, `6M`, `1Y`) and CSV/PNG export options.
+- **Interactive Charts**: Line charts powered by Chart.js with dynamic timeframe selection (`1W`, `1M`, `3M`, `6M`, `1Y`) and context-aware CSV, PNG, or `.zip` Complete Analysis bundle export options.
 - **Company Overview & Autocomplete**: Real-time ticker search autocomplete and metadata dashboard (Market Cap, P/E ratio, 52-week High/Low, Volume).
 - **Watchlist & History**: Persists user watchlists and past predictions using browser local storage.
 
