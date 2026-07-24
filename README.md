@@ -23,19 +23,7 @@ StockLSTM is a stock price forecasting application built with **FastAPI**, **Rea
 - **Company Overview & Autocomplete**: Real-time ticker search autocomplete and metadata dashboard (Market Cap, P/E ratio, 52-week High/Low, Volume).
 - **Watchlist & History**: Persists user watchlists and past predictions using browser local storage.
 
----
 
-## 📸 Screenshots
-
-| Hero Dashboard | Prediction Chart |
-| :---: | :---: |
-| ![Hero Dashboard](docs/images/hero_dashboard.png) | ![Prediction Chart](docs/images/prediction_chart.png) |
-
-| Company Overview | Dark Mode |
-| :---: | :---: |
-| ![Company Overview](docs/images/company_overview.png) | ![Dark Mode](docs/images/dark_mode.png) |
-
----
 
 ## 🚀 Quick Start with Docker
 
