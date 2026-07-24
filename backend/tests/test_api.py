@@ -166,7 +166,12 @@ def test_predict_direction_schema():
         mock_fetch.return_value = (_make_prices(100), _make_dates(100))
         mock_prep.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler)
         mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.1] * 60)
-        mock_metrics.return_value = {"precision": 0.8, "recall": 0.7, "f1": 0.75, "naive_baseline": 0.5}
+        mock_metrics.return_value = {
+            "precision": 0.8,
+            "recall": 0.7,
+            "f1": 0.75,
+            "naive_baseline": 0.5,
+        }
         mock_sentiment.return_value = {
             "sentiment": {
                 "score": 0.5,
@@ -216,7 +221,12 @@ def test_predict_direction_attention_alignment():
         mock_fetch.return_value = (_make_prices(100), _make_dates(100))
         mock_prep.return_value = (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler)
         mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.05] * 60)
-        mock_metrics.return_value = {"precision": 0.8, "recall": 0.7, "f1": 0.75, "naive_baseline": 0.5}
+        mock_metrics.return_value = {
+            "precision": 0.8,
+            "recall": 0.7,
+            "f1": 0.75,
+            "naive_baseline": 0.5,
+        }
         mock_sentiment.return_value = {
             "sentiment": {
                 "score": 0.0,
@@ -243,4 +253,3 @@ def test_predict_direction_attention_alignment():
         dates = [item["date"] for item in attn]
         assert dates == sorted(dates)
         assert len(set(dates)) == len(dates)
-

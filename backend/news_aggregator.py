@@ -6,12 +6,13 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 logger = logging.getLogger(__name__)
 
+
 def get_financial_sentiment(ticker: str) -> dict:
     try:
         try:
             analyzer = SentimentIntensityAnalyzer()
         except LookupError:
-            nltk.download('vader_lexicon', quiet=True)
+            nltk.download("vader_lexicon", quiet=True)
             analyzer = SentimentIntensityAnalyzer()
 
         custom_dict = {
@@ -46,7 +47,7 @@ def get_financial_sentiment(ticker: str) -> dict:
             "acquisition": 1.0,
             "buyout": 1.5,
             "slumps": -1.5,
-            "soars": 1.5
+            "soars": 1.5,
         }
 
         analyzer.lexicon.update(custom_dict)

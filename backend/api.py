@@ -244,7 +244,9 @@ async def predict_direction_endpoint(
     try:
         closing_prices, historical_dates = fetch_data(ticker)
 
-        X_train, X_test, y_train, y_test, scaler = prepare_return_data(closing_prices, forecast_days=days)
+        X_train, X_test, y_train, y_test, scaler = prepare_return_data(
+            closing_prices, forecast_days=days
+        )
 
         model, model_scaler = await run_in_threadpool(
             load_or_train, ticker, X_train, y_train, X_test, y_test, scaler, model_type="attention"
@@ -255,7 +257,9 @@ async def predict_direction_endpoint(
                 closing_prices, forecast_days=days, scaler=model_scaler
             )
 
-        directions, probabilities, attention_weights = predict_direction(model, closing_prices, model_scaler, days=days)
+        directions, probabilities, attention_weights = predict_direction(
+            model, closing_prices, model_scaler, days=days
+        )
 
         metrics = load_metrics(ticker, model_type="attention")
 
@@ -283,12 +287,15 @@ async def predict_direction_endpoint(
             "probabilities": probabilities,
             "attention_weights": formatted_attention,
             "metrics": metrics,
-            "sentiment": sentiment_data.get("sentiment", {
-                "score": 0.0,
-                "status": "fallback",
-                "provider": "yfinance",
-                "method": "vader_financial",
-            }),
+            "sentiment": sentiment_data.get(
+                "sentiment",
+                {
+                    "score": 0.0,
+                    "status": "fallback",
+                    "provider": "yfinance",
+                    "method": "vader_financial",
+                },
+            ),
         }
 
         _predict_cache[cache_key] = data

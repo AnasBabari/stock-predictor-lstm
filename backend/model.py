@@ -90,7 +90,9 @@ def build_attention_lstm_model(forecast_days: int = MAX_FORECAST_DAYS) -> Model:
     lstm_out = Dropout(0.25)(lstm_out)
 
     # Self-attention over the LSTM sequence outputs
-    attention_out, attention_weights = Attention()([lstm_out, lstm_out], return_attention_scores=True)
+    attention_out, attention_weights = Attention()(
+        [lstm_out, lstm_out], return_attention_scores=True
+    )
 
     # Pool sequence to a single vector per batch item
     pooled = GlobalAveragePooling1D()(attention_out)
@@ -118,7 +120,9 @@ def load_metrics(ticker: str, model_type: str = "attention") -> dict:
 
 
 # ── Train ────────────────────────────────────────────────────────────
-def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None, model_type: str = "lstm"):
+def train_model(
+    X_train, y_train, X_test, y_test, ticker: str, scaler=None, model_type: str = "lstm"
+):
     """Train with explicit validation data (3.3), silent output (3.7), and scaler persistence."""
     forecast_days = y_train.shape[1]
 
@@ -169,13 +173,15 @@ def train_model(X_train, y_train, X_test, y_test, ticker: str, scaler=None, mode
 
         majority_class = int(np.bincount(true_first).argmax()) if len(true_first) > 0 else 0
         naive_preds = np.full_like(true_first, majority_class)
-        naive_baseline = float(accuracy_score(true_first, naive_preds)) if len(true_first) > 0 else 0.0
+        naive_baseline = (
+            float(accuracy_score(true_first, naive_preds)) if len(true_first) > 0 else 0.0
+        )
 
         metrics = {
             "precision": precision,
             "recall": recall,
             "f1": f1,
-            "naive_baseline": naive_baseline
+            "naive_baseline": naive_baseline,
         }
 
         metrics_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_metrics.json"
@@ -195,7 +201,9 @@ def _is_stale(path: Path) -> bool:
 
 
 # ── Load or train ────────────────────────────────────────────────────
-def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None, model_type: str = "lstm"):
+def load_or_train(
+    ticker: str, X_train, y_train, X_test, y_test, scaler=None, model_type: str = "lstm"
+):
     """Load a cached model & scaler or train a new pair, with per-ticker locking (2.4)."""
     model_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_model.keras"
     scaler_path = Path(MODEL_DIR) / f"{ticker}_{model_type}_scaler.joblib"
@@ -221,7 +229,15 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None, mo
                         actual_out,
                         expected_out,
                     )
-                    return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler, model_type=model_type)
+                    return train_model(
+                        X_train,
+                        y_train,
+                        X_test,
+                        y_test,
+                        ticker,
+                        scaler=scaler,
+                        model_type=model_type,
+                    )
                 logger.info("Loaded cached model & scaler for %s", ticker)
                 return model, loaded_scaler
             except Exception:
@@ -231,7 +247,9 @@ def load_or_train(ticker: str, X_train, y_train, X_test, y_test, scaler=None, mo
                     exc_info=True,
                 )
 
-        return train_model(X_train, y_train, X_test, y_test, ticker, scaler=scaler, model_type=model_type)
+        return train_model(
+            X_train, y_train, X_test, y_test, ticker, scaler=scaler, model_type=model_type
+        )
 
 
 # ── Evaluate (3.6) ──────────────────────────────────────────────────

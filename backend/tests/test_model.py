@@ -118,10 +118,15 @@ def test_build_attention_lstm_model_outputs():
     attention_weights_shape = m.outputs[1].shape
 
     # Check shape: (batch_size, forecast_days)
-    assert predictions_shape == (None, 7), f"Expected predictions shape (None, 7), got {predictions_shape}"
+    assert predictions_shape == (
+        None,
+        7,
+    ), f"Expected predictions shape (None, 7), got {predictions_shape}"
 
     # Check shape: (batch_size, sequence_length, sequence_length)
-    assert attention_weights_shape == (None, WINDOW_SIZE, WINDOW_SIZE), f"Expected attention weights shape (None, {WINDOW_SIZE}, {WINDOW_SIZE}), got {attention_weights_shape}"
+    assert (
+        attention_weights_shape == (None, WINDOW_SIZE, WINDOW_SIZE)
+    ), f"Expected attention weights shape (None, {WINDOW_SIZE}, {WINDOW_SIZE}), got {attention_weights_shape}"
 
 
 def test_train_model_attention_caching_and_metrics(preprocessed, tmp_path, monkeypatch):
@@ -135,11 +140,18 @@ def test_train_model_attention_caching_and_metrics(preprocessed, tmp_path, monke
 
     # We need to make y_train, y_test binary for attention to work properly
     import numpy as np
+
     y_train_bin = (y_train > np.median(y_train)).astype(int)
     y_test_bin = (y_test > np.median(y_test)).astype(int)
 
     trained_m, trained_s = train_model(
-        X_train, y_train_bin, X_test, y_test_bin, ticker="ATTN_TEST", scaler=scaler, model_type="attention"
+        X_train,
+        y_train_bin,
+        X_test,
+        y_test_bin,
+        ticker="ATTN_TEST",
+        scaler=scaler,
+        model_type="attention",
     )
 
     assert (tmp_path / "ATTN_TEST_attention_model.keras").exists()
@@ -174,6 +186,7 @@ def test_load_or_train_graceful_overwrite(preprocessed, tmp_path, monkeypatch):
     model_path.write_text("this is not a valid keras model")
 
     import joblib
+
     joblib.dump(scaler, str(scaler_path))
 
     # load_or_train should catch the Exception loading the corrupt model and retrain
