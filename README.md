@@ -128,8 +128,6 @@ cp backend/.env.example backend/.env
 
 Models (`.keras`) and fitted `MinMaxScaler` instances (`.joblib`) are serialized together in `backend/saved_models/`. Reusing the exact fitted scaler instance during inference ensures input preprocessing matches training data and prevents prediction drift caused by refitting on new market data. The preprocessing pipeline is designed to prevent look-ahead bias by fitting transformations only on the training partition before applying them to validation and test data.
 
----
-
 ## 🏛 Architecture & Model Design
 
 ```mermaid
@@ -142,6 +140,15 @@ graph TD
     NewsService --> VADER[VADER + Financial Lexicon]
     VADER --> YFinance[yfinance News]
 ```
+
+### Why Two Models?
+
+The application provides two complementary forecasting modes:
+
+- **Price Forecast**: Estimates future raw closing prices using a 2-layer LSTM regression model (`/api/v1/predict`).
+- **Trend Forecast**: Estimates the directional probability of upward vs. downward movement using an Attention-LSTM classification model with timestamped attention-weight explanations (`/api/v1/predict/direction`).
+
+Users can seamlessly switch between these modes through a unified interface while the backend maintains separate model lifecycles, endpoints, and caches.
 
 ### Multi-Output Direction Forecasting
 For binary directional prediction, the Attention-LSTM model employs a **direct multi-output architecture**. Rather than performing recursive or rolling one-step predictions, the network's final layer (`Dense(forecast_days, activation="sigmoid")`) predicts all target forecast days simultaneously in a single forward pass.
