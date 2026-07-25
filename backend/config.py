@@ -3,7 +3,7 @@
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
 
@@ -51,19 +51,30 @@ class Settings(BaseSettings):
     model_max_age_days: int = 7
     default_forecast_days: int = 7
     max_forecast_days: int = 30
-    allowed_origins: list[str] = [
-        "http://127.0.0.1:5500",
-        "http://localhost:5500",
-    ]
+
+    allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+        ]
+    )
+
+    cors_origin: str | None = None
+
     cache_ttl: int = 300
     cache_max_size: int = 256
     model_type: str = "bilstm_attention_direction"
     validation: ValidationConfig = ValidationConfig()
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+    }
 
 
 settings = Settings()
+if settings.cors_origin:
+    settings.allowed_origins.append(settings.cors_origin)
 
 # Backward-compatible module-level constants
 DEFAULT_TICKER = settings.default_ticker
