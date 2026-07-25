@@ -1020,10 +1020,19 @@ def load_or_train(
             and is_schema_valid(ticker, model_type)
         ):
             try:
+                loaded_scaler = joblib.load(str(scaler_path))
+                if getattr(loaded_scaler, "n_features_in_", 0) != len(FEATURES):
+                    logger.warning(
+                        "Scaler feature mismatch for %s/%s: expected %d, got %d. Retraining...",
+                        ticker,
+                        model_type,
+                        len(FEATURES),
+                        loaded_scaler.n_features_in_,
+                    )
+                    raise ValueError("Scaler feature count mismatch")
                 model = load_model(
                     str(model_path), custom_objects={"TemporalAttention": TemporalAttention}
                 )
-                loaded_scaler = joblib.load(str(scaler_path))
                 logger.info("Loaded valid cached model (%s/%s)", ticker, model_type)
                 return model, loaded_scaler
             except Exception:

@@ -19,6 +19,7 @@ import sys
 import traceback
 from datetime import timedelta
 
+import numpy as np
 import pandas_market_calendars as mcal
 import sklearn  # type: ignore[import-untyped]
 import tensorflow as tf  # type: ignore[import-untyped]
@@ -260,7 +261,7 @@ async def predict(
         )
         future_dates = [d.strftime("%Y-%m-%d") for d in schedule.index if d > cur][:days]
 
-        historical_prices = closing_prices.astype(float).tolist()
+        historical_prices = np.asarray(closing_prices, dtype=float).flatten().tolist()
 
         data = {
             "ticker": ticker,
