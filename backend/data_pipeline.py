@@ -17,7 +17,13 @@ def fetch_data(ticker: str):
     Download historical OHLCV prices, build enriched features, and validate schema.
     Returns (feature_df, closing_prices, dates, feature_metadata).
     """
-    data = yf.download(ticker, period=f"{HISTORICAL_YEARS}y", progress=False, auto_adjust=True)
+    data = yf.download(
+        ticker,
+        period=f"{HISTORICAL_YEARS}y",
+        progress=False,
+        auto_adjust=True,
+        timeout=30,
+    )
 
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
@@ -134,7 +140,8 @@ def prepare_return_data(feature_df: pd.DataFrame, forecast_days=MAX_FORECAST_DAY
     dates = feature_df.index
 
     # Calculate daily log returns for the target; align to drop first row
-    log_returns = np.log(close_values[1:] / close_values[:-1])
+    close_safe = np.maximum(close_values, 1e-8)
+    log_returns = np.log(close_safe[1:] / close_safe[:-1])
     aligned_features = feature_values[1:]
     aligned_dates = dates[1:]
 
@@ -175,7 +182,8 @@ def get_raw_feature_arrays(
     """
     feature_values = feature_df[FEATURES].values
     close_values = feature_df["Close"].values
-    log_returns = np.log(close_values[1:] / close_values[:-1])
+    close_safe = np.maximum(close_values, 1e-8)
+    log_returns = np.log(close_safe[1:] / close_safe[:-1])
     dates = feature_df.index
     return feature_values, close_values, log_returns, dates
 

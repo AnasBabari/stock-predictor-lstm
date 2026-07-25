@@ -16,7 +16,7 @@ import os
 import re
 import subprocess
 import sys
-import traceback
+import threading
 from datetime import timedelta
 
 import numpy as np
@@ -38,6 +38,7 @@ from config import (
     DEFAULT_FORECAST_DAYS,
     FEATURES,
     MAX_FORECAST_DAYS,
+    MODEL_DIR,
     SCHEMA_VERSION,
     WINDOW_SIZE,
     settings,
@@ -90,6 +91,7 @@ app.add_middleware(
 )
 
 # ── Bounded caches (2.3) ────────────────────────────────────────────
+_predict_cache_lock = threading.Lock()
 _predict_cache: TTLCache = TTLCache(
     maxsize=settings.cache_max_size,
     ttl=settings.cache_ttl,
@@ -98,6 +100,8 @@ _info_cache: TTLCache = TTLCache(
     maxsize=settings.cache_max_size,
     ttl=settings.cache_ttl,
 )
+
+VALID_MODEL_TYPES = {"lstm", "bilstm_attention_direction", "attention"}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -135,6 +139,17 @@ def validate_ticker(ticker: str) -> str:
     return ticker
 
 
+def validate_model_type(model_type: str) -> str:
+    """Validate model type parameter to prevent path traversal."""
+    model_type = model_type.strip().lower()
+    if model_type not in VALID_MODEL_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model type. Must be one of: {sorted(VALID_MODEL_TYPES)}",
+        )
+    return model_type
+
+
 # ── Endpoints ────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
@@ -145,10 +160,14 @@ def health():
 @app.get("/ready")
 def ready():
     """O(1) Readiness probe."""
+    model_dir_ok = os.path.exists(MODEL_DIR) and os.access(MODEL_DIR, os.R_OK)
     return {
-        "status": "ready",
+        "status": "ready" if model_dir_ok else "degraded",
         "version": APP_VERSION,
-        "dependencies": {"yfinance": True},
+        "dependencies": {
+            "yfinance": True,
+            "model_storage": model_dir_ok,
+        },
     }
 
 
@@ -160,7 +179,10 @@ def list_models():
 
 @app.get("/api/v1/search")
 @limiter.limit("30/minute")
-def search(request: Request, query: str):
+def search(
+    request: Request,
+    query: str = Query(..., min_length=1, max_length=100),
+):
     try:
         results = yf.Search(query, max_results=8)
         suggestions = []
@@ -230,7 +252,8 @@ async def predict(
     ticker = validate_ticker(ticker)
 
     cache_key = f"{ticker}_{days}"
-    cached = _predict_cache.get(cache_key)
+    with _predict_cache_lock:
+        cached = _predict_cache.get(cache_key)
     if cached:
         return cached
 
@@ -274,15 +297,21 @@ async def predict(
             "metadata": get_runtime_metadata(ticker, "lstm"),
         }
 
-        _predict_cache[cache_key] = data
+        with _predict_cache_lock:
+            _predict_cache[cache_key] = data
         return data
 
     except ValueError as err:
-        traceback.print_exc()
         logger.exception("ValueError while predicting %s", ticker)
+        safe_msgs = ["Not enough historical data", "Not enough data for"]
+        detail = (
+            str(err)
+            if any(m in str(err) for m in safe_msgs)
+            else "Invalid input data for prediction."
+        )
         raise HTTPException(
             status_code=400,
-            detail=str(err),
+            detail=detail,
         ) from err
 
     except Exception as err:
@@ -303,7 +332,8 @@ async def predict_direction_endpoint(
     ticker = validate_ticker(ticker)
 
     cache_key = f"dir_{ticker}_{days}"
-    cached = _predict_cache.get(cache_key)
+    with _predict_cache_lock:
+        cached = _predict_cache.get(cache_key)
     if cached:
         return cached
 
@@ -365,11 +395,19 @@ async def predict_direction_endpoint(
             "metadata": get_runtime_metadata(ticker, model_type),
         }
 
-        _predict_cache[cache_key] = data
+        with _predict_cache_lock:
+            _predict_cache[cache_key] = data
         return data
 
     except ValueError as err:
-        raise HTTPException(status_code=400, detail=str(err)) from err
+        logger.exception("ValueError while predicting direction for %s", ticker)
+        safe_msgs = ["Not enough historical data", "Not enough data for"]
+        detail = (
+            str(err)
+            if any(m in str(err) for m in safe_msgs)
+            else "Invalid input data for prediction."
+        )
+        raise HTTPException(status_code=400, detail=detail) from err
     except Exception as err:
         logger.exception("Error predicting direction %s", ticker)
         raise HTTPException(
@@ -391,6 +429,7 @@ async def diagnostics(
     Includes per-fold residuals, actuals, predictions, and cross-validation summary.
     """
     ticker = validate_ticker(ticker)
+    model_type = validate_model_type(model_type)
 
     try:
         cv_summary = load_cross_validation(ticker, model_type)

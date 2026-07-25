@@ -131,9 +131,7 @@ def _compute_residual_diagnostics(all_residuals: list[float]) -> dict:
         lb_stat = float(
             n * (n + 2) * np.sum(acf_vals**2 / np.array([n - k for k in range(1, lags + 1)]))
         )
-        import scipy.stats as _chi2
-
-        lb_p = float(1.0 - _chi2.chi2.cdf(lb_stat, df=lags))
+        lb_p = float(1.0 - scipy_stats.chi2.cdf(lb_stat, df=lags))
 
     return {
         "n_residuals": n,
@@ -170,6 +168,8 @@ def _unscale_close(scaled_values: np.ndarray, scaler) -> np.ndarray:
     """Unscale predictions using the scaler's 'Close' feature parameters."""
     close_idx = FEATURES.index("Close")
     close_scale = scaler.scale_[close_idx]
+    if close_scale == 0:
+        return np.full_like(scaled_values, scaler.data_min_[close_idx])
     close_min = scaler.min_[close_idx]
     return (scaled_values - close_min) / close_scale
 
@@ -929,6 +929,9 @@ def train_model(
             shutil.rmtree(tmp_dir)
         logger.error("Failed to save trained model artifacts to %s", tmp_dir, exc_info=True)
         raise
+    finally:
+        if tracemalloc.is_tracing():
+            tracemalloc.stop()
 
     update_manifest(ticker, model_type, {"status": "trained", "schema_version": SCHEMA_VERSION})
     return final_model, scaler

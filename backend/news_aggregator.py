@@ -7,50 +7,59 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 logger = logging.getLogger(__name__)
 
 
-def get_financial_sentiment(ticker: str) -> dict:
-    try:
+_analyzer = None
+
+CUSTOM_FINANCIAL_DICT = {
+    "guidance cut": -2.0,
+    "missed estimates": -1.5,
+    "beat expectations": 2.0,
+    "upgrade": 1.5,
+    "downgrade": -1.5,
+    "bullish": 2.0,
+    "bearish": -2.0,
+    "outperform": 1.5,
+    "underperform": -1.5,
+    "buy": 1.0,
+    "sell": -1.0,
+    "strong buy": 2.0,
+    "strong sell": -2.0,
+    "profit warning": -2.0,
+    "dividend hike": 1.5,
+    "dividend cut": -1.5,
+    "layoffs": -1.5,
+    "restructuring": -0.5,
+    "bankruptcy": -3.0,
+    "lawsuit": -1.5,
+    "investigation": -1.5,
+    "record high": 1.5,
+    "record low": -1.5,
+    "surged": 1.5,
+    "plunged": -2.0,
+    "selloff": -2.0,
+    "rally": 1.5,
+    "merger": 1.0,
+    "acquisition": 1.0,
+    "buyout": 1.5,
+    "slumps": -1.5,
+    "soars": 1.5,
+}
+
+
+def _get_analyzer():
+    global _analyzer
+    if _analyzer is None:
         try:
-            analyzer = SentimentIntensityAnalyzer()
+            _analyzer = SentimentIntensityAnalyzer()
         except LookupError:
             nltk.download("vader_lexicon", quiet=True)
-            analyzer = SentimentIntensityAnalyzer()
+            _analyzer = SentimentIntensityAnalyzer()
+        _analyzer.lexicon.update(CUSTOM_FINANCIAL_DICT)
+    return _analyzer
 
-        custom_dict = {
-            "guidance cut": -2.0,
-            "missed estimates": -1.5,
-            "beat expectations": 2.0,
-            "upgrade": 1.5,
-            "downgrade": -1.5,
-            "bullish": 2.0,
-            "bearish": -2.0,
-            "outperform": 1.5,
-            "underperform": -1.5,
-            "buy": 1.0,
-            "sell": -1.0,
-            "strong buy": 2.0,
-            "strong sell": -2.0,
-            "profit warning": -2.0,
-            "dividend hike": 1.5,
-            "dividend cut": -1.5,
-            "layoffs": -1.5,
-            "restructuring": -0.5,
-            "bankruptcy": -3.0,
-            "lawsuit": -1.5,
-            "investigation": -1.5,
-            "record high": 1.5,
-            "record low": -1.5,
-            "surged": 1.5,
-            "plunged": -2.0,
-            "selloff": -2.0,
-            "rally": 1.5,
-            "merger": 1.0,
-            "acquisition": 1.0,
-            "buyout": 1.5,
-            "slumps": -1.5,
-            "soars": 1.5,
-        }
 
-        analyzer.lexicon.update(custom_dict)
+def get_financial_sentiment(ticker: str) -> dict:
+    try:
+        analyzer = _get_analyzer()
 
         ticker_obj = yf.Ticker(ticker)
         news = ticker_obj.news

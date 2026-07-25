@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 
 
-def _ensure_series(col):
+def _ensure_series(col: pd.Series | pd.DataFrame) -> pd.Series:
+    """Ensure the input is a 1D pandas Series."""
     if isinstance(col, pd.DataFrame):
         col = col.iloc[:, 0]
     return col

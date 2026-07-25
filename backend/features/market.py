@@ -26,6 +26,7 @@ def add_market_context(df: pd.DataFrame, period: str = "5y") -> pd.DataFrame:
                 period=period,
                 progress=False,
                 auto_adjust=True,
+                timeout=30,
             )
 
             if isinstance(m_data.columns, pd.MultiIndex):
