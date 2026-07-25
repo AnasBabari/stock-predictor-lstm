@@ -6,19 +6,33 @@
 [![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![TensorFlow 2.16+](https://img.shields.io/badge/TensorFlow-2.16+-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Render](https://img.shields.io/badge/Render-46E3B7?logo=render&logoColor=white)](https://stock-predictor-lstm.onrender.com)
+[![Vercel](https://img.shields.io/badge/Vercel-000000?logo=vercel&logoColor=white)](https://stock-predictor-lstm-two.vercel.app)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://github.com/AnasBabari/stock-predictor-lstm/pkgs/container/stock-predictor-lstm)
 
 ---
 
-**StockLSTM** is a full-stack stock forecasting application combining a **Bi-LSTM model with temporal attention** for directional prediction with an **LSTM regression model** for price forecasting. Historical data is sourced from Yahoo Finance; results are surfaced through a FastAPI backend and a responsive React dashboard.
+## Live Demo
+
+Frontend: https://stock-predictor-lstm-two.vercel.app  
+Backend API: https://stock-predictor-lstm.onrender.com
+
+---
+
+**StockLSTM** is a full-stack stock forecasting platform combining an **LSTM regression model** for price forecasting with a **BiLSTM + temporal attention model** for directional prediction. Historical market data is retrieved from Yahoo Finance, processed through a feature-engineering pipeline, and served via a FastAPI REST API to an interactive React dashboard powered by Chart.js.
 
 > [!IMPORTANT]
 > **Highlights**
 > - Full-stack ML application — FastAPI backend + React 18 frontend
-> - Bidirectional LSTM with temporal attention and interpretable attention weights
+> - LSTM regression model for multi-step price prediction
+> - BiLSTM with temporal attention for up/down direction prediction
 > - Walk-forward validation (5-fold expanding window)
 > - 22 engineered features: OHLCV, technical indicators, market context, calendar
-> - 53 automated backend tests · **80.5% test coverage**
-> - GitHub Actions CI/CD with lint, type-check, security scan, and coverage gate
+> - Financial sentiment via VADER with financial lexicon
+> - Model caching with automatic retraining when stale
+> - 53 automated backend tests · 80.5% test coverage
+> - Docker Compose support
+> - Live deployment on Render + Vercel
 
 > ⚠️ **Disclaimer** — Educational project only. Not financial advice.
 
@@ -26,30 +40,78 @@
 
 ## Screenshots
 
-| Price Forecast | Direction Forecast |
+| Price Forecast Dashboard | Direction Prediction |
 |---|---|
-| ![Dashboard top](assets/screenshot-top.png) | ![Dashboard bottom](assets/screenshot-bottom.png) |
+| ![Dashboard](assets/dashboard.png) | ![Prediction](assets/prediction.png) |
 
 ---
 
-## Key Features
+## Tech Stack
+
+**Backend**
+- FastAPI
+- TensorFlow / Keras
+- scikit-learn
+- yfinance
+- pandas
+- NumPy
+
+**Frontend**
+- React
+- Vite
+- Chart.js (react-chartjs-2)
+
+**Deployment**
+- Render (backend)
+- Vercel (frontend)
+- Docker Compose
+
+---
+
+## Features
 
 | Feature | Detail |
 |---|---|
-| **Bi-LSTM + Temporal Attention** | Directional classifier with per-timestep attention weights for interpretability |
-| **Multi-step price regression** | LSTM model predicts raw closing prices for 1–30 trading days |
-| **Walk-forward validation** | Configurable expanding / rolling / anchored 5-fold evaluation |
-| **22-feature engineering pipeline** | OHLCV · 9 technical indicators · 4 market context features · 4 calendar features |
-| **Sentiment integration** | VADER with financial lexicon applied to yfinance news headlines |
-| **Model caching & staleness detection** | `.keras` + fitted `MinMaxScaler` persisted; auto-retrain after 7 days |
-| **Diagnostics endpoint** | Per-fold residuals, cross-validation summary, dataset fingerprint |
-| **Interactive React dashboard** | Chart.js charts, watchlist, timeframe selector, CSV/PNG/ZIP export |
-| **Rate-limited API** | slowapi per-IP limits, explicit CORS origins, sanitised inputs |
-| **GitHub Actions CI/CD** | ruff → mypy → bandit → pytest (70% gate) → Docker build & push to GHCR |
+| **Price forecasting** | LSTM model predicts raw closing prices for 1–30 trading days |
+| **Trend prediction** | BiLSTM with temporal attention for directional classification (up/down) |
+| **Attention-based BiLSTM** | Per-timestep attention weights for interpretability |
+| **Walk-forward validation** | 5-fold expanding window evaluation |
+| **Technical indicator engineering** | 9 technical indicators: SMA, EMA, RSI, MACD, BB, ATR, OBV |
+| **Cross-asset features** | Market context from SPY, QQQ, VIX, TNX |
+| **Financial sentiment** | VADER with financial lexicon applied to yfinance news headlines |
+| **Calendar features** | Month and day sin/cos encoding |
+| **Interactive charts** | Chart.js visualisations with dynamic timeframe selection |
+| **Watchlist** | LocalStorage-persisted watchlist with one-click predictions |
+| **Prediction history** | Recent forecast history with change tracking |
+| **PNG/CSV export** | Export charts as PNG, data as CSV, or complete analysis as ZIP |
+| **Model caching** | .keras + fitted MinMaxScaler persisted; auto-retrain after configurable days |
+| **Automatic retraining** | Staleness detection triggers retrain on next request |
+| **REST API** | Rate-limited endpoints with OpenAPI docs |
+| **Docker deployment** | Docker Compose with health checks and persistent model volumes |
+| **CI/CD** | GitHub Actions with lint, type-check, security scan, tests, coverage gate, and Docker builds |
 
 ---
 
 ## Architecture
+
+```
+React (Vite)
+        │
+        ▼
+FastAPI REST API
+        │
+        ▼
+  Prediction Service
+        │
+  ┌──────┴────────┐
+  ▼               ▼
+ LSTM         BiLSTM + Attention
+        │
+        ▼
+  TensorFlow / Keras
+```
+
+### Detailed Data Flow
 
 ```mermaid
 graph TD
@@ -58,7 +120,7 @@ graph TD
     subgraph Backend
         API --> Val["Input Validation\n+ Rate Limiting"]
         Val --> Price["LSTM Regression\n/api/v1/predict"]
-        Val --> Dir["Bi-LSTM Attention\n/api/v1/predict/direction"]
+        Val --> Dir["BiLSTM Attention\n/api/v1/predict/direction"]
         Val --> Diag["Diagnostics\n/api/v1/diagnostics/{ticker}"]
         Price & Dir --> MM["Model Manager\n(load / train / cache)"]
         MM --> DP["Data Pipeline\nyfinance + 22 features"]
@@ -75,7 +137,7 @@ graph LR
     Raw --> Market["Market Context\nSPY · QQQ · VIX · TNX\n1-day returns"]
     Raw --> Cal["Calendar\nMonth & Day\nsin/cos encoding"]
     Tech & Market & Cal --> Window["60-day\nSliding Window\n→ shape 60 × 22"]
-    Window --> Models["LSTM  /  Bi-LSTM-Attention"]
+    Window --> Models["LSTM  /  BiLSTM Attention"]
 ```
 
 ### Model Architecture
@@ -83,15 +145,16 @@ graph LR
 ```mermaid
 graph TD
     subgraph "LSTM Regression"
-        I1["Input · 60 × 22"] --> L1["LSTM 64 · Dropout 0.2"]
-        L1 --> L2["LSTM 64 · Dropout 0.2"]
+        I1["Input · 60 × 22"] --> L1["LSTM 64 · Dropout 0.25"]
+        L1 --> L2["LSTM 32 · Dropout 0.25"]
         L2 --> O1["Dense(forecast_days)\nLinear — price output"]
     end
 
-    subgraph "Bi-LSTM + Attention"
-        I2["Input · 60 × 22"] --> BL["BiLSTM 64 · returns sequences\n→ 60 × 128"]
-        BL --> AT["Self-Attention\n→ context 128 · weights 60"]
-        AT --> O2["Dense(forecast_days, sigmoid)\nUp/Down probability"]
+    subgraph "BiLSTM + Temporal Attention"
+        I2["Input · 60 × 22"] --> LN["LayerNormalization"]
+        LN --> BL["BiLSTM 64 · returns sequences\n→ 60 × 128"]
+        BL --> TA["TemporalAttention\n→ context vector · weights 60"]
+        TA --> O2["Dense(forecast_days, sigmoid)\nUp/Down probability"]
     end
 ```
 
@@ -99,30 +162,27 @@ graph TD
 
 ```mermaid
 graph LR
-    PR["push / PR"] --> B1["ruff lint\n+ format"]
+    PR["push / PR"] --> B1["ruff lint\n+ format check"]
     B1 --> B2["mypy\ntype check"]
-    B2 --> B3["bandit\nsecurity"]
-    B3 --> B4["pytest\n70% coverage gate"]
+    B2 --> B3["bandit\nsecurity scan"]
+    B3 --> B4["pytest\ncoverage"]
     B4 --> F1["npm ci"]
-    F1 --> F2["vitest"]
-    F2 --> F3["vite build"]
-    F3 --> D["Docker build\n→ GHCR  ·  main only"]
+    F1 --> F2["react-doctor"]
+    F2 --> D["Docker build & push\n→ GHCR (main/develop only)"]
 ```
 
 ---
 
-## Project Metrics
+## Deployment
 
-| Metric | Value |
-|---|---|
-| Backend tests | 53 |
-| Frontend tests | 1 |
-| Test coverage | 80.5% |
-| Features engineered | 22 |
-| Walk-forward folds | 5 |
-| Forecast horizon | 3–30 days |
-| Input window size | 60 days |
-| Model types | 2 (regression + directional) |
+**Frontend**
+- Hosted on Vercel
+- Automatically redeployed on pushes to `main`
+
+**Backend**
+- Hosted on Render
+- FastAPI + TensorFlow with persistent disk for cached models
+- CORS origins are configured via the `CORS_ORIGIN` environment variable, allowing the deployed Vercel frontend to communicate securely with the Render-hosted backend.
 
 ---
 
@@ -162,7 +222,7 @@ API: `http://127.0.0.1:8000` · Swagger UI: `http://127.0.0.1:8000/docs`
 
 ```bash
 cd frontend
-npm ci          # mirrors CI — enforces lockfile integrity
+npm ci
 npm run dev     # Vite dev server → http://localhost:5500
 ```
 
@@ -172,10 +232,10 @@ npm run dev     # Vite dev server → http://localhost:5500
 
 | Variable | Default | Description |
 |---|---|---|
-| `ALLOWED_ORIGINS` | `["http://localhost:5500"]` | CORS allowed origins (JSON array) |
-| `CACHE_TTL` | `300` | Prediction cache TTL (seconds) |
-| `CACHE_MAX_SIZE` | `256` | Maximum cached entries |
-| `MODEL_MAX_AGE_DAYS` | `7` | Days before cached model is considered stale |
+| `CORS_ORIGIN` | (unset) | Production frontend origin for FastAPI CORS |
+| `CACHE_TTL` | `300` | Prediction cache TTL |
+| `CACHE_MAX_SIZE` | `256` | Cache size |
+| `MODEL_MAX_AGE_DAYS` | `7` | Retrain threshold (days) |
 
 Full list in `.env.example`.
 
@@ -191,7 +251,7 @@ Full specification: [`docs/API.md`](docs/API.md)
 | `GET /ready` | Readiness probe |
 | `GET /models` | Cached model manifest |
 | `GET /api/v1/predict` | LSTM price forecast + evaluation metrics |
-| `GET /api/v1/predict/direction` | Bi-LSTM direction forecast · attention weights · sentiment |
+| `GET /api/v1/predict/direction` | BiLSTM direction forecast · attention weights · sentiment |
 | `GET /api/v1/diagnostics/{ticker}` | Walk-forward validation diagnostics |
 | `GET /api/v1/search` | Ticker autocomplete |
 | `GET /api/v1/info` | Stock fundamentals |
@@ -212,13 +272,19 @@ npm run test:run
 
 ---
 
-## Future Improvements
+## Project Metrics
 
-- Transformer-based forecasting (Temporal Fusion Transformer)
-- Benchmark against XGBoost and LightGBM baselines
-- SHAP / permutation feature importance
-- Live deployment (Render + Vercel)
-- Real-time streaming predictions via WebSocket
+| Metric | Value |
+|---|---|
+| Backend tests | 53 |
+| Test coverage | 80.5% |
+| Engineered features | 22 |
+| Neural network architectures | 2 (regression + directional) |
+| Walk-forward folds | 5 |
+| Backend API endpoints | 8 |
+| Forecast horizon | 1–30 days |
+| Input window size | 60 days |
+| Deployment | Render + Vercel |
 
 ---
 
