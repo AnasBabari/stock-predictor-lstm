@@ -1,241 +1,234 @@
-# StockLSTM — AI Stock Price Predictor
+﻿# StockLSTM — AI Stock Price Predictor
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-18.0+-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![TensorFlow](https://img.shields.io/badge/TensorFlow-2.15+-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/)
-[![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
-[![CI/CD](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/main.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions)
-
-StockLSTM is a stock price forecasting application built with **FastAPI**, **React**, **Vite**, and **TensorFlow**. It fetches historical price data from Yahoo Finance, trains or loads cached LSTM neural network models, predicts future closing prices (3 to 30 trading days), and presents interactive visualizations.
+[![FastAPI 0.115+](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![TensorFlow 2.16+](https://img.shields.io/badge/TensorFlow-2.16+-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## Features
+**StockLSTM** is a full-stack stock forecasting application combining a **Bi-LSTM model with temporal attention** for directional prediction with an **LSTM regression model** for price forecasting. Historical data is sourced from Yahoo Finance; results are surfaced through a FastAPI backend and a responsive React dashboard.
 
-- **LSTM Forecasting**: Multi-step stock price prediction (3, 7, 14, or 30 trading days) using 2-layer LSTM models.
-- **Model Evaluation Metrics**: Computes RMSE, MAE, MAPE, R², and Directional Accuracy. Evaluation metrics are computed on a held-out test split from the downloaded historical data.
-- **Scaler & Model Persistence**: Serializes fitted `MinMaxScaler` objects alongside trained `.keras` models to ensure preprocessing during inference matches training.
-- **Automatic Staleness Detection**: Retrains cached models automatically when historical price data exceeds 7 days.
-- **React Frontend**: Single-page application built with Vite, CSS variables, and modular component architecture.
-- **Interactive Charts**: Line charts powered by Chart.js with dynamic timeframe selection (`1W`, `1M`, `3M`, `6M`, `1Y`) and context-aware CSV, PNG, or `.zip` Complete Analysis bundle export options.
-- **Company Overview & Autocomplete**: Real-time ticker search autocomplete and metadata dashboard (Market Cap, P/E ratio, 52-week High/Low, Volume).
-- **Watchlist & History**: Persists user watchlists and past predictions using browser local storage.
+> [!IMPORTANT]
+> **Highlights**
+> - Full-stack ML application — FastAPI backend + React 18 frontend
+> - Bidirectional LSTM with temporal attention and interpretable attention weights
+> - Walk-forward validation (5-fold expanding window)
+> - 22 engineered features: OHLCV, technical indicators, market context, calendar
+> - 53 automated backend tests · **80.5% test coverage**
+> - GitHub Actions CI/CD with lint, type-check, security scan, and coverage gate
 
-
-
-## 🚀 Quick Start with Docker
-
-Run the full-stack application locally using Docker Compose:
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/AnasBabari/stock-predictor-lstm.git
-   cd stock-predictor-lstm
-   ```
-
-2. Build and start containers:
-   ```bash
-   docker compose up --build
-   ```
-
-3. Open your browser and navigate to `http://localhost:5500`.
-
-*Note: Initial predictions for new tickers train an LSTM model on demand. Subsequent predictions load cached models immediately.*
+> ⚠️ **Disclaimer** — Educational project only. Not financial advice.
 
 ---
 
-## 🌐 Deployment & Configuration Management
+## Screenshots
 
-### Live Production Deployment
-- **Frontend (Vercel)**: Deployed automatically via Vercel GitHub integration. The frontend interacts with the FastAPI backend using `VITE_API_BASE_URL`.
-- **Backend (Render)**: Provisioned using `render.yaml` with persistent disk storage (`/saved_models`) to preserve cached TensorFlow models across container restarts.
-
-> [!NOTE]
-> **Storage & Horizontal Scaling**: Model artifacts currently persist to local disk volumes (`/saved_models`). While optimal for single-instance deployments, scaling horizontally across multiple backend instances would require migrating model caching to cloud object storage (e.g., AWS S3 or Google Cloud Storage).
-
-### Environment Secrets & Configuration
-Production configurations and API secrets are managed strictly through platform environment variables (Render Environment Variables and Vercel Project Settings). No credentials or secrets are committed to the codebase.
-
+| Price Forecast | Direction Forecast |
+|---|---|
+| ![Dashboard top](assets/screenshot-top.png) | ![Dashboard bottom](assets/screenshot-bottom.png) |
 
 ---
 
-## 💻 Local Development Setup
+## Key Features
 
-### 1. Backend Setup
+| Feature | Detail |
+|---|---|
+| **Bi-LSTM + Temporal Attention** | Directional classifier with per-timestep attention weights for interpretability |
+| **Multi-step price regression** | LSTM model predicts raw closing prices for 1–30 trading days |
+| **Walk-forward validation** | Configurable expanding / rolling / anchored 5-fold evaluation |
+| **22-feature engineering pipeline** | OHLCV · 9 technical indicators · 4 market context features · 4 calendar features |
+| **Sentiment integration** | VADER with financial lexicon applied to yfinance news headlines |
+| **Model caching & staleness detection** | `.keras` + fitted `MinMaxScaler` persisted; auto-retrain after 7 days |
+| **Diagnostics endpoint** | Per-fold residuals, cross-validation summary, dataset fingerprint |
+| **Interactive React dashboard** | Chart.js charts, watchlist, timeframe selector, CSV/PNG/ZIP export |
+| **Rate-limited API** | slowapi per-IP limits, explicit CORS origins, sanitised inputs |
+| **GitHub Actions CI/CD** | ruff → mypy → bandit → pytest (70% gate) → Docker build & push to GHCR |
 
-Navigate to the `backend` directory, create a virtual environment, and install dependencies:
+---
+
+## Architecture
+
+```mermaid
+graph TD
+    Browser["React 18 · Vite 5"] -->|REST| API["FastAPI 0.115+"]
+
+    subgraph Backend
+        API --> Val["Input Validation\n+ Rate Limiting"]
+        Val --> Price["LSTM Regression\n/api/v1/predict"]
+        Val --> Dir["Bi-LSTM Attention\n/api/v1/predict/direction"]
+        Val --> Diag["Diagnostics\n/api/v1/diagnostics/{ticker}"]
+        Price & Dir --> MM["Model Manager\n(load / train / cache)"]
+        MM --> DP["Data Pipeline\nyfinance + 22 features"]
+        MM --> Disk["saved_models/\n.keras · .joblib · metadata"]
+        Dir --> News["VADER Sentiment"]
+    end
+```
+
+### Feature Engineering Pipeline
+
+```mermaid
+graph LR
+    Raw["yfinance\nOHLCV"] --> Tech["Technical\nSMA · EMA · RSI\nMACD · BB · ATR · OBV"]
+    Raw --> Market["Market Context\nSPY · QQQ · VIX · TNX\n1-day returns"]
+    Raw --> Cal["Calendar\nMonth & Day\nsin/cos encoding"]
+    Tech & Market & Cal --> Window["60-day\nSliding Window\n→ shape 60 × 22"]
+    Window --> Models["LSTM  /  Bi-LSTM-Attention"]
+```
+
+### Model Architecture
+
+```mermaid
+graph TD
+    subgraph "LSTM Regression"
+        I1["Input · 60 × 22"] --> L1["LSTM 64 · Dropout 0.2"]
+        L1 --> L2["LSTM 64 · Dropout 0.2"]
+        L2 --> O1["Dense(forecast_days)\nLinear — price output"]
+    end
+
+    subgraph "Bi-LSTM + Attention"
+        I2["Input · 60 × 22"] --> BL["BiLSTM 64 · returns sequences\n→ 60 × 128"]
+        BL --> AT["Self-Attention\n→ context 128 · weights 60"]
+        AT --> O2["Dense(forecast_days, sigmoid)\nUp/Down probability"]
+    end
+```
+
+### CI/CD Pipeline
+
+```mermaid
+graph LR
+    PR["push / PR"] --> B1["ruff lint\n+ format"]
+    B1 --> B2["mypy\ntype check"]
+    B2 --> B3["bandit\nsecurity"]
+    B3 --> B4["pytest\n70% coverage gate"]
+    B4 --> F1["npm ci"]
+    F1 --> F2["vitest"]
+    F2 --> F3["vite build"]
+    F3 --> D["Docker build\n→ GHCR  ·  main only"]
+```
+
+---
+
+## Project Metrics
+
+| Metric | Value |
+|---|---|
+| Backend tests | 53 |
+| Frontend tests | 1 |
+| Test coverage | 80.5% |
+| Features engineered | 22 |
+| Walk-forward folds | 5 |
+| Forecast horizon | 3–30 days |
+| Input window size | 60 days |
+| Model types | 2 (regression + directional) |
+
+---
+
+## Quick Start — Docker
+
+```bash
+git clone https://github.com/AnasBabari/stock-predictor-lstm.git
+cd stock-predictor-lstm
+docker compose up --build
+```
+
+Open `http://localhost:5500`. On first use, selecting a new ticker trains the model on demand (~1–3 min). Subsequent requests load the cached model instantly.
+
+---
+
+## Local Development
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+ and npm 9+
+
+### Backend
 
 ```bash
 cd backend
 python -m venv venv
-
-# On Linux/macOS:
-source venv/bin/activate
-
-# On Windows (PowerShell):
-.\venv\Scripts\Activate.ps1
-
-# Install requirements
+source venv/bin/activate        # Windows: .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt -r requirements-dev.txt
-```
-
-Create your environment file from `.env.example`:
-```bash
-cp .env.example .env
-```
-
-Start the backend server using Uvicorn:
-
-```bash
+cp ../.env.example ../.env
 uvicorn api:app --reload --port 8000
 ```
-The API will be available at `http://127.0.0.1:8000`. Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
 
-### 2. Frontend Setup
+API: `http://127.0.0.1:8000` · Swagger UI: `http://127.0.0.1:8000/docs`
 
-In a separate terminal, navigate to the `frontend` directory, install Node packages, and launch the Vite development server:
+### Frontend
 
 ```bash
 cd frontend
-# cp .env.example .env  # Uncomment if you need to configure custom API URLs
-npm install
-npm run dev
+npm ci          # mirrors CI — enforces lockfile integrity
+npm run dev     # Vite dev server → http://localhost:5500
 ```
-The frontend application will run at `http://localhost:5500`.
 
 ---
 
-## 🔐 Environment Variables
+## Environment Variables
 
-Before running the backend, create a `.env` file by copying `.env.example`:
+| Variable | Default | Description |
+|---|---|---|
+| `ALLOWED_ORIGINS` | `["http://localhost:5500"]` | CORS allowed origins (JSON array) |
+| `CACHE_TTL` | `300` | Prediction cache TTL (seconds) |
+| `CACHE_MAX_SIZE` | `256` | Maximum cached entries |
+| `MODEL_MAX_AGE_DAYS` | `7` | Days before cached model is considered stale |
+
+Full list in `.env.example`.
+
+---
+
+## API
+
+Full specification: [`docs/API.md`](docs/API.md)
+
+| Endpoint | Description |
+|---|---|
+| `GET /health` | Liveness probe |
+| `GET /ready` | Readiness probe |
+| `GET /models` | Cached model manifest |
+| `GET /api/v1/predict` | LSTM price forecast + evaluation metrics |
+| `GET /api/v1/predict/direction` | Bi-LSTM direction forecast · attention weights · sentiment |
+| `GET /api/v1/diagnostics/{ticker}` | Walk-forward validation diagnostics |
+| `GET /api/v1/search` | Ticker autocomplete |
+| `GET /api/v1/info` | Stock fundamentals |
+
+---
+
+## Testing
 
 ```bash
-cp backend/.env.example backend/.env
-```
+# Backend
+cd backend
+pytest tests/ -v --cov=. --cov-report=term-missing --cov-fail-under=70
 
-| Environment Variable | Default Value | Description |
-| :--- | :--- | :--- |
-| `ALLOWED_ORIGINS` | `["http://localhost:5500","http://127.0.0.1:5500"]` | JSON array of CORS allowed origins |
-| `RATE_LIMIT_PREDICT` | `5/minute` | Rate limit for `/api/v1/predict` endpoint |
-| `RATE_LIMIT_SEARCH` | `30/minute` | Rate limit for `/api/v1/search` endpoint |
-| `RATE_LIMIT_INFO` | `20/minute` | Rate limit for `/api/v1/info` endpoint |
-| `PREDICT_CACHE_TTL` | `300` | Prediction cache TTL in seconds |
-| `INFO_CACHE_TTL` | `3600` | Stock info cache TTL in seconds |
-| `CACHE_MAX_SIZE` | `500` | Maximum items in in-memory cache |
-
----
-
-## 🧠 Scaler & Model Persistence
-
-Models (`.keras`) and fitted `MinMaxScaler` instances (`.joblib`) are serialized together in `backend/saved_models/`. Reusing the exact fitted scaler instance during inference ensures input preprocessing matches training data and prevents prediction drift caused by refitting on new market data. The preprocessing pipeline is designed to prevent look-ahead bias by fitting transformations only on the training partition before applying them to validation and test data.
-
-## 🏛 Architecture & Model Design
-
-```mermaid
-graph TD
-    React[React Frontend] -->|GET /predict/direction| FastAPI[FastAPI Backend]
-    FastAPI --> ModelManager[Model Manager]
-    FastAPI --> NewsService[News Aggregator]
-    ModelManager --> AttentionLSTM[Attention-LSTM Model]
-    ModelManager --> Metrics[Metrics Store]
-    NewsService --> VADER[VADER + Financial Lexicon]
-    VADER --> YFinance[yfinance News]
-```
-
-### Why Two Models?
-
-The application provides two complementary forecasting modes:
-
-- **Price Forecast**: Estimates future raw closing prices using a 2-layer LSTM regression model (`/api/v1/predict`).
-- **Trend Forecast**: Estimates the directional probability of upward vs. downward movement using an Attention-LSTM classification model with timestamped attention-weight explanations (`/api/v1/predict/direction`).
-
-Users can seamlessly switch between these modes through a unified interface while the backend maintains separate model lifecycles, endpoints, and caches.
-
-### Multi-Output Direction Forecasting
-For binary directional prediction, the Attention-LSTM model employs a **direct multi-output architecture**. Rather than performing recursive or rolling one-step predictions, the network's final layer (`Dense(forecast_days, activation="sigmoid")`) predicts all target forecast days simultaneously in a single forward pass.
-
-### Probability & Calibration
-Probabilities returned by `/api/v1/predict/direction` represent **raw sigmoid model outputs** ($> 0.5 \rightarrow \text{Up}$, $\le 0.5 \rightarrow \text{Down}$). They indicate relative model confidence along the sigmoid curve rather than calibrated Bayesian probabilities.
-
----
-
-## 🏗 Project Structure
-
-```text
-stock-predictor-lstm/
-├── .github/
-│   └── workflows/
-│       └── main.yml           # GitHub Actions CI/CD Pipeline
-├── backend/
-│   ├── api.py                 # FastAPI endpoints & middleware
-│   ├── data_pipeline.py       # YFinance data retrieval & feature scaling
-│   ├── model.py                # LSTM model architecture & persistence
-│   ├── requirements.txt       # Production dependencies
-│   ├── requirements-dev.txt   # Development & test dependencies
-│   ├── saved_models/          # Model (.keras) and scaler (.joblib) artifacts
-│   └── tests/                 # Unit and integration tests
-├── frontend/
-│   ├── Dockerfile             # Multi-stage build (Node -> Nginx)
-│   ├── package.json           # React & Vite dependencies
-│   ├── vite.config.js         # Vite configuration & API proxy
-│   └── src/
-│       ├── main.jsx           # Application entry point
-│       ├── App.jsx            # Main container & state management
-│       ├── styles.css         # UI styles and CSS variables
-│       └── components/        # UI components
-├── docs/
-│   └── images/                # Application screenshots
-├── docker-compose.yml         # Container orchestration
-└── README.md
+# Frontend
+cd frontend
+npm run test:run
 ```
 
 ---
 
-## 🚀 CI/CD Pipeline
+## Future Improvements
 
-StockLSTM uses **GitHub Actions** ([`main.yml`](file:///.github/workflows/main.yml)) for continuous integration and automated container builds on pushes to `main` and `develop`.
-
-```mermaid
-graph LR
-    Lint[1. Lint & Type Check] --> Test[2. Unit Tests]
-    Test --> Security[3. Security Scan]
-    Security --> Build[4. Docker Build & Push]
-```
-
-### Pipeline Steps
-1. **Lint & Type Check**: Checks formatting with `ruff`, runs static typing with `mypy`, and scans React components.
-2. **Unit Tests**: Runs backend tests with `pytest` and exports coverage reports.
-3. **Security Scan**: Performs static code security analysis using `bandit`.
-4. **Docker Build & Push**: Builds container images with Docker Buildx and pushes them to GitHub Container Registry (GHCR):
-   - `ghcr.io/anasbabari/stock-predictor-lstm/backend:latest`
-   - `ghcr.io/anasbabari/stock-predictor-lstm/frontend:latest`
+- Transformer-based forecasting (Temporal Fusion Transformer)
+- Benchmark against XGBoost and LightGBM baselines
+- SHAP / permutation feature importance
+- Live deployment (Render + Vercel)
+- Real-time streaming predictions via WebSocket
 
 ---
 
-## 📡 API Reference
+## Documentation
 
-| Endpoint | Method | Parameters | Description |
-| :--- | :--- | :--- | :--- |
-| `/health` | `GET` | None | O(1) Liveness probe returning process status and version |
-| `/ready` | `GET` | None | O(1) Readiness probe verifying backend dependency health |
-| `/models` | `GET` | None | Returns manifest of trained and cached model artifacts |
-| `/api/v1/predict` | `GET` | `ticker` (str), `days` (int, default: 7) | Generates regression price forecasts, evaluation metrics, and runtime metadata |
-| `/api/v1/predict/direction` | `GET` | `ticker` (str), `days` (int, default: 7) | Directional Attention-LSTM forecasts, timestamped attention weights, metrics (F1, Precision, Recall), sentiment, and metadata |
-| `/api/v1/search` | `GET` | `query` (str) | Returns stock ticker autocomplete suggestions |
-| `/api/v1/info` | `GET` | `ticker` (str) | Retrieves stock fundamental metadata |
-
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design, data flow, design decisions
+- [`docs/API.md`](docs/API.md) — full endpoint specification with examples
 
 ---
 
-## ⚠️ Disclaimer
+## License
 
-> [!WARNING]
-> This project is for **educational and research purposes only**. Stock price forecasts generated by machine learning models should not be used as financial or investment advice.
-
----
-
-## 📄 License
-
-This project is licensed under the [MIT License](LICENSE).
+MIT License — see [`LICENSE`](LICENSE) for details.
