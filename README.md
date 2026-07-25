@@ -30,7 +30,7 @@ Backend API: https://stock-predictor-lstm.onrender.com
 > - 22 engineered features: OHLCV, technical indicators, market context, calendar
 > - Financial sentiment via VADER with financial lexicon
 > - Model caching with automatic retraining when stale
-> - 53 automated backend tests · 80.5% test coverage
+> - 56 automated backend tests · 80.5% test coverage
 > - Docker Compose support
 > - Live deployment on Render + Vercel
 
@@ -276,7 +276,7 @@ npm run test:run
 
 | Metric | Value |
 |---|---|
-| Backend tests | 53 |
+| Backend tests | 56 |
 | Test coverage | 80.5% |
 | Engineered features | 22 |
 | Neural network architectures | 2 (regression + directional) |
