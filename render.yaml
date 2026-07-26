@@ -3,14 +3,32 @@ services:
     name: stock-predictor-backend
     env: python
     region: oregon
-    buildCommand: "pip install -r backend/requirements.txt"
-    startCommand: "cd backend && uvicorn api:app --host 0.0.0.0 --port $PORT"
+    buildCommand: "pip install uv==0.11.16 && uv sync --project backend --frozen --no-dev"
+    startCommand: "backend/.venv/bin/uvicorn api:app --app-dir backend --host 0.0.0.0 --port $PORT"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: ENVIRONMENT
         value: production
+      - key: CORS_ORIGIN
+        sync: false
+      - key: MODEL_DIR
+        value: /app/saved_models
+      - key: PREDICTION_WORKERS
+        value: "2"
+      - key: PREDICTION_QUEUE_SIZE
+        value: "4"
+      - key: PREDICTION_TIMEOUT_SECONDS
+        value: "600"
+      - key: TRAINING_CONCURRENCY
+        value: "1"
+      - key: MODEL_MAX_COUNT
+        value: "20"
+      - key: MODEL_MAX_STORAGE_MB
+        value: "900"
+      - key: MODEL_MIN_FREE_MB
+        value: "100"
     disk:
       name: saved-models
-      mountPath: /app/backend/saved_models
+      mountPath: /app/saved_models
       sizeGB: 1

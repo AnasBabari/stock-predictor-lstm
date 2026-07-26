@@ -11,28 +11,31 @@ Fixes applied:
     2.7 Structured logging
 """
 
+import asyncio
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
-from datetime import timedelta
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 
 import numpy as np
-import pandas_market_calendars as mcal
 import sklearn  # type: ignore[import-untyped]
 import tensorflow as tf  # type: ignore[import-untyped]
 import yfinance as yf  # type: ignore[import-untyped]
 from cachetools import TTLCache
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from calendars import future_trading_dates
 from config import (
     APP_VERSION,
     DEFAULT_FORECAST_DAYS,
@@ -43,9 +46,10 @@ from config import (
     WINDOW_SIZE,
     settings,
 )
-from data_pipeline import fetch_data, get_pipeline, prepare_return_data, preprocess
+from data_pipeline import fetch_data, prepare_return_data, preprocess
+from features.market import MarketContextUnavailable
 from model import (
-    evaluate_model,
+    TrainingCapacityError,
     get_manifest,
     load_cross_validation,
     load_metadata,
@@ -98,8 +102,52 @@ _predict_cache: TTLCache = TTLCache(
 )
 _info_cache: TTLCache = TTLCache(
     maxsize=settings.cache_max_size,
-    ttl=settings.cache_ttl,
+    ttl=settings.info_cache_ttl,
 )
+_info_cache_lock = threading.Lock()
+
+
+class ServiceBusyError(RuntimeError):
+    """The bounded prediction executor has no queue capacity."""
+
+
+class WorkCoordinator:
+    """Bounded executor with exact-request coalescing."""
+
+    def __init__(self, workers: int, queue_size: int):
+        self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="prediction")
+        self._capacity = threading.BoundedSemaphore(workers + queue_size)
+        self._lock = threading.Lock()
+        self._inflight: dict[str, Future] = {}
+
+    def submit(self, key: str, function, *args) -> Future:
+        with self._lock:
+            existing = self._inflight.get(key)
+            if existing is not None:
+                return existing
+            if not self._capacity.acquire(blocking=False):
+                raise ServiceBusyError("Prediction queue is full.")
+            future = self._executor.submit(function, *args)
+            self._inflight[key] = future
+
+        def complete(_future):
+            with self._lock:
+                self._inflight.pop(key, None)
+            self._capacity.release()
+
+        future.add_done_callback(complete)
+        return future
+
+
+_work_coordinator = WorkCoordinator(settings.prediction_workers, settings.prediction_queue_size)
+_upstream_lock = threading.Lock()
+_upstream_state = {
+    "status": "unknown",
+    "circuit": "unknown",
+    "last_error": None,
+    "checked_at_epoch": None,
+    "consecutive_failures": 0,
+}
 
 VALID_MODEL_TYPES = {"lstm", "bilstm_attention_direction", "attention"}
 
@@ -127,7 +175,17 @@ def get_runtime_metadata(ticker: str, model_type: str = "lstm") -> dict:
         "sklearn_version": sklearn.__version__,
         "window_size": WINDOW_SIZE,
         "feature_count": saved_meta.get("feature_count", len(FEATURES)),
-        "architecture": "attention_lstm" if model_type == "attention" else "lstm",
+        "architecture": (
+            "bidirectional_lstm_with_attention"
+            if model_type == "bilstm_attention_direction"
+            else "attention_lstm"
+            if model_type == "attention"
+            else "lstm"
+        ),
+        "output_width": saved_meta.get("output_width"),
+        "metric_source": saved_meta.get("metric_source", "unavailable"),
+        "seed": saved_meta.get("seed"),
+        "deterministic": saved_meta.get("deterministic"),
     }
 
 
@@ -150,6 +208,200 @@ def validate_model_type(model_type: str) -> str:
     return model_type
 
 
+def _record_upstream(status: str, error: str | None = None) -> None:
+    with _upstream_lock:
+        failures = (
+            min(int(_upstream_state["consecutive_failures"] or 0) + 1, 1000)
+            if status == "unavailable"
+            else 0
+        )
+        _upstream_state.update(
+            {
+                "status": status,
+                "circuit": "open" if status == "unavailable" else "closed",
+                "last_error": error,
+                "checked_at_epoch": int(time.time()),
+                "consecutive_failures": failures,
+            }
+        )
+
+
+def _fetch_snapshot(ticker: str):
+    with _upstream_lock:
+        checked_at = int(_upstream_state["checked_at_epoch"] or 0)
+        cooldown_remaining = settings.upstream_circuit_cooldown_seconds - (time.time() - checked_at)
+        if _upstream_state["circuit"] == "open" and cooldown_remaining > 0:
+            raise MarketContextUnavailable("Market data circuit is temporarily open; retry later.")
+        if _upstream_state["circuit"] == "open":
+            _upstream_state["circuit"] = "half_open"
+        elif _upstream_state["circuit"] == "half_open":
+            raise MarketContextUnavailable("Market data circuit recovery probe is in progress.")
+    try:
+        snapshot = fetch_data(ticker)
+        _record_upstream("available")
+        feature_df, prices, dates, metadata = snapshot
+        return feature_df.copy(deep=True), prices.copy(), dates.copy(), dict(metadata)
+    except Exception as err:
+        _record_upstream("unavailable", type(err).__name__)
+        raise
+
+
+def _validated_future_dates(ticker: str, last_date, days: int) -> tuple[list[str], str]:
+    dates, calendar_id = future_trading_dates(ticker, last_date, days)
+    if len(dates) != days:
+        raise RuntimeError("Calendar provider returned an incomplete forecast horizon.")
+    return dates, calendar_id
+
+
+def _price_prediction_pipeline(ticker: str, days: int) -> dict:
+    feature_df, closing_prices, historical_dates, feature_metadata = _fetch_snapshot(ticker)
+    X_train, X_test, y_train, y_test, scaler, _, _ = preprocess(
+        feature_df, forecast_days=MAX_FORECAST_DAYS
+    )
+    model, model_scaler = load_or_train(
+        ticker,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        scaler,
+        "lstm",
+        feature_df,
+        feature_metadata,
+    )
+    predictions = predict_future(model, feature_df, model_scaler, days=days)
+    future_dates, calendar_id = _validated_future_dates(ticker, historical_dates[-1], days)
+    if len(predictions) != days:
+        raise RuntimeError("Price model returned an incompatible forecast horizon.")
+
+    runtime = get_runtime_metadata(ticker, "lstm")
+    runtime.update(
+        {
+            "calendar": calendar_id,
+            "data_snapshot": feature_metadata,
+            "data_quality": feature_metadata.get("market_context", {}),
+        }
+    )
+    return {
+        "ticker": ticker,
+        "historical_dates": historical_dates.strftime("%Y-%m-%d").tolist(),
+        "historical_prices": np.asarray(closing_prices, dtype=float).flatten().tolist(),
+        "future_dates": future_dates,
+        "predicted_prices": [float(value) for value in predictions],
+        "forecast_days": days,
+        "metrics": load_metrics(ticker, "lstm"),
+        "metadata": runtime,
+    }
+
+
+def _direction_prediction_pipeline(ticker: str, days: int) -> dict:
+    feature_df, _, historical_dates, feature_metadata = _fetch_snapshot(ticker)
+    # Direction artifacts always have a fixed maximum output width. Responses are sliced only
+    # after the artifact signature has been validated by load_or_train.
+    X_train, X_test, y_train, y_test, scaler, _, _ = prepare_return_data(
+        feature_df, forecast_days=MAX_FORECAST_DAYS
+    )
+    model_type = "bilstm_attention_direction"
+    model, model_scaler = load_or_train(
+        ticker,
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        scaler,
+        model_type,
+        feature_df,
+        feature_metadata,
+    )
+    directions, probabilities, attention_weights = predict_direction(
+        model, feature_df, model_scaler, days=days
+    )
+    future_dates, calendar_id = _validated_future_dates(ticker, historical_dates[-1], days)
+    if not (
+        len(directions) == len(probabilities) == len(future_dates) == days
+        and len(attention_weights) == WINDOW_SIZE
+    ):
+        raise RuntimeError("Direction model returned an incompatible response shape.")
+    if not all(
+        np.isfinite(probability) and 0.0 <= probability <= 1.0 for probability in probabilities
+    ):
+        raise RuntimeError("Direction model returned invalid probabilities.")
+
+    past_dates = historical_dates[-WINDOW_SIZE:].strftime("%Y-%m-%d").tolist()
+    formatted_attention = [
+        {"index": index, "date": date, "weight": float(weight)}
+        for index, (date, weight) in enumerate(zip(past_dates, attention_weights, strict=True))
+    ]
+    sentiment_data = get_financial_sentiment(ticker)
+    runtime = get_runtime_metadata(ticker, model_type)
+    runtime.update(
+        {
+            "calendar": calendar_id,
+            "data_snapshot": feature_metadata,
+            "data_quality": feature_metadata.get("market_context", {}),
+        }
+    )
+    return {
+        "ticker": ticker,
+        "forecast_days": days,
+        "future_dates": future_dates,
+        "directions": directions,
+        "probabilities": probabilities,
+        "attention_weights": formatted_attention,
+        "metrics": load_metrics(ticker, model_type=model_type),
+        "sentiment": sentiment_data.get(
+            "sentiment",
+            {
+                "score": 0.0,
+                "status": "fallback",
+                "provider": "yfinance",
+                "method": "vader_financial",
+            },
+        ),
+        "metadata": runtime,
+    }
+
+
+async def _await_prediction(key: str, function, ticker: str, days: int) -> dict:
+    try:
+        future = _work_coordinator.submit(key, function, ticker, days)
+
+        def cache_completed(completed: Future) -> None:
+            try:
+                result = completed.result()
+            except Exception:
+                return
+            with _predict_cache_lock:
+                _predict_cache[key] = result
+
+        future.add_done_callback(cache_completed)
+        return await asyncio.wait_for(
+            asyncio.shield(asyncio.wrap_future(future)),
+            timeout=settings.prediction_timeout_seconds,
+        )
+    except (ServiceBusyError, TrainingCapacityError) as err:
+        raise HTTPException(
+            status_code=503, detail="Prediction capacity is temporarily full."
+        ) from err
+    except TimeoutError as err:
+        raise HTTPException(
+            status_code=503, detail="Prediction timed out; the shared job may still complete."
+        ) from err
+    except MarketContextUnavailable as err:
+        raise HTTPException(status_code=503, detail=str(err)) from err
+    except ValueError as err:
+        safe_messages = ("Not enough historical data", "Not enough data for")
+        detail = (
+            str(err) if str(err).startswith(safe_messages) else "Invalid input data for prediction."
+        )
+        raise HTTPException(status_code=400, detail=detail) from err
+    except Exception as err:
+        logger.exception("Prediction pipeline failed for %s", ticker)
+        raise HTTPException(
+            status_code=500, detail="Prediction failed. Please try again later."
+        ) from err
+
+
 # ── Endpoints ────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
@@ -159,16 +411,36 @@ def health():
 
 @app.get("/ready")
 def ready():
-    """O(1) Readiness probe."""
-    model_dir_ok = os.path.exists(MODEL_DIR) and os.access(MODEL_DIR, os.R_OK)
-    return {
-        "status": "ready" if model_dir_ok else "degraded",
+    """Readiness checks storage admission and bounded upstream circuit state."""
+    model_dir_ok = False
+    free_mb = 0
+    try:
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=MODEL_DIR, prefix=".ready-", delete=True):
+            pass
+        free_mb = shutil.disk_usage(MODEL_DIR).free // (1024 * 1024)
+        model_dir_ok = free_mb >= settings.model_min_free_mb
+    except OSError:
+        logger.warning("Model storage readiness check failed", exc_info=True)
+    with _upstream_lock:
+        upstream = dict(_upstream_state)
+    checked_at = upstream["checked_at_epoch"] or 0
+    circuit_blocked = (
+        upstream["circuit"] == "open"
+        and time.time() - checked_at < settings.upstream_circuit_cooldown_seconds
+    )
+    if upstream["circuit"] == "open" and not circuit_blocked:
+        upstream["circuit"] = "half_open"
+    is_ready = model_dir_ok and not circuit_blocked
+    content = {
+        "status": "ready" if is_ready else "degraded",
         "version": APP_VERSION,
         "dependencies": {
-            "yfinance": True,
-            "model_storage": model_dir_ok,
+            "market_data": upstream,
+            "model_storage": {"writable": model_dir_ok, "free_mb": free_mb},
         },
     }
+    return JSONResponse(status_code=200 if is_ready else 503, content=content)
 
 
 @app.get("/models")
@@ -183,6 +455,12 @@ def search(
     request: Request,
     query: str = Query(..., min_length=1, max_length=100),
 ):
+    exact_symbol = query.strip().upper()
+    fallback = []
+    if re.fullmatch(r"[A-Z0-9.\-]{1,12}", exact_symbol):
+        fallback.append({"ticker": exact_symbol, "name": exact_symbol, "type": "SYMBOL"})
+    if fallback and query.strip() == exact_symbol:
+        return {"results": fallback}
     try:
         results = yf.Search(query, max_results=8)
         suggestions = []
@@ -195,8 +473,12 @@ def search(
                         "type": r.get("quoteType", ""),
                     }
                 )
-        return {"results": suggestions}
+        seen = {item["ticker"] for item in suggestions}
+        return {"results": suggestions + [item for item in fallback if item["ticker"] not in seen]}
     except Exception as err:
+        if fallback:
+            logger.warning("Autocomplete upstream unavailable; returning exact symbol fallback")
+            return {"results": fallback, "degraded": True}
         logger.exception("Error in /api/v1/search")
         raise HTTPException(
             status_code=500,
@@ -210,7 +492,8 @@ def stock_info(request: Request, ticker: str = "AAPL"):
     """Return rich metadata for a ticker."""
     ticker = validate_ticker(ticker)
 
-    cached = _info_cache.get(ticker)
+    with _info_cache_lock:
+        cached = _info_cache.get(ticker)
     if cached:
         return cached
 
@@ -232,7 +515,8 @@ def stock_info(request: Request, ticker: str = "AAPL"):
             "sector": info.get("sector", "—"),
             "industry": info.get("industry", "—"),
         }
-        _info_cache[ticker] = data
+        with _info_cache_lock:
+            _info_cache[ticker] = data
         return data
     except Exception as err:
         logger.exception("Error fetching info for %s", ticker)
@@ -257,69 +541,10 @@ async def predict(
     if cached:
         return cached
 
-    try:
-        pipeline_data, closing_prices, historical_dates, feature_metadata = get_pipeline(ticker)
-        X_train, X_test, y_train, y_test, scaler, _, _ = pipeline_data
-        feature_df, _, _, _ = fetch_data(ticker)
-
-        # Model load or train with atomic fail-safe (passes feature_df for walk-forward)
-        model, model_scaler = await run_in_threadpool(
-            load_or_train, ticker, X_train, y_train, X_test, y_test, scaler, "lstm", feature_df
-        )
-
-        if model_scaler is not scaler:
-            X_train, X_test, y_train, y_test, model_scaler, _, _ = preprocess(
-                feature_df, scaler=model_scaler
-            )
-
-        metrics = evaluate_model(model, X_test, y_test, model_scaler)
-        predictions = predict_future(model, feature_df, model_scaler, days=days)
-
-        hist_dates = historical_dates.strftime("%Y-%m-%d").tolist()
-
-        cur = historical_dates[-1]
-        nyse = mcal.get_calendar("NYSE")
-        schedule = nyse.schedule(
-            start_date=cur + timedelta(days=1), end_date=cur + timedelta(days=days * 3 + 10)
-        )
-        future_dates = [d.strftime("%Y-%m-%d") for d in schedule.index if d > cur][:days]
-
-        historical_prices = np.asarray(closing_prices, dtype=float).flatten().tolist()
-
-        data = {
-            "ticker": ticker,
-            "historical_dates": hist_dates,
-            "historical_prices": historical_prices,
-            "future_dates": future_dates,
-            "predicted_prices": [float(p) for p in predictions],
-            "forecast_days": days,
-            "metrics": metrics,
-            "metadata": get_runtime_metadata(ticker, "lstm"),
-        }
-
-        with _predict_cache_lock:
-            _predict_cache[cache_key] = data
-        return data
-
-    except ValueError as err:
-        logger.exception("ValueError while predicting %s", ticker)
-        safe_msgs = ["Not enough historical data", "Not enough data for"]
-        detail = (
-            str(err)
-            if any(m in str(err) for m in safe_msgs)
-            else "Invalid input data for prediction."
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=detail,
-        ) from err
-
-    except Exception as err:
-        logger.exception("Error predicting %s", ticker)
-        raise HTTPException(
-            status_code=500,
-            detail="Prediction failed. Please try again later.",
-        ) from err
+    data = await _await_prediction(cache_key, _price_prediction_pipeline, ticker, days)
+    with _predict_cache_lock:
+        _predict_cache[cache_key] = data
+    return data
 
 
 @app.get("/api/v1/predict/direction")
@@ -337,83 +562,10 @@ async def predict_direction_endpoint(
     if cached:
         return cached
 
-    try:
-        feature_df, closing_prices, historical_dates, feature_metadata = fetch_data(ticker)
-
-        X_train, X_test, y_train, y_test, scaler, _, _ = prepare_return_data(
-            feature_df, forecast_days=days
-        )
-
-        model_type = "bilstm_attention_direction"
-        model, model_scaler = await run_in_threadpool(
-            load_or_train, ticker, X_train, y_train, X_test, y_test, scaler, model_type, feature_df
-        )
-
-        if model_scaler is not scaler:
-            X_train, X_test, y_train, y_test, model_scaler, _, _ = prepare_return_data(
-                feature_df, forecast_days=days, scaler=model_scaler
-            )
-
-        directions, probabilities, attention_weights = predict_direction(
-            model, feature_df, model_scaler, days=days
-        )
-
-        metrics = load_metrics(ticker, model_type=model_type)
-
-        cur = historical_dates[-1]
-        nyse = mcal.get_calendar("NYSE")
-        schedule = nyse.schedule(
-            start_date=cur + timedelta(days=1), end_date=cur + timedelta(days=days * 3 + 10)
-        )
-        future_dates = [d.strftime("%Y-%m-%d") for d in schedule.index if d > cur][:days]
-
-        past_dates = historical_dates[-WINDOW_SIZE:].strftime("%Y-%m-%d").tolist()
-        formatted_attention = [
-            {"index": idx, "date": d, "weight": float(w)}
-            for idx, (d, w) in enumerate(zip(past_dates, attention_weights, strict=False))
-        ]
-
-        sentiment_data = get_financial_sentiment(ticker)
-
-        data = {
-            "ticker": ticker,
-            "forecast_days": days,
-            "future_dates": future_dates,
-            "directions": directions,
-            "probabilities": probabilities,
-            "attention_weights": formatted_attention,
-            "metrics": metrics,
-            "sentiment": sentiment_data.get(
-                "sentiment",
-                {
-                    "score": 0.0,
-                    "status": "fallback",
-                    "provider": "yfinance",
-                    "method": "vader_financial",
-                },
-            ),
-            "metadata": get_runtime_metadata(ticker, model_type),
-        }
-
-        with _predict_cache_lock:
-            _predict_cache[cache_key] = data
-        return data
-
-    except ValueError as err:
-        logger.exception("ValueError while predicting direction for %s", ticker)
-        safe_msgs = ["Not enough historical data", "Not enough data for"]
-        detail = (
-            str(err)
-            if any(m in str(err) for m in safe_msgs)
-            else "Invalid input data for prediction."
-        )
-        raise HTTPException(status_code=400, detail=detail) from err
-    except Exception as err:
-        logger.exception("Error predicting direction %s", ticker)
-        raise HTTPException(
-            status_code=500,
-            detail="Prediction failed. Please try again later.",
-        ) from err
+    data = await _await_prediction(cache_key, _direction_prediction_pipeline, ticker, days)
+    with _predict_cache_lock:
+        _predict_cache[cache_key] = data
+    return data
 
 
 @app.get("/api/v1/diagnostics/{ticker}")

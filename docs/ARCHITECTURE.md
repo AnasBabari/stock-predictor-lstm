@@ -1,92 +1,43 @@
 # Architecture
 
-## Overview
+## Request flow
 
-StockLSTM is a decoupled full-stack application: a **FastAPI** backend handles data ingestion, feature engineering, model training/inference, and diagnostics; a **React + Vite** frontend renders interactive charts and sends REST requests. GitHub Actions enforces quality gates on every push and publishes Docker images to GHCR on merges to `main`.
+The React SPA calls same-origin `/api/` paths. In Compose, Nginx proxies those paths to FastAPI. Fast cache hits return immediately. Cold prediction work is admitted to a bounded executor; identical in-flight identities share one future. The entire blocking flow—Yahoo downloads, feature work, artifact load/training, inference, exchange calendar, and news sentiment—runs outside the event loop.
 
----
-
-## Frontend
-
-- **React 18.3 + Vite 5.4** — component-driven SPA, lazy-loaded charts.
-- **Chart.js** — line charts with dynamic timeframe selection (1W → 1Y).
-- **Features**: ticker autocomplete, watchlist (localStorage), CSV/PNG/ZIP export, forecast-type toggle (price / direction).
-- Connects to the backend via `VITE_API_BASE_URL`; defaults to `http://localhost:8000`.
-
----
-
-## Backend
-
-- **FastAPI 0.115+** — async endpoints, auto-generated OpenAPI docs at `/docs`.
-- **Middleware**: explicit CORS origins, per-IP rate limiting (slowapi), input sanitisation (`[A-Z0-9.\-]{1,12}` regex on tickers).
-- **Caching**: `cachetools.TTLCache` for predictions (300 s) and stock info (3600 s). Separate cache keys for price and direction endpoints.
-- **Error handling**: internal stack traces are logged server-side only; clients receive sanitised messages.
-
----
-
-## ML Pipeline
-
-### Feature Engineering (22 features per time step)
-
-| Group | Features |
-|---|---|
-| Base (OHLCV) | Open, High, Low, Close, Volume |
-| Technical (9) | SMA_20, EMA_20, RSI_14, MACD, MACD_Signal, BB_Upper, BB_Lower, ATR_14, OBV |
-| Market context (4) | SPY_Return_1D, QQQ_Return_1D, VIX_Return_1D, TNX_Return_1D |
-| Calendar (4) | Month_Sin, Month_Cos, Day_Sin, Day_Cos |
-
-Input window: **60 days**. Scaling: `MinMaxScaler` fitted exclusively on the training partition (no look-ahead bias).
-
-### Models
-
-**LSTM Regression** — predicts raw closing prices.
-- 2× LSTM(64) + Dropout(0.2), `Dense(forecast_days)` linear output.
-- Loss: MSE. Target: scaled closing price.
-
-**Bi-LSTM + Attention** — predicts up/down direction with interpretability.
-- `Bidirectional(LSTM(64, return_sequences=True))` → self-attention → `Dense(forecast_days, sigmoid)`.
-- Loss: binary cross-entropy. Target: log-return direction (1 = up, 0 = down).
-- Attention weights (60 values) exported per request for interpretability.
-
----
-
-## Walk-Forward Validation
-
-```python
-ValidationConfig(method="expanding", folds=5, min_train_size=500, horizon=30, seed=42)
+```text
+browser -> Nginx -> validation/rate limit/cache -> bounded coordinator
+  -> one immutable target snapshot
+  -> technical + calendar + versioned market-context features
+  -> compatible versioned artifact OR bounded/coalesced training
+  -> inference + exchange dates + response-shape validation
+  -> identity cache -> browser
 ```
 
-Five expanding folds. Each fold increases the training set by `horizon` days while keeping the test window fixed. Strategy (`expanding` / `rolling` / `anchored`) is config-only — no code changes needed to compare strategies.
+Prediction identity includes ticker, horizon, and type at the response/cache layer. Direction artifact identity deliberately uses a fixed 30-session output width; metadata and the Keras signature are checked before a shorter response is sliced.
 
-Per-fold results and aggregated cross-validation summaries are persisted to `saved_models/` alongside each model.
+## Data and ML boundaries
 
----
+There are 22 ordered features: OHLCV (5), technical (9), market context (4), and cyclic calendar values (4). Market context schema v2 carries the last known close across a closed benchmark session before calculating its return. It never fills from the future. Any source that cannot be aligned from a prior observation fails closed with provenance rather than producing an indistinguishable zero.
 
-## Model Caching
+Validation supports two real strategies:
 
-Each trained ticker produces six artefacts in `saved_models/`:
+- `expanding`: training starts at row zero and grows each fold.
+- `rolling`: training uses exactly `min_train_size` rows before each gap.
 
-```
-{ticker}_{model_type}_model.keras       ← Keras weights
-{ticker}_{model_type}_scaler.joblib     ← Fitted MinMaxScaler
-{ticker}_{model_type}_metrics.json      ← Evaluation metrics
-{ticker}_{model_type}_metadata.json     ← Hyper-params, dataset fingerprint, training time
-{ticker}_{model_type}_cv.json           ← Aggregate cross-validation summary
-{ticker}_{model_type}_validation.json   ← Per-fold predictions and residuals
-```
+Each fold has an exact `horizon` and `gap`. A scaler fits only on the fold's training rows. An inner tail of that training fold supplies early stopping; the subsequent evaluation fold is not passed to `fit`. Metrics pool predictions across every forecast output; the direction majority baseline is selected from the training fold. Per-fold diagnostic rows remain first-step views and are labelled separately. Only aggregated out-of-fold results are published. The final serving model may train on all sequences after evaluation.
 
-Models are considered stale after `MODEL_MAX_AGE_DAYS` (default 7) and auto-retrain on the next request.
+Reproducibility metadata records Python/NumPy/scikit-learn/TensorFlow versions, seed, deterministic mode, feature schema, validation settings, input data range, snapshot hash, source provenance, and Git commit. Deterministic TensorFlow kernels remain platform-dependent; exact equivalence across different hardware/library builds is not promised.
 
----
+## Persistence and concurrency
 
-## Key Design Decisions
+In-process and O_EXCL process locks prevent duplicate same-artifact training. A global semaphore bounds simultaneous training. A candidate version is written to a unique directory, hashed, then activated with atomic replacement of `current.json`; the prior version is not removed first. Readers resolve only activated versions and validate metadata, feature order/count, output width, scaler shape/finiteness, and SHA-256 hashes before Keras/scaler loading. Scalers are JSON, not pickle/joblib.
 
-1. **Two models, two endpoints** — Regression (MSE) and classification (BCE) are kept separate so each model is independently cacheable, replaceable, and optimised for its own loss.
+Count, byte, and free-space quotas evict old artifact roots. Readiness verifies the storage can create a file and retains a configured free-space floor.
 
-2. **Scaler co-persistence** — Saving the fitted scaler alongside the model guarantees that inference preprocessing exactly matches training. Re-fitting on new data would introduce distribution shift.
+## Calendars and fallbacks
 
-3. **Configurable validation strategy** — `ValidationConfig` is a Pydantic model. Swapping `expanding` → `rolling` requires only a config change.
+Suffix mapping covers `.L`, `.SW`, `.TO`, `.AX`, and `.HK`; unsuffixed instruments use NYSE. `-USD`, `-GBP`, `-EUR`, and `-USDT` pairs use a 24/7 calendar. Unknown dotted suffixes use `NYSE_FALLBACK`, which is returned in response metadata so consumers can identify the assumption.
 
-4. **NYSE calendar for future dates** — `pandas_market_calendars` generates only trading days for forecast horizons, excluding weekends and holidays.
+## Security boundaries
 
-5. **Look-ahead bias prevention** — Both preprocessing functions (`preprocess` and `prepare_return_data`) fit all transformations on the training partition only before applying them to test data.
+Ticker/model identities are allowlisted before path construction. Public forecast endpoints have per-IP rate limits plus bounded global capacity. CORS allows explicit origins and no credentials. Internal exceptions are not returned. External text renders through React text nodes, and export identity/length checks prevent cross-forecast ZIPs. CSV cells that begin with spreadsheet formula characters are neutralised. Model artifacts are trusted local server state and integrity checked; SHA-256 detects corruption but is not an authenticity signature against an attacker who can rewrite both data and hashes.

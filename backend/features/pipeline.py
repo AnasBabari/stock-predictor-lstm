@@ -53,7 +53,7 @@ def build_features(
 
     # Apply feature engineering stages
     df = add_technical_indicators(df)
-    df = add_market_context(df)
+    df, market_metadata = add_market_context(df)
     df = add_calendar_features(df)
 
     # Drop initial NaN rows created by rolling windows (e.g., SMA_20, MACD, ATR_14)
@@ -69,6 +69,8 @@ def build_features(
         "feature_names": expected_features,
         "feature_count": len(expected_features),
         "date_range": f"{df.index[0].strftime('%Y-%m-%d')} to {df.index[-1].strftime('%Y-%m-%d')}",
+        "market_context": market_metadata,
+        "rows": int(len(df)),
     }
 
     return df, metadata

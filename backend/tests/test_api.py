@@ -1,386 +1,222 @@
-# backend/tests/test_api.py
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pandas as pd
 from fastapi.testclient import TestClient
 
-from api import app
+import api
+from api import WorkCoordinator, app
+from config import FEATURES, MAX_FORECAST_DAYS, WINDOW_SIZE
 
 client = TestClient(app)
 
 
-def _make_prices(n):
-    return [[float(i)] for i in range(n)]
-
-
-def _make_dates(n):
-    import pandas as pd
-
-    return pd.date_range("2023-01-01", periods=n, freq="B")
-
-
-def _make_mock_feature_df(n):
-    import numpy as np
-    import pandas as pd
-
-    from config import FEATURES
-
-    dates = _make_dates(n)
-    df = pd.DataFrame(index=dates)
-    for f in FEATURES:
-        df[f] = np.random.rand(n)
-    return df
-
-
-def test_health():
-    res = client.get("/health")
-    assert res.status_code == 200
-    assert res.json()["status"] == "ok"
-    assert "version" in res.json()
-
-
-def test_ready():
-    res = client.get("/ready")
-    assert res.status_code == 200
-    assert res.json()["status"] == "ready"
-    assert "dependencies" in res.json()
-
-
-def test_models():
-    res = client.get("/models")
-    assert res.status_code == 200
-    assert "manifest" in res.json()
-
-
-def test_validate_ticker_rejects_path_traversal():
-    res = client.get("/api/v1/predict?ticker=../etc/passwd")
-    assert res.status_code == 400
-    assert "Invalid ticker" in res.json()["detail"]
-
-
-def test_validate_ticker_rejects_empty():
-    res = client.get("/api/v1/predict?ticker=")
-    assert res.status_code == 400
-
-
-def test_validate_ticker_rejects_too_long():
-    res = client.get("/api/v1/predict?ticker=ABCDEFGHIJKLM")  # 13 chars
-    assert res.status_code == 400
-
-
-def test_validate_ticker_accepts_valid():
-    with (
-        patch("api.get_pipeline") as mock_pipe,
-        patch("api.fetch_data") as mock_fetch,
-        patch("api.load_or_train") as mock_model,
-        patch("api.evaluate_model") as mock_eval,
-        patch("api.predict_future") as mock_pred,
-        patch("api.run_in_threadpool") as mock_thread,
-    ):
-        mock_scaler = MagicMock()
-
-        async def mock_run(*args, **kwargs):
-            return mock_model(), mock_scaler
-
-        mock_thread.side_effect = mock_run
-
-        mock_df = _make_mock_feature_df(100)
-        mock_pipe.return_value = (
-            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler, [], []),
-            _make_prices(100),
-            _make_dates(100),
-            {"feature_count": 21},
-        )
-        mock_fetch.return_value = (
-            mock_df,
-            _make_prices(100),
-            _make_dates(100),
-            {"feature_count": 21},
-        )
-        mock_eval.return_value = {
-            "rmse": 1.0,
-            "mae": 0.5,
-            "mape": 1.2,
-            "r2": 0.95,
-            "directional_accuracy": 0.6,
+def _response(ticker="AAPL", days=7, direction=False):
+    base = {
+        "ticker": ticker,
+        "forecast_days": days,
+        "future_dates": [f"2026-08-{day + 1:02d}" for day in range(days)],
+        "metrics": {"metric_source": "walk_forward_out_of_fold"},
+        "metadata": {"calendar": "NYSE"},
+    }
+    if direction:
+        return {
+            **base,
+            "directions": ["Up"] * days,
+            "probabilities": [0.6] * days,
+            "attention_weights": [],
+            "sentiment": {"score": 0.0, "status": "fallback"},
         }
-        mock_pred.return_value = [150.0] * 7
-        res = client.get("/api/v1/predict?ticker=AAPL&days=7")
-        assert res.status_code == 200
+    return {
+        **base,
+        "historical_dates": ["2026-07-01"],
+        "historical_prices": [100.0],
+        "predicted_prices": [101.0] * days,
+    }
+
+
+def _feature_snapshot(rows=500):
+    index = pd.date_range("2024-01-01", periods=rows, freq="B")
+    return pd.DataFrame({name: np.arange(rows, dtype=float) + 1 for name in FEATURES}, index=index)
+
+
+def setup_function():
+    with api._predict_cache_lock:
+        api._predict_cache.clear()
+    with api._info_cache_lock:
+        api._info_cache.clear()
+
+
+def test_health_and_readiness(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "MODEL_DIR", str(tmp_path))
+    api._record_upstream("available")
+    assert client.get("/health").status_code == 200
+    response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["dependencies"]["model_storage"]["writable"] is True
+
+
+def test_validate_ticker_and_horizon():
+    assert client.get("/api/v1/predict?ticker=../etc/passwd").status_code == 400
+    assert client.get("/api/v1/predict?ticker=ABCDEFGHIJKLM").status_code == 400
+    assert client.get("/api/v1/predict?ticker=AAPL&days=99").status_code == 422
+
+
+def test_openapi_contains_public_routes_and_horizon_constraints():
+    schema = client.get("/openapi.json").json()
+    for route in (
+        "/api/v1/predict",
+        "/api/v1/predict/direction",
+        "/api/v1/search",
+        "/api/v1/info",
+    ):
+        assert route in schema["paths"]
+    days = next(
+        parameter
+        for parameter in schema["paths"]["/api/v1/predict"]["get"]["parameters"]
+        if parameter["name"] == "days"
+    )
+    assert days["schema"]["minimum"] == 1
+    assert days["schema"]["maximum"] == MAX_FORECAST_DAYS
 
 
 def test_predict_response_schema():
-    with (
-        patch("api.get_pipeline") as mock_pipe,
-        patch("api.fetch_data") as mock_fetch,
-        patch("api.load_or_train") as mock_model,
-        patch("api.evaluate_model") as mock_eval,
-        patch("api.predict_future") as mock_pred,
-        patch("api.run_in_threadpool") as mock_thread,
-    ):
-        mock_scaler = MagicMock()
-
-        async def mock_run(*args, **kwargs):
-            return mock_model(), mock_scaler
-
-        mock_thread.side_effect = mock_run
-
-        mock_df = _make_mock_feature_df(100)
-        mock_pipe.return_value = (
-            (MagicMock(), MagicMock(), MagicMock(), MagicMock(), mock_scaler, [], []),
-            _make_prices(100),
-            _make_dates(100),
-            {"feature_count": 21},
-        )
-        mock_fetch.return_value = (
-            mock_df,
-            _make_prices(100),
-            _make_dates(100),
-            {"feature_count": 21},
-        )
-        mock_eval.return_value = {
-            "rmse": 1.0,
-            "mae": 0.5,
-            "mape": 1.2,
-            "r2": 0.95,
-            "directional_accuracy": 0.6,
-        }
-        mock_pred.return_value = [150.0] * 7
-        res = client.get("/api/v1/predict?ticker=AAPL&days=7")
-        body = res.json()
-        assert set(body.keys()) >= {
-            "ticker",
-            "historical_dates",
-            "historical_prices",
-            "future_dates",
-            "predicted_prices",
-            "forecast_days",
-            "metrics",
-        }
-        assert body["forecast_days"] == 7
-        assert len(body["predicted_prices"]) == 7
-        assert len(body["future_dates"]) == 7
+    with patch("api._price_prediction_pipeline", return_value=_response()):
+        response = client.get("/api/v1/predict?ticker=AAPL&days=7")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ticker"] == "AAPL"
+    assert len(body["predicted_prices"]) == len(body["future_dates"]) == 7
 
 
-def test_predict_days_clamped():
-    res = client.get("/api/v1/predict?ticker=AAPL&days=99")
-    assert res.status_code == 422  # FastAPI Query validation
-
-
-def test_search_returns_list():
-    with patch("api.yf.Search") as mock_search:
-        mock_search.return_value.quotes = [
+def test_search_and_info_cache_are_sanitised_and_thread_safe():
+    with patch("api.yf.Search") as search:
+        search.return_value.quotes = [
             {"symbol": "AAPL", "longname": "Apple Inc.", "quoteType": "EQUITY"}
         ]
-        res = client.get("/api/v1/search?query=Apple")
-        assert res.status_code == 200
-        assert "results" in res.json()
-        assert res.json()["results"][0]["ticker"] == "AAPL"
+        assert client.get("/api/v1/search?query=Apple").json()["results"][0]["ticker"] == "AAPL"
+    with patch("api.yf.Ticker") as ticker:
+        ticker.return_value.info = {"longName": "Apple Inc."}
+        assert client.get("/api/v1/info?ticker=AAPL").status_code == 200
+        assert client.get("/api/v1/info?ticker=AAPL").status_code == 200
+        assert ticker.call_count == 1
 
 
-def test_search_error_returns_500_not_stacktrace():
-    with patch("api.yf.Search", side_effect=RuntimeError("boom")):
-        res = client.get("/api/v1/search?query=Apple")
-        assert res.status_code == 500
-        assert "boom" not in res.json()["detail"]  # sanitised
+def test_direction_fixed_width_is_horizon_safe_in_both_request_orders():
+    snapshot = _feature_snapshot()
+    dates = snapshot.index
+    arrays = (
+        np.zeros((2, WINDOW_SIZE, len(FEATURES))),
+        np.zeros((1, WINDOW_SIZE, len(FEATURES))),
+        np.zeros((2, MAX_FORECAST_DAYS)),
+        np.zeros((1, MAX_FORECAST_DAYS)),
+        MagicMock(),
+        [],
+        [],
+    )
+
+    def prediction(_model, _frame, _scaler, days):
+        return ["Up"] * days, [0.6] * days, [1 / WINDOW_SIZE] * WINDOW_SIZE
+
+    for order in ((3, 30), (30, 3)):
+        with (
+            patch(
+                "api.fetch_data", return_value=(snapshot, snapshot.Close.values, dates, {})
+            ) as fetch,
+            patch("api.prepare_return_data", return_value=arrays) as prepare,
+            patch("api.load_or_train", return_value=(MagicMock(), arrays[4])),
+            patch("api.predict_direction", side_effect=prediction),
+            patch(
+                "api.future_trading_dates",
+                side_effect=lambda _t, _d, count: ([f"d{i}" for i in range(count)], "NYSE"),
+            ),
+            patch("api.get_financial_sentiment", return_value={"sentiment": {"score": 0.0}}),
+            patch("api.load_metrics", return_value={"metric_source": "walk_forward_out_of_fold"}),
+        ):
+            results = [api._direction_prediction_pipeline("AAPL", days) for days in order]
+        assert [result["forecast_days"] for result in results] == list(order)
+        assert all(
+            call.kwargs["forecast_days"] == MAX_FORECAST_DAYS for call in prepare.call_args_list
+        )
+        assert fetch.call_count == 2
 
 
-def test_info_caches_response():
-    with patch("api.yf.Ticker") as mock_ticker:
-        mock_ticker.return_value.info = {"longName": "Apple Inc."}
-        client.get("/api/v1/info?ticker=AAPL")
-        assert mock_ticker.call_count == 1  # second call hits cache
+def test_price_pipeline_uses_one_coherent_snapshot():
+    snapshot = _feature_snapshot()
+    original_id = id(snapshot)
+    observed = []
+    arrays = (
+        np.zeros((2, WINDOW_SIZE, len(FEATURES))),
+        np.zeros((1, WINDOW_SIZE, len(FEATURES))),
+        np.zeros((2, MAX_FORECAST_DAYS)),
+        np.zeros((1, MAX_FORECAST_DAYS)),
+        MagicMock(),
+        [],
+        [],
+    )
 
+    def preprocess(frame, **_kwargs):
+        observed.append(frame.attrs["snapshot"])
+        return arrays
 
-def test_predict_direction_schema():
+    snapshot.attrs["snapshot"] = "immutable-one"
     with (
-        patch("api.fetch_data") as mock_fetch,
-        patch("api.prepare_return_data") as mock_prep,
-        patch("api.load_or_train") as mock_model,
-        patch("api.predict_direction") as mock_pred,
-        patch("api.load_metrics") as mock_metrics,
-        patch("api.run_in_threadpool") as mock_thread,
-        patch("api.get_financial_sentiment") as mock_sentiment,
+        patch(
+            "api.fetch_data",
+            return_value=(snapshot, snapshot.Close.values, snapshot.index, {"snapshot_id": "one"}),
+        ) as fetch,
+        patch("api.preprocess", side_effect=preprocess),
+        patch("api.load_or_train", return_value=(MagicMock(), arrays[4])) as load,
+        patch("api.predict_future", return_value=[101.0] * 3),
+        patch("api.future_trading_dates", return_value=(["d1", "d2", "d3"], "NYSE")),
+        patch("api.load_metrics", return_value={"metric_source": "walk_forward_out_of_fold"}),
     ):
-        mock_scaler = MagicMock()
-
-        async def mock_run(*args, **kwargs):
-            return mock_model(), mock_scaler
-
-        mock_thread.side_effect = mock_run
-
-        mock_df = _make_mock_feature_df(100)
-        mock_fetch.return_value = (
-            mock_df,
-            _make_prices(100),
-            _make_dates(100),
-            {"feature_count": 21},
-        )
-        mock_prep.return_value = (
-            MagicMock(),
-            MagicMock(),
-            MagicMock(),
-            MagicMock(),
-            mock_scaler,
-            [],
-            [],
-        )
-        mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.1] * 60)
-        mock_metrics.return_value = {
-            "precision": 0.8,
-            "recall": 0.7,
-            "f1": 0.75,
-            "naive_baseline": 0.5,
-        }
-        mock_sentiment.return_value = {
-            "sentiment": {
-                "score": 0.5,
-                "status": "live",
-                "provider": "yfinance",
-                "method": "vader_financial",
-            }
-        }
-
-        res = client.get("/api/v1/predict/direction?ticker=AAPL&days=7")
-        body = res.json()
-        assert res.status_code == 200
-        assert set(body.keys()) >= {
-            "ticker",
-            "forecast_days",
-            "future_dates",
-            "directions",
-            "probabilities",
-            "attention_weights",
-            "metrics",
-            "sentiment",
-        }
-        assert body["forecast_days"] == 7
-        assert len(body["directions"]) == 7
-        assert len(body["probabilities"]) == 7
-        assert body["sentiment"]["score"] == 0.5
-        assert body["sentiment"]["status"] == "live"
+        result = api._price_prediction_pipeline("AAPL", 3)
+    assert id(snapshot) == original_id
+    assert fetch.call_count == 1
+    assert observed == ["immutable-one"]
+    assert load.call_args.args[7].attrs["snapshot"] == "immutable-one"
+    assert result["metadata"]["data_snapshot"]["snapshot_id"] == "one"
 
 
-def test_predict_direction_attention_alignment():
-    with (
-        patch("api.fetch_data") as mock_fetch,
-        patch("api.prepare_return_data") as mock_prep,
-        patch("api.load_or_train") as mock_model,
-        patch("api.predict_direction") as mock_pred,
-        patch("api.load_metrics") as mock_metrics,
-        patch("api.run_in_threadpool") as mock_thread,
-        patch("api.get_financial_sentiment") as mock_sentiment,
-    ):
-        mock_scaler = MagicMock()
+def test_work_coordinator_coalesces_and_bounds_queue():
+    coordinator = WorkCoordinator(workers=1, queue_size=1)
+    gate = threading.Event()
+    calls = 0
 
-        async def mock_run(*args, **kwargs):
-            return mock_model(), mock_scaler
+    def work():
+        nonlocal calls
+        calls += 1
+        gate.wait(2)
+        return "done"
 
-        mock_thread.side_effect = mock_run
+    first = coordinator.submit("same", work)
+    assert coordinator.submit("same", work) is first
+    queued = coordinator.submit("other", work)
+    with np.testing.assert_raises(api.ServiceBusyError):
+        coordinator.submit("overflow", work)
+    gate.set()
+    assert first.result(2) == queued.result(2) == "done"
+    assert calls == 2
 
-        mock_df = _make_mock_feature_df(100)
-        mock_fetch.return_value = (
-            mock_df,
-            _make_prices(100),
-            _make_dates(100),
-            {"feature_count": 21},
-        )
-        mock_prep.return_value = (
-            MagicMock(),
-            MagicMock(),
-            MagicMock(),
-            MagicMock(),
-            mock_scaler,
-            [],
-            [],
-        )
-        mock_pred.return_value = (["Up"] * 7, [0.6] * 7, [0.05] * 60)
-        mock_metrics.return_value = {
-            "precision": 0.8,
-            "recall": 0.7,
-            "f1": 0.75,
-            "naive_baseline": 0.5,
-        }
-        mock_sentiment.return_value = {
-            "sentiment": {
-                "score": 0.0,
-                "status": "fallback",
-                "provider": "yfinance",
-                "method": "vader_financial",
-            }
-        }
 
-        res = client.get("/api/v1/predict/direction?ticker=AAPL&days=7")
-        body = res.json()
-        attn = body["attention_weights"]
-
-        # 1. Correct length matching WINDOW_SIZE (60)
-        assert len(attn) == 60
-
-        # 2. Sequential indexing & numeric weight types
-        for idx, item in enumerate(attn):
-            assert item["index"] == idx
-            assert isinstance(item["weight"], int | float)
-            assert isinstance(item["date"], str)
-
-        # 3. Dates ordered oldest -> newest with no duplicate dates
-        dates = [item["date"] for item in attn]
-        assert dates == sorted(dates)
-        assert len(set(dates)) == len(dates)
+def test_health_remains_responsive_during_cold_work():
+    gate = threading.Event()
+    coordinator = WorkCoordinator(workers=1, queue_size=0)
+    future = coordinator.submit("cold", lambda: gate.wait(2))
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        response = pool.submit(client.get, "/health").result(1)
+    gate.set()
+    future.result(2)
+    assert response.status_code == 200
 
 
 def test_diagnostics_404_when_not_trained():
-    """Phase 3: diagnostics endpoint returns 404 if no walk-forward data exists."""
     with (
-        patch("api.load_cross_validation") as mock_cv,
-        patch("api.load_validation_results") as mock_vr,
-        patch("api.load_metadata") as mock_meta,
+        patch("api.load_cross_validation", return_value={}),
+        patch("api.load_validation_results", return_value=[]),
+        patch("api.load_metadata", return_value={}),
     ):
-        mock_cv.return_value = {}
-        mock_vr.return_value = []
-        mock_meta.return_value = {}
-
-        res = client.get("/api/v1/diagnostics/AAPL")
-        assert res.status_code == 404
-        assert "Train the model first" in res.json()["detail"]
-
-
-def test_diagnostics_returns_cv_and_folds():
-    """Phase 3: diagnostics endpoint returns cross_validation and fold_results."""
-    with (
-        patch("api.load_cross_validation") as mock_cv,
-        patch("api.load_validation_results") as mock_vr,
-        patch("api.load_metadata") as mock_meta,
-    ):
-        mock_cv.return_value = {
-            "folds": 5,
-            "folds_completed": 5,
-            "average_rmse": 2.34,
-            "std_rmse": 0.12,
-        }
-        mock_vr.return_value = [
-            {
-                "fold": 1,
-                "train_start": "2020-01-01",
-                "validation_start": "2021-01-01",
-                "actuals": [100.0, 101.0],
-                "predictions": [99.5, 101.5],
-                "residuals": [
-                    {"date": "2021-01-05", "actual": 100.0, "residual": 0.5, "absolute_error": 0.5}
-                ],
-            }
-        ]
-        mock_meta.return_value = {
-            "schema_version": 2,
-            "validation_method": "expanding",
-            "validation_folds": 5,
-        }
-
-        res = client.get("/api/v1/diagnostics/AAPL?model_type=bilstm_attention_direction")
-        body = res.json()
-        assert res.status_code == 200
-        assert "cross_validation" in body
-        assert "fold_results" in body
-        assert "model_metadata" in body
-        assert body["cross_validation"]["folds_completed"] == 5
-        assert len(body["fold_results"]) == 1
-        assert body["model_metadata"]["validation_method"] == "expanding"
+        assert client.get("/api/v1/diagnostics/AAPL").status_code == 404

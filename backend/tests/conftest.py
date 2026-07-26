@@ -70,9 +70,20 @@ def preprocessed_with_dates(synthetic_feature_df):
 
 
 @pytest.fixture
-def trained_model(preprocessed):
+def trained_model(preprocessed, tmp_path, monkeypatch):
+    import model as model_module
     from model import train_model
 
+    monkeypatch.setattr(model_module, "MODEL_DIR", str(tmp_path))
+    monkeypatch.setattr(model_module, "EPOCHS", 1)
     X_train, X_test, y_train, y_test, scaler = preprocessed
     model, _ = train_model(X_train, y_train, X_test, y_test, ticker="TEST", scaler=scaler)
     return model, preprocessed
+
+
+@pytest.fixture(autouse=True)
+def fast_training(monkeypatch):
+    """Tests own their training cost and never rely on repository artifacts."""
+    import model as model_module
+
+    monkeypatch.setattr(model_module, "EPOCHS", 1)

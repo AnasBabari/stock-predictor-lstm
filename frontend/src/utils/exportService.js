@@ -9,8 +9,38 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
+function csvCell(value) {
+  let text = String(value ?? '');
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  if (/[",\r\n]/.test(text)) text = `"${text.replaceAll('"', '""')}"`;
+  return text;
+}
+
 function csvFromRows(rows) {
-  return rows.map((row) => row.join(',')).join('\n');
+  return rows.map((row) => row.map(csvCell).join(',')).join('\n');
+}
+
+function assertCompleteIdentity(priceData, directionData, metadata) {
+  const expectedTicker = String(metadata?.ticker || '').toUpperCase();
+  const expectedDays = Number(metadata?.forecast_days);
+  for (const [name, data] of [
+    ['price', priceData],
+    ['direction', directionData],
+  ]) {
+    if (data?.ticker !== expectedTicker || Number(data?.forecast_days) !== expectedDays) {
+      throw new Error(`${name} forecast identity does not match the requested export.`);
+    }
+    if (data.future_dates?.length !== expectedDays) {
+      throw new Error(`${name} forecast is incomplete for the requested export.`);
+    }
+  }
+  if (
+    priceData.predicted_prices?.length !== expectedDays ||
+    directionData.directions?.length !== expectedDays ||
+    directionData.probabilities?.length !== expectedDays
+  ) {
+    throw new Error('Forecast payload lengths do not match the requested export.');
+  }
 }
 
 export async function exportPriceCSV(stockData) {
@@ -58,6 +88,7 @@ export async function exportAttentionCSV(stockData) {
 }
 
 export async function exportCompleteAnalysis({ priceData, directionData, metadata }) {
+  assertCompleteIdentity(priceData, directionData, metadata);
   const zip = new JSZip();
 
   const priceRows = [['Date', 'Price', 'Type']];
@@ -89,5 +120,7 @@ export async function exportCompleteAnalysis({ priceData, directionData, metadat
   zip.file('metadata.json', JSON.stringify(metadata, null, 2));
 
   const blob = await zip.generateAsync({ type: 'blob' });
-  downloadBlob(blob, `${metadata.ticker}_complete_analysis.zip`);
+  const filename = `${metadata.ticker}_complete_analysis.zip`;
+  downloadBlob(blob, filename);
+  return { blob, filename };
 }

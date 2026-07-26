@@ -25,6 +25,10 @@ export default function MetricsCard({ stockData, forecastType }) {
   const m = stockData.metrics;
   const isTrend = forecastType === 'trend';
   const modeLabel = isTrend ? 'Trend Forecast Metrics' : 'Price Forecast Metrics';
+  const metricSource =
+    m.metric_source === 'walk_forward_out_of_fold'
+      ? 'Walk-forward out-of-fold evaluation'
+      : 'Evaluation unavailable';
 
   const priceMetrics = [
     { label: 'RMSE', value: m.rmse != null ? m.rmse.toFixed(2) : '—', title: 'Root Mean Squared Error — lower is better' },
@@ -34,14 +38,14 @@ export default function MetricsCard({ stockData, forecastType }) {
     {
       label: 'Dir. Acc',
       value: m.directional_accuracy != null ? `${(m.directional_accuracy * 100).toFixed(1)}%` : '—',
-      title: 'Directional Accuracy (Test Set)',
+      title: 'Directional accuracy from walk-forward out-of-fold predictions',
     },
   ];
 
   const trendMetrics = [
-    { label: 'Precision', value: m.precision != null ? m.precision.toFixed(4) : '—', title: 'Precision on held-out test set' },
-    { label: 'Recall', value: m.recall != null ? m.recall.toFixed(4) : '—', title: 'Recall on held-out test set' },
-    { label: 'F1', value: m.f1 != null ? m.f1.toFixed(4) : '—', title: 'F1 score on held-out test set' },
+    { label: 'Precision', value: m.precision != null ? m.precision.toFixed(4) : '—', title: 'Walk-forward out-of-fold precision' },
+    { label: 'Recall', value: m.recall != null ? m.recall.toFixed(4) : '—', title: 'Walk-forward out-of-fold recall' },
+    { label: 'F1', value: m.f1 != null ? m.f1.toFixed(4) : '—', title: 'Walk-forward out-of-fold F1 score' },
     {
       label: 'Naive Baseline',
       value: m.naive_baseline != null ? `${(m.naive_baseline * 100).toFixed(1)}%` : '—',
@@ -59,6 +63,8 @@ export default function MetricsCard({ stockData, forecastType }) {
           <span className="metric-value">{modeLabel}</span>
         </div>
       </div>
+      <div className="metric-divider"></div>
+      <MetricItem iconTitle={metricSource} label="Metric source" value={metricSource} />
       {metrics.map((metric, index) => (
         <React.Fragment key={metric.label}>
           <div className="metric-divider"></div>

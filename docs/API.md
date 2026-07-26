@@ -1,167 +1,71 @@
-# API Reference
+# API reference
 
-Base URL (local): `http://127.0.0.1:8000`
+Local backend: `http://127.0.0.1:8000`. Interactive OpenAPI: `/docs`; schema: `/openapi.json`.
 
-All endpoints return `application/json`. Rate limits are per source IP. Errors always include `{"detail": "..."}`.
+All errors use `{"detail":"..."}`. `400` means invalid/insufficient instrument data, `422` means query-schema failure, `429` means per-IP rate limiting, and `503` means bounded capacity, timeout, readiness failure, or retryable benchmark unavailability.
 
----
+## Probes and discovery
 
-## Health
+- `GET /health`: process liveness only.
+- `GET /ready`: `200` only when model storage is writable/has its free-space floor and the last market-data dependency state is not unavailable; otherwise `503`.
+- `GET /models`: model manifest.
+- `GET /api/v1/search?query=AAPL`: up to eight Yahoo suggestions. A syntactically valid exact symbol remains available as a clearly generic `SYMBOL` fallback if autocomplete is down.
+- `GET /api/v1/info?ticker=AAPL`: fundamentals; thread-safe 3600-second cache by default.
 
-### `GET /health`
-Liveness probe.
-```json
-{"status": "ok", "version": "1.1.0"}
-```
+## `GET /api/v1/predict`
 
-### `GET /ready`
-Readiness probe.
-```json
-{"status": "ready", "version": "1.1.0", "dependencies": {"yfinance": true}}
-```
+Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, range 1–30). Rate limit: 5/minute/IP. Prediction cache: 300 seconds by default.
 
-### `GET /models`
-Manifest of cached model artefacts.
-```json
-{"version": "1.1.0", "manifest": [{"ticker": "AAPL", "model_type": "lstm", "age_days": 2}]}
-```
-
----
-
-## Prediction
-
-### `GET /api/v1/predict`
-
-LSTM regression price forecast.
-
-**Rate limit**: 5 / min · **Cache**: 300 s
-
-| Parameter | Type | Default | Constraints |
-|---|---|---|---|
-| `ticker` | string | `AAPL` | 1–12 chars, `[A-Z0-9.\-]` |
-| `days` | integer | `7` | 1–30 |
-
-**Example**
-```
-GET /api/v1/predict?ticker=AAPL&days=7
-```
 ```json
 {
   "ticker": "AAPL",
-  "historical_dates": ["2025-07-14", "..."],
-  "historical_prices": [210.5, "..."],
-  "future_dates": ["2025-07-21", "..."],
-  "predicted_prices": [212.1, 213.4, "..."],
-  "forecast_days": 7,
-  "metrics": {"rmse": 4.82, "mae": 3.61, "mape": 1.74, "r2": 0.91, "direction_accuracy": 0.63},
-  "metadata": {"model_version": "1.1.0", "architecture": "lstm", "window_size": 60}
+  "historical_dates": ["2026-07-24"],
+  "historical_prices": [213.88],
+  "future_dates": ["2026-07-27", "2026-07-28", "2026-07-29"],
+  "predicted_prices": [214.1, 214.5, 213.9],
+  "forecast_days": 3,
+  "metrics": {
+    "metric_source": "walk_forward_out_of_fold",
+    "metric_scope": "all_forecast_horizons",
+    "rmse": 4.82,
+    "mae": 3.61,
+    "mape": 1.74,
+    "r2": 0.91,
+    "directional_accuracy": 0.63
+  },
+  "metadata": {
+    "architecture": "lstm",
+    "output_width": 30,
+    "calendar": "NYSE",
+    "metric_source": "walk_forward_out_of_fold",
+    "data_snapshot": {"snapshot_id": "sha256..."},
+    "data_quality": {"schema_version": 2, "policy": "fail_closed", "status": "complete"}
+  }
 }
 ```
 
----
+Metrics can instead be `{"metric_source":"unavailable","detail":"..."}`. They are never computed on the final production model's training samples.
 
-### `GET /api/v1/predict/direction`
+## `GET /api/v1/predict/direction`
 
-Bi-LSTM + Attention directional forecast with sentiment.
+Same parameters/cache/rate limit. `directions` contains strings (`"Up"`/`"Down"`), and `probabilities` contains sigmoid probabilities in `[0,1]`. Both arrays and `future_dates` have exactly `forecast_days` entries. `attention_weights` has exactly 60 dated entries. The cached model always has `output_width: 30`, regardless of request order.
 
-**Rate limit**: 5 / min · **Cache**: 300 s
-
-| Parameter | Type | Default | Constraints |
-|---|---|---|---|
-| `ticker` | string | `AAPL` | 1–12 chars, `[A-Z0-9.\-]` |
-| `days` | integer | `7` | 1–30 |
-
-**Example**
-```
-GET /api/v1/predict/direction?ticker=AAPL&days=5
-```
 ```json
 {
-  "ticker": "AAPL",
-  "forecast_days": 5,
-  "future_dates": ["2025-07-21", "..."],
-  "directions": [1, 1, 0, 1, 0],
-  "probabilities": [0.68, 0.71, 0.43, 0.59, 0.48],
-  "attention_weights": [{"index": 0, "date": "2025-06-19", "weight": 0.012}, "..."],
-  "metrics": {"precision": 0.61, "recall": 0.58, "naive_baseline": 0.54},
-  "sentiment": {"score": 0.23, "status": "ok"},
-  "metadata": {"architecture": "attention_lstm", "window_size": 60}
+  "ticker": "VOD.L",
+  "forecast_days": 3,
+  "future_dates": ["2026-07-27", "2026-07-28", "2026-07-29"],
+  "directions": ["Up", "Down", "Up"],
+  "probabilities": [0.68, 0.43, 0.59],
+  "attention_weights": [{"index": 0, "date": "2026-05-01", "weight": 0.012}],
+  "metrics": {"metric_source": "walk_forward_out_of_fold", "precision": 0.61, "recall": 0.58, "f1": 0.59},
+  "sentiment": {"score": 0.23, "status": "live", "provider": "yfinance", "method": "vader_financial"},
+  "metadata": {"architecture": "bidirectional_lstm_with_attention", "output_width": 30, "calendar": "LSE"}
 }
 ```
 
-**Notes**
-- `directions` — `1` = predicted up, `0` = predicted down.
-- `probabilities` — raw sigmoid output; > 0.5 → up.
-- `attention_weights` — 60 entries, one per day in the input window.
-- `sentiment.score` — VADER compound score in [-1.0, 1.0].
+Sentiment is untrusted, headline-only external data. Failures produce a documented `fallback` score of `0.0`; sentiment does not enter model features.
 
----
+## `GET /api/v1/diagnostics/{ticker}`
 
-## Diagnostics
-
-### `GET /api/v1/diagnostics/{ticker}`
-
-Walk-forward validation results for a trained model.
-
-**Rate limit**: 10 / min
-
-| Parameter | Where | Default | Description |
-|---|---|---|---|
-| `ticker` | path | — | Ticker symbol |
-| `model_type` | query | `bilstm_attention_direction` | `lstm` or `bilstm_attention_direction` |
-
-**Example**
-```
-GET /api/v1/diagnostics/AAPL
-```
-```json
-{
-  "ticker": "AAPL",
-  "model_type": "bilstm_attention_direction",
-  "cross_validation": {"mean_rmse": 5.21, "mean_direction_accuracy": 0.59, "folds": 5},
-  "fold_results": [{"fold": 1, "rmse": 5.80, "direction_accuracy": 0.56}],
-  "model_metadata": {"training_duration_seconds": 87.4, "validation_method": "expanding"}
-}
-```
-
-Returns `404` if the model has not been trained yet.
-
----
-
-## Discovery
-
-### `GET /api/v1/search`
-
-Ticker autocomplete. **Rate limit**: 30 / min
-
-| Parameter | Type | Description |
-|---|---|---|
-| `query` | string | Partial ticker or company name |
-
-```
-GET /api/v1/search?query=apple
-```
-```json
-{"results": [{"ticker": "AAPL", "name": "Apple Inc.", "type": "EQUITY"}]}
-```
-
----
-
-### `GET /api/v1/info`
-
-Stock fundamentals. **Rate limit**: 20 / min · **Cache**: 3600 s
-
-| Parameter | Type | Default |
-|---|---|---|
-| `ticker` | string | `AAPL` |
-
-```
-GET /api/v1/info?ticker=AAPL
-```
-```json
-{
-  "ticker": "AAPL", "name": "Apple Inc.", "marketCap": 3200000000000,
-  "peRatio": 31.5, "fiftyTwoWeekHigh": 237.23, "fiftyTwoWeekLow": 164.08,
-  "sector": "Technology", "industry": "Consumer Electronics"
-}
-```
+Query `model_type` is one of `lstm`, `attention`, or `bilstm_attention_direction`. Returns persisted fold boundaries, untouched-fold predictions/residuals, cross-validation aggregates, and model metadata. Returns `404` when no activated validation artifacts exist.

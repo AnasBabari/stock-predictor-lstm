@@ -1,8 +1,7 @@
 import logging
 
-import nltk
 import yfinance as yf
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +47,7 @@ CUSTOM_FINANCIAL_DICT = {
 def _get_analyzer():
     global _analyzer
     if _analyzer is None:
-        try:
-            _analyzer = SentimentIntensityAnalyzer()
-        except LookupError:
-            nltk.download("vader_lexicon", quiet=True)
-            _analyzer = SentimentIntensityAnalyzer()
+        _analyzer = SentimentIntensityAnalyzer()
         _analyzer.lexicon.update(CUSTOM_FINANCIAL_DICT)
     return _analyzer
 

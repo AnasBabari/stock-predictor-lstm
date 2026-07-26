@@ -5,12 +5,14 @@ services:
       - "8000:8000"
     volumes:
       - model_cache:/app/saved_models
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       - ALLOWED_ORIGINS=["http://localhost:5500","http://127.0.0.1:5500"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
       interval: 30s
       timeout: 5s
       retries: 3

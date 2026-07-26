@@ -1,48 +1,71 @@
-name: CI
+name: StockLSTM CI
 
 on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+
+permissions:
+  contents: read
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
-          cache: pip
+      - run: python -m pip install uv==0.11.16
+      - run: uv lock --project backend --check
+      - run: uv sync --project backend --frozen
+      - run: uv run --project backend ruff check backend
+      - run: uv run --project backend ruff format --check backend
+      - run: uv run --project backend mypy --config-file backend/pyproject.toml backend/api.py backend/model.py backend/data_pipeline.py backend/config.py backend/features
+      - run: uv run --project backend bandit -r backend -x backend/tests,backend/.venv -ll -q
+      - run: uv run --project backend pip-audit
+      - run: uv run --project backend python scripts/check_api_docs.py
+      - run: uv run --project backend pytest backend/tests -q --cov=backend --cov-report=term-missing --cov-fail-under=70
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
-
-      - name: Lint (ruff)
-        run: ruff check .
-
-      - name: Format check (ruff)
-        run: ruff format --check .
-
-      - name: Type check (mypy)
-        run: mypy api.py model.py data_pipeline.py config.py --ignore-missing-imports
-
-      - name: Security scan (bandit)
-        run: bandit -r . -x tests/,venv/ -ll  # -ll = medium severity and above only
-
-      - name: Tests
-        run: pytest tests/ -v --cov=. --cov-report=term-missing --cov-fail-under=70
-
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          name: coverage-report
-          path: backend/htmlcov/
+          node-version: "22.22.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run test:run
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - run: python scripts/check_ci_policy.py
+
+  compose-smoke:
+    runs-on: ubuntu-24.04
+    needs: [backend, frontend, policy]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - run: docker compose config --quiet
+      - run: docker compose up --build --detach --wait --wait-timeout 180
+      - name: Verify frontend API proxy reaches backend search JSON
+        run: |
+          curl --fail --silent --show-error \
+            "http://localhost:5500/api/v1/search?query=AAPL" \
+            | python -c 'import json,sys; body=json.load(sys.stdin); assert isinstance(body["results"], list)'
+      - if: always()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down --volumes

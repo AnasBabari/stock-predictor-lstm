@@ -6,16 +6,20 @@
 import hashlib
 import json
 import logging
+import os
+import random
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
 import tracemalloc
+import uuid
 import weakref
+from contextlib import contextmanager
 from pathlib import Path
 
-import joblib  # type: ignore[import-untyped]
 import numpy as np
 import tensorflow as tf  # type: ignore[import-untyped]
 from sklearn.metrics import (  # type: ignore[import-untyped]
@@ -27,7 +31,6 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
     r2_score,
     recall_score,
 )
-from sklearn.model_selection import TimeSeriesSplit  # type: ignore[import-untyped]
 from sklearn.preprocessing import MinMaxScaler  # type: ignore[import-untyped]
 from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
 from tensorflow.keras.layers import (  # type: ignore[import-untyped]
@@ -55,10 +58,179 @@ from config import (
     SCHEMA_VERSION,
     VALIDATION_CONFIG,
     WINDOW_SIZE,
+    settings,
 )
-from data_pipeline import create_direction_sequences, create_sequences
 
 logger = logging.getLogger(__name__)
+
+
+class ArtifactValidationError(RuntimeError):
+    """A cached artifact failed integrity or compatibility validation."""
+
+
+class TrainingCapacityError(RuntimeError):
+    """The bounded training pool could not accept more work."""
+
+
+_training_slots = threading.BoundedSemaphore(settings.training_concurrency)
+
+
+def set_reproducibility(seed: int | None = None) -> None:
+    """Apply deterministic seeds before every model construction/training run."""
+    chosen = VALIDATION_CONFIG.seed if seed is None else seed
+    os.environ.setdefault("TF_DETERMINISTIC_OPS", "1" if VALIDATION_CONFIG.deterministic else "0")
+    random.seed(chosen)
+    np.random.seed(chosen)
+    tf.keras.utils.set_random_seed(chosen)
+    if VALIDATION_CONFIG.deterministic:
+        try:
+            tf.config.experimental.enable_op_determinism()
+        except Exception:
+            logger.info("TensorFlow deterministic operations are unavailable")
+
+
+def generate_validation_splits(
+    n_rows: int, config=VALIDATION_CONFIG
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Generate deterministic expanding or fixed-window rolling splits."""
+    required = config.min_train_size + config.gap + config.folds * config.horizon
+    if n_rows < required:
+        raise ValueError(f"Not enough rows for validation: need {required}, received {n_rows}.")
+    first_validation = n_rows - config.folds * config.horizon
+    splits = []
+    for fold in range(config.folds):
+        val_start = first_validation + fold * config.horizon
+        train_end = val_start - config.gap
+        train_start = 0 if config.method == "expanding" else train_end - config.min_train_size
+        train_idx = np.arange(train_start, train_end)
+        val_idx = np.arange(val_start, val_start + config.horizon)
+        if len(train_idx) < config.min_train_size:
+            raise ValueError("Validation fold violates min_train_size.")
+        splits.append((train_idx, val_idx))
+    return splits
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _save_scaler_json(scaler: MinMaxScaler, path: Path) -> None:
+    payload = {
+        "format": "sklearn_minmax_v1",
+        "feature_range": list(scaler.feature_range),
+        "n_features_in": int(scaler.n_features_in_),
+        "data_min": scaler.data_min_.tolist(),
+        "data_max": scaler.data_max_.tolist(),
+        "data_range": scaler.data_range_.tolist(),
+        "scale": scaler.scale_.tolist(),
+        "min": scaler.min_.tolist(),
+        "n_samples_seen": int(scaler.n_samples_seen_),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _load_scaler_json(path: Path) -> MinMaxScaler:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("format") != "sklearn_minmax_v1":
+            raise ArtifactValidationError("Unsupported scaler format.")
+        count = int(payload["n_features_in"])
+        names = ("data_min", "data_max", "data_range", "scale", "min")
+        arrays = {name: np.asarray(payload[name], dtype=float) for name in names}
+        feature_range = tuple(float(value) for value in payload["feature_range"])
+        samples_seen = int(payload["n_samples_seen"])
+    except ArtifactValidationError:
+        raise
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ArtifactValidationError("Scaler metadata is malformed.") from exc
+    if (
+        count != len(FEATURES)
+        or len(feature_range) != 2
+        or not np.isfinite(feature_range).all()
+        or feature_range[0] >= feature_range[1]
+        or samples_seen < 1
+        or any(value.shape != (count,) for value in arrays.values())
+    ):
+        raise ArtifactValidationError("Scaler feature shape or range is incompatible.")
+    if not all(np.isfinite(value).all() for value in arrays.values()):
+        raise ArtifactValidationError("Scaler contains non-finite values.")
+    scaler = MinMaxScaler(feature_range=feature_range)
+    scaler.n_features_in_ = count
+    scaler.n_samples_seen_ = samples_seen
+    for name, value in arrays.items():
+        setattr(scaler, f"{name}_", value)
+    return scaler
+
+
+def _artifact_root(ticker: str, model_type: str) -> Path:
+    if not re.fullmatch(r"[A-Z0-9.\-]{1,12}", ticker):
+        raise ArtifactValidationError("Invalid ticker artifact identity.")
+    if model_type not in {"lstm", "attention", "bilstm_attention_direction"}:
+        raise ArtifactValidationError("Invalid model artifact identity.")
+    return Path(MODEL_DIR) / ticker / model_type
+
+
+def _active_artifact_dir(ticker: str, model_type: str) -> Path | None:
+    root = _artifact_root(ticker, model_type)
+    pointer = root / "current.json"
+    if not pointer.exists():
+        return None
+    try:
+        version = json.loads(pointer.read_text(encoding="utf-8"))["version"]
+    except Exception as exc:
+        raise ArtifactValidationError("Artifact pointer is corrupt.") from exc
+    if not isinstance(version, str) or not version.replace("-", "").isalnum():
+        raise ArtifactValidationError("Artifact pointer contains an invalid version.")
+    candidate = root / "versions" / version
+    if not candidate.is_dir():
+        raise ArtifactValidationError("Artifact version is incomplete.")
+    return candidate
+
+
+def _validate_integrity(directory: Path) -> None:
+    integrity_path = directory / "integrity.json"
+    try:
+        expected = json.loads(integrity_path.read_text(encoding="utf-8"))["sha256"]
+    except Exception as exc:
+        raise ArtifactValidationError("Artifact integrity manifest is missing or corrupt.") from exc
+    for name in ("model.keras", "scaler.json", "metadata.json"):
+        path = directory / name
+        if not path.is_file() or expected.get(name) != _sha256(path):
+            raise ArtifactValidationError(f"Artifact integrity check failed for {name}.")
+
+
+@contextmanager
+def _process_file_lock(path: Path, timeout: float):
+    """Cross-process lock using atomic exclusive creation with stale-lock recovery."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, f"{os.getpid()}\n".encode())
+            os.close(fd)
+            break
+        # Windows can report a sharing violation (PermissionError) while another
+        # process owns the lock file, instead of the POSIX-style FileExistsError.
+        # Both states mean the lock is contended and must follow the same timeout path.
+        except (FileExistsError, PermissionError) as err:
+            if time.monotonic() >= deadline:
+                raise TrainingCapacityError("Timed out waiting for model artifact lock.") from err
+            try:
+                if time.time() - path.stat().st_mtime > settings.artifact_lock_timeout_seconds * 2:
+                    path.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            time.sleep(0.1)
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
 
 
 # ── Git / environment helpers ────────────────────────────────────────
@@ -283,6 +455,7 @@ def _build_model_for_type(
     model_type: str, forecast_days: int, num_features: int
 ) -> Model | Sequential:
     """Factory: instantiate the correct model architecture for model_type."""
+    set_reproducibility()
     if model_type == "bilstm_attention_regression":
         return build_bilstm_attention_regression(
             forecast_days=forecast_days, num_features=num_features
@@ -303,7 +476,8 @@ def _is_direction_model(model_type: str) -> bool:
 
 # ── Load metrics & metadata ──────────────────────────────────────────
 def load_metadata(ticker: str, model_type: str = "lstm") -> dict:
-    meta_path = Path(MODEL_DIR) / ticker / model_type / "metadata.json"
+    directory = _active_artifact_dir(ticker, model_type)
+    meta_path = directory / "metadata.json" if directory else Path("__missing__")
     if meta_path.exists():
         try:
             with open(meta_path) as f:
@@ -314,7 +488,8 @@ def load_metadata(ticker: str, model_type: str = "lstm") -> dict:
 
 
 def load_metrics(ticker: str, model_type: str = "attention") -> dict:
-    metrics_path = Path(MODEL_DIR) / ticker / model_type / "metrics.json"
+    directory = _active_artifact_dir(ticker, model_type)
+    metrics_path = directory / "metrics.json" if directory else Path("__missing__")
     if metrics_path.exists():
         try:
             with open(metrics_path) as f:
@@ -326,7 +501,8 @@ def load_metrics(ticker: str, model_type: str = "attention") -> dict:
 
 def load_cross_validation(ticker: str, model_type: str = "lstm") -> dict:
     """Load cross_validation.json for a ticker/model_type."""
-    cv_path = Path(MODEL_DIR) / ticker / model_type / "cross_validation.json"
+    directory = _active_artifact_dir(ticker, model_type)
+    cv_path = directory / "cross_validation.json" if directory else Path("__missing__")
     if cv_path.exists():
         try:
             with open(cv_path) as f:
@@ -338,7 +514,8 @@ def load_cross_validation(ticker: str, model_type: str = "lstm") -> dict:
 
 def load_validation_results(ticker: str, model_type: str = "lstm") -> list:
     """Load validation_results.json (per-fold residuals) for a ticker/model_type."""
-    vr_path = Path(MODEL_DIR) / ticker / model_type / "validation_results.json"
+    directory = _active_artifact_dir(ticker, model_type)
+    vr_path = directory / "validation_results.json" if directory else Path("__missing__")
     if vr_path.exists():
         try:
             with open(vr_path) as f:
@@ -383,14 +560,22 @@ def _compute_fold_metrics_regression(y_true_prices: np.ndarray, y_pred_prices: n
     }
 
 
-def _compute_fold_metrics_direction(y_true_binary: np.ndarray, y_pred_probs: np.ndarray) -> dict:
-    """Compute classification metrics from binary targets and predicted probabilities."""
+def _compute_fold_metrics_direction(
+    y_true_binary: np.ndarray,
+    y_pred_probs: np.ndarray,
+    training_targets: np.ndarray,
+) -> dict:
+    """Compute all-horizon metrics with a training-fold majority baseline."""
+    y_true_binary = y_true_binary.ravel()
+    y_pred_probs = y_pred_probs.ravel()
+    training_targets = training_targets.ravel().astype(int)
     y_pred_binary = (y_pred_probs > 0.5).astype(int)
     acc = float(accuracy_score(y_true_binary, y_pred_binary))
     prec = float(precision_score(y_true_binary, y_pred_binary, zero_division=0))
     rec = float(recall_score(y_true_binary, y_pred_binary, zero_division=0))
     f1 = float(f1_score(y_true_binary, y_pred_binary, zero_division=0))
-    naive_baseline = float(np.mean(y_true_binary == int(np.bincount(y_true_binary).argmax())))
+    training_majority = int(np.bincount(training_targets, minlength=2).argmax())
+    naive_baseline = float(np.mean(y_true_binary == training_majority))
     return {
         "direction_accuracy": round(acc, 4),
         "precision": round(prec, 4),
@@ -407,24 +592,30 @@ def _compute_fold_metrics_direction(y_true_binary: np.ndarray, y_pred_probs: np.
 def _train_single_fold(
     X_train_fold: np.ndarray,
     y_train_fold: np.ndarray,
-    X_val_fold: np.ndarray,
-    y_val_fold: np.ndarray,
     model_type: str,
     forecast_days: int,
     num_features: int,
 ) -> tuple:
-    """Train one fold model. Returns (model, history, training_seconds)."""
+    """Train one fold model using only the training fold for fitting and early stopping."""
     model = _build_model_for_type(model_type, forecast_days, num_features)
     early_stop = EarlyStopping(monitor="val_loss", patience=7, restore_best_weights=True)
+    inner_validation_size = max(1, int(len(X_train_fold) * 0.1))
+    if len(X_train_fold) <= inner_validation_size:
+        raise ValueError("Training fold is too small for an inner validation split.")
+    X_fit = X_train_fold[:-inner_validation_size]
+    y_fit = y_train_fold[:-inner_validation_size]
+    X_inner_validation = X_train_fold[-inner_validation_size:]
+    y_inner_validation = y_train_fold[-inner_validation_size:]
 
     t0 = time.time()
     history = model.fit(
-        X_train_fold,
-        y_train_fold,
+        X_fit,
+        y_fit,
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
-        validation_data=(X_val_fold, y_val_fold),
+        validation_data=(X_inner_validation, y_inner_validation),
         callbacks=[early_stop],
+        shuffle=False,
         verbose=0,
     )
     training_seconds = round(time.time() - t0, 2)
@@ -518,7 +709,6 @@ def _run_walk_forward_validation(
     Returns (fold_results_list, cv_summary_dict).
     """
     n_folds = VALIDATION_CONFIG.folds
-    tss = TimeSeriesSplit(n_splits=n_folds)
     num_features = feature_values.shape[1]
     is_dir = _is_direction_model(model_type)
 
@@ -531,49 +721,45 @@ def _run_walk_forward_validation(
         aligned_dates = dates
 
     n_rows = len(aligned_features)
-    indices = np.arange(n_rows)
+    splits = generate_validation_splits(n_rows, VALIDATION_CONFIG)
 
     fold_results = []
     all_fold_metrics = []
 
     logger.info("Starting Walk-Forward Validation: %d folds, model_type=%s", n_folds, model_type)
 
-    for fold_idx, (train_idx, val_idx) in enumerate(tss.split(indices), start=1):
+    for fold_idx, (train_idx, val_idx) in enumerate(splits, start=1):
         fold_start_t = time.time()
 
         # ── Per-fold scaler (fit on train partition only) ────────────
         train_features_raw = aligned_features[train_idx]
-        val_features_raw = aligned_features[val_idx]
         fold_scaler = MinMaxScaler()
         fold_scaler.fit(train_features_raw)
-        train_features_scaled = fold_scaler.transform(train_features_raw)
-        val_features_scaled = fold_scaler.transform(val_features_raw)
+        all_features_scaled = fold_scaler.transform(aligned_features)
 
         train_dates_fold = aligned_dates[train_idx]
         val_dates_fold = aligned_dates[val_idx]
 
-        # ── Build sequences ───────────────────────────────────────────
-        try:
-            if is_dir:
-                train_log_returns = log_returns[train_idx]
-                val_log_returns = log_returns[val_idx]
-                X_train_f, y_train_f, _ = create_direction_sequences(
-                    train_features_scaled, train_log_returns, train_dates_fold, forecast_days
-                )
-                X_val_f, y_val_f, val_seq_dates = create_direction_sequences(
-                    val_features_scaled, val_log_returns, val_dates_fold, forecast_days
-                )
-            else:
-                close_idx = FEATURES.index("Close")
-                X_train_f, y_train_f, _ = create_sequences(
-                    train_features_scaled, train_dates_fold, close_idx, forecast_days
-                )
-                X_val_f, y_val_f, val_seq_dates = create_sequences(
-                    val_features_scaled, val_dates_fold, close_idx, forecast_days
-                )
-        except ValueError as exc:
-            logger.warning("Fold %d skipped: not enough data. (%s)", fold_idx, exc)
-            continue
+        def build_for_targets(target_starts: list[int], scaled_features=all_features_scaled):
+            X_rows, y_rows, date_rows = [], [], []
+            close_idx = FEATURES.index("Close")
+            for start in target_starts:
+                if start < WINDOW_SIZE or start + forecast_days > n_rows:
+                    continue
+                X_rows.append(scaled_features[start - WINDOW_SIZE : start])
+                if is_dir:
+                    y_rows.append((log_returns[start : start + forecast_days] > 0).astype(int))
+                else:
+                    y_rows.append(scaled_features[start : start + forecast_days, close_idx])
+                date_rows.append(str(aligned_dates[start - 1].date()))
+            return np.asarray(X_rows), np.asarray(y_rows), date_rows
+
+        train_last = int(train_idx[-1])
+        val_first, val_last = int(val_idx[0]), int(val_idx[-1])
+        train_targets = list(range(WINDOW_SIZE, train_last - forecast_days + 2))
+        val_targets = list(range(val_first, val_last - forecast_days + 2))
+        X_train_f, y_train_f, _ = build_for_targets(train_targets)
+        X_val_f, y_val_f, val_seq_dates = build_for_targets(val_targets)
 
         if len(X_train_f) == 0 or len(X_val_f) == 0:
             logger.warning("Fold %d skipped: empty sequences after windowing.", fold_idx)
@@ -583,8 +769,6 @@ def _run_walk_forward_validation(
         fold_model, fold_history, fold_train_secs = _train_single_fold(
             X_train_f,
             y_train_f,
-            X_val_f,
-            y_val_f,
             model_type,
             forecast_days,
             num_features,
@@ -597,10 +781,10 @@ def _run_walk_forward_validation(
 
         # ── Compute fold metrics ──────────────────────────────────────
         if is_dir:
-            metrics = _compute_fold_metrics_direction(y_val_f[:, 0], preds[:, 0])
+            metrics = _compute_fold_metrics_direction(y_val_f, preds, y_train_f)
         else:
-            pred_prices = _unscale_close(preds[:, 0], fold_scaler)
-            true_prices = _unscale_close(y_val_f[:, 0], fold_scaler)
+            pred_prices = _unscale_close(preds.reshape(-1), fold_scaler)
+            true_prices = _unscale_close(y_val_f.reshape(-1), fold_scaler)
             metrics = _compute_fold_metrics_regression(true_prices, pred_prices)
 
         fold_total_secs = round(time.time() - fold_start_t, 2)
@@ -631,10 +815,18 @@ def _run_walk_forward_validation(
             "train_end": train_end_date,
             "validation_start": val_start_date,
             "validation_end": val_end_date,
+            "train_index_start": int(train_idx[0]),
+            "train_index_end": int(train_idx[-1]),
+            "validation_index_start": int(val_idx[0]),
+            "validation_index_end": int(val_idx[-1]),
+            "gap": VALIDATION_CONFIG.gap,
             "train_samples": len(X_train_f),
             "validation_samples": len(X_val_f),
             "training_seconds": fold_train_secs,
             "fold_total_seconds": fold_total_secs,
+            "early_stopping_source": "training_fold_tail",
+            "evaluation_source": "untouched_walk_forward_fold",
+            "metric_scope": "all_forecast_horizons",
             **metrics,
         }
 
@@ -662,6 +854,16 @@ def _run_walk_forward_validation(
 
     # ── Aggregate cross-validation summary ───────────────────────────
     cv_summary = _aggregate_cv_metrics(all_fold_metrics, n_folds)
+    cv_summary.update(
+        {
+            "metric_source": "walk_forward_out_of_fold" if all_fold_metrics else "unavailable",
+            "metric_scope": "all_forecast_horizons" if all_fold_metrics else "unavailable",
+            "validation_method": VALIDATION_CONFIG.method,
+            "validation_horizon": VALIDATION_CONFIG.horizon,
+            "validation_gap": VALIDATION_CONFIG.gap,
+            "validation_min_train_size": VALIDATION_CONFIG.min_train_size,
+        }
+    )
 
     # ── Pool residuals for diagnostics (regression only) ─────────────
     if not is_dir and fold_results:
@@ -710,20 +912,43 @@ def train_model(
     scaler=None,
     model_type: str = "lstm",
     feature_df=None,
+    feature_metadata: dict | None = None,
 ):
     """
-    Phase 3 training pipeline:
-    1. Walk-forward validation (5-fold expanding) to generate realistic performance metrics.
+    Production training pipeline:
+    1. Configured walk-forward validation to generate untouched out-of-fold metrics.
     2. Train final production model on 100% of available data.
     3. Atomically save everything: model, scaler, metadata, history, cross_validation, validation_results.
 
     Parameters
     ----------
     X_train, y_train    : labelled train sequences (kept for API compatibility; used for final training).
-    X_test, y_test      : held-out test sequences (used for post-training eval).
+    X_test, y_test      : remaining chronological sequences, combined only for final serving fit.
     feature_df          : optional raw feature DataFrame; required for walk-forward splits.
     """
-    forecast_days = y_train.shape[1]
+    if scaler is None:
+        raise ValueError("A fitted scaler is required to train and persist a model artifact.")
+    if X_train.ndim != 3 or X_test.ndim != 3 or y_train.ndim != 2 or y_test.ndim != 2:
+        raise ValueError("Training arrays must be 3D inputs and 2D targets.")
+    if not len(X_train) or not len(X_test) or not len(y_train) or not len(y_test):
+        raise ValueError("Training and serving partitions must both contain samples.")
+    if X_train.shape[2] != len(FEATURES) or X_test.shape[2] != len(FEATURES):
+        raise ValueError("Training feature count is incompatible with the feature schema.")
+    if X_train.shape[1] != WINDOW_SIZE or X_test.shape[1] != WINDOW_SIZE:
+        raise ValueError("Training sequence window is incompatible with the feature schema.")
+    if getattr(scaler, "n_features_in_", None) != len(FEATURES):
+        raise ValueError("Training scaler is incompatible with the feature schema.")
+    if y_train.shape[1] != y_test.shape[1]:
+        raise ValueError("Training and serving target horizons differ.")
+    forecast_days = int(y_train.shape[1])
+    if not 1 <= forecast_days <= MAX_FORECAST_DAYS:
+        raise ValueError(f"Training horizon must be between 1 and {MAX_FORECAST_DAYS}.")
+    if not np.isfinite(X_train).all() or not np.isfinite(X_test).all():
+        raise ValueError("Training features contain non-finite values.")
+    if _is_direction_model(model_type) and not set(
+        np.unique(np.concatenate([y_train, y_test]))
+    ).issubset({0, 1}):
+        raise ValueError("Direction targets must be binary.")
     num_features = X_train.shape[2]
 
     tracemalloc.start()
@@ -781,6 +1006,7 @@ def train_model(
         batch_size=BATCH_SIZE,
         validation_data=(X_final_val, y_final_val),
         callbacks=[early_stop],
+        shuffle=False,
         verbose=0,
     )
     training_duration_seconds = round(time.time() - start_time, 2)
@@ -819,43 +1045,51 @@ def train_model(
         except Exception:
             pass
 
-    # ── Compute test-set classification or regression metrics ─────────
-    test_metrics: dict = {}
-    if _is_direction_model(model_type) and len(X_test) > 0:
-        preds_test = final_model.predict(X_test, verbose=0)
-        if isinstance(preds_test, (list, tuple)):
-            preds_test = preds_test[0]
-        pred_first = (preds_test[:, 0] > 0.5).astype(int)
-        true_first = y_test[:, 0].astype(int)
-        test_metrics = {
-            "precision": float(precision_score(true_first, pred_first, zero_division=0)),
-            "recall": float(recall_score(true_first, pred_first, zero_division=0)),
-            "f1": float(f1_score(true_first, pred_first, zero_division=0)),
-            "naive_baseline": float(
-                accuracy_score(
-                    true_first, np.full_like(true_first, int(np.bincount(true_first).argmax()))
-                )
-            )
-            if len(true_first) > 0
-            else 0.0,
+    # Published metrics are exclusively out-of-fold; the production model has seen all samples.
+    published_metrics: dict = {
+        "metric_source": "walk_forward_out_of_fold",
+        "metric_scope": cv_summary.get("metric_scope", "all_forecast_horizons"),
+    }
+    for key in (
+        "rmse",
+        "mae",
+        "mape",
+        "r2",
+        "direction_accuracy",
+        "precision",
+        "recall",
+        "f1",
+        "naive_baseline",
+    ):
+        value = cv_summary.get(f"average_{key}")
+        if value is not None:
+            public_key = "directional_accuracy" if key == "direction_accuracy" else key
+            published_metrics[public_key] = value
+    if cv_summary.get("folds_completed", 0) == 0:
+        published_metrics = {
+            "metric_source": "unavailable",
+            "detail": "No leakage-free walk-forward folds completed.",
         }
 
     # ── Fail-Safe Atomic Save ─────────────────────────────────────────
-    base_dir = Path(MODEL_DIR) / ticker / model_type
-    tmp_dir = Path(MODEL_DIR) / ticker / f"{model_type}_tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    base_dir = _artifact_root(ticker, model_type)
+    version_id = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex}"
+    tmp_dir = base_dir / "versions" / version_id
+    tmp_dir.mkdir(parents=True, exist_ok=False)
 
+    activated = False
     try:
         final_model.save(str(tmp_dir / "model.keras"))
         model_saved_path = tmp_dir / "model.keras"
         if scaler is not None:
-            joblib.dump(scaler, str(tmp_dir / "scaler.joblib"))
+            _save_scaler_json(scaler, tmp_dir / "scaler.json")
 
         meta = {
             "schema_version": SCHEMA_VERSION,
             "model_type": model_type,
             "window_size": WINDOW_SIZE,
             "feature_count": num_features,
+            "output_width": forecast_days,
             "features": FEATURES,
             "dataset_fingerprint": fingerprint,
             "feature_stats": feature_stats,
@@ -868,6 +1102,14 @@ def train_model(
             "scaler": "MinMaxScaler",
             "validation_method": VALIDATION_CONFIG.method,
             "validation_folds": VALIDATION_CONFIG.folds,
+            "validation_horizon": VALIDATION_CONFIG.horizon,
+            "validation_gap": VALIDATION_CONFIG.gap,
+            "validation_min_train_size": VALIDATION_CONFIG.min_train_size,
+            "seed": VALIDATION_CONFIG.seed,
+            "deterministic": VALIDATION_CONFIG.deterministic,
+            "metric_source": "walk_forward_out_of_fold",
+            "metric_scope": "all_forecast_horizons",
+            "data_snapshot": feature_metadata or {},
             "app_version": APP_VERSION,
             "tensorflow_version": tf.__version__,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -881,7 +1123,7 @@ def train_model(
                 "dropout": 0.25,
                 "lstm_units": LSTM_UNITS,
                 "window_size": WINDOW_SIZE,
-                "forecast_days": MAX_FORECAST_DAYS,
+                "forecast_days": forecast_days,
             },
             "environment": {
                 "python_version": sys.version.split()[0],
@@ -906,9 +1148,8 @@ def train_model(
         with open(tmp_dir / "history.json", "w") as f:
             json.dump(history_data, f, indent=2)
 
-        if test_metrics:
-            with open(tmp_dir / "metrics.json", "w") as f:
-                json.dump(test_metrics, f, indent=2)
+        with open(tmp_dir / "metrics.json", "w") as f:
+            json.dump(published_metrics, f, indent=2)
 
         # Walk-forward outputs
         with open(tmp_dir / "cross_validation.json", "w") as f:
@@ -917,15 +1158,33 @@ def train_model(
         with open(tmp_dir / "validation_results.json", "w") as f:
             json.dump(fold_results, f, indent=2)
 
-        # Atomic directory swap
-        if base_dir.exists():
-            shutil.rmtree(base_dir)
-        tmp_dir.rename(base_dir)
+        hashes = {
+            name: _sha256(tmp_dir / name)
+            for name in ("model.keras", "scaler.json", "metadata.json")
+        }
+        (tmp_dir / "integrity.json").write_text(
+            json.dumps({"algorithm": "sha256", "sha256": hashes}, indent=2),
+            encoding="utf-8",
+        )
+
+        pointer_tmp = base_dir / f".current-{uuid.uuid4().hex}.json"
+        pointer_tmp.write_text(json.dumps({"version": version_id}), encoding="utf-8")
+        os.replace(pointer_tmp, base_dir / "current.json")
+        activated = True
+
+        with _process_file_lock(base_dir / ".access.lock", settings.artifact_lock_timeout_seconds):
+            versions = sorted(
+                (base_dir / "versions").iterdir(),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            for old_version in versions[settings.model_versions_to_keep :]:
+                shutil.rmtree(old_version, ignore_errors=True)
 
         logger.info("Successfully trained and saved model → %s", base_dir)
 
     except Exception:
-        if tmp_dir.exists():
+        if tmp_dir.exists() and not activated:
             shutil.rmtree(tmp_dir)
         logger.error("Failed to save trained model artifacts to %s", tmp_dir, exc_info=True)
         raise
@@ -940,28 +1199,29 @@ def train_model(
 def update_manifest(ticker: str, model_type: str, metadata: dict | None = None) -> None:
     """Automatically update saved_models/manifest.json."""
     manifest_path = Path(MODEL_DIR) / "manifest.json"
-    manifest = {}
-    if manifest_path.exists():
-        try:
-            with open(manifest_path) as f:
-                manifest = json.load(f)
-        except Exception:
-            manifest = {}
-
-    key = f"{ticker}_{model_type}"
-    manifest[key] = {
-        "ticker": ticker,
-        "model_type": model_type,
-        "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "version": APP_VERSION,
-        "schema_version": SCHEMA_VERSION,
-        "metadata": metadata or {},
-    }
-
     try:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(manifest_path, "w") as f:
-            json.dump(manifest, f, indent=2)
+        with _process_file_lock(
+            manifest_path.with_suffix(".lock"), settings.artifact_lock_timeout_seconds
+        ):
+            manifest = {}
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:
+                    logger.warning("Replacing corrupt manifest.json")
+            key = f"{ticker}_{model_type}"
+            manifest[key] = {
+                "ticker": ticker,
+                "model_type": model_type,
+                "last_updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "version": APP_VERSION,
+                "schema_version": SCHEMA_VERSION,
+                "metadata": metadata or {},
+            }
+            temp_path = manifest_path.with_name(f".manifest-{uuid.uuid4().hex}.json")
+            temp_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            os.replace(temp_path, manifest_path)
     except Exception:
         logger.warning("Failed to update manifest.json", exc_info=True)
 
@@ -978,6 +1238,52 @@ def get_manifest() -> dict:
     return {}
 
 
+def enforce_storage_quota(exclude: tuple[str, str] | None = None) -> None:
+    """Bound model count/storage and evict the least-recently-used inactive model."""
+    root = Path(MODEL_DIR)
+    root.mkdir(parents=True, exist_ok=True)
+    free_mb = shutil.disk_usage(root).free / (1024 * 1024)
+    protected = _artifact_root(*exclude) if exclude else None
+    candidates: list[tuple[float, Path, int]] = []
+    all_roots: list[tuple[Path, int]] = []
+    for pointer in root.glob("*/*/current.json"):
+        model_root = pointer.parent
+        size = sum(path.stat().st_size for path in model_root.rglob("*") if path.is_file())
+        all_roots.append((model_root, size))
+        if model_root != protected:
+            candidates.append((pointer.stat().st_mtime, model_root, size))
+
+    total_bytes = sum(size for _, size in all_roots)
+    projected_count = len(all_roots) + (1 if protected and not protected.exists() else 0)
+    max_bytes = settings.model_max_storage_mb * 1024 * 1024
+    candidates.sort(key=lambda item: item[0])
+    while candidates and (
+        projected_count > settings.model_max_count
+        or total_bytes >= max_bytes
+        or free_mb < settings.model_min_free_mb
+    ):
+        _, victim, size = candidates.pop(0)
+        try:
+            with (
+                _process_file_lock(victim / ".train.lock", timeout=0),
+                _process_file_lock(victim / ".access.lock", timeout=0),
+            ):
+                shutil.rmtree(victim)
+        except (OSError, TrainingCapacityError):
+            logger.info("Skipping busy artifact during quota eviction: %s", victim)
+            continue
+        total_bytes -= size
+        projected_count -= 1
+        free_mb = shutil.disk_usage(root).free / (1024 * 1024)
+
+    if (
+        projected_count > settings.model_max_count
+        or total_bytes >= max_bytes
+        or free_mb < settings.model_min_free_mb
+    ):
+        raise TrainingCapacityError("Model storage quota is exhausted.")
+
+
 # ── Staleness & Schema Validation ────────────────────────────────────
 def _is_stale(path: Path) -> bool:
     if not path.exists():
@@ -986,16 +1292,61 @@ def _is_stale(path: Path) -> bool:
     return age_days > MODEL_MAX_AGE_DAYS
 
 
-def is_schema_valid(ticker: str, model_type: str) -> bool:
+def is_schema_valid(ticker: str, model_type: str, expected_output_width: int | None = None) -> bool:
     """Check if saved metadata matches current SCHEMA_VERSION and FEATURES list."""
     meta = load_metadata(ticker, model_type)
     if not meta:
         return False
-    return (
+    valid = (
         meta.get("schema_version") == SCHEMA_VERSION
         and meta.get("features") == FEATURES
         and meta.get("window_size") == WINDOW_SIZE
+        and meta.get("feature_count") == len(FEATURES)
     )
+    if expected_output_width is not None:
+        valid = valid and meta.get("output_width") == expected_output_width
+    return valid
+
+
+def _load_valid_artifact(
+    ticker: str, model_type: str, expected_output_width: int, allow_stale: bool = False
+):
+    root = _artifact_root(ticker, model_type)
+    # Readers use a stable root-level lock.  A writer only changes ``current.json``
+    # after its version is complete, while pruning/eviction takes this same lock;
+    # no reader can therefore observe a directory disappearing mid-deserialisation.
+    with _process_file_lock(root / ".access.lock", settings.artifact_lock_timeout_seconds):
+        directory = _active_artifact_dir(ticker, model_type)
+        if directory is None:
+            raise ArtifactValidationError("No versioned artifact is active.")
+        _validate_integrity(directory)
+        model_path = directory / "model.keras"
+        scaler_path = directory / "scaler.json"
+        if not allow_stale and _is_stale(model_path):
+            raise ArtifactValidationError("Artifact is stale.")
+        if not is_schema_valid(ticker, model_type, expected_output_width):
+            raise ArtifactValidationError("Artifact metadata is incompatible.")
+        loaded_scaler = _load_scaler_json(scaler_path)
+        # ``safe_mode`` rejects Lambda/Python payloads embedded in a .keras archive and
+        # ``compile=False`` avoids deserialising an unneeded optimizer state.  This is
+        # deliberately after the integrity validation above: an artifact from outside
+        # the trusted model store is never loaded merely because it has the right name.
+        try:
+            model = load_model(
+                str(model_path),
+                custom_objects={"TemporalAttention": TemporalAttention},
+                safe_mode=True,
+                compile=False,
+            )
+            output = model.outputs[0] if isinstance(model.outputs, list) else model.output
+            actual_width = int(output.shape[-1])
+        except Exception as exc:
+            raise ArtifactValidationError("Artifact model cannot be safely deserialised.") from exc
+        if actual_width != expected_output_width:
+            raise ArtifactValidationError(
+                f"Model output width mismatch: expected {expected_output_width}, got {actual_width}."
+            )
+        return model, loaded_scaler
 
 
 # ── Load or train ────────────────────────────────────────────────────
@@ -1008,75 +1359,67 @@ def load_or_train(
     scaler=None,
     model_type: str = "lstm",
     feature_df=None,
+    feature_metadata: dict | None = None,
 ):
     """Load cached model & scaler or retrain with fail-safe fallback."""
-    base_dir = Path(MODEL_DIR) / ticker / model_type
-    model_path = base_dir / "model.keras"
-    scaler_path = base_dir / "scaler.joblib"
+    expected_output_width = int(y_train.shape[1])
     lock = _get_ticker_lock(ticker)
 
     with lock:
-        if (
-            model_path.exists()
-            and scaler_path.exists()
-            and not _is_stale(model_path)
-            and is_schema_valid(ticker, model_type)
-        ):
-            try:
-                loaded_scaler = joblib.load(str(scaler_path))
-                if getattr(loaded_scaler, "n_features_in_", 0) != len(FEATURES):
-                    logger.warning(
-                        "Scaler feature mismatch for %s/%s: expected %d, got %d. Retraining...",
-                        ticker,
-                        model_type,
-                        len(FEATURES),
-                        loaded_scaler.n_features_in_,
-                    )
-                    raise ValueError("Scaler feature count mismatch")
-                model = load_model(
-                    str(model_path), custom_objects={"TemporalAttention": TemporalAttention}
-                )
-                logger.info("Loaded valid cached model (%s/%s)", ticker, model_type)
-                return model, loaded_scaler
-            except Exception:
-                logger.warning(
-                    "Failed to load cached model for %s/%s. Retraining...",
-                    ticker,
-                    model_type,
-                    exc_info=True,
-                )
-
-        # Retrain with fail-safe behavior
         try:
-            return train_model(
-                X_train,
-                y_train,
-                X_test,
-                y_test,
-                ticker,
-                scaler=scaler,
-                model_type=model_type,
-                feature_df=feature_df,
-            )
-        except Exception:
-            if model_path.exists() and scaler_path.exists():
-                logger.warning(
-                    "Retraining failed. Falling back to existing cached model for %s/%s",
+            loaded = _load_valid_artifact(ticker, model_type, expected_output_width)
+            logger.info("Loaded valid cached model (%s/%s)", ticker, model_type)
+            return loaded
+        except ArtifactValidationError:
+            logger.info("No compatible fresh artifact for %s/%s", ticker, model_type)
+
+        artifact_lock = _artifact_root(ticker, model_type) / ".train.lock"
+        with _process_file_lock(artifact_lock, settings.training_wait_seconds):
+            try:
+                return _load_valid_artifact(ticker, model_type, expected_output_width)
+            except ArtifactValidationError:
+                pass
+            if not _training_slots.acquire(timeout=settings.training_wait_seconds):
+                raise TrainingCapacityError("Training concurrency limit reached.")
+            try:
+                with _process_file_lock(
+                    Path(MODEL_DIR) / ".quota.lock", settings.artifact_lock_timeout_seconds
+                ):
+                    enforce_storage_quota(exclude=(ticker, model_type))
+                trained = train_model(
+                    X_train,
+                    y_train,
+                    X_test,
+                    y_test,
                     ticker,
-                    model_type,
+                    scaler=scaler,
+                    model_type=model_type,
+                    feature_df=feature_df,
+                    feature_metadata=feature_metadata,
                 )
-                model = load_model(
-                    str(model_path), custom_objects={"TemporalAttention": TemporalAttention}
-                )
-                loaded_scaler = joblib.load(str(scaler_path))
-                return model, loaded_scaler
-            raise
+                with _process_file_lock(
+                    Path(MODEL_DIR) / ".quota.lock", settings.artifact_lock_timeout_seconds
+                ):
+                    enforce_storage_quota(exclude=(ticker, model_type))
+                return trained
+            except Exception:
+                try:
+                    return _load_valid_artifact(
+                        ticker, model_type, expected_output_width, allow_stale=True
+                    )
+                except ArtifactValidationError:
+                    raise
+            finally:
+                _training_slots.release()
 
 
 # ── Evaluate ─────────────────────────────────────────────────────────
 def evaluate_model(model, X_test, y_test, scaler):
     """
-    RMSE, MAE, MAPE, R², and directional accuracy on the test set in original price scale.
+    Diagnostic metric utility in original price scale.
+
+    API responses do not publish this result for the all-data production model; they load only
+    walk-forward out-of-fold metrics persisted by ``train_model``.
     """
     empty = {
         "rmse": None,
@@ -1143,31 +1486,64 @@ def predict_future(model, feature_df, scaler, days: int = 7):
     """
     Direct multi-step price prediction using the last multi-feature sequence.
     """
+    if not 1 <= days <= MAX_FORECAST_DAYS:
+        raise ValueError(f"Forecast days must be between 1 and {MAX_FORECAST_DAYS}.")
+    if len(feature_df) < WINDOW_SIZE:
+        raise ValueError("Not enough feature rows for prediction.")
     feature_values = feature_df[FEATURES].values
     last_window = feature_values[-WINDOW_SIZE:]
     scaled_window = scaler.transform(last_window)
     input_seq = scaled_window.reshape(1, WINDOW_SIZE, len(FEATURES))
 
-    preds = model.predict(input_seq, verbose=0)
-    preds_scaled = preds[0] if isinstance(preds, (list, tuple)) else preds[0]
-    preds_scaled = np.squeeze(preds_scaled)[:days]
-
-    return _unscale_close(preds_scaled, scaler).tolist()
+    raw_predictions = model.predict(input_seq, verbose=0)
+    predictions = (
+        raw_predictions[0] if isinstance(raw_predictions, (list, tuple)) else raw_predictions
+    )
+    preds_scaled = np.asarray(predictions, dtype=float).reshape(-1)
+    if len(preds_scaled) < days:
+        raise ArtifactValidationError(
+            f"Price model returned {len(preds_scaled)} outputs for a {days}-day forecast."
+        )
+    if not np.isfinite(preds_scaled[:days]).all():
+        raise ValueError("Price model returned non-finite predictions.")
+    prices = _unscale_close(preds_scaled[:days], scaler)
+    if not np.isfinite(prices).all() or np.any(prices <= 0):
+        raise ValueError("Price model returned invalid non-positive prices.")
+    return prices.tolist()
 
 
 def predict_direction(model, feature_df, scaler, days: int = 7):
     """
     Directional multi-step prediction using the Attention model.
     """
+    if not 1 <= days <= MAX_FORECAST_DAYS:
+        raise ValueError(f"Forecast days must be between 1 and {MAX_FORECAST_DAYS}.")
+    if len(feature_df) < WINDOW_SIZE:
+        raise ValueError("Not enough feature rows for prediction.")
     feature_values = feature_df[FEATURES].values
     last_window = feature_values[-WINDOW_SIZE:]
     scaled_window = scaler.transform(last_window)
     input_seq = scaled_window.reshape(1, WINDOW_SIZE, len(FEATURES))
 
-    probabilities, attention_weights = model.predict(input_seq, verbose=0)
-    probabilities = probabilities[0][:days]
+    output = model.predict(input_seq, verbose=0)
+    if not isinstance(output, (list, tuple)) or len(output) != 2:
+        raise ArtifactValidationError(
+            "Direction model must return probabilities and attention weights."
+        )
+    probabilities, attention_weights = output
+    probabilities = np.asarray(probabilities, dtype=float)
+    attention_weights = np.asarray(attention_weights, dtype=float)
+    if probabilities.ndim != 2 or probabilities.shape[0] != 1 or probabilities.shape[1] < days:
+        raise ArtifactValidationError(
+            "Direction model probability output has an incompatible horizon."
+        )
+    if attention_weights.shape[0] != 1 or attention_weights.size != WINDOW_SIZE:
+        raise ArtifactValidationError("Direction model attention output has an incompatible shape.")
+    probabilities = probabilities[0, :days]
+    if not np.isfinite(probabilities).all() or np.any((probabilities < 0) | (probabilities > 1)):
+        raise ValueError("Direction model returned invalid probabilities.")
 
     probs_list = [float(p) for p in probabilities]
     directions = ["Up" if p > 0.5 else "Down" for p in probs_list]
 
-    return directions, probs_list, attention_weights.flatten().tolist()
+    return directions, probs_list, attention_weights.reshape(-1).tolist()

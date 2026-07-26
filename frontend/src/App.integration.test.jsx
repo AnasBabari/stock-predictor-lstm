@@ -58,18 +58,18 @@ const priceResponse = {
   ticker: 'TSLA',
   historical_dates: ['2026-07-18', '2026-07-21'],
   historical_prices: [390.0, 400.0],
-  future_dates: ['2026-07-24', '2026-07-25'],
-  predicted_prices: [405.0, 410.0],
-  forecast_days: 2,
+  future_dates: Array.from({ length: 7 }, (_, index) => `2026-07-${24 + index}`),
+  predicted_prices: Array.from({ length: 7 }, (_, index) => 405.0 + index),
+  forecast_days: 7,
   metrics: { rmse: 1.2, mae: 0.8, r2: 0.99, mape: 0.5, directional_accuracy: 0.75 },
 };
 
 const trendResponse = {
   ticker: 'TSLA',
-  forecast_days: 2,
-  future_dates: ['2026-07-24', '2026-07-25'],
-  directions: ['Up', 'Down'],
-  probabilities: [0.65, 0.42],
+  forecast_days: 7,
+  future_dates: Array.from({ length: 7 }, (_, index) => `2026-07-${24 + index}`),
+  directions: ['Up', 'Down', 'Up', 'Up', 'Down', 'Up', 'Down'],
+  probabilities: [0.65, 0.42, 0.7, 0.6, 0.4, 0.8, 0.3],
   attention_weights: [
     { index: 0, date: '2026-07-18', weight: 0.2 },
     { index: 1, date: '2026-07-21', weight: 0.8 },

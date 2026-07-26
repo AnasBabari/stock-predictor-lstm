@@ -18,7 +18,23 @@ def test_preprocess_y_shape(preprocessed):
 def test_train_test_split_ratio(preprocessed):
     X_train, X_test, *_ = preprocessed
     total = len(X_train) + len(X_test)
-    assert abs(len(X_train) / total - 0.80) < 0.05
+    # The gap is deliberately purged for the 30-day target horizon, so the
+    # effective training count is slightly below the configured 80% boundary.
+    assert 0.65 < len(X_train) / total < 0.80
+
+
+def test_price_train_and_test_targets_do_not_overlap(synthetic_feature_df):
+    """A date scored by the diagnostic test partition is never a train target."""
+    from data_pipeline import preprocess
+
+    X_train, X_test, y_train, y_test, _scaler, train_dates, test_dates = preprocess(
+        synthetic_feature_df
+    )
+    assert len(X_train) == len(y_train) == len(train_dates)
+    assert len(X_test) == len(y_test) == len(test_dates)
+    last_train_target = synthetic_feature_df.index.get_loc(train_dates[-1]) + MAX_FORECAST_DAYS
+    first_test_target = synthetic_feature_df.index.get_loc(test_dates[0]) + 1
+    assert last_train_target < first_test_target
 
 
 def test_scaler_fit_on_train_only(synthetic_feature_df):
@@ -45,7 +61,7 @@ def test_fetch_data_bad_ticker_raises():
 
     from data_pipeline import fetch_data
 
-    with pytest.raises(ValueError, match="Not enough historical data"):
+    with pytest.raises(ValueError, match="(No market data|Not enough historical data)"):
         fetch_data("ZZZZZZZZZ_FAKE")
 
 
@@ -162,6 +178,17 @@ def test_prepare_return_data_shapes_and_values(synthetic_feature_df):
     # Dates returned correctly
     assert len(train_dates) == len(X_train)
     assert len(test_dates) == len(X_test)
+
+
+def test_direction_train_and_test_targets_do_not_overlap(synthetic_feature_df):
+    from data_pipeline import prepare_return_data
+
+    *_, train_dates, test_dates = prepare_return_data(synthetic_feature_df)
+    # Direction sequence dates are based on the one-row-return-aligned index;
+    # the same horizon purge applies to their actual target dates.
+    last_train_target = synthetic_feature_df.index.get_loc(train_dates[-1]) + MAX_FORECAST_DAYS
+    first_test_target = synthetic_feature_df.index.get_loc(test_dates[0]) + 1
+    assert last_train_target < first_test_target
 
 
 def test_get_raw_feature_arrays(synthetic_feature_df):

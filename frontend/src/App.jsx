@@ -12,6 +12,7 @@ import ForecastChartActions from './components/ForecastChartActions';
 import Watchlist from './components/Watchlist';
 import PredictionHistory from './components/PredictionHistory';
 import ToastContainer from './components/ToastContainer';
+import { exportCompleteAnalysis } from './utils/exportService';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const THEME_KEY = 'stocklstm-theme:v1';
@@ -22,6 +23,24 @@ const FORECAST_TYPES = {
   PRICE: 'price',
   TREND: 'trend',
 };
+
+const forecastIdentity = (ticker, days, type) =>
+  `${ticker.trim().toUpperCase()}::${Number(days)}::${type}`;
+
+function assertForecastIdentity(data, ticker, days, type) {
+  const symbol = ticker.trim().toUpperCase();
+  if (!data || data.ticker !== symbol || Number(data.forecast_days) !== Number(days)) {
+    throw new Error('The forecast response does not match the selected ticker and horizon.');
+  }
+  const hasExpectedPayload =
+    type === FORECAST_TYPES.PRICE
+      ? data.predicted_prices?.length === Number(days)
+      : data.directions?.length === Number(days) && data.probabilities?.length === Number(days);
+  if (!hasExpectedPayload || data.future_dates?.length !== Number(days)) {
+    throw new Error('The forecast response is incomplete for the selected forecast type.');
+  }
+  return data;
+}
 
 export default function App() {
   const [theme, setTheme] = useState(() => {
@@ -56,10 +75,7 @@ export default function App() {
 
   const abortControllerRef = useRef(null);
   const requestIdRef = useRef(0);
-  const forecastCacheRef = useRef({
-    [FORECAST_TYPES.PRICE]: null,
-    [FORECAST_TYPES.TREND]: null,
-  });
+  const forecastCacheRef = useRef(new Map());
   const chartRef = useRef(null);
 
   const abortActiveRequest = useCallback(() => {
@@ -157,6 +173,7 @@ export default function App() {
       setErrorMsg('');
       setIsLoading(true);
       setPredictionData(null);
+      setStockInfo(null);
 
       try {
         const [predRes, infoRes] = await Promise.allSettled([
@@ -169,8 +186,16 @@ export default function App() {
         }
 
         if (predRes.status === 'fulfilled') {
-          const fetchedData = predRes.value;
-          forecastCacheRef.current[requestedType] = fetchedData;
+          const fetchedData = assertForecastIdentity(
+            predRes.value,
+            symbol,
+            forecastDays,
+            requestedType
+          );
+          forecastCacheRef.current.set(
+            forecastIdentity(symbol, forecastDays, requestedType),
+            fetchedData
+          );
           setPredictionData(fetchedData);
 
           if (requestedType === FORECAST_TYPES.PRICE && fetchedData.historical_prices?.length) {
@@ -237,6 +262,30 @@ export default function App() {
     [abortActiveRequest, forecastType]
   );
 
+  const handleTickerChange = useCallback(
+    (nextTicker) => {
+      abortActiveRequest();
+      setTicker(nextTicker);
+      setPredictionData(null);
+      setStockInfo(null);
+      setErrorMsg('');
+      setIsLoading(false);
+    },
+    [abortActiveRequest]
+  );
+
+  const handleForecastDaysChange = useCallback(
+    (nextDays) => {
+      abortActiveRequest();
+      setForecastDays(nextDays);
+      setPredictionData(null);
+      setStockInfo(null);
+      setErrorMsg('');
+      setIsLoading(false);
+    },
+    [abortActiveRequest]
+  );
+
   const handleExportCompleteAnalysis = useCallback(async () => {
     const tickerSymbol = (ticker || '').trim().toUpperCase();
     if (!tickerSymbol) {
@@ -245,18 +294,22 @@ export default function App() {
       return;
     }
 
-    const cachedPrice = forecastCacheRef.current[FORECAST_TYPES.PRICE];
-    const cachedTrend = forecastCacheRef.current[FORECAST_TYPES.TREND];
+    const priceKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.PRICE);
+    const trendKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.TREND);
+    const cachedPrice = forecastCacheRef.current.get(priceKey);
+    const cachedTrend = forecastCacheRef.current.get(trendKey);
 
     const ensureForecast = async (type) => {
-      if (forecastCacheRef.current[type]) {
-        return forecastCacheRef.current[type];
+      const key = forecastIdentity(tickerSymbol, forecastDays, type);
+      if (forecastCacheRef.current.has(key)) {
+        return forecastCacheRef.current.get(key);
       }
 
       const controller = new AbortController();
       const data = await fetchPredictionData(tickerSymbol, forecastDays, type, controller.signal);
-      forecastCacheRef.current[type] = data;
-      return data;
+      const validated = assertForecastIdentity(data, tickerSymbol, forecastDays, type);
+      forecastCacheRef.current.set(key, validated);
+      return validated;
     };
 
     try {
@@ -269,20 +322,23 @@ export default function App() {
       if (!priceData || !trendData) {
         throw new Error('Both forecast types are required to export the complete analysis.');
       }
+      assertForecastIdentity(priceData, tickerSymbol, forecastDays, FORECAST_TYPES.PRICE);
+      assertForecastIdentity(trendData, tickerSymbol, forecastDays, FORECAST_TYPES.TREND);
 
       const metadata = {
         ticker: tickerSymbol,
         generated_at: new Date().toISOString(),
         forecast_days: forecastDays,
-        window_size: 60,
-        price_model: 'LSTM',
-        price_model_version: 'v1',
-        direction_model: 'Attention-LSTM',
-        direction_model_version: 'v1',
-        backend_api_version: '3.0',
+        window_size: priceData.metadata?.window_size,
+        price_model: priceData.metadata?.architecture,
+        price_model_version: priceData.metadata?.model_version,
+        direction_model: trendData.metadata?.architecture,
+        direction_model_version: trendData.metadata?.model_version,
+        backend_api_version: priceData.metadata?.model_version,
+        price_metric_source: priceData.metrics?.metric_source,
+        direction_metric_source: trendData.metrics?.metric_source,
       };
 
-      const { exportCompleteAnalysis } = await import('./utils/exportService');
       await exportCompleteAnalysis({
         priceData,
         directionData: trendData,
@@ -370,9 +426,9 @@ export default function App() {
 
         <SearchCard
           ticker={ticker}
-          setTicker={setTicker}
+          setTicker={handleTickerChange}
           forecastDays={forecastDays}
-          setForecastDays={setForecastDays}
+          setForecastDays={handleForecastDaysChange}
           forecastType={forecastType}
           onForecastTypeChange={handleForecastTypeChange}
           onPredict={handlePredict}

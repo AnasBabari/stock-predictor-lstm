@@ -3,12 +3,21 @@
 # Features included: OHLCV, Technical Indicators, Market Returns, Cyclical Calendar
 # Phase 3: Decoupled sequence generation for walk-forward validation support.
 
+import hashlib
+
 import numpy as np
 import pandas as pd
 import yfinance as yf  # type: ignore[import-untyped]
 from sklearn.preprocessing import MinMaxScaler  # type: ignore[import-untyped]
 
-from config import FEATURES, HISTORICAL_YEARS, MAX_FORECAST_DAYS, TRAIN_SPLIT, WINDOW_SIZE
+from config import (
+    FEATURES,
+    HISTORICAL_YEARS,
+    MAX_FORECAST_DAYS,
+    SCHEMA_VERSION,
+    TRAIN_SPLIT,
+    WINDOW_SIZE,
+)
 from features.pipeline import build_features
 
 
@@ -25,10 +34,19 @@ def fetch_data(ticker: str):
         timeout=30,
     )
 
+    if not isinstance(data, pd.DataFrame) or data.empty:
+        raise ValueError(f"No market data is available for {ticker}.")
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
 
-    data = data.dropna()
+    required_ohlcv = {"Open", "High", "Low", "Close", "Volume"}
+    if not required_ohlcv.issubset(data.columns):
+        raise ValueError(f"Market data for {ticker} is missing required OHLCV columns.")
+    data = data.loc[~data.index.duplicated(keep="last")].sort_index().dropna(subset=required_ohlcv)
+    if not np.isfinite(data[list(required_ohlcv)].to_numpy(dtype=float)).all():
+        raise ValueError(f"Market data for {ticker} contains non-finite OHLCV values.")
+    if (data[["Open", "High", "Low", "Close"]] <= 0).any().any() or (data["Volume"] < 0).any():
+        raise ValueError(f"Market data for {ticker} contains invalid OHLCV values.")
     min_rows = WINDOW_SIZE + MAX_FORECAST_DAYS + 30  # account for 20-day rolling window NaNs
     if len(data) < min_rows:
         raise ValueError(
@@ -37,6 +55,12 @@ def fetch_data(ticker: str):
 
     # Build features & metadata
     feature_df, feature_metadata = build_features(data, FEATURES)
+    snapshot_hasher = hashlib.sha256()
+    snapshot_hasher.update("|".join(feature_df.columns).encode("utf-8"))
+    snapshot_hasher.update(pd.util.hash_pandas_object(feature_df, index=True).values.tobytes())
+    feature_metadata["snapshot_id"] = snapshot_hasher.hexdigest()
+    feature_metadata["ticker"] = ticker
+    feature_metadata["feature_schema_version"] = SCHEMA_VERSION
     closing_prices = feature_df["Close"].to_numpy()
 
     return feature_df, closing_prices, feature_df.index, feature_metadata
@@ -111,6 +135,13 @@ def preprocess(feature_df: pd.DataFrame, forecast_days=MAX_FORECAST_DAYS, scaler
         raise ValueError("Not enough data for training after windowing.")
 
     split = int(n_samples * TRAIN_SPLIT)
+    # A multi-step target beginning at sample ``i`` covers raw rows
+    # ``WINDOW_SIZE + i : WINDOW_SIZE + i + forecast_days``.  Purge the
+    # boundary samples so a target date used by the training partition can
+    # never also appear in the diagnostic test partition.
+    train_count = split - forecast_days + 1
+    if train_count < 1 or split >= n_samples:
+        raise ValueError("Not enough data for a leakage-free train/test split.")
     split_raw_idx = split + WINDOW_SIZE
 
     # ── Fit scaler on training data only to prevent look-ahead bias ────
@@ -121,9 +152,9 @@ def preprocess(feature_df: pd.DataFrame, forecast_days=MAX_FORECAST_DAYS, scaler
 
     X, y, seq_dates = create_sequences(scaled, dates, close_idx, forecast_days, WINDOW_SIZE)
 
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
-    train_dates = seq_dates[:split]
+    X_train, X_test = X[:train_count], X[split:]
+    y_train, y_test = y[:train_count], y[split:]
+    train_dates = seq_dates[:train_count]
     test_dates = seq_dates[split:]
 
     return X_train, X_test, y_train, y_test, scaler, train_dates, test_dates
@@ -150,6 +181,9 @@ def prepare_return_data(feature_df: pd.DataFrame, forecast_days=MAX_FORECAST_DAY
         raise ValueError("Not enough data for training after windowing.")
 
     split = int(n_samples * TRAIN_SPLIT)
+    train_count = split - forecast_days + 1
+    if train_count < 1 or split >= n_samples:
+        raise ValueError("Not enough data for a leakage-free train/test split.")
     split_raw_idx = split + WINDOW_SIZE
 
     # ── Fit scaler on training features only ────
@@ -163,9 +197,9 @@ def prepare_return_data(feature_df: pd.DataFrame, forecast_days=MAX_FORECAST_DAY
         scaled_features, log_returns, aligned_dates, forecast_days, WINDOW_SIZE
     )
 
-    X_train, X_test = X[:split], X[split:]
-    y_train, y_test = y[:split], y[split:]
-    train_dates = seq_dates[:split]
+    X_train, X_test = X[:train_count], X[split:]
+    y_train, y_test = y[:train_count], y[split:]
+    train_dates = seq_dates[:train_count]
     test_dates = seq_dates[split:]
 
     return X_train, X_test, y_train, y_test, scaler, train_dates, test_dates

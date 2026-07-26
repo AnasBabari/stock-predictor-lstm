@@ -17,17 +17,28 @@ export default function SearchCard({
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const searchWrapperRef = useRef(null);
   const searchTimeoutRef = useRef(null);
+  const searchAbortRef = useRef(null);
+  const searchRequestIdRef = useRef(0);
 
   const fetchSuggestions = useCallback(
     async (query) => {
+      searchAbortRef.current?.abort();
+      const controller = new AbortController();
+      searchAbortRef.current = controller;
+      const requestId = ++searchRequestIdRef.current;
       try {
-        const res = await fetch(`${apiBase}/api/v1/search?query=${encodeURIComponent(query)}`);
+        const res = await fetch(`${apiBase}/api/v1/search?query=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
         if (!res.ok) return;
         const data = await res.json();
-        setSuggestions(data.results || []);
-        setDropdownOpen(true);
+        if (requestId !== searchRequestIdRef.current) return;
+        const results = Array.isArray(data.results) ? data.results : [];
+        setSuggestions(results);
+        setDropdownOpen(results.length > 0);
         setHighlightedIndex(-1);
-      } catch {
+      } catch (error) {
+        if (error.name === 'AbortError') return;
         // Ignore network errors on search autocomplete
       }
     },
@@ -37,6 +48,11 @@ export default function SearchCard({
   const handleInputChange = (e) => {
     const value = e.target.value;
     setTicker(value);
+    searchRequestIdRef.current += 1;
+    searchAbortRef.current?.abort();
+    setSuggestions([]);
+    setDropdownOpen(false);
+    setHighlightedIndex(-1);
 
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
@@ -74,6 +90,8 @@ export default function SearchCard({
       e.preventDefault();
       if (highlightedIndex >= 0 && highlightedIndex < suggestions.length) {
         const item = suggestions[highlightedIndex];
+        searchRequestIdRef.current += 1;
+        searchAbortRef.current?.abort();
         setTicker(item.ticker);
         setDropdownOpen(false);
         setSuggestions([]);
@@ -88,6 +106,8 @@ export default function SearchCard({
   };
 
   const handleSuggestionClick = (item) => {
+    searchRequestIdRef.current += 1;
+    searchAbortRef.current?.abort();
     setTicker(item.ticker);
     setDropdownOpen(false);
     setSuggestions([]);
@@ -106,6 +126,7 @@ export default function SearchCard({
       if (searchTimeoutRef.current) {
         clearTimeout(searchTimeoutRef.current);
       }
+      searchAbortRef.current?.abort();
     };
   }, []);
 

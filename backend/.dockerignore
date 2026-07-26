@@ -1,6 +1,7 @@
 .env
 .env.*
 tests/
+saved_models/
 __pycache__/
 .mypy_cache/
 .ruff_cache/

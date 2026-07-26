@@ -2,8 +2,9 @@
 
 import tomllib
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -23,18 +24,21 @@ APP_VERSION = get_app_version()
 
 
 class ValidationConfig(BaseModel):
-    """Configurable walk-forward validation strategy.
+    """Supported, executable walk-forward validation settings."""
 
-    Supports 'expanding', 'rolling', and 'anchored' methods so future
-    strategy comparisons require no code changes — only config changes.
-    """
+    method: Literal["expanding", "rolling"] = "expanding"
+    folds: int = Field(default=5, ge=1, le=20)
+    min_train_size: int = Field(default=300, ge=100)
+    horizon: int = Field(default=60, ge=30)
+    gap: int = Field(default=0, ge=0)
+    seed: int = 42
+    deterministic: bool = True
 
-    method: str = "expanding"  # "expanding" | "rolling" | "anchored"
-    folds: int = 5
-    min_train_size: int = 500  # minimum rows required in any training fold
-    horizon: int = 30  # validation window size per fold (days)
-    seed: int = 42  # global random seed for reproducibility
-    test_size: float = 0.2
+    @model_validator(mode="after")
+    def validate_strategy(self):
+        if self.method == "rolling" and self.min_train_size < 100:
+            raise ValueError("rolling validation requires min_train_size >= 100")
+        return self
 
 
 class Settings(BaseSettings):
@@ -62,13 +66,26 @@ class Settings(BaseSettings):
     cors_origin: str | None = None
 
     cache_ttl: int = 300
+    info_cache_ttl: int = 3600
     cache_max_size: int = 256
     model_type: str = "bilstm_attention_direction"
     validation: ValidationConfig = ValidationConfig()
+    prediction_workers: int = Field(default=2, ge=1, le=8)
+    prediction_queue_size: int = Field(default=4, ge=0, le=64)
+    prediction_timeout_seconds: int = Field(default=600, ge=30, le=3600)
+    upstream_circuit_cooldown_seconds: int = Field(default=30, ge=1, le=300)
+    training_concurrency: int = Field(default=1, ge=1, le=4)
+    training_wait_seconds: int = Field(default=30, ge=1, le=300)
+    model_max_count: int = Field(default=20, ge=1, le=500)
+    model_max_storage_mb: int = Field(default=900, ge=50)
+    model_min_free_mb: int = Field(default=100, ge=10)
+    model_versions_to_keep: int = Field(default=2, ge=1, le=10)
+    artifact_lock_timeout_seconds: int = Field(default=900, ge=30, le=3600)
 
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
+        "env_nested_delimiter": "__",
     }
 
 
@@ -93,7 +110,7 @@ VALIDATION_CONFIG = settings.validation
 VALIDATION_SEED = settings.validation.seed
 
 # Feature Schema Versioning & Centralized Config
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 FEATURE_CONFIG = {
     "base": ["Open", "High", "Low", "Close", "Volume"],
