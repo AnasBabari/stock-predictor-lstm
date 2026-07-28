@@ -1360,32 +1360,65 @@ def load_or_train(
     model_type: str = "lstm",
     feature_df=None,
     feature_metadata: dict | None = None,
+    telemetry=None,
 ):
     """Load cached model & scaler or retrain with fail-safe fallback."""
     expected_output_width = int(y_train.shape[1])
     lock = _get_ticker_lock(ticker)
 
+    def artifact_state(error: ArtifactValidationError) -> str:
+        message = str(error).lower()
+        if "no versioned artifact" in message:
+            return "missing"
+        if "stale" in message:
+            return "stale"
+        return "incompatible"
+
+    def load_artifact(allow_stale: bool = False):
+        started = time.perf_counter()
+        try:
+            return _load_valid_artifact(
+                ticker, model_type, expected_output_width, allow_stale=allow_stale
+            )
+        finally:
+            if telemetry is not None:
+                telemetry.add_timing("artifact_load_validation", time.perf_counter() - started)
+
+    def set_artifact(state: str, action: str) -> None:
+        if telemetry is not None:
+            telemetry.set_artifact(state, action)
+
     with lock:
         try:
-            loaded = _load_valid_artifact(ticker, model_type, expected_output_width)
+            loaded = load_artifact()
+            set_artifact("fresh", "loaded")
             logger.info("Loaded valid cached model (%s/%s)", ticker, model_type)
             return loaded
-        except ArtifactValidationError:
+        except ArtifactValidationError as err:
+            initial_state = artifact_state(err)
+            set_artifact(initial_state, "not_applicable")
             logger.info("No compatible fresh artifact for %s/%s", ticker, model_type)
 
         artifact_lock = _artifact_root(ticker, model_type) / ".train.lock"
         with _process_file_lock(artifact_lock, settings.training_wait_seconds):
             try:
-                return _load_valid_artifact(ticker, model_type, expected_output_width)
+                loaded = load_artifact()
+                set_artifact(initial_state, "loaded")
+                return loaded
             except ArtifactValidationError:
                 pass
             if not _training_slots.acquire(timeout=settings.training_wait_seconds):
                 raise TrainingCapacityError("Training concurrency limit reached.")
             try:
+                if telemetry is not None:
+                    telemetry.set_stage("training")
+                training_started: float | None = None
+                training_recorded = False
                 with _process_file_lock(
                     Path(MODEL_DIR) / ".quota.lock", settings.artifact_lock_timeout_seconds
                 ):
                     enforce_storage_quota(exclude=(ticker, model_type))
+                training_started = time.perf_counter()
                 trained = train_model(
                     X_train,
                     y_train,
@@ -1397,16 +1430,22 @@ def load_or_train(
                     feature_df=feature_df,
                     feature_metadata=feature_metadata,
                 )
+                if telemetry is not None:
+                    telemetry.add_timing("training", time.perf_counter() - training_started)
+                    training_recorded = True
+                    telemetry.set_artifact(initial_state, "retrained")
                 with _process_file_lock(
                     Path(MODEL_DIR) / ".quota.lock", settings.artifact_lock_timeout_seconds
                 ):
                     enforce_storage_quota(exclude=(ticker, model_type))
                 return trained
             except Exception:
+                if telemetry is not None and training_started is not None and not training_recorded:
+                    telemetry.add_timing("training", time.perf_counter() - training_started)
                 try:
-                    return _load_valid_artifact(
-                        ticker, model_type, expected_output_width, allow_stale=True
-                    )
+                    loaded = load_artifact(allow_stale=True)
+                    set_artifact(initial_state, "loaded")
+                    return loaded
                 except ArtifactValidationError:
                     raise
             finally:

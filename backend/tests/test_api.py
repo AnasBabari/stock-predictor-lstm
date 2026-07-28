@@ -1,4 +1,7 @@
+import asyncio
 import threading
+import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
@@ -43,10 +46,12 @@ def _feature_snapshot(rows=500):
 
 
 def setup_function():
+    api.limiter._storage.reset()
     with api._predict_cache_lock:
         api._predict_cache.clear()
     with api._info_cache_lock:
         api._info_cache.clear()
+    api._status_registry = api.PredictionStatusRegistry()
 
 
 def test_health_and_readiness(tmp_path, monkeypatch):
@@ -71,6 +76,7 @@ def test_openapi_contains_public_routes_and_horizon_constraints():
         "/api/v1/predict/direction",
         "/api/v1/search",
         "/api/v1/info",
+        "/api/v1/prediction-status/{request_id}",
     ):
         assert route in schema["paths"]
     days = next(
@@ -89,6 +95,136 @@ def test_predict_response_schema():
     body = response.json()
     assert body["ticker"] == "AAPL"
     assert len(body["predicted_prices"]) == len(body["future_dates"]) == 7
+    assert body["metadata"]["timings_seconds"]["total"] is not None
+    assert body["metadata"]["execution"]["mode"] == "artifact_loaded"
+
+
+def test_response_cache_timing_and_status_are_truthful():
+    with patch("api._price_prediction_pipeline", return_value=_response()):
+        assert client.get("/api/v1/predict?ticker=AAPL&days=7").status_code == 200
+
+    request_id = str(uuid.uuid4())
+    response = client.get(
+        "/api/v1/predict?ticker=AAPL&days=7",
+        headers={"X-Prediction-Request-ID": request_id},
+    )
+    assert response.status_code == 200
+    metadata = response.json()["metadata"]
+    assert metadata["execution"] == {"mode": "response_cache_hit", "coalesced": False}
+    assert metadata["artifact_action"] == "not_applicable"
+    assert metadata["artifact_state_before"] is None
+    assert metadata["timings_seconds"]["total"] is not None
+    assert all(
+        metadata["timings_seconds"][name] is None for name in api.TIMING_FIELDS if name != "total"
+    )
+
+    status = client.get(f"/api/v1/prediction-status/{request_id}")
+    assert status.status_code == 200
+    assert status.headers["cache-control"] == "no-store"
+    assert status.json()["stage"] == "completed"
+
+
+def test_status_registry_coalesces_caller_views_and_hides_unknown_ids():
+    registry = api.PredictionStatusRegistry(max_entries=2, ttl_seconds=600)
+    owner_id, joiner_id = str(uuid.uuid4()), str(uuid.uuid4())
+    owner = api.PredictionJob("AAPL_7")
+    assert registry.attach(owner_id, owner, coalesced=False)
+    assert registry.attach(joiner_id, owner, coalesced=True)
+    owner.start()
+    owner.set_stage("training")
+    assert registry.get(joiner_id) == {"status": "running", "stage": "training", "coalesced": True}
+    unknown = client.get(f"/api/v1/prediction-status/{uuid.uuid4()}")
+    malformed = client.get("/api/v1/prediction-status/not-a-uuid")
+    assert unknown.status_code == malformed.status_code == 404
+    assert unknown.headers["cache-control"] == malformed.headers["cache-control"] == "no-store"
+
+
+def test_cancelled_prediction_expires_its_status_view(monkeypatch):
+    coordinator = WorkCoordinator(workers=1, queue_size=0)
+    monkeypatch.setattr(api, "_work_coordinator", coordinator)
+    request_id = str(uuid.uuid4())
+    gate = threading.Event()
+
+    def pipeline(*_args, **_kwargs):
+        gate.wait(2)
+        return _response()
+
+    async def cancel_request():
+        task = asyncio.create_task(
+            api._await_prediction(
+                "cancel_AAPL", pipeline, "AAPL", 7, time.perf_counter(), request_id
+            )
+        )
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with np.testing.assert_raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_request())
+    view = api._status_registry._views[request_id]
+    assert view["terminal"] is True
+    assert view["lifecycle"] == "failed"
+    assert view["expires_at"] < float("inf")
+    gate.set()
+
+
+def test_status_joiner_binds_to_the_coordinator_job(monkeypatch):
+    coordinator = WorkCoordinator(workers=1, queue_size=1)
+    monkeypatch.setattr(api, "_work_coordinator", coordinator)
+    request_id = str(uuid.uuid4())
+    started = threading.Event()
+    gate = threading.Event()
+
+    def pipeline(*_args, job, **_kwargs):
+        job.set_stage("training")
+        started.set()
+        gate.wait(2)
+        return _response()
+
+    async def coalesce_requests():
+        owner = asyncio.create_task(
+            api._await_prediction("shared_AAPL", pipeline, "AAPL", 7, time.perf_counter())
+        )
+        while not started.is_set():
+            await asyncio.sleep(0.005)
+        joiner = asyncio.create_task(
+            api._await_prediction(
+                "shared_AAPL", pipeline, "AAPL", 7, time.perf_counter(), request_id
+            )
+        )
+        await asyncio.sleep(0.01)
+        assert api._status_registry.get(request_id) == {
+            "status": "running",
+            "stage": "training",
+            "coalesced": True,
+        }
+        gate.set()
+        await owner
+        return await joiner
+
+    result = asyncio.run(coalesce_requests())
+    assert result["metadata"]["execution"] == {"mode": "coalesced", "coalesced": True}
+
+
+def test_request_identifier_must_be_uuidv4():
+    invalid = client.get(
+        "/api/v1/predict?ticker=AAPL",
+        headers={"X-Prediction-Request-ID": str(uuid.uuid1())},
+    )
+    assert invalid.status_code == 400
+
+
+def test_cors_allows_prediction_request_identifier_header():
+    response = client.options(
+        "/api/v1/predict",
+        headers={
+            "Origin": api.settings.allowed_origins[0],
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "X-Prediction-Request-ID",
+        },
+    )
+    assert response.status_code == 200
+    assert "x-prediction-request-id" in response.headers["access-control-allow-headers"].lower()
 
 
 def test_search_and_info_cache_are_sanitised_and_thread_safe():
