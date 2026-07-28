@@ -39,6 +39,7 @@ for required in (
     "uv sync --project backend --frozen",
     "npm ci",
     "scripts/check_api_docs.py",
+    "scripts/check_text_hygiene.py",
 ):
     if required not in workflow_text:
         errors.append(f"Missing CI gate: {required}")

@@ -26,7 +26,35 @@ jobs:
       - run: uv run --project backend bandit -r backend -x backend/tests,backend/.venv -ll -q
       - run: uv run --project backend pip-audit
       - run: uv run --project backend python scripts/check_api_docs.py
-      - run: uv run --project backend pytest backend/tests -q --cov=backend --cov-report=term-missing --cov-fail-under=70
+      - name: Run backend tests with coverage reports
+        run: |
+          mkdir -p reports
+          uv run --project backend pytest backend/tests -q --cov=backend --cov-report=term-missing --cov-report=json:reports/coverage.json --cov-fail-under=70 --junitxml=reports/pytest.xml
+      - name: Write backend test summary
+        if: success()
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          report_dir = Path("reports")
+          root = ElementTree.parse(report_dir / "pytest.xml").getroot()
+          tests = int(root.attrib.get("tests", sum(int(node.attrib.get("tests", 0)) for node in root.iter("testsuite"))))
+          coverage = json.loads((report_dir / "coverage.json").read_text(encoding="utf-8"))
+          percent = coverage["totals"]["percent_covered"]
+          summary = os.environ["GITHUB_STEP_SUMMARY"]
+          with open(summary, "a", encoding="utf-8") as handle:
+              handle.write("## Backend test evidence\\n\\n")
+              handle.write(f"- Tests: {tests}\\n")
+              handle.write(f"- Coverage: {percent:.2f}%\\n")
+              handle.write(f"- Python: {sys.version.split()[0]}\\n")
+              handle.write(f"- Commit: {os.environ.get('GITHUB_SHA', 'unknown')}\\n")
+              handle.write(f"- Generated: {datetime.now(timezone.utc).isoformat()}\\n")
+          PY
 
   frontend:
     runs-on: ubuntu-24.04
@@ -51,6 +79,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
+      - run: python scripts/check_text_hygiene.py
       - run: python scripts/check_ci_policy.py
 
   compose-smoke:
