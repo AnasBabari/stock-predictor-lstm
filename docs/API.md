@@ -11,10 +11,11 @@ All errors use `{"detail":"..."}`. `400` means invalid/insufficient instrument d
 - `GET /models`: model manifest.
 - `GET /api/v1/search?query=AAPL`: up to eight Yahoo suggestions. A syntactically valid exact symbol remains available as a clearly generic `SYMBOL` fallback if autocomplete is down.
 - `GET /api/v1/info?ticker=AAPL`: fundamentals; thread-safe 3600-second cache by default.
+- `GET /api/v1/prediction-status/{request_id}`: short-lived progress for a request ID supplied to a forecast request. Rate limit: 60/minute/IP. Responses use `Cache-Control: no-store`.
 
 ## `GET /api/v1/predict`
 
-Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, range 1–30). Rate limit: 5/minute/IP. Prediction cache: 300 seconds by default.
+Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, range 1–30). Rate limit: 5/minute/IP. Prediction cache: 300 seconds by default. Send an optional `X-Prediction-Request-ID` UUIDv4 header to enable short-lived status polling.
 
 ```json
 {
@@ -39,12 +40,18 @@ Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, r
     "calendar": "NYSE",
     "metric_source": "walk_forward_out_of_fold",
     "data_snapshot": {"snapshot_id": "sha256..."},
-    "data_quality": {"schema_version": 2, "policy": "fail_closed", "status": "complete"}
+    "data_quality": {"schema_version": 2, "policy": "fail_closed", "status": "complete"},
+    "timings_seconds": {"queue_wait": "<measured seconds or null>", "market_data": "<measured seconds or null>", "feature_preparation": "<measured seconds or null>", "artifact_load_validation": "<measured seconds or null>", "training": "<measured seconds or null>", "inference": "<measured seconds or null>", "total": "<measured seconds>"},
+    "execution": {"mode": "artifact_loaded", "coalesced": false},
+    "artifact_state_before": "fresh",
+    "artifact_action": "loaded"
   }
 }
 ```
 
 Metrics can instead be `{"metric_source":"unavailable","detail":"..."}`. They are never computed on the final production model's training samples.
+
+`timings_seconds` are measured for this request. Stages that did not run are `null`; a response-cache hit has `null` pipeline stages but a measured `total`. `artifact_state_before` is `fresh`, `missing`, `stale`, or `incompatible` when artifact validation ran (otherwise `null` for a response-cache hit). `artifact_action` is `loaded`, `retrained`, or `not_applicable`. `execution.mode` is `response_cache_hit`, `artifact_loaded`, `trained`, or `coalesced`.
 
 ## `GET /api/v1/predict/direction`
 
@@ -65,6 +72,12 @@ Same parameters/cache/rate limit. `directions` contains strings (`"Up"`/`"Down"`
 ```
 
 Sentiment is untrusted, headline-only external data. Failures produce a documented `fallback` score of `0.0`; sentiment does not enter model features.
+
+## `GET /api/v1/prediction-status/{request_id}`
+
+Use the UUIDv4 value sent in `X-Prediction-Request-ID` on a pending forecast request. The response contains generic request lifecycle/status fields and the current shared stage (`queued`, `downloading_market_data`, `preparing_features`, `checking_artifact`, `training`, `generating_forecast`, `completed`, or `failed`), plus whether the caller joined matching in-flight work. Unknown, expired, or malformed IDs return a generic `404` response.
+
+Status telemetry is in-process and short-lived: it is intended for request UX and diagnostics, not durable observability or a production benchmark.
 
 ## `GET /api/v1/diagnostics/{ticker}`
 
