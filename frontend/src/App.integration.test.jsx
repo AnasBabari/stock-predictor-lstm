@@ -16,7 +16,7 @@ vi.mock('./components/HeroSection', () => ({
 }));
 
 vi.mock('./components/LoadingIndicator', () => ({
-  default: ({ isLoading }) => (isLoading ? <div>Loading...</div> : null),
+  default: ({ isLoading, stage }) => (isLoading ? <div>{stage || 'Loading...'}</div> : null),
 }));
 
 vi.mock('./components/StockInfoGrid', () => ({
@@ -141,5 +141,69 @@ describe('forecast toggle integration', () => {
     await waitFor(() => expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument());
     expect(screen.getByText(/Historical vs Predicted/i)).toBeInTheDocument();
     expect(screen.queryByText('Trend Forecast Metrics')).not.toBeInTheDocument();
+  });
+
+  it('uses server-reported status stages and sends a request identifier', async () => {
+    let resolvePrediction;
+    global.fetch = vi.fn((url, options = {}) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/api/v1/prediction-status/')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ status: 'running', stage: 'training', coalesced: false }),
+        });
+      }
+      if (requestUrl.includes('/api/v1/info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
+      }
+      if (requestUrl.includes('/api/v1/predict')) {
+        expect(options.headers['X-Prediction-Request-ID']).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+        );
+        return new Promise((resolve) => {
+          resolvePrediction = () => resolve({ ok: true, json: () => Promise.resolve(priceResponse) });
+        });
+      }
+      return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
+    });
+
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByPlaceholderText(/search tickers/i), 'TSLA');
+    await user.click(screen.getByRole('button', { name: /^predict$/i }));
+
+    expect(await screen.findByText('Training a new model for this ticker…')).toBeInTheDocument();
+    resolvePrediction();
+    await waitFor(() => expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument());
+  });
+
+  it('aborts the request and clears status polling on unmount', async () => {
+    let predictionOptions;
+    const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+    global.fetch = vi.fn((url, options = {}) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/api/v1/prediction-status/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ stage: 'queued' }) });
+      }
+      if (requestUrl.includes('/api/v1/info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
+      }
+      if (requestUrl.includes('/api/v1/predict')) {
+        predictionOptions = options;
+        return new Promise(() => {});
+      }
+      return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
+    });
+
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+    await user.type(screen.getByPlaceholderText(/search tickers/i), 'TSLA');
+    await user.click(screen.getByRole('button', { name: /^predict$/i }));
+    await screen.findByText('Waiting for prediction capacity…');
+
+    unmount();
+    expect(predictionOptions.signal.aborted).toBe(true);
+    expect(clearIntervalSpy).toHaveBeenCalled();
+    clearIntervalSpy.mockRestore();
   });
 });

@@ -23,6 +23,31 @@ const FORECAST_TYPES = {
   PRICE: 'price',
   TREND: 'trend',
 };
+const STATUS_POLL_INTERVAL_MS = 1750;
+
+const stageLabels = {
+  queued: 'Waiting for prediction capacity…',
+  downloading_market_data: 'Downloading market data…',
+  preparing_features: 'Preparing market features…',
+  checking_artifact: 'Checking for a compatible model…',
+  training: 'Training a new model for this ticker…',
+  generating_forecast: 'Generating forecast…',
+  completed: 'Forecast ready.',
+  failed: 'Forecast could not be completed.',
+};
+
+function createRequestId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new Error('Secure request identifiers are unavailable in this browser.');
+  }
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 const forecastIdentity = (ticker, days, type) =>
   `${ticker.trim().toUpperCase()}::${Number(days)}::${type}`;
@@ -52,6 +77,7 @@ export default function App() {
   const [daysView, setDaysView] = useState(21);
   const [forecastType, setForecastType] = useState(FORECAST_TYPES.PRICE);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStage, setLoadingStage] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [predictionData, setPredictionData] = useState(null);
   const [stockInfo, setStockInfo] = useState(null);
@@ -74,6 +100,7 @@ export default function App() {
   });
 
   const abortControllerRef = useRef(null);
+  const statusPollRef = useRef(null);
   const requestIdRef = useRef(0);
   const forecastCacheRef = useRef(new Map());
   const chartRef = useRef(null);
@@ -83,6 +110,10 @@ export default function App() {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
+    }
+    if (statusPollRef.current) {
+      clearInterval(statusPollRef.current);
+      statusPollRef.current = null;
     }
   }, []);
 
@@ -112,12 +143,8 @@ export default function App() {
   }, [history]);
 
   useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
-  }, []);
+    return abortActiveRequest;
+  }, [abortActiveRequest]);
 
   const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
@@ -132,10 +159,11 @@ export default function App() {
   }, []);
 
   const fetchPredictionData = useCallback(
-    async (symbol, days, type, signal) => {
+    async (symbol, days, type, signal, requestId) => {
       const endpoint =
         type === FORECAST_TYPES.TREND ? '/api/v1/predict/direction' : '/api/v1/predict';
-      const res = await fetch(`${API_BASE}${endpoint}?ticker=${symbol}&days=${days}`, { signal });
+      const headers = requestId ? { 'X-Prediction-Request-ID': requestId } : undefined;
+      const res = await fetch(`${API_BASE}${endpoint}?ticker=${symbol}&days=${days}`, { signal, headers });
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -146,6 +174,26 @@ export default function App() {
     },
     []
   );
+
+  const startStatusPolling = useCallback((requestId, requestIdNumber, signal) => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/prediction-status/${requestId}`, { signal });
+        if (!res.ok) return;
+        const status = await res.json();
+        const stageLabel = stageLabels[status.stage];
+        if (requestIdRef.current === requestIdNumber && stageLabel) {
+          setLoadingStage(stageLabel);
+        }
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          // The prediction request remains the source of truth for user-facing errors.
+        }
+      }
+    };
+    void poll();
+    statusPollRef.current = setInterval(() => void poll(), STATUS_POLL_INTERVAL_MS);
+  }, []);
 
   const fetchStockInfo = useCallback(
     async (symbol, signal) => {
@@ -172,12 +220,15 @@ export default function App() {
 
       setErrorMsg('');
       setIsLoading(true);
+      setLoadingStage('');
       setPredictionData(null);
       setStockInfo(null);
 
       try {
+        const requestToken = createRequestId();
+        startStatusPolling(requestToken, requestId, signal);
         const [predRes, infoRes] = await Promise.allSettled([
-          fetchPredictionData(symbol, forecastDays, requestedType, signal),
+          fetchPredictionData(symbol, forecastDays, requestedType, signal, requestToken),
           fetchStockInfo(symbol, signal),
         ]);
 
@@ -236,6 +287,12 @@ export default function App() {
         if (err.name === 'AbortError') return;
         const msg = err.message.includes('Failed to fetch')
           ? 'Could not connect to the backend. Make sure the server is running.'
+          : err.message.includes('capacity')
+          ? 'Prediction capacity is currently full. Please try again shortly.'
+          : err.message.includes('timed out')
+          ? 'Prediction timed out. The shared work may still finish; try again shortly.'
+          : err.message.includes('Market data')
+          ? 'Market data is temporarily unavailable. Please try again later.'
           : err.message.includes('400')
           ? 'Invalid ticker or not enough data. Try a different symbol.'
           : err.message;
@@ -243,11 +300,24 @@ export default function App() {
         addToast('error', msg);
       } finally {
         if (requestIdRef.current === requestId) {
+          if (statusPollRef.current) {
+            clearInterval(statusPollRef.current);
+            statusPollRef.current = null;
+          }
           setIsLoading(false);
+          setLoadingStage('');
         }
       }
     },
-    [abortActiveRequest, addToast, fetchPredictionData, fetchStockInfo, forecastDays, forecastType]
+    [
+      abortActiveRequest,
+      addToast,
+      fetchPredictionData,
+      fetchStockInfo,
+      forecastDays,
+      forecastType,
+      startStatusPolling,
+    ]
   );
 
   const handleForecastTypeChange = useCallback(
@@ -258,6 +328,7 @@ export default function App() {
       setPredictionData(null);
       setErrorMsg('');
       setIsLoading(false);
+      setLoadingStage('');
     },
     [abortActiveRequest, forecastType]
   );
@@ -270,6 +341,7 @@ export default function App() {
       setStockInfo(null);
       setErrorMsg('');
       setIsLoading(false);
+      setLoadingStage('');
     },
     [abortActiveRequest]
   );
@@ -282,6 +354,7 @@ export default function App() {
       setStockInfo(null);
       setErrorMsg('');
       setIsLoading(false);
+      setLoadingStage('');
     },
     [abortActiveRequest]
   );
@@ -438,7 +511,7 @@ export default function App() {
 
         {errorMsg && <div className="error">{errorMsg}</div>}
 
-        <LoadingIndicator isLoading={isLoading} />
+        <LoadingIndicator isLoading={isLoading} stage={loadingStage} />
 
         <StockInfoGrid info={stockInfo} />
 

@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function LoadingIndicator({ isLoading }) {
+export default function LoadingIndicator({ isLoading, stage }) {
   if (!isLoading) return null;
 
   return (
@@ -22,13 +22,10 @@ export default function LoadingIndicator({ isLoading }) {
           <path d="M9 21h6M10 17v4M14 17v4" />
         </svg>
       </div>
-      <p className="loading-text">Running LSTM model…</p>
+      <p className="loading-text">{stage || 'Forecast request in progress…'}</p>
       <p className="loading-hint">
-        First prediction for a new ticker may take longer while the model trains.
+        This request may retrieve market data or train a compatible model.
       </p>
-      <div className="loading-bar">
-        <div className="loading-bar-fill"></div>
-      </div>
     </div>
   );
 }
