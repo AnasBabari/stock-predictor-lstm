@@ -49,6 +49,48 @@ function createRequestId() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+function normalizePredictionError(reason) {
+  if (reason instanceof Error) return reason;
+  return new Error('Prediction request failed.');
+}
+
+function predictionErrorMessage(error) {
+  const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+  if (
+    error instanceof TypeError ||
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('network error')
+  ) {
+    return 'Could not connect to the backend. Make sure the server is running.';
+  }
+  if (message.includes('timed out') || message.includes('timeout')) {
+    return 'Prediction timed out. The shared work may still finish; try again shortly.';
+  }
+  if (
+    message.includes('market data') ||
+    message.includes('upstream') ||
+    message.includes('data source')
+  ) {
+    return 'Market data is temporarily unavailable. Please try again later.';
+  }
+  if (
+    message.includes('capacity') ||
+    message.includes('queue is full') ||
+    message.includes('(503)') ||
+    message.includes(' 503')
+  ) {
+    return 'Prediction capacity is currently full. Please try again shortly.';
+  }
+  if (message.includes('rate limit') || message.includes('(429)') || message.includes(' 429')) {
+    return 'Too many prediction requests. Please wait before trying again.';
+  }
+  if (message.includes('invalid ticker') || message.includes('not enough data') || message.includes('(400)')) {
+    return 'Invalid ticker or not enough data. Try a different symbol.';
+  }
+  return 'Prediction could not be completed. Please try again.';
+}
+
 const forecastIdentity = (ticker, days, type) =>
   `${ticker.trim().toUpperCase()}::${Number(days)}::${type}`;
 
@@ -277,7 +319,7 @@ export default function App() {
             `${requestedType === FORECAST_TYPES.TREND ? 'Trend' : 'Price'} forecast ready for ${fetchedData.ticker}`
           );
         } else {
-          throw new Error('Network error. Failed to fetch prediction.');
+          throw normalizePredictionError(predRes.reason);
         }
 
         if (infoRes.status === 'fulfilled' && infoRes.value) {
@@ -285,17 +327,7 @@ export default function App() {
         }
       } catch (err) {
         if (err.name === 'AbortError') return;
-        const msg = err.message.includes('Failed to fetch')
-          ? 'Could not connect to the backend. Make sure the server is running.'
-          : err.message.includes('capacity')
-          ? 'Prediction capacity is currently full. Please try again shortly.'
-          : err.message.includes('timed out')
-          ? 'Prediction timed out. The shared work may still finish; try again shortly.'
-          : err.message.includes('Market data')
-          ? 'Market data is temporarily unavailable. Please try again later.'
-          : err.message.includes('400')
-          ? 'Invalid ticker or not enough data. Try a different symbol.'
-          : err.message;
+        const msg = predictionErrorMessage(err);
         setErrorMsg(msg);
         addToast('error', msg);
       } finally {

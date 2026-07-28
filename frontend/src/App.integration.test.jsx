@@ -109,6 +109,35 @@ describe('forecast toggle integration', () => {
     localStorage.clear();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  function mockPredictionFailure(reason) {
+    global.fetch = vi.fn((url) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/api/v1/prediction-status/')) {
+        return Promise.resolve({ ok: false });
+      }
+      if (requestUrl.includes('/api/v1/info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
+      }
+      if (requestUrl.includes('/api/v1/predict')) {
+        return Promise.reject(reason);
+      }
+      return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
+    });
+  }
+
+  async function submitPrediction() {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByPlaceholderText(/search tickers/i), 'TSLA');
+    await user.click(screen.getByRole('button', { name: /^predict$/i }));
+    return user;
+  }
+
   it('switches between forecast types without stale state', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -205,5 +234,99 @@ describe('forecast toggle integration', () => {
     expect(predictionOptions.signal.aborted).toBe(true);
     expect(clearIntervalSpy).toHaveBeenCalled();
     clearIntervalSpy.mockRestore();
+  });
+
+  it.each([
+    [
+      new Error('Prediction capacity is temporarily full.'),
+      'Prediction capacity is currently full. Please try again shortly.',
+    ],
+    [
+      new Error('Prediction timed out; the shared job may still complete.'),
+      'Prediction timed out. The shared work may still finish; try again shortly.',
+    ],
+    [
+      new Error('Market data is temporarily unavailable.'),
+      'Market data is temporarily unavailable. Please try again later.',
+    ],
+    [
+      new TypeError('Failed to fetch'),
+      'Could not connect to the backend. Make sure the server is running.',
+    ],
+    [{ internal: 'must not be rendered' }, 'Prediction could not be completed. Please try again.'],
+  ])('maps a rejected prediction to a safe message', async (reason, expectedMessage) => {
+    mockPredictionFailure(reason);
+    await submitPrediction();
+    expect(await screen.findByText(expectedMessage)).toBeInTheDocument();
+    expect(screen.queryByText(/must not be rendered/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps intentional abort cancellation silent', async () => {
+    global.fetch = vi.fn((url, options = {}) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/api/v1/prediction-status/')) {
+        return Promise.resolve({ ok: false });
+      }
+      if (requestUrl.includes('/api/v1/info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
+      }
+      if (requestUrl.includes('/api/v1/predict')) {
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true }
+          );
+        });
+      }
+      return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
+    });
+
+    const user = await submitPrediction();
+    await user.type(screen.getByPlaceholderText(/search tickers/i), 'A');
+
+    await waitFor(() => {
+      expect(screen.queryByText(/could not connect|could not be completed|timed out|capacity/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('ignores a late failure from a superseded request', async () => {
+    let rejectFirstPrediction;
+    global.fetch = vi.fn((url) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/api/v1/prediction-status/')) {
+        return Promise.resolve({ ok: false });
+      }
+      if (requestUrl.includes('/api/v1/info')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
+      }
+      if (requestUrl.includes('ticker=TSLA')) {
+        return new Promise((resolve, reject) => {
+          rejectFirstPrediction = reject;
+        });
+      }
+      if (requestUrl.includes('ticker=AAPL')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ...priceResponse, ticker: 'AAPL' }),
+        });
+      }
+      return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
+    });
+
+    const user = await submitPrediction();
+    const input = screen.getByPlaceholderText(/search tickers/i);
+    await user.clear(input);
+    await user.type(input, 'AAPL');
+    await user.click(screen.getByRole('button', { name: /^predict$/i }));
+    expect(await screen.findByText('Price Forecast Metrics')).toBeInTheDocument();
+
+    rejectFirstPrediction(new Error('Prediction capacity is temporarily full.'));
+    await waitFor(() => {
+      expect(
+        screen.queryByText('Prediction capacity is currently full. Please try again shortly.')
+      ).not.toBeInTheDocument();
+      expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument();
+    });
   });
 });
