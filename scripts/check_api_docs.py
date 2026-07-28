@@ -159,6 +159,9 @@ def main() -> None:
         *ARTIFACT_STATES,
         *ARTIFACT_ACTIONS,
         *STATUS_STAGES,
+        "caller-level semantics",
+        "up to 10 minutes",
+        "capacity pressure",
     ):
         if required not in docs:
             raise SystemExit(f"Telemetry API documentation is missing: {required}")

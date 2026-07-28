@@ -226,6 +226,36 @@ def test_status_registry_coalesces_caller_views_and_hides_unknown_ids():
     assert unknown.headers["cache-control"] == malformed.headers["cache-control"] == "no-store"
 
 
+def test_status_registry_capacity_prefers_terminal_eviction_and_remains_bounded():
+    registry = api.PredictionStatusRegistry(max_entries=2, ttl_seconds=600)
+    active_id = str(uuid.uuid4())
+    terminal_id = str(uuid.uuid4())
+    replacement_id = str(uuid.uuid4())
+
+    assert registry.attach(active_id, api.PredictionJob("active"), coalesced=False)
+    assert registry.attach(
+        terminal_id, api.PredictionJob("terminal"), coalesced=False, terminal=True
+    )
+    assert registry.attach(replacement_id, api.PredictionJob("replacement"), coalesced=False)
+
+    assert len(registry._views) == registry.max_entries
+    assert active_id in registry._views
+    assert replacement_id in registry._views
+    assert terminal_id not in registry._views
+
+    api._status_registry = registry
+    evicted = client.get(f"/api/v1/prediction-status/{terminal_id}")
+    assert evicted.status_code == 404
+    assert evicted.json() == {"detail": "Prediction status is unavailable."}
+    assert evicted.headers["cache-control"] == "no-store"
+
+    active_only = api.PredictionStatusRegistry(max_entries=1, ttl_seconds=600)
+    first_active = str(uuid.uuid4())
+    assert active_only.attach(first_active, api.PredictionJob("first"), coalesced=False)
+    assert not active_only.attach(str(uuid.uuid4()), api.PredictionJob("second"), coalesced=False)
+    assert list(active_only._views) == [first_active]
+
+
 def test_cancelled_prediction_expires_its_status_view(monkeypatch):
     coordinator = WorkCoordinator(workers=1, queue_size=0)
     monkeypatch.setattr(api, "_work_coordinator", coordinator)

@@ -51,7 +51,7 @@ Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, r
 
 Metrics can instead be `{"metric_source":"unavailable","detail":"..."}`. They are never computed on the final production model's training samples.
 
-`timings_seconds` are measured for this request. Stages that did not run are `null`; a response-cache hit has `null` pipeline stages but a measured `total`. `artifact_state_before` is `fresh`, `missing`, `stale`, or `incompatible` when artifact validation ran (otherwise `null` for a response-cache hit). `artifact_action` is `loaded`, `retrained`, or `not_applicable`. `execution.mode` is `response_cache_hit`, `artifact_loaded`, `trained`, or `coalesced`.
+`timings_seconds` use caller-level semantics. Stages that did not run for that caller are `null`; a response-cache hit has `null` pipeline stages but a measured `total`. A coalesced caller receives its independently measured `total` while owner-executed pipeline stages remain `null`. `artifact_state_before` is `fresh`, `missing`, `stale`, or `incompatible` when artifact validation ran (otherwise `null` for a response-cache hit). `artifact_action` is `loaded`, `retrained`, or `not_applicable`. For a coalesced response, the artifact fields describe the shared job's validated outcome rather than a second artifact check by the joiner. `execution.mode` is `response_cache_hit`, `artifact_loaded`, `trained`, or `coalesced`.
 
 ## `GET /api/v1/predict/direction`
 
@@ -77,7 +77,7 @@ Sentiment is untrusted, headline-only external data. Failures produce a document
 
 Use the UUIDv4 value sent in `X-Prediction-Request-ID` on a pending forecast request. The response contains generic request lifecycle/status fields and the current shared stage (`queued`, `downloading_market_data`, `preparing_features`, `checking_artifact`, `training`, `generating_forecast`, `completed`, or `failed`), plus whether the caller joined matching in-flight work. Unknown, expired, or malformed IDs return a generic `404` response.
 
-Status telemetry is in-process and short-lived: it is intended for request UX and diagnostics, not durable observability or a production benchmark.
+Completed and failed status views are eligible to remain available for up to 10 minutes, but terminal views may be evicted earlier under registry capacity pressure. Status telemetry is short-lived and in-process: it is intended only for request UX and diagnostics, not durable storage, production observability, or a production benchmark.
 
 ## `GET /api/v1/diagnostics/{ticker}`
 
