@@ -617,12 +617,14 @@ def _with_execution_metadata(
     timings: dict[str, float | None] = {name: None for name in TIMING_FIELDS}
     artifact_state: str | None
     if job is not None and not response_cache_hit:
-        timings.update(job.snapshot()["timings"])
-        started_at = job.snapshot()["started_at"]
-        if started_at is not None:
-            timings["queue_wait"] = round(max(0.0, started_at - request_started), 4)
-        artifact_state = job.snapshot()["artifact_state_before"]
-        artifact_action = job.snapshot()["artifact_action"]
+        snapshot = job.snapshot()
+        if not coalesced:
+            timings.update(snapshot["timings"])
+            started_at = snapshot["started_at"]
+            if started_at is not None and started_at >= request_started:
+                timings["queue_wait"] = round(started_at - request_started, 4)
+        artifact_state = snapshot["artifact_state_before"]
+        artifact_action = snapshot["artifact_action"]
     else:
         artifact_state = None
         artifact_action = "not_applicable"

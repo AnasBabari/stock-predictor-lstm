@@ -176,6 +176,12 @@ def test_status_joiner_binds_to_the_coordinator_job(monkeypatch):
     gate = threading.Event()
 
     def pipeline(*_args, job, **_kwargs):
+        job.add_timing("market_data", 0.25)
+        job.add_timing("feature_preparation", 0.5)
+        job.add_timing("artifact_load_validation", 0.125)
+        job.add_timing("training", 0.75)
+        job.add_timing("inference", 0.375)
+        job.set_artifact("stale", "retrained")
         job.set_stage("training")
         started.set()
         gate.wait(2)
@@ -185,25 +191,40 @@ def test_status_joiner_binds_to_the_coordinator_job(monkeypatch):
         owner = asyncio.create_task(
             api._await_prediction("shared_AAPL", pipeline, "AAPL", 7, time.perf_counter())
         )
-        while not started.is_set():
-            await asyncio.sleep(0.005)
+        assert await asyncio.to_thread(started.wait, 1)
+        joiner_started = time.perf_counter()
         joiner = asyncio.create_task(
-            api._await_prediction(
-                "shared_AAPL", pipeline, "AAPL", 7, time.perf_counter(), request_id
-            )
+            api._await_prediction("shared_AAPL", pipeline, "AAPL", 7, joiner_started, request_id)
         )
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0)
         assert api._status_registry.get(request_id) == {
             "status": "running",
             "stage": "training",
             "coalesced": True,
         }
         gate.set()
-        await owner
-        return await joiner
+        return await asyncio.gather(owner, joiner)
 
-    result = asyncio.run(coalesce_requests())
-    assert result["metadata"]["execution"] == {"mode": "coalesced", "coalesced": True}
+    owner_result, joiner_result = asyncio.run(coalesce_requests())
+    owner_metadata = owner_result["metadata"]
+    joiner_metadata = joiner_result["metadata"]
+
+    assert owner_metadata["execution"] == {"mode": "trained", "coalesced": False}
+    assert owner_metadata["artifact_state_before"] == "stale"
+    assert owner_metadata["artifact_action"] == "retrained"
+    assert owner_metadata["timings_seconds"]["market_data"] == 0.25
+    assert owner_metadata["timings_seconds"]["training"] == 0.75
+    assert owner_metadata["timings_seconds"]["queue_wait"] is not None
+
+    assert joiner_metadata["execution"] == {"mode": "coalesced", "coalesced": True}
+    assert joiner_metadata["artifact_state_before"] == "stale"
+    assert joiner_metadata["artifact_action"] == "retrained"
+    assert joiner_metadata["timings_seconds"]["total"] is not None
+    assert all(
+        joiner_metadata["timings_seconds"][name] is None
+        for name in api.TIMING_FIELDS
+        if name != "total"
+    )
 
 
 def test_request_identifier_must_be_uuidv4():
