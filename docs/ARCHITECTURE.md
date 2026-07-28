@@ -4,13 +4,19 @@
 
 The React SPA calls same-origin `/api/` paths. In Compose, Nginx proxies those paths to FastAPI. Fast cache hits return immediately. Cold prediction work is admitted to a bounded executor; identical in-flight identities share one future. The entire blocking flow—Yahoo downloads, feature work, artifact load/training, inference, exchange calendar, and news sentiment—runs outside the event loop.
 
-```text
-browser -> Nginx -> validation/rate limit/cache -> bounded coordinator
-  -> one immutable target snapshot
-  -> technical + calendar + versioned market-context features
-  -> compatible versioned artifact OR bounded/coalesced training
-  -> inference + exchange dates + response-shape validation
-  -> identity cache -> browser
+```mermaid
+flowchart LR
+    browser[Browser / React SPA] --> nginx[Nginx]
+    nginx --> api[FastAPI: validation, rate limit, cache]
+    api -->|cache hit| response[Response and diagnostics]
+    api -->|cache miss| coordinator[Bounded coordinator<br/>coalesced in-flight work]
+    coordinator --> market[Market data and features]
+    market --> artifact{Validated fresh artifact?}
+    artifact -->|yes| inference[Inference]
+    artifact -->|no| training[Bounded training]
+    training --> inference
+    inference --> response
+    response --> browser
 ```
 
 Prediction identity includes ticker, horizon, and type at the response/cache layer. Direction artifact identity deliberately uses a fixed 30-session output width; metadata and the Keras signature are checked before a shorter response is sliced.

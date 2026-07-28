@@ -1,4 +1,4 @@
-﻿# StockLSTM - AI Stock Price Predictor
+# StockLSTM - AI Stock Price Predictor
 
 [![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI 0.115+](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/) [![TensorFlow 2.16+](https://img.shields.io/badge/TensorFlow-2.16+-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Render](https://img.shields.io/badge/Render-46E3B7?logo=render&logoColor=white)](https://stock-predictor-lstm.onrender.com) [![Vercel](https://img.shields.io/badge/Vercel-000000?logo=vercel&logoColor=white)](https://stock-predictor-lstm-two.vercel.app) [![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://github.com/AnasBabari/stock-predictor-lstm/pkgs/container/stock-predictor-lstm)
 
@@ -6,6 +6,9 @@ StockLSTM is a React and FastAPI stock-forecasting application. It retrieves Yah
 
 > [!WARNING]
 > Educational project only. Forecasts, indicators, and sentiment are not financial advice.
+
+> [!NOTE]
+> **Engineering Quality:** [GitHub Actions](https://github.com/AnasBabari/stock-predictor-lstm/actions) runs locked dependency checks, Ruff, Mypy, Bandit, pip-audit, API-documentation drift checks, backend and frontend tests/builds, and Docker Compose API smoke tests.
 
 ## Live Demo
 
@@ -20,9 +23,12 @@ StockLSTM is a React and FastAPI stock-forecasting application. It retrieves Yah
 | --- | --- |
 | ![Price forecast dashboard with historical and predicted prices.](assets/dashboard.png) | ![Direction forecast dashboard with model analysis.](assets/prediction.png) |
 
-Search for a ticker or enter an exact symbol, select a 1-30 trading-day horizon, and run a price or direction forecast. Price results include historical and predicted prices; direction results include probabilities and 60 dated attention weights. Headline sentiment is external VADER context, not a model input. Save price results to the browser-local watchlist, revisit prediction history, or export PNG, CSV, and complete ZIP analyses.
+- Search for a ticker or enter an exact symbol, then choose a 1–30 trading-day horizon.
+- Run a price forecast with historical/predicted prices, or a direction forecast with up/down probabilities.
+- Attention weights and headline sentiment are supporting context, not financial advice; sentiment is not a model input.
+- Save price results to a browser-local watchlist, revisit prediction history, and export PNG, CSV, or complete ZIP analyses.
 
-First requests can be slower while a model is trained. Later requests load compatible, fresh persistent artifacts.
+First uncached requests can require market-data retrieval and model training. Compatible, fresh persistent artifacts are faster to load.
 
 ## Data, Models, and Runtime
 
