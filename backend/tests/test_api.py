@@ -7,7 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import api
 from api import WorkCoordinator, app
@@ -88,6 +90,86 @@ def test_openapi_contains_public_routes_and_horizon_constraints():
     assert days["schema"]["maximum"] == MAX_FORECAST_DAYS
 
 
+def test_forecast_openapi_declares_shared_telemetry_contract():
+    schema = app.openapi()
+    paths = schema["paths"]
+    schemas = schema["components"]["schemas"]
+
+    price_response = paths["/api/v1/predict"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    direction_response = paths["/api/v1/predict/direction"]["get"]["responses"]["200"]["content"][
+        "application/json"
+    ]["schema"]
+    assert price_response["$ref"].endswith("/PriceForecastResponse")
+    assert direction_response["$ref"].endswith("/DirectionForecastResponse")
+
+    for response_name in ("PriceForecastResponse", "DirectionForecastResponse"):
+        metadata = schemas[response_name]["properties"]["metadata"]
+        assert metadata["$ref"].endswith("/ForecastMetadata")
+
+    timing_schema = schemas["PredictionTimings"]
+    assert set(api.TIMING_FIELDS) == set(timing_schema["properties"])
+    assert set(api.TIMING_FIELDS).issubset(timing_schema["required"])
+    for name in api.TIMING_FIELDS:
+        field_schema = timing_schema["properties"][name]
+        if name == "total":
+            assert field_schema["type"] == "number"
+            assert field_schema["minimum"] == 0
+        else:
+            variants = field_schema["anyOf"]
+            assert {variant["type"] for variant in variants} == {"number", "null"}
+            number_variant = next(variant for variant in variants if variant["type"] == "number")
+            assert number_variant["minimum"] == 0
+
+    execution = schemas["PredictionExecution"]["properties"]
+    assert set(execution["mode"]["enum"]) == set(api.EXECUTION_MODES)
+    assert execution["coalesced"]["type"] == "boolean"
+
+    metadata = schemas["ForecastMetadata"]["properties"]
+    artifact_states = next(
+        variant["enum"]
+        for variant in metadata["artifact_state_before"]["anyOf"]
+        if "enum" in variant
+    )
+    assert set(artifact_states) == set(api.ARTIFACT_STATES)
+    assert set(metadata["artifact_action"]["enum"]) == set(api.ARTIFACT_ACTIONS)
+
+    status_response = paths["/api/v1/prediction-status/{request_id}"]["get"]["responses"]["200"][
+        "content"
+    ]["application/json"]["schema"]
+    assert status_response["$ref"].endswith("/PredictionStatusResponse")
+    for path in ("/api/v1/predict", "/api/v1/predict/direction"):
+        headers = {
+            parameter["name"]
+            for parameter in paths[path]["get"]["parameters"]
+            if parameter["in"] == "header"
+        }
+        assert "X-Prediction-Request-ID" in headers
+
+
+def test_forecast_contract_rejects_malformed_telemetry():
+    payload = _response()
+    payload["metadata"].update(
+        {
+            "timings_seconds": {
+                "queue_wait": None,
+                "market_data": None,
+                "feature_preparation": None,
+                "artifact_load_validation": None,
+                "training": None,
+                "inference": None,
+                "total": -1,
+            },
+            "execution": {"mode": "artifact_loaded", "coalesced": False},
+            "artifact_state_before": "fresh",
+            "artifact_action": "loaded",
+        }
+    )
+    with pytest.raises(ValidationError):
+        api.PriceForecastResponse.model_validate(payload)
+
+
 def test_predict_response_schema():
     with patch("api._price_prediction_pipeline", return_value=_response()):
         response = client.get("/api/v1/predict?ticker=AAPL&days=7")
@@ -97,6 +179,11 @@ def test_predict_response_schema():
     assert len(body["predicted_prices"]) == len(body["future_dates"]) == 7
     assert body["metadata"]["timings_seconds"]["total"] is not None
     assert body["metadata"]["execution"]["mode"] == "artifact_loaded"
+
+    with patch("api._direction_prediction_pipeline", return_value=_response(direction=True)):
+        direction = client.get("/api/v1/predict/direction?ticker=AAPL&days=7")
+    assert direction.status_code == 200
+    assert direction.json()["directions"] == ["Up"] * 7
 
 
 def test_response_cache_timing_and_status_are_truthful():

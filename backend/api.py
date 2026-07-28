@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Literal
+from typing import Annotated, Any, Literal
 
 import numpy as np
 import sklearn  # type: ignore[import-untyped]
@@ -34,7 +34,7 @@ from cachetools import TTLCache
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -158,6 +158,67 @@ class PredictionStatusResponse(BaseModel):
         "failed",
     ]
     coalesced: bool
+
+
+NonNegativeSeconds = Annotated[float, Field(ge=0)]
+Probability = Annotated[float, Field(ge=0, le=1)]
+
+
+class PredictionTimings(BaseModel):
+    queue_wait: NonNegativeSeconds | None
+    market_data: NonNegativeSeconds | None
+    feature_preparation: NonNegativeSeconds | None
+    artifact_load_validation: NonNegativeSeconds | None
+    training: NonNegativeSeconds | None
+    inference: NonNegativeSeconds | None
+    total: NonNegativeSeconds
+
+
+class PredictionExecution(BaseModel):
+    mode: Literal["response_cache_hit", "artifact_loaded", "trained", "coalesced"]
+    coalesced: bool
+
+
+class ForecastMetadata(BaseModel):
+    """Stable telemetry contract plus permissive legacy runtime diagnostics."""
+
+    model_config = ConfigDict(extra="allow")
+
+    timings_seconds: PredictionTimings
+    execution: PredictionExecution
+    artifact_state_before: Literal["fresh", "missing", "stale", "incompatible"] | None
+    artifact_action: Literal["loaded", "retrained", "not_applicable"]
+
+
+class ForecastResponse(BaseModel):
+    """Stable forecast envelope; metrics remain model-specific legacy data."""
+
+    model_config = ConfigDict(extra="allow")
+
+    ticker: str
+    forecast_days: int
+    future_dates: list[str]
+    metrics: dict[str, Any]
+    metadata: ForecastMetadata
+
+
+class PriceForecastResponse(ForecastResponse):
+    historical_dates: list[str]
+    historical_prices: list[float]
+    predicted_prices: list[float]
+
+
+class AttentionWeight(BaseModel):
+    index: int
+    date: str
+    weight: float
+
+
+class DirectionForecastResponse(ForecastResponse):
+    directions: list[Literal["Up", "Down"]]
+    probabilities: list[Probability]
+    attention_weights: list[AttentionWeight]
+    sentiment: dict[str, Any]
 
 
 class PredictionJob:
@@ -861,7 +922,7 @@ def stock_info(request: Request, ticker: str = "AAPL"):
         ) from err
 
 
-@app.get("/api/v1/predict")
+@app.get("/api/v1/predict", response_model=PriceForecastResponse)
 @limiter.limit("5/minute")
 async def predict(
     request: Request,
@@ -891,7 +952,7 @@ async def predict(
     return data
 
 
-@app.get("/api/v1/predict/direction")
+@app.get("/api/v1/predict/direction", response_model=DirectionForecastResponse)
 @limiter.limit("5/minute")
 async def predict_direction_endpoint(
     request: Request,

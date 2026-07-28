@@ -30,6 +30,16 @@ DOCUMENTED_PATHS = {
 }
 
 
+def resolve_schema(schema: dict, components: dict) -> dict:
+    reference = schema.get("$ref")
+    if not reference:
+        return schema
+    prefix = "#/components/schemas/"
+    if not reference.startswith(prefix):
+        raise SystemExit(f"Unexpected OpenAPI schema reference: {reference}")
+    return components[reference.removeprefix(prefix)]
+
+
 def main() -> None:
     docs = (ROOT / "docs" / "API.md").read_text(encoding="utf-8")
     paths = app.openapi()["paths"]
@@ -66,12 +76,77 @@ def main() -> None:
             "Prediction OpenAPI schema no longer exposes the request ID header."
         )
 
+    openapi = app.openapi()
+    paths = openapi["paths"]
+    components = openapi["components"]["schemas"]
+
     status_schema = paths["/api/v1/prediction-status/{request_id}"]["get"]["responses"][
         "200"
     ]["content"]["application/json"]["schema"]
     if "$ref" not in status_schema:
         raise SystemExit(
             "Prediction status OpenAPI response no longer has a typed schema."
+        )
+
+    forecast_names = {
+        "/api/v1/predict": "PriceForecastResponse",
+        "/api/v1/predict/direction": "DirectionForecastResponse",
+    }
+    for path, expected_name in forecast_names.items():
+        response_schema = paths[path]["get"]["responses"]["200"]["content"][
+            "application/json"
+        ]["schema"]
+        if not response_schema.get("$ref", "").endswith(f"/{expected_name}"):
+            raise SystemExit(f"{path} no longer exposes the {expected_name} schema.")
+        response = resolve_schema(response_schema, components)
+        metadata = response.get("properties", {}).get("metadata", {})
+        if not metadata.get("$ref", "").endswith("/ForecastMetadata"):
+            raise SystemExit(f"{path} no longer references ForecastMetadata.")
+
+    metadata = components["ForecastMetadata"]
+    metadata_properties = metadata["properties"]
+    timings = resolve_schema(metadata_properties["timings_seconds"], components)
+    timing_properties = timings["properties"]
+    if set(timing_properties) != set(TIMING_FIELDS):
+        raise SystemExit(
+            "Forecast timing fields no longer match the documented contract."
+        )
+    if not set(TIMING_FIELDS).issubset(timings.get("required", [])):
+        raise SystemExit(
+            "Forecast timing fields must remain required, with null for skipped stages."
+        )
+    total = timing_properties["total"]
+    if total.get("type") != "number" or total.get("minimum") != 0:
+        raise SystemExit("Forecast total timing must remain a non-negative number.")
+    for name in TIMING_FIELDS:
+        if name == "total":
+            continue
+        variants = timing_properties[name].get("anyOf", [])
+        if {variant.get("type") for variant in variants} != {"number", "null"}:
+            raise SystemExit(
+                f"Forecast timing {name} must remain nullable and numeric."
+            )
+
+    execution = resolve_schema(metadata_properties["execution"], components)[
+        "properties"
+    ]
+    if set(execution["mode"].get("enum", [])) != set(EXECUTION_MODES):
+        raise SystemExit(
+            "Forecast execution modes no longer match the documented contract."
+        )
+    artifact_state = metadata_properties["artifact_state_before"].get("anyOf", [])
+    documented_states = next(
+        (variant.get("enum", []) for variant in artifact_state if "enum" in variant), []
+    )
+    if set(documented_states) != set(ARTIFACT_STATES):
+        raise SystemExit(
+            "Forecast artifact states no longer match the documented contract."
+        )
+    if set(metadata_properties["artifact_action"].get("enum", [])) != set(
+        ARTIFACT_ACTIONS
+    ):
+        raise SystemExit(
+            "Forecast artifact actions no longer match the documented contract."
         )
 
     for required in (
