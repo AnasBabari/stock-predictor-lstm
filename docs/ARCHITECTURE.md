@@ -2,19 +2,21 @@
 
 ## Request flow
 
-The React SPA calls same-origin `/api/` paths. In Compose, Nginx proxies those paths to FastAPI. Fast cache hits return immediately. Cold prediction work is admitted to a bounded executor; identical in-flight identities share one future. The entire blocking flow—Yahoo downloads, feature work, artifact load/training, inference, exchange calendar, and news sentiment—runs outside the event loop.
+The React SPA calls same-origin `/api/` paths. In Compose, Nginx proxies those paths to FastAPI. A response-cache hit first revalidates its underlying artifact and is evicted with `503` if that artifact is no longer fresh. Cache misses enter a bounded, coalescing executor, but the worker first requires a fresh validated artifact. Missing or invalid artifacts fail with `503` before market data is fetched. TensorFlow training is reachable only from the operator CLI.
 
 ```mermaid
 flowchart LR
+    operator[Operator pretrain CLI] --> training[Bounded training]
+    training --> artifacts[Validated atomic artifacts]
     browser[Browser / React SPA] --> nginx[Nginx]
     nginx --> api[FastAPI: validation, rate limit, cache]
-    api -->|cache hit| response[Response and diagnostics]
+    api -->|cache hit + fresh artifact| response[Response and diagnostics]
+    api -->|cache hit + stale artifact| unavailable
     api -->|cache miss| coordinator[Bounded coordinator<br/>coalesced in-flight work]
-    coordinator --> market[Market data and features]
-    market --> artifact{Validated fresh artifact?}
-    artifact -->|yes| inference[Inference]
-    artifact -->|no| training[Bounded training]
-    training --> inference
+    coordinator --> artifact{Fresh artifact?}
+    artifact -->|no| unavailable[503 unavailable]
+    artifact -->|yes| market[Market data and features]
+    market --> inference[Inference]
     inference --> response
     response --> browser
 ```
@@ -36,7 +38,7 @@ Reproducibility metadata records Python/NumPy/scikit-learn/TensorFlow versions, 
 
 ## Persistence and concurrency
 
-In-process and O_EXCL process locks prevent duplicate same-artifact training. A global semaphore bounds simultaneous training. A candidate version is written to a unique directory, hashed, then activated with atomic replacement of `current.json`; the prior version is not removed first. Readers resolve only activated versions and validate metadata, feature order/count, output width, scaler shape/finiteness, and SHA-256 hashes before Keras/scaler loading. Scalers are JSON, not pickle/joblib.
+Operator-controlled training uses in-process and O_EXCL process locks to prevent duplicate same-artifact work. A global semaphore bounds simultaneous CLI training; public HTTP requests cannot acquire it. A candidate version is written to a unique directory, hashed, then activated with atomic replacement of `current.json`; the prior version is not removed first. Readers resolve only activated versions and validate metadata, feature order/count, output width, scaler shape/finiteness, and SHA-256 hashes before Keras/scaler loading. Scalers are JSON, not pickle/joblib.
 
 Count, byte, and free-space quotas evict old artifact roots. Readiness verifies the storage can create a file and retains a configured free-space floor.
 
@@ -46,4 +48,4 @@ Suffix mapping covers `.L`, `.SW`, `.TO`, `.AX`, and `.HK`; unsuffixed instrumen
 
 ## Security boundaries
 
-Ticker/model identities are allowlisted before path construction. Public forecast endpoints have per-IP rate limits plus bounded global capacity. CORS allows explicit origins and no credentials. Internal exceptions are not returned. External text renders through React text nodes, and export identity/length checks prevent cross-forecast ZIPs. CSV cells that begin with spreadsheet formula characters are neutralised. Model artifacts are trusted local server state and integrity checked; SHA-256 detects corruption but is not an authenticity signature against an attacker who can rewrite both data and hashes.
+Ticker/model identities are allowlisted before path construction. Public forecast endpoints have per-client rate limits plus bounded global capacity. Forwarded addresses affect the limiter only when the direct peer is an exact configured trusted proxy; all other callers are keyed by their direct address. CORS allows explicit origins and no credentials. Internal exceptions are not returned. External text renders through React text nodes, and export identity/length checks prevent cross-forecast ZIPs. CSV cells that begin with spreadsheet formula characters are neutralised. Model artifacts are trusted local server state and integrity checked; SHA-256 detects corruption but is not an authenticity signature against an attacker who can rewrite both data and hashes.

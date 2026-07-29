@@ -28,7 +28,7 @@ StockLSTM is a React and FastAPI stock-forecasting application. It retrieves Yah
 - Attention weights and headline sentiment are supporting context, not financial advice; sentiment is not a model input.
 - Save price results to a browser-local watchlist, revisit prediction history, and export PNG, CSV, or complete ZIP analyses.
 
-First uncached requests can require market-data retrieval and model training. Compatible, fresh persistent artifacts are faster to load.
+Public requests never train models. They serve only fresh, operator-prepared artifacts; an unprepared, stale, or incompatible ticker/model returns `503`.
 
 ## Data, Models, and Runtime
 
@@ -36,17 +36,19 @@ The tested feature pipeline has **22 ordered features**: 5 OHLCV fields, 9 techn
 
 Validation supports `expanding` and `rolling` walk-forward strategies; defaults use five expanding folds and publish untouched out-of-fold metrics when available. Exchange calendars support selected international suffixes and 24/7 crypto pairs; unknown dotted symbols report an NYSE fallback. Yahoo Finance headline sentiment uses VADER with a financial lexicon, falls back safely to zero when unavailable, and never enters model features.
 
-FastAPI validates input, rate-limits public predictions, caches responses, and bounds prediction/training capacity. Versioned Keras artifacts, JSON scalers, metadata, and evaluation data are validated before activation. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for concurrency, locks, quotas, integrity, and readiness behavior.
+FastAPI validates input, rate-limits public predictions, caches responses, and keeps model training outside the public HTTP path. Versioned Keras artifacts, JSON scalers, metadata, and evaluation data are validated before activation. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for concurrency, locks, quotas, integrity, and readiness behavior.
 
 ## Docker Compose
 
 ```bash
 git clone https://github.com/AnasBabari/stock-predictor-lstm.git
 cd stock-predictor-lstm
-docker compose up --build
+docker compose build
+docker compose run --rm backend python pretrain.py --ticker AAPL
+docker compose up
 ```
 
-Open `http://localhost:5500`. Nginx serves the frontend on `5500`, proxies `/api/` to FastAPI on `8000`, waits for backend readiness, and persists models in `model_cache`. Use `docker compose ps`, `docker compose logs -f`, and `docker compose down`; add `--volumes` only to intentionally remove cached models.
+The example explicitly approves `AAPL`; repeat `--ticker` for other symbols. No ticker is prepared by default. Open `http://localhost:5500`. Nginx serves the frontend on `5500`, proxies `/api/` to FastAPI, waits for backend readiness, and persists models in `model_cache`. Use `docker compose ps`, `docker compose logs -f`, and `docker compose down`; add `--volumes` only to intentionally remove cached models.
 
 ## Local Development
 
@@ -82,7 +84,7 @@ Vite runs at `http://localhost:5500` and proxies `/api` to `http://127.0.0.1:800
 
 See [.env.example](.env.example) for the full list and `backend/config.py` for defaults. Key groups are data/model (`HISTORICAL_YEARS`, `WINDOW_SIZE`, `LSTM_UNITS`, `EPOCHS`, `BATCH_SIZE`, `TRAIN_SPLIT`), forecast/artifact (`MODEL_DIR`, `MODEL_MAX_AGE_DAYS`, `DEFAULT_FORECAST_DAYS`, `MAX_FORECAST_DAYS`), cache, capacity, and storage settings. Defaults include a 60-session window, 7-day default forecast, 30-day maximum, 7-day artifact age, and `saved_models` directory.
 
-`ALLOWED_ORIGINS` is a JSON-style list, for example `["http://localhost:5500"]`. `CORS_ORIGIN` appends one production frontend origin; Compose overrides local origins for `5500`. Nested validation uses `VALIDATION__...` settings for method, folds, minimum training size, horizon, gap, seed, and deterministic mode. Production should explicitly configure CORS and persistent model storage.
+`ALLOWED_ORIGINS` is a JSON-style list, for example `["http://localhost:5500"]`. `CORS_ORIGIN` appends one production frontend origin; Compose overrides local origins for `5500`. Nested validation uses `VALIDATION__...` settings for method, folds, minimum training size, horizon, gap, seed, and deterministic mode. Production should explicitly configure CORS and persistent model storage. `TRUSTED_PROXY_IPS` is an exact JSON IP list; leave it empty unless the direct peer is a controlled proxy.
 
 ## API
 
@@ -96,7 +98,7 @@ See [.env.example](.env.example) for the full list and `backend/config.py` for d
 | `GET /api/v1/predict/direction` | Direction, probability, attention, sentiment, and metrics. |
 | `GET /api/v1/diagnostics/{ticker}` | Persisted walk-forward diagnostics. |
 
-Prediction requests accept tickers matching `[A-Z0-9.\-]{1,12}` and 1-30 days. `429` indicates rate limiting; `503` can indicate capacity, timeout, readiness, or retryable market-data failure.
+Prediction requests accept tickers matching `[A-Z0-9.\-]{1,12}` and 1-30 days. `429` indicates rate limiting; `503` can indicate an unavailable prepared artifact, capacity, timeout, readiness, or retryable market-data failure.
 
 ## Deployment, Testing, and Contribution
 
@@ -112,7 +114,7 @@ npm run build
 
 CI checks dependency locks, Ruff, Mypy, Bandit, pip-audit, API documentation, backend tests/coverage, frontend tests/build, policy checks, and a Compose build, health, and frontend-to-backend API smoke test. It does not publish containers or deploy. Do not commit `.env`, generated models, downloaded data, logs, coverage data, or editor files.
 
-For a slow first forecast, the ticker may need training. For a `503`, check storage writability/free space and upstream data status. For local API failures, ensure FastAPI is on `8000`, Vite is on `5500`, and frontend calls use `/api`.
+Before serving forecasts, run `uv run --project backend python backend/pretrain.py --ticker SYMBOL` against persistent model storage and verify `/models`. The command exits non-zero if preparation fails; it never reports a stale fallback artifact as ready. Schedule the same explicit command at least daily to stay within the default seven-day artifact age. For a `503`, verify the requested artifact is fresh, then check storage and upstream status. For local API failures, ensure FastAPI is on `8000`, Vite is on `5500`, and frontend calls use `/api`.
 
 ## License
 

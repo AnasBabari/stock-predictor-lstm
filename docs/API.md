@@ -2,7 +2,7 @@
 
 Local backend: `http://127.0.0.1:8000`. Interactive OpenAPI: `/docs`; schema: `/openapi.json`.
 
-All errors use `{"detail":"..."}`. `400` means invalid/insufficient instrument data, `422` means query-schema failure, `429` means per-IP rate limiting, and `503` means bounded capacity, timeout, readiness failure, or retryable benchmark unavailability.
+All errors use `{"detail":"..."}`. `400` means invalid/insufficient instrument data, `422` means query-schema failure, `429` means per-client rate limiting, and `503` means no fresh prepared artifact, bounded capacity, timeout, readiness failure, or retryable benchmark unavailability.
 
 ## Probes and discovery
 
@@ -15,7 +15,7 @@ All errors use `{"detail":"..."}`. `400` means invalid/insufficient instrument d
 
 ## `GET /api/v1/predict`
 
-Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, range 1–30). Rate limit: 5/minute/IP. Prediction cache: 300 seconds by default. Send an optional `X-Prediction-Request-ID` UUIDv4 header to enable short-lived status polling.
+Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, range 1–30). Rate limit: 5/minute/client. Prediction cache: 300 seconds by default; a cache hit revalidates its underlying artifact and is evicted if it is no longer fresh. Send an optional `X-Prediction-Request-ID` UUIDv4 header to enable short-lived status polling. Public requests load only fresh, validated 30-day artifacts and never initiate training. Missing, stale, or invalid artifacts return the generic `503` detail `Forecast model is not currently available for this ticker.` before market data is downloaded.
 
 ```json
 {
@@ -75,7 +75,7 @@ Sentiment is untrusted, headline-only external data. Failures produce a document
 
 ## `GET /api/v1/prediction-status/{request_id}`
 
-Use the UUIDv4 value sent in `X-Prediction-Request-ID` on a pending forecast request. The response contains generic request lifecycle/status fields and the current shared stage (`queued`, `downloading_market_data`, `preparing_features`, `checking_artifact`, `training`, `generating_forecast`, `completed`, or `failed`), plus whether the caller joined matching in-flight work. Unknown, expired, or malformed IDs return a generic `404` response.
+Use the UUIDv4 value sent in `X-Prediction-Request-ID` on a pending forecast request. The response contains generic request lifecycle/status fields and the current shared stage (`queued`, `downloading_market_data`, `preparing_features`, `checking_artifact`, `training`, `generating_forecast`, `completed`, or `failed`), plus whether the caller joined matching in-flight work. `training` remains a reserved telemetry value for compatibility but is not entered by public requests. Unknown, expired, or malformed IDs return a generic `404` response.
 
 Completed and failed status views are eligible to remain available for up to 10 minutes, but terminal views may be evicted earlier under registry capacity pressure. Status telemetry is short-lived and in-process: it is intended only for request UX and diagnostics, not durable storage, production observability, or a production benchmark.
 
