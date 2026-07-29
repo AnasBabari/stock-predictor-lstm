@@ -71,6 +71,94 @@ def test_validate_ticker_and_horizon():
     assert client.get("/api/v1/predict?ticker=AAPL&days=99").status_code == 422
 
 
+def test_missing_artifact_fails_before_market_data():
+    with (
+        patch(
+            "api.load_fresh_artifact",
+            side_effect=api.ArtifactValidationError("No versioned artifact is active."),
+        ),
+        patch("api.fetch_data") as fetch,
+    ):
+        response = client.get("/api/v1/predict?ticker=AAPL&days=7")
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Forecast model is not currently available for this ticker."
+    }
+    fetch.assert_not_called()
+
+
+def _request(peer: str, forwarded: str | None = None):
+    headers = [] if forwarded is None else [(b"x-forwarded-for", forwarded.encode())]
+    return api.Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/v1/predict",
+            "headers": headers,
+            "client": (peer, 1234),
+            "server": ("test", 80),
+            "scheme": "http",
+            "query_string": b"",
+        }
+    )
+
+
+def test_rate_limit_identity_uses_only_explicitly_trusted_proxy(monkeypatch):
+    monkeypatch.setattr(api, "_trusted_proxy_ips", frozenset({"172.30.30.10"}))
+    assert api.rate_limit_identity(_request("198.51.100.7", "203.0.113.9")) == "198.51.100.7"
+    assert api.rate_limit_identity(_request("172.30.30.10", "203.0.113.9")) == "203.0.113.9"
+    assert (
+        api.rate_limit_identity(_request("172.30.30.10", "spoofed, 203.0.113.9")) == "172.30.30.10"
+    )
+    assert (
+        api.rate_limit_identity(_request("172.30.30.10", "198.51.100.1, 203.0.113.9, 172.30.30.10"))
+        == "203.0.113.9"
+    )
+
+
+def test_forecast_rate_limits_are_isolated_by_trusted_forwarded_client(monkeypatch):
+    monkeypatch.setattr(api, "_trusted_proxy_ips", frozenset({"172.30.30.10"}))
+    unavailable = api.ArtifactValidationError("No versioned artifact is active.")
+
+    with (
+        patch("api.load_fresh_artifact", side_effect=unavailable),
+        TestClient(app, client=("172.30.30.10", 1234)) as proxy_client,
+    ):
+        for address in ("198.51.100.21", "198.51.100.22"):
+            headers = {"X-Forwarded-For": address}
+            for _ in range(5):
+                assert (
+                    proxy_client.get("/api/v1/predict?ticker=AAPL", headers=headers).status_code
+                    == 503
+                )
+            assert (
+                proxy_client.get("/api/v1/predict?ticker=AAPL", headers=headers).status_code == 429
+            )
+
+
+def test_direct_forecast_requests_cannot_spoof_rate_limit_identity(monkeypatch):
+    monkeypatch.setattr(api, "_trusted_proxy_ips", frozenset({"172.30.30.10"}))
+    unavailable = api.ArtifactValidationError("No versioned artifact is active.")
+
+    with (
+        patch("api.load_fresh_artifact", side_effect=unavailable),
+        TestClient(app, client=("198.51.100.23", 1234)) as direct_client,
+    ):
+        for number in range(5):
+            response = direct_client.get(
+                "/api/v1/predict?ticker=AAPL",
+                headers={"X-Forwarded-For": f"203.0.113.{number + 1}"},
+            )
+            assert response.status_code == 503
+        assert (
+            direct_client.get(
+                "/api/v1/predict?ticker=AAPL",
+                headers={"X-Forwarded-For": "203.0.113.99"},
+            ).status_code
+            == 429
+        )
+
+
 def test_openapi_contains_public_routes_and_horizon_constraints():
     schema = client.get("/openapi.json").json()
     for route in (
@@ -140,6 +228,7 @@ def test_forecast_openapi_declares_shared_telemetry_contract():
     ]["application/json"]["schema"]
     assert status_response["$ref"].endswith("/PredictionStatusResponse")
     for path in ("/api/v1/predict", "/api/v1/predict/direction"):
+        assert "503" in paths[path]["get"]["responses"]
         headers = {
             parameter["name"]
             for parameter in paths[path]["get"]["parameters"]
@@ -187,15 +276,19 @@ def test_predict_response_schema():
 
 
 def test_response_cache_timing_and_status_are_truthful():
-    with patch("api._price_prediction_pipeline", return_value=_response()):
+    with (
+        patch("api._price_prediction_pipeline", return_value=_response()),
+        patch("api.load_fresh_artifact", return_value=(MagicMock(), MagicMock())) as load,
+    ):
         assert client.get("/api/v1/predict?ticker=AAPL&days=7").status_code == 200
 
-    request_id = str(uuid.uuid4())
-    response = client.get(
-        "/api/v1/predict?ticker=AAPL&days=7",
-        headers={"X-Prediction-Request-ID": request_id},
-    )
+        request_id = str(uuid.uuid4())
+        response = client.get(
+            "/api/v1/predict?ticker=AAPL&days=7",
+            headers={"X-Prediction-Request-ID": request_id},
+        )
     assert response.status_code == 200
+    load.assert_called_once_with("AAPL", "lstm", MAX_FORECAST_DAYS)
     metadata = response.json()["metadata"]
     assert metadata["execution"] == {"mode": "response_cache_hit", "coalesced": False}
     assert metadata["artifact_action"] == "not_applicable"
@@ -209,6 +302,23 @@ def test_response_cache_timing_and_status_are_truthful():
     assert status.status_code == 200
     assert status.headers["cache-control"] == "no-store"
     assert status.json()["stage"] == "completed"
+
+
+def test_response_cache_is_evicted_when_artifact_is_no_longer_fresh():
+    with patch("api._price_prediction_pipeline", return_value=_response()):
+        assert client.get("/api/v1/predict?ticker=AAPL&days=7").status_code == 200
+
+    with patch(
+        "api.load_fresh_artifact",
+        side_effect=api.ArtifactValidationError("Artifact is stale."),
+    ):
+        response = client.get("/api/v1/predict?ticker=AAPL&days=7")
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Forecast model is not currently available for this ticker."
+    }
+    with api._predict_cache_lock:
+        assert "AAPL_7" not in api._predict_cache
 
 
 def test_status_registry_coalesces_caller_views_and_hides_unknown_ids():
@@ -381,15 +491,7 @@ def test_search_and_info_cache_are_sanitised_and_thread_safe():
 def test_direction_fixed_width_is_horizon_safe_in_both_request_orders():
     snapshot = _feature_snapshot()
     dates = snapshot.index
-    arrays = (
-        np.zeros((2, WINDOW_SIZE, len(FEATURES))),
-        np.zeros((1, WINDOW_SIZE, len(FEATURES))),
-        np.zeros((2, MAX_FORECAST_DAYS)),
-        np.zeros((1, MAX_FORECAST_DAYS)),
-        MagicMock(),
-        [],
-        [],
-    )
+    scaler = MagicMock()
 
     def prediction(_model, _frame, _scaler, days):
         return ["Up"] * days, [0.6] * days, [1 / WINDOW_SIZE] * WINDOW_SIZE
@@ -399,8 +501,7 @@ def test_direction_fixed_width_is_horizon_safe_in_both_request_orders():
             patch(
                 "api.fetch_data", return_value=(snapshot, snapshot.Close.values, dates, {})
             ) as fetch,
-            patch("api.prepare_return_data", return_value=arrays) as prepare,
-            patch("api.load_or_train", return_value=(MagicMock(), arrays[4])),
+            patch("api.load_fresh_artifact", return_value=(MagicMock(), scaler)) as load,
             patch("api.predict_direction", side_effect=prediction),
             patch(
                 "api.future_trading_dates",
@@ -411,9 +512,7 @@ def test_direction_fixed_width_is_horizon_safe_in_both_request_orders():
         ):
             results = [api._direction_prediction_pipeline("AAPL", days) for days in order]
         assert [result["forecast_days"] for result in results] == list(order)
-        assert all(
-            call.kwargs["forecast_days"] == MAX_FORECAST_DAYS for call in prepare.call_args_list
-        )
+        assert all(call.args[2] == MAX_FORECAST_DAYS for call in load.call_args_list)
         assert fetch.call_count == 2
 
 
@@ -421,19 +520,11 @@ def test_price_pipeline_uses_one_coherent_snapshot():
     snapshot = _feature_snapshot()
     original_id = id(snapshot)
     observed = []
-    arrays = (
-        np.zeros((2, WINDOW_SIZE, len(FEATURES))),
-        np.zeros((1, WINDOW_SIZE, len(FEATURES))),
-        np.zeros((2, MAX_FORECAST_DAYS)),
-        np.zeros((1, MAX_FORECAST_DAYS)),
-        MagicMock(),
-        [],
-        [],
-    )
+    scaler = MagicMock()
 
-    def preprocess(frame, **_kwargs):
-        observed.append(frame.attrs["snapshot"])
-        return arrays
+    def prediction(_model, frame, model_scaler, days):
+        observed.append((frame.attrs["snapshot"], model_scaler, days))
+        return [101.0] * days
 
     snapshot.attrs["snapshot"] = "immutable-one"
     with (
@@ -441,17 +532,16 @@ def test_price_pipeline_uses_one_coherent_snapshot():
             "api.fetch_data",
             return_value=(snapshot, snapshot.Close.values, snapshot.index, {"snapshot_id": "one"}),
         ) as fetch,
-        patch("api.preprocess", side_effect=preprocess),
-        patch("api.load_or_train", return_value=(MagicMock(), arrays[4])) as load,
-        patch("api.predict_future", return_value=[101.0] * 3),
+        patch("api.load_fresh_artifact", return_value=(MagicMock(), scaler)) as load,
+        patch("api.predict_future", side_effect=prediction),
         patch("api.future_trading_dates", return_value=(["d1", "d2", "d3"], "NYSE")),
         patch("api.load_metrics", return_value={"metric_source": "walk_forward_out_of_fold"}),
     ):
         result = api._price_prediction_pipeline("AAPL", 3)
     assert id(snapshot) == original_id
     assert fetch.call_count == 1
-    assert observed == ["immutable-one"]
-    assert load.call_args.args[7].attrs["snapshot"] == "immutable-one"
+    assert load.call_args.args == ("AAPL", "lstm", MAX_FORECAST_DAYS)
+    assert observed == [("immutable-one", scaler, 3)]
     assert result["metadata"]["data_snapshot"]["snapshot_id"] == "one"
 
 

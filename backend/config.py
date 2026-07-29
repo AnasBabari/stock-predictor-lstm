@@ -1,10 +1,11 @@
 """Application configuration with environment variable support (4.2)."""
 
 import tomllib
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -81,6 +82,18 @@ class Settings(BaseSettings):
     model_min_free_mb: int = Field(default=100, ge=10)
     model_versions_to_keep: int = Field(default=2, ge=1, le=10)
     artifact_lock_timeout_seconds: int = Field(default=900, ge=30, le=3600)
+    trusted_proxy_ips: list[str] = Field(default_factory=list)
+
+    @field_validator("trusted_proxy_ips")
+    @classmethod
+    def validate_trusted_proxy_ips(cls, values: list[str]) -> list[str]:
+        """Accept exact proxy addresses only; broad networks and wildcards are unsafe."""
+        normalised: list[str] = []
+        for value in values:
+            if "/" in value or value.strip() == "*":
+                raise ValueError("trusted_proxy_ips entries must be exact IP addresses")
+            normalised.append(str(ip_address(value.strip())))
+        return list(dict.fromkeys(normalised))
 
     model_config = {
         "env_file": ".env",

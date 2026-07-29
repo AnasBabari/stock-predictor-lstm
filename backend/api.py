@@ -13,6 +13,7 @@ Fixes applied:
 
 import asyncio
 import copy
+import ipaddress
 import logging
 import os
 import re
@@ -37,7 +38,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from calendars import future_trading_dates
 from config import (
@@ -50,15 +50,16 @@ from config import (
     WINDOW_SIZE,
     settings,
 )
-from data_pipeline import fetch_data, prepare_return_data, preprocess
+from data_pipeline import fetch_data
 from features.market import MarketContextUnavailable
 from model import (
+    ArtifactValidationError,
     TrainingCapacityError,
     get_manifest,
     load_cross_validation,
+    load_fresh_artifact,
     load_metadata,
     load_metrics,
-    load_or_train,
     load_validation_results,
     predict_direction,
     predict_future,
@@ -76,8 +77,37 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="StockLSTM API", version=APP_VERSION)
 
 
+_trusted_proxy_ips = frozenset(settings.trusted_proxy_ips)
+
+
+def _normalise_ip(value: str) -> str | None:
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
+def rate_limit_identity(request: Request) -> str:
+    """Trust forwarding data only when the direct peer is explicitly configured."""
+    peer = request.client.host if request.client is not None else "unknown"
+    normalised_peer = _normalise_ip(peer)
+    if normalised_peer is None or normalised_peer not in _trusted_proxy_ips:
+        return normalised_peer or peer
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if not forwarded:
+        return normalised_peer
+    hops = [_normalise_ip(value) for value in forwarded.split(",")]
+    if any(hop is None for hop in hops):
+        return normalised_peer
+    for hop in reversed(hops):
+        if hop is not None and hop not in _trusted_proxy_ips:
+            return hop
+    return normalised_peer
+
+
 # Rate limiter (2.5)
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=rate_limit_identity)
 app.state.limiter = limiter
 
 
@@ -529,27 +559,15 @@ def _measure(job: PredictionJob, timing: str, stage: str, function):
 
 def _price_prediction_pipeline(ticker: str, days: int, job: PredictionJob | None = None) -> dict:
     job = job or PredictionJob(f"price_{ticker}_{days}")
+    model, model_scaler = _measure(
+        job,
+        "artifact_load_validation",
+        "checking_artifact",
+        lambda: load_fresh_artifact(ticker, "lstm", MAX_FORECAST_DAYS),
+    )
+    job.set_artifact("fresh", "loaded")
     feature_df, closing_prices, historical_dates, feature_metadata = _measure(
         job, "market_data", "downloading_market_data", lambda: _fetch_snapshot(ticker)
-    )
-    X_train, X_test, y_train, y_test, scaler, _, _ = _measure(
-        job,
-        "feature_preparation",
-        "preparing_features",
-        lambda: preprocess(feature_df, forecast_days=MAX_FORECAST_DAYS),
-    )
-    job.set_stage("checking_artifact")
-    model, model_scaler = load_or_train(
-        ticker,
-        X_train,
-        y_train,
-        X_test,
-        y_test,
-        scaler,
-        "lstm",
-        feature_df,
-        feature_metadata,
-        telemetry=job,
     )
     predictions, future_dates, calendar_id = _measure(
         job,
@@ -587,30 +605,16 @@ def _direction_prediction_pipeline(
     ticker: str, days: int, job: PredictionJob | None = None
 ) -> dict:
     job = job or PredictionJob(f"direction_{ticker}_{days}")
+    model_type = "bilstm_attention_direction"
+    model, model_scaler = _measure(
+        job,
+        "artifact_load_validation",
+        "checking_artifact",
+        lambda: load_fresh_artifact(ticker, model_type, MAX_FORECAST_DAYS),
+    )
+    job.set_artifact("fresh", "loaded")
     feature_df, _, historical_dates, feature_metadata = _measure(
         job, "market_data", "downloading_market_data", lambda: _fetch_snapshot(ticker)
-    )
-    # Direction artifacts always have a fixed maximum output width. Responses are sliced only
-    # after the artifact signature has been validated by load_or_train.
-    X_train, X_test, y_train, y_test, scaler, _, _ = _measure(
-        job,
-        "feature_preparation",
-        "preparing_features",
-        lambda: prepare_return_data(feature_df, forecast_days=MAX_FORECAST_DAYS),
-    )
-    job.set_stage("checking_artifact")
-    model_type = "bilstm_attention_direction"
-    model, model_scaler = load_or_train(
-        ticker,
-        X_train,
-        y_train,
-        X_test,
-        y_test,
-        scaler,
-        model_type,
-        feature_df,
-        feature_metadata,
-        telemetry=job,
     )
     directions, probabilities, attention_weights, future_dates, calendar_id = _measure(
         job,
@@ -709,6 +713,28 @@ def _with_execution_metadata(
     return response
 
 
+async def _get_fresh_cached_response(cache_key: str, ticker: str, model_type: str) -> dict | None:
+    """Return a cached response only if its underlying serving artifact is still fresh."""
+    with _predict_cache_lock:
+        cached = _predict_cache.get(cache_key)
+    if cached is None:
+        return None
+
+    try:
+        await asyncio.to_thread(load_fresh_artifact, ticker, model_type, MAX_FORECAST_DAYS)
+    except ArtifactValidationError as err:
+        with _predict_cache_lock:
+            _predict_cache.pop(cache_key, None)
+        logger.info(
+            "Evicted response cache for unavailable forecast artifact %s/%s", ticker, model_type
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Forecast model is not currently available for this ticker.",
+        ) from err
+    return cached
+
+
 async def _await_prediction(
     key: str,
     function,
@@ -763,6 +789,15 @@ async def _await_prediction(
             view_finished = True
         raise HTTPException(
             status_code=503, detail="Prediction capacity is temporarily full."
+        ) from err
+    except ArtifactValidationError as err:
+        if status_attached and request_id is not None:
+            _status_registry.finish_view(request_id, False)
+            view_finished = True
+        logger.info("Fresh forecast artifact unavailable for %s", ticker)
+        raise HTTPException(
+            status_code=503,
+            detail="Forecast model is not currently available for this ticker.",
         ) from err
     except TimeoutError as err:
         if status_attached and request_id is not None:
@@ -922,7 +957,21 @@ def stock_info(request: Request, ticker: str = "AAPL"):
         ) from err
 
 
-@app.get("/api/v1/predict", response_model=PriceForecastResponse)
+FORECAST_UNAVAILABLE_RESPONSE = {
+    503: {
+        "description": (
+            "No fresh, pre-trained model artifact is available for the requested ticker, "
+            "or prediction capacity is temporarily full."
+        )
+    }
+}
+
+
+@app.get(
+    "/api/v1/predict",
+    response_model=PriceForecastResponse,
+    responses=FORECAST_UNAVAILABLE_RESPONSE,
+)
 @limiter.limit("5/minute")
 async def predict(
     request: Request,
@@ -935,8 +984,7 @@ async def predict(
     ticker = validate_ticker(ticker)
 
     cache_key = f"{ticker}_{days}"
-    with _predict_cache_lock:
-        cached = _predict_cache.get(cache_key)
+    cached = await _get_fresh_cached_response(cache_key, ticker, "lstm")
     if cached:
         if request_id is not None:
             _status_registry.cache_hit(request_id, cache_key)
@@ -952,7 +1000,11 @@ async def predict(
     return data
 
 
-@app.get("/api/v1/predict/direction", response_model=DirectionForecastResponse)
+@app.get(
+    "/api/v1/predict/direction",
+    response_model=DirectionForecastResponse,
+    responses=FORECAST_UNAVAILABLE_RESPONSE,
+)
 @limiter.limit("5/minute")
 async def predict_direction_endpoint(
     request: Request,
@@ -965,8 +1017,7 @@ async def predict_direction_endpoint(
     ticker = validate_ticker(ticker)
 
     cache_key = f"dir_{ticker}_{days}"
-    with _predict_cache_lock:
-        cached = _predict_cache.get(cache_key)
+    cached = await _get_fresh_cached_response(cache_key, ticker, "bilstm_attention_direction")
     if cached:
         if request_id is not None:
             _status_registry.cache_hit(request_id, cache_key)

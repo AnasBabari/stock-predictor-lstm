@@ -1349,6 +1349,13 @@ def _load_valid_artifact(
         return model, loaded_scaler
 
 
+def load_fresh_artifact(ticker: str, model_type: str, expected_output_width: int):
+    """Load a serving artifact without admitting any training work."""
+    lock = _get_ticker_lock(ticker)
+    with lock:
+        return _load_valid_artifact(ticker, model_type, expected_output_width)
+
+
 # ── Load or train ────────────────────────────────────────────────────
 def load_or_train(
     ticker: str,
@@ -1361,8 +1368,9 @@ def load_or_train(
     feature_df=None,
     feature_metadata: dict | None = None,
     telemetry=None,
+    allow_stale_fallback: bool = True,
 ):
-    """Load cached model & scaler or retrain with fail-safe fallback."""
+    """Load or train an artifact, with an optional stale-artifact failure fallback."""
     expected_output_width = int(y_train.shape[1])
     lock = _get_ticker_lock(ticker)
 
@@ -1442,6 +1450,8 @@ def load_or_train(
             except Exception:
                 if telemetry is not None and training_started is not None and not training_recorded:
                     telemetry.add_timing("training", time.perf_counter() - training_started)
+                if not allow_stale_fallback:
+                    raise
                 try:
                     loaded = load_artifact(allow_stale=True)
                     set_artifact(initial_state, "loaded")
