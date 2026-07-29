@@ -74,6 +74,9 @@ function predictionErrorMessage(error) {
   ) {
     return 'Market data is temporarily unavailable. Please try again later.';
   }
+  if (message.includes('forecast model') || message.includes('prepared model')) {
+    return 'No prepared forecast model is available for this ticker. Try an approved symbol.';
+  }
   if (
     message.includes('capacity') ||
     message.includes('queue is full') ||

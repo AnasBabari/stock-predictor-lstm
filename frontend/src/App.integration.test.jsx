@@ -238,6 +238,10 @@ describe('forecast toggle integration', () => {
 
   it.each([
     [
+      new Error('Forecast model is not currently available for this ticker.'),
+      'No prepared forecast model is available for this ticker. Try an approved symbol.',
+    ],
+    [
       new Error('Prediction capacity is temporarily full.'),
       'Prediction capacity is currently full. Please try again shortly.',
     ],
