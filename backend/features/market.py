@@ -46,9 +46,10 @@ def add_market_context_from_frames(
         # pre-existing feature is already in its rolling warm-up period.
         required_index = df.dropna().index
         required_returns = returns.reindex(required_index)
-        if required_returns.isna().any() or not np.isfinite(
-            required_returns.to_numpy(dtype=float)
-        ).all():
+        if (
+            required_returns.isna().any()
+            or not np.isfinite(required_returns.to_numpy(dtype=float)).all()
+        ):
             raise MarketContextUnavailable(
                 f"Snapshot benchmark {ticker} cannot be aligned from prior observations."
             )
