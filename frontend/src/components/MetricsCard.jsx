@@ -23,6 +23,7 @@ export default function MetricsCard({ stockData, forecastType }) {
   if (!stockData || !stockData.metrics) return null;
 
   const m = stockData.metrics;
+  const engine = stockData.metadata?.engine;
   const isTrend = forecastType === 'trend';
   const modeLabel = isTrend ? 'Trend Forecast Metrics' : 'Price Forecast Metrics';
   const metricSource =
@@ -58,15 +59,36 @@ export default function MetricsCard({ stockData, forecastType }) {
   ];
 
   const metrics = isTrend ? trendMetrics : priceMetrics;
+  const engineLabel = engine?.family
+    ? engine.family.replaceAll('_', ' ')
+    : 'Prepared model';
+  const evidenceLabel = engine?.baseline_fallback
+    ? 'Baseline fallback'
+    : engine?.role === 'learned_candidate'
+      ? 'Learned candidate'
+      : 'Artifact evidence';
 
   return (
-    <section id="metricsCard" className="metrics-card">
+    <section
+      id="metricsCard"
+      className={`metrics-card${engine?.baseline_fallback ? ' metrics-card--baseline' : ''}`}
+    >
       <div className="metric">
         <div className="metric-content">
           <span className="metric-label">Mode</span>
           <span className="metric-value">{modeLabel}</span>
         </div>
       </div>
+      <div className="metric-divider"></div>
+      <MetricItem
+        iconTitle={
+          engine?.baseline_fallback
+            ? 'No learned candidate currently has qualifying serving evidence.'
+            : 'Forecast engine selected by the serving pipeline.'
+        }
+        label="Active engine"
+        value={`${engineLabel} · ${evidenceLabel}`}
+      />
       <div className="metric-divider"></div>
       <MetricItem iconTitle={metricSource} label="Metric source" value={metricSource} />
       {metrics.map((metric, index) => (
