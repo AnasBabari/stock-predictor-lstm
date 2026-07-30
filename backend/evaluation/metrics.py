@@ -9,6 +9,7 @@ forecast origins.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 from sklearn.metrics import r2_score
@@ -110,9 +111,20 @@ def regression_metrics(
 
     return {
         "mae": float(np.mean(absolute_errors)),
+        "median_absolute_error": float(np.median(absolute_errors)),
         "mse": float(np.mean(squared_errors)),
         "rmse": float(np.sqrt(np.mean(squared_errors))),
         "mape": mape,
+        "smape": float(
+            np.mean(
+                np.divide(
+                    200 * absolute_errors,
+                    np.abs(actual_array) + np.abs(predicted_array),
+                    out=np.zeros_like(absolute_errors),
+                    where=(np.abs(actual_array) + np.abs(predicted_array)) > 0,
+                )
+            )
+        ),
         "bias": float(np.mean(errors)),
         "r2": r2,
         "direction_accuracy": direction_accuracy,
@@ -185,7 +197,9 @@ def evaluate_forecast_horizons(
     }
 
 
-def evaluate_probability_forecast(actual, probabilities, *, training_targets) -> dict[str, float]:
+def evaluate_probability_forecast(
+    actual, probabilities, *, training_targets, calibration_bins: int = 10
+) -> dict[str, Any]:
     """Evaluate a binary probability forecast against a training-only majority baseline."""
 
     actual_array = np.asarray(actual, dtype=int).reshape(-1)
@@ -193,6 +207,8 @@ def evaluate_probability_forecast(actual, probabilities, *, training_targets) ->
     training_array = np.asarray(training_targets, dtype=int).reshape(-1)
     if actual_array.shape != probability_array.shape or actual_array.size == 0:
         raise ValueError("Actual labels and probabilities must be non-empty and aligned.")
+    if calibration_bins < 2:
+        raise ValueError("calibration_bins must be at least two.")
     if not set(np.unique(actual_array)).issubset({0, 1}) or not set(
         np.unique(training_array)
     ).issubset({0, 1}):
@@ -213,6 +229,27 @@ def evaluate_probability_forecast(actual, probabilities, *, training_targets) ->
         float(np.mean(predictions[actual_array == 0] == 0)) if np.any(actual_array == 0) else 0.0
     )
     clipped = np.clip(probability_array, 1e-7, 1 - 1e-7)
+    # Equal-width bins are deliberately deterministic and retain empty bins as
+    # omitted rather than pretending they carry calibration evidence.
+    bin_index = np.minimum((probability_array * calibration_bins).astype(int), calibration_bins - 1)
+    reliability_bins = []
+    expected_calibration_error = 0.0
+    for index in range(calibration_bins):
+        mask = bin_index == index
+        if not np.any(mask):
+            continue
+        confidence = float(np.mean(probability_array[mask]))
+        observed = float(np.mean(actual_array[mask]))
+        weight = float(np.mean(mask))
+        expected_calibration_error += weight * abs(confidence - observed)
+        reliability_bins.append(
+            {
+                "bin": index,
+                "count": int(np.sum(mask)),
+                "confidence": confidence,
+                "observed_rate": observed,
+            }
+        )
 
     return {
         "accuracy": accuracy,
@@ -222,5 +259,7 @@ def evaluate_probability_forecast(actual, probabilities, *, training_targets) ->
         "log_loss": float(
             -np.mean(actual_array * np.log(clipped) + (1 - actual_array) * np.log(1 - clipped))
         ),
+        "expected_calibration_error": expected_calibration_error,
+        "reliability_bins": reliability_bins,
         "sample_count": int(len(actual_array)),
     }
