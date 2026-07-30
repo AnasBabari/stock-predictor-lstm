@@ -33,6 +33,9 @@ def run_feature_ablation(
     *,
     feature_sets: tuple[str, ...] | None = None,
     config: ExperimentConfig | None = None,
+    dates=None,
+    snapshot_id: str | None = None,
+    candidate_factories=(),
 ) -> dict:
     """Evaluate requested feature sets without changing folds or model settings."""
 
@@ -56,6 +59,9 @@ def run_feature_ablation(
             close_values,
             feature_names=columns,
             config=config,
+            dates=dates,
+            snapshot_id=snapshot_id,
+            candidate_factories=candidate_factories,
         )
     return {
         "feature_sets": list(selected),

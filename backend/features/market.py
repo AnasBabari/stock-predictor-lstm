@@ -22,6 +22,52 @@ MARKET_TICKERS = {
 }
 
 
+def add_market_context_from_frames(
+    df: pd.DataFrame,
+    frames: dict[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict]:
+    """Build market returns from an already verified snapshot without network access."""
+
+    result = df.copy()
+    sources: dict[str, dict] = {}
+    for ticker, feature_name in MARKET_TICKERS.items():
+        source = frames.get(ticker)
+        if source is None or source.empty or "Close" not in source:
+            raise MarketContextUnavailable(
+                f"Verified snapshot is missing benchmark context {ticker}."
+            )
+        close = source["Close"]
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        combined_index = close.index.union(df.index)
+        aligned_close = close.reindex(combined_index).sort_index().ffill()
+        returns = np.log(aligned_close / aligned_close.shift(1)).reindex(df.index)
+        # Initial market return NaNs are acceptable only where another
+        # pre-existing feature is already in its rolling warm-up period.
+        required_index = df.dropna().index
+        required_returns = returns.reindex(required_index)
+        if required_returns.isna().any() or not np.isfinite(
+            required_returns.to_numpy(dtype=float)
+        ).all():
+            raise MarketContextUnavailable(
+                f"Snapshot benchmark {ticker} cannot be aligned from prior observations."
+            )
+        result[feature_name] = returns
+        sources[feature_name] = {
+            "ticker": ticker,
+            "status": "snapshot",
+            "rows": int(len(source)),
+            "alignment": "prior_observation_carry_forward_v2",
+        }
+    return result, {
+        "schema_version": MARKET_CONTEXT_SCHEMA_VERSION,
+        "policy": "verified_snapshot",
+        "imputation": "closed-market close carried forward before return calculation",
+        "status": "complete",
+        "sources": sources,
+    }
+
+
 def add_market_context(df: pd.DataFrame, period: str = "5y") -> tuple[pd.DataFrame, dict]:
     """
     Fetch benchmark index prices, join on the target DataFrame's index,

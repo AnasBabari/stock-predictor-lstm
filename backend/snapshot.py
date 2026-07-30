@@ -31,13 +31,14 @@ DEFAULT_BENCHMARK_UNIVERSE = (
     "GLD",
     "BTC-USD",
 )
-TICKER_PATTERN = re.compile(r"[A-Z0-9.\-]{1,12}")
+DEFAULT_CONTEXT_TICKERS = ("QQQ", "^VIX", "^TNX")
+TICKER_PATTERN = re.compile(r"(?:\^[A-Z0-9]{1,10}|[A-Z0-9.\-]{1,12})")
 
 
 def normalise_ticker(value: str) -> str:
     ticker = str(value).strip().upper()
     if not TICKER_PATTERN.fullmatch(ticker):
-        raise ValueError("Snapshot ticker must match [A-Z0-9.\\-]{1,12}.")
+        raise ValueError("Snapshot ticker contains an unsupported identity.")
     return ticker
 
 
@@ -85,10 +86,17 @@ def create_market_snapshot(
     end: str,
     output: Path,
     downloader: Callable[..., pd.DataFrame] = yf.download,
+    benchmark_universe: tuple[str, ...] | list[str] | None = None,
 ) -> dict:
     """Download, validate and write immutable Parquet market data plus its manifest."""
 
     selected = tuple(dict.fromkeys(normalise_ticker(ticker) for ticker in tickers))
+    targets = tuple(
+        dict.fromkeys(
+            normalise_ticker(ticker)
+            for ticker in (benchmark_universe if benchmark_universe is not None else selected)
+        )
+    )
     if not selected:
         raise ValueError("At least one ticker is required.")
     if pd.Timestamp(start) >= pd.Timestamp(end):
@@ -121,6 +129,7 @@ def create_market_snapshot(
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "created_at_utc": datetime.now(UTC).isoformat(),
         "requested": {"tickers": list(selected), "start": start, "end": end},
+        "benchmark_universe": list(targets),
         "provider": {
             "name": "yfinance",
             "version": getattr(yf, "__version__", "unknown"),
@@ -180,8 +189,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--end", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
-    tickers = _read_universe(args.universe) if args.universe else DEFAULT_BENCHMARK_UNIVERSE
-    manifest = create_market_snapshot(tickers, start=args.start, end=args.end, output=args.output)
+    universe = _read_universe(args.universe) if args.universe else DEFAULT_BENCHMARK_UNIVERSE
+    tickers = tuple(dict.fromkeys((*universe, *DEFAULT_CONTEXT_TICKERS)))
+    manifest = create_market_snapshot(
+        tickers,
+        start=args.start,
+        end=args.end,
+        output=args.output,
+        benchmark_universe=universe,
+    )
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
 
