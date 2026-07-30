@@ -173,6 +173,7 @@ def test_openapi_contains_public_routes_and_horizon_constraints():
         "/api/v1/search",
         "/api/v1/info",
         "/api/v1/prediction-status/{request_id}",
+        "/api/v1/model-performance/{ticker}",
     ):
         assert route in schema["paths"]
     days = next(
@@ -182,6 +183,36 @@ def test_openapi_contains_public_routes_and_horizon_constraints():
     )
     assert days["schema"]["minimum"] == 1
     assert days["schema"]["maximum"] == MAX_FORECAST_DAYS
+
+
+def test_model_performance_discloses_learned_and_baseline_engines():
+    with (
+        patch("api.load_fresh_artifact", return_value=(MagicMock(), MagicMock())),
+        patch(
+            "api.load_metadata",
+            return_value={
+                "version_id": "v1",
+                "validation_method": "expanding",
+                "validation_folds": 5,
+                "metric_source": "walk_forward_out_of_fold",
+                "data_snapshot": {"snapshot_id": "one"},
+            },
+        ),
+        patch("api.load_metrics", return_value={"rmse": 2.0}),
+    ):
+        learned = client.get("/api/v1/model-performance/AAPL")
+    assert learned.status_code == 200
+    assert not learned.json()["engine"]["baseline_fallback"]
+    assert learned.json()["benchmark"]["validation_folds"] == 5
+
+    with patch(
+        "api.load_fresh_artifact",
+        side_effect=api.ArtifactValidationError("missing"),
+    ):
+        baseline = client.get("/api/v1/model-performance/AAPL?forecast_type=direction")
+    assert baseline.status_code == 200
+    assert baseline.json()["engine"]["family"] == "recent_base_rate"
+    assert baseline.json()["metrics"]["metric_source"] == "baseline_definition"
 
 
 def test_forecast_openapi_declares_shared_telemetry_contract():

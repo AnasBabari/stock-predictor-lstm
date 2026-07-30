@@ -55,7 +55,7 @@ Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, r
 
 Metrics can instead be `{"metric_source":"unavailable","detail":"..."}`. They are never computed on the final production model's training samples. MASE/RMSSE use training-only naïve scales; `relative_mae` and `relative_rmse` divide candidate error by the no-change persistence error for the same forecast origins. Values below `1.0` indicate improvement over their respective baseline.
 
-`timings_seconds` use caller-level semantics. Stages that did not run for that caller are `null`; a response-cache hit has `null` pipeline stages but a measured `total`. A coalesced caller receives its independently measured `total` while owner-executed pipeline stages remain `null`. `artifact_state_before` is `fresh`, `missing`, `stale`, or `incompatible` when artifact validation ran (otherwise `null` for a response-cache hit). `artifact_action` is `loaded`, `retrained`, or `not_applicable`. For a coalesced response, the artifact fields describe the shared job's validated outcome rather than a second artifact check by the joiner. `execution.mode` is `response_cache_hit`, `artifact_loaded`, `trained`, or `coalesced`.
+`timings_seconds` use caller-level semantics. Stages that did not run for that caller are `null`; a response-cache hit has `null` pipeline stages but a measured `total`. A coalesced caller receives its independently measured `total` while owner-executed pipeline stages remain `null`. `artifact_state_before` is `fresh`, `missing`, `stale`, or `incompatible` when artifact validation ran (otherwise `null` for a response-cache hit). `artifact_action` is `loaded`, `retrained`, or `not_applicable`. For a coalesced response, the artifact fields describe the shared job's validated outcome rather than a second artifact check by the joiner. `execution.mode` is `response_cache_hit`, `artifact_loaded`, `baseline_fallback`, `trained`, or `coalesced`. A baseline fallback is labelled in `metadata.engine` and never represented as learned-model evidence.
 
 ## `GET /api/v1/predict/direction`
 
@@ -104,3 +104,7 @@ Completed and failed status views are eligible to remain available for up to 10 
 ## `GET /api/v1/diagnostics/{ticker}`
 
 Query `model_type` is one of `lstm`, `gru`, `attention`, `bilstm_attention_regression`, or `bilstm_attention_direction`. Returns persisted fold boundaries, untouched-fold predictions/residuals, cross-validation aggregates, per-horizon metrics for regression artifacts, and model metadata. Returns `404` when no activated validation artifacts exist.
+
+## `GET /api/v1/model-performance/{ticker}`
+
+Query `forecast_type` is `price` or `direction`. Returns the currently selected engine family and role, its attached metrics, snapshot and validation provenance, or an explicit `baseline_definition` result when no learned candidate has qualifying fresh evidence.

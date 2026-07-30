@@ -264,6 +264,14 @@ class DirectionForecastResponse(ForecastResponse):
     sentiment: dict[str, Any]
 
 
+class ModelPerformanceResponse(BaseModel):
+    ticker: str
+    forecast_type: Literal["price", "direction"]
+    engine: dict[str, Any]
+    metrics: dict[str, Any]
+    benchmark: dict[str, Any]
+
+
 class PredictionJob:
     """Shared, in-process state for one bounded prediction job."""
 
@@ -1174,3 +1182,62 @@ async def diagnostics(
             status_code=500,
             detail="Failed to fetch diagnostics. Please try again later.",
         ) from err
+
+
+@app.get(
+    "/api/v1/model-performance/{ticker}",
+    response_model=ModelPerformanceResponse,
+)
+@limiter.limit("20/minute")
+def model_performance(
+    request: Request,
+    ticker: str,
+    forecast_type: Literal["price", "direction"] = Query(default="price"),
+):
+    """Disclose evidence for the engine selected by public serving."""
+
+    ticker = validate_ticker(ticker)
+    model_type = "lstm" if forecast_type == "price" else "bilstm_attention_direction"
+    try:
+        load_fresh_artifact(ticker, model_type, MAX_FORECAST_DAYS)
+        metadata = load_metadata(ticker, model_type)
+        metrics = load_metrics(ticker, model_type)
+        engine = {
+            "family": model_type,
+            "role": "learned_candidate",
+            "baseline_fallback": False,
+            "artifact_version": metadata.get("version_id"),
+        }
+        benchmark = {
+            "snapshot": metadata.get("data_snapshot", {}),
+            "validation_method": metadata.get("validation_method"),
+            "validation_folds": metadata.get("validation_folds"),
+            "metric_source": metadata.get("metric_source"),
+        }
+    except ArtifactValidationError:
+        family = "persistence" if forecast_type == "price" else "recent_base_rate"
+        engine = {
+            "family": family,
+            "role": "baseline_fallback",
+            "baseline_fallback": True,
+            "artifact_version": None,
+        }
+        metrics = {
+            "metric_source": "baseline_definition",
+            "relative_mae": 1.0 if forecast_type == "price" else None,
+            "relative_rmse": 1.0 if forecast_type == "price" else None,
+            "detail": "No learned candidate currently has qualifying fresh evidence.",
+        }
+        benchmark = {
+            "snapshot": None,
+            "validation_method": None,
+            "validation_folds": None,
+            "metric_source": "baseline_definition",
+        }
+    return {
+        "ticker": ticker,
+        "forecast_type": forecast_type,
+        "engine": engine,
+        "metrics": metrics,
+        "benchmark": benchmark,
+    }
