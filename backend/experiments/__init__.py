@@ -6,6 +6,8 @@ from .baselines import (
     PersistenceForecaster,
     RidgeForecaster,
 )
+from .candidates import NeuralCandidate
+from .contracts import ExperimentDataset, Fold, FoldPlan, build_experiment_dataset
 from .targets import (
     SupervisedDataset,
     build_supervised_dataset,
@@ -15,11 +17,16 @@ from .targets import (
 
 __all__ = [
     "DriftForecaster",
+    "ExperimentDataset",
+    "Fold",
+    "FoldPlan",
     "HistogramGradientBoostingForecaster",
     "PersistenceForecaster",
     "RidgeForecaster",
+    "NeuralCandidate",
     "SupervisedDataset",
     "build_supervised_dataset",
+    "build_experiment_dataset",
     "reconstruct_prices",
     "transform_price_targets",
 ]

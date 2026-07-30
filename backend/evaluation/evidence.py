@@ -8,18 +8,25 @@ import numpy as np
 
 
 def _aligned_losses(actual, candidate, baseline, loss: str) -> tuple[np.ndarray, np.ndarray]:
-    observed = np.asarray(actual, dtype=float).reshape(-1)
-    contender = np.asarray(candidate, dtype=float).reshape(-1)
-    reference = np.asarray(baseline, dtype=float).reshape(-1)
+    observed = np.asarray(actual, dtype=float)
+    contender = np.asarray(candidate, dtype=float)
+    reference = np.asarray(baseline, dtype=float)
     if not (observed.shape == contender.shape == reference.shape) or observed.size < 2:
         raise ValueError("actual, candidate, and baseline must be aligned with at least two rows.")
     if not all(np.isfinite(value).all() for value in (observed, contender, reference)):
         raise ValueError("Loss inputs must be finite.")
     if loss == "absolute":
-        return np.abs(observed - contender), np.abs(observed - reference)
-    if loss == "squared":
-        return (observed - contender) ** 2, (observed - reference) ** 2
-    raise ValueError("loss must be 'absolute' or 'squared'.")
+        candidate_loss = np.abs(observed - contender)
+        baseline_loss = np.abs(observed - reference)
+    elif loss == "squared":
+        candidate_loss = (observed - contender) ** 2
+        baseline_loss = (observed - reference) ** 2
+    else:
+        raise ValueError("loss must be 'absolute' or 'squared'.")
+    if candidate_loss.ndim > 1:
+        candidate_loss = np.mean(candidate_loss, axis=tuple(range(1, candidate_loss.ndim)))
+        baseline_loss = np.mean(baseline_loss, axis=tuple(range(1, baseline_loss.ndim)))
+    return candidate_loss.reshape(-1), baseline_loss.reshape(-1)
 
 
 def moving_block_bootstrap_interval(

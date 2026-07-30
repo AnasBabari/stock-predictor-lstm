@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
+from evaluation.evidence import paired_loss_evidence
 from evaluation.metrics import evaluate_forecast_horizons
 from evaluation.promotion import PromotionPolicy, assess_promotion
-from evaluation.splits import generate_walk_forward_splits
+from evaluation.splits import purged_tail_split
 from experiments.baselines import (
     DriftForecaster,
     HistogramGradientBoostingForecaster,
     PersistenceForecaster,
     RidgeForecaster,
 )
-from experiments.targets import TargetType, build_supervised_dataset, reconstruct_prices
+from experiments.contracts import FoldPlan, build_experiment_dataset
+from experiments.targets import TargetType, reconstruct_prices
 
 
 @dataclass(frozen=True)
@@ -67,30 +71,42 @@ def run_baseline_experiment(
     *,
     feature_names: list[str],
     config: ExperimentConfig | None = None,
+    dates=None,
+    snapshot_id: str | None = None,
+    candidate_factories: tuple[Callable[[], object], ...] = (),
 ) -> dict:
     """Compare baselines on identical purged walk-forward observations."""
 
     selected = config or ExperimentConfig()
     if "Close" not in feature_names:
         raise ValueError("feature_names must identify the Close feature.")
-    dataset = build_supervised_dataset(
+    date_index = (
+        pd.DatetimeIndex(dates)
+        if dates is not None
+        else pd.date_range("1970-01-01", periods=len(close_values), freq="D")
+    )
+    dataset = build_experiment_dataset(
         feature_values,
         close_values,
+        dates=date_index,
+        feature_names=feature_names,
         lookback=selected.lookback,
         horizons=selected.horizons,
         target_type=selected.target_type,
+        snapshot_id=snapshot_id,
     )
     if len(feature_names) != dataset.features.shape[2]:
         raise ValueError("feature_names must match the feature matrix.")
 
-    splits = generate_walk_forward_splits(
-        len(dataset.features),
+    fold_plan = FoldPlan.create(
+        dataset,
         folds=selected.folds,
         min_train_size=selected.min_train_size,
         validation_size=selected.validation_size,
         gap=selected.effective_gap,
         method=selected.method,
     )
+    splits = [(fold.training_indices, fold.validation_indices) for fold in fold_plan.folds]
     model_reports: dict[str, dict] = {}
     pooled_rows: dict[str, dict[str, list[np.ndarray]]] = {}
     initial_scale_end = int(dataset.origin_indices[splits[0][0][-1]] + max(selected.horizons))
@@ -129,6 +145,46 @@ def run_baseline_experiment(
                 selected.target_type,
             )
 
+        # Neural (or other) candidates use the exact outer folds as every
+        # baseline. Their early-stopping validation is a purged tail of the
+        # outer training partition, never the outer validation observations.
+        for factory in candidate_factories:
+            candidate = factory()
+            candidate_name = getattr(candidate, "name", candidate.__class__.__name__)
+            if str(candidate_name) in candidates:
+                raise ValueError(f"Duplicate experiment candidate name: {candidate_name}")
+            inner_training, inner_validation = purged_tail_split(
+                len(raw_train), validation_fraction=0.15, purge=selected.effective_gap
+            )
+            inner_raw_train = raw_train[inner_training]
+            inner_raw_validation = raw_train[inner_validation]
+            feature_count = inner_raw_train.shape[2]
+            scaler = MinMaxScaler().fit(inner_raw_train.reshape(-1, feature_count))
+            inner_scaled_train = scaler.transform(
+                inner_raw_train.reshape(-1, feature_count)
+            ).reshape(inner_raw_train.shape)
+            inner_scaled_validation = scaler.transform(
+                inner_raw_validation.reshape(-1, feature_count)
+            ).reshape(inner_raw_validation.shape)
+            candidate.fit(
+                inner_scaled_train,
+                training_targets[inner_training],
+                validation_data=(inner_scaled_validation, training_targets[inner_validation]),
+            )
+            if hasattr(candidate, "refit"):
+                candidate.refit(scaled_train, training_targets)
+                candidate_validation = scaled_validation
+            else:
+                # Lightweight third-party adapters may not support a second
+                # fit. They remain on the purged inner training scaler.
+                candidate_validation = scaler.transform(
+                    raw_validation.reshape(-1, feature_count)
+                ).reshape(raw_validation.shape)
+            predicted_targets = candidate.predict(candidate_validation)
+            candidates[str(candidate_name)] = reconstruct_prices(
+                validation_origins, predicted_targets, selected.target_type
+            )
+
         for model_name, predicted_prices in candidates.items():
             fold_report = evaluate_forecast_horizons(
                 validation_actual,
@@ -161,6 +217,8 @@ def run_baseline_experiment(
     promotion_policy = PromotionPolicy(
         minimum_winning_folds=min(4, selected.folds),
     )
+    persistence_rows = pooled_rows["persistence"]
+    persistence_predicted = np.concatenate(persistence_rows["predicted"])
     for model_name, report in model_reports.items():
         rows = pooled_rows[model_name]
         aggregate = evaluate_forecast_horizons(
@@ -180,6 +238,18 @@ def run_baseline_experiment(
             "promoted": decision.promoted,
             "reasons": list(decision.reasons),
         }
+        if model_name != "persistence":
+            # Pooled observations are ordered chronologically by fold and origin.
+            # The bootstrap supports, but does not determine, the promotion gate.
+            report["evidence"] = paired_loss_evidence(
+                np.concatenate(rows["actual"]),
+                np.concatenate(rows["predicted"]),
+                persistence_predicted,
+                loss="absolute",
+                horizon=max(selected.horizons),
+                resamples=250,
+                seed=selected.seed,
+            )
 
     result = {
         "config": {
@@ -191,6 +261,7 @@ def run_baseline_experiment(
             "feature_count": int(dataset.features.shape[2]),
             "first_origin_index": int(dataset.origin_indices[0]),
             "last_origin_index": int(dataset.origin_indices[-1]),
+            "snapshot_id": dataset.snapshot_id,
         },
         "models": model_reports,
     }
