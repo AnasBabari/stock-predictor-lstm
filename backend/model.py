@@ -34,6 +34,7 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
 from sklearn.preprocessing import MinMaxScaler  # type: ignore[import-untyped]
 from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
 from tensorflow.keras.layers import (  # type: ignore[import-untyped]
+    GRU,
     LSTM,
     Attention,
     Bidirectional,
@@ -60,6 +61,8 @@ from config import (
     WINDOW_SIZE,
     settings,
 )
+from evaluation.metrics import evaluate_forecast_horizons, evaluate_probability_forecast
+from evaluation.splits import generate_walk_forward_splits, purged_tail_split
 
 logger = logging.getLogger(__name__)
 
@@ -93,21 +96,14 @@ def generate_validation_splits(
     n_rows: int, config=VALIDATION_CONFIG
 ) -> list[tuple[np.ndarray, np.ndarray]]:
     """Generate deterministic expanding or fixed-window rolling splits."""
-    required = config.min_train_size + config.gap + config.folds * config.horizon
-    if n_rows < required:
-        raise ValueError(f"Not enough rows for validation: need {required}, received {n_rows}.")
-    first_validation = n_rows - config.folds * config.horizon
-    splits = []
-    for fold in range(config.folds):
-        val_start = first_validation + fold * config.horizon
-        train_end = val_start - config.gap
-        train_start = 0 if config.method == "expanding" else train_end - config.min_train_size
-        train_idx = np.arange(train_start, train_end)
-        val_idx = np.arange(val_start, val_start + config.horizon)
-        if len(train_idx) < config.min_train_size:
-            raise ValueError("Validation fold violates min_train_size.")
-        splits.append((train_idx, val_idx))
-    return splits
+    return generate_walk_forward_splits(
+        n_rows,
+        folds=config.folds,
+        min_train_size=config.min_train_size,
+        validation_size=config.horizon,
+        gap=config.gap,
+        method=config.method,
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -169,7 +165,13 @@ def _load_scaler_json(path: Path) -> MinMaxScaler:
 def _artifact_root(ticker: str, model_type: str) -> Path:
     if not re.fullmatch(r"[A-Z0-9.\-]{1,12}", ticker):
         raise ArtifactValidationError("Invalid ticker artifact identity.")
-    if model_type not in {"lstm", "attention", "bilstm_attention_direction"}:
+    if model_type not in {
+        "lstm",
+        "gru",
+        "attention",
+        "bilstm_attention_regression",
+        "bilstm_attention_direction",
+    }:
         raise ArtifactValidationError("Invalid model artifact identity.")
     return Path(MODEL_DIR) / ticker / model_type
 
@@ -394,6 +396,26 @@ def build_lstm_model(
     return model
 
 
+def build_gru_model(
+    forecast_days: int = MAX_FORECAST_DAYS, num_features: int = len(FEATURES)
+) -> Sequential:
+    """GRU candidate with the same capacity budget as the baseline LSTM."""
+
+    model = Sequential(
+        [
+            Input(shape=(WINDOW_SIZE, num_features)),
+            GRU(LSTM_UNITS, return_sequences=True),
+            Dropout(0.25),
+            GRU(LSTM_UNITS // 2, return_sequences=False),
+            Dropout(0.25),
+            Dense(32, activation="relu"),
+            Dense(forecast_days),
+        ]
+    )
+    model.compile(optimizer="adam", loss="mean_squared_error")
+    return model
+
+
 def build_attention_lstm_model(
     forecast_days: int = MAX_FORECAST_DAYS, num_features: int = len(FEATURES)
 ) -> Model:
@@ -466,6 +488,8 @@ def _build_model_for_type(
         )
     elif model_type == "attention":
         return build_attention_lstm_model(forecast_days=forecast_days, num_features=num_features)
+    elif model_type == "gru":
+        return build_gru_model(forecast_days=forecast_days, num_features=num_features)
     else:
         return build_lstm_model(forecast_days=forecast_days, num_features=num_features)
 
@@ -568,8 +592,11 @@ def _compute_fold_metrics_direction(
     """Compute all-horizon metrics with a training-fold majority baseline."""
     y_true_binary = y_true_binary.ravel()
     y_pred_probs = y_pred_probs.ravel()
+    probability_metrics = evaluate_probability_forecast(
+        y_true_binary, y_pred_probs, training_targets=training_targets
+    )
     training_targets = training_targets.ravel().astype(int)
-    y_pred_binary = (y_pred_probs > 0.5).astype(int)
+    y_pred_binary = (y_pred_probs >= 0.5).astype(int)
     acc = float(accuracy_score(y_true_binary, y_pred_binary))
     prec = float(precision_score(y_true_binary, y_pred_binary, zero_division=0))
     rec = float(recall_score(y_true_binary, y_pred_binary, zero_division=0))
@@ -582,6 +609,9 @@ def _compute_fold_metrics_direction(
         "recall": round(rec, 4),
         "f1": round(f1, 4),
         "naive_baseline": round(naive_baseline, 4),
+        "balanced_accuracy": round(probability_metrics["balanced_accuracy"], 4),
+        "brier_score": round(probability_metrics["brier_score"], 6),
+        "log_loss": round(probability_metrics["log_loss"], 6),
         "rmse": None,
         "mae": None,
         "mape": None,
@@ -599,13 +629,13 @@ def _train_single_fold(
     """Train one fold model using only the training fold for fitting and early stopping."""
     model = _build_model_for_type(model_type, forecast_days, num_features)
     early_stop = EarlyStopping(monitor="val_loss", patience=7, restore_best_weights=True)
-    inner_validation_size = max(1, int(len(X_train_fold) * 0.1))
-    if len(X_train_fold) <= inner_validation_size:
-        raise ValueError("Training fold is too small for an inner validation split.")
-    X_fit = X_train_fold[:-inner_validation_size]
-    y_fit = y_train_fold[:-inner_validation_size]
-    X_inner_validation = X_train_fold[-inner_validation_size:]
-    y_inner_validation = y_train_fold[-inner_validation_size:]
+    fitting, inner_validation = purged_tail_split(
+        len(X_train_fold), validation_fraction=0.1, purge=forecast_days - 1
+    )
+    X_fit = X_train_fold[fitting]
+    y_fit = y_train_fold[fitting]
+    X_inner_validation = X_train_fold[inner_validation]
+    y_inner_validation = y_train_fold[inner_validation]
 
     t0 = time.time()
     history = model.fit(
@@ -741,7 +771,7 @@ def _run_walk_forward_validation(
         val_dates_fold = aligned_dates[val_idx]
 
         def build_for_targets(target_starts: list[int], scaled_features=all_features_scaled):
-            X_rows, y_rows, date_rows = [], [], []
+            X_rows, y_rows, date_rows, origin_rows = [], [], [], []
             close_idx = FEATURES.index("Close")
             for start in target_starts:
                 if start < WINDOW_SIZE or start + forecast_days > n_rows:
@@ -752,14 +782,15 @@ def _run_walk_forward_validation(
                 else:
                     y_rows.append(scaled_features[start : start + forecast_days, close_idx])
                 date_rows.append(str(aligned_dates[start - 1].date()))
-            return np.asarray(X_rows), np.asarray(y_rows), date_rows
+                origin_rows.append(float(aligned_features[start - 1, close_idx]))
+            return np.asarray(X_rows), np.asarray(y_rows), date_rows, np.asarray(origin_rows)
 
         train_last = int(train_idx[-1])
         val_first, val_last = int(val_idx[0]), int(val_idx[-1])
         train_targets = list(range(WINDOW_SIZE, train_last - forecast_days + 2))
         val_targets = list(range(val_first, val_last - forecast_days + 2))
-        X_train_f, y_train_f, _ = build_for_targets(train_targets)
-        X_val_f, y_val_f, val_seq_dates = build_for_targets(val_targets)
+        X_train_f, y_train_f, _, _ = build_for_targets(train_targets)
+        X_val_f, y_val_f, val_seq_dates, val_origins = build_for_targets(val_targets)
 
         if len(X_train_f) == 0 or len(X_val_f) == 0:
             logger.warning("Fold %d skipped: empty sequences after windowing.", fold_idx)
@@ -782,10 +813,31 @@ def _run_walk_forward_validation(
         # ── Compute fold metrics ──────────────────────────────────────
         if is_dir:
             metrics = _compute_fold_metrics_direction(y_val_f, preds, y_train_f)
+            horizon_metrics = None
         else:
-            pred_prices = _unscale_close(preds.reshape(-1), fold_scaler)
-            true_prices = _unscale_close(y_val_f.reshape(-1), fold_scaler)
-            metrics = _compute_fold_metrics_regression(true_prices, pred_prices)
+            pred_prices = _unscale_close(preds, fold_scaler)
+            true_prices = _unscale_close(y_val_f, fold_scaler)
+            horizon_metrics = evaluate_forecast_horizons(
+                true_prices,
+                pred_prices,
+                val_origins,
+                horizons=range(1, forecast_days + 1),
+                scale_series=aligned_features[train_idx, FEATURES.index("Close")],
+            )
+            metrics = {
+                key: horizon_metrics["pooled"].get(key)
+                for key in (
+                    "rmse",
+                    "mae",
+                    "mape",
+                    "r2",
+                    "direction_accuracy",
+                    "mase",
+                    "rmsse",
+                    "relative_mae",
+                    "relative_rmse",
+                )
+            }
 
         fold_total_secs = round(time.time() - fold_start_t, 2)
 
@@ -826,7 +878,8 @@ def _run_walk_forward_validation(
             "fold_total_seconds": fold_total_secs,
             "early_stopping_source": "training_fold_tail",
             "evaluation_source": "untouched_walk_forward_fold",
-            "metric_scope": "all_forecast_horizons",
+            "metric_scope": "forecast_origin_horizon_pairs",
+            "horizon_metrics": horizon_metrics,
             **metrics,
         }
 
@@ -857,7 +910,9 @@ def _run_walk_forward_validation(
     cv_summary.update(
         {
             "metric_source": "walk_forward_out_of_fold" if all_fold_metrics else "unavailable",
-            "metric_scope": "all_forecast_horizons" if all_fold_metrics else "unavailable",
+            "metric_scope": (
+                "forecast_origin_horizon_pairs" if all_fold_metrics else "unavailable"
+            ),
             "validation_method": VALIDATION_CONFIG.method,
             "validation_horizon": VALIDATION_CONFIG.horizon,
             "validation_gap": VALIDATION_CONFIG.gap,
@@ -979,11 +1034,8 @@ def train_model(
     X_all = np.concatenate([X_train, X_test], axis=0)
     y_all = np.concatenate([y_train, y_test], axis=0)
 
-    final_model = _build_model_for_type(model_type, forecast_days, num_features)
-    early_stop = EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
-
     logger.info(
-        "Training final production model for %s (%s):\n"
+        "Selecting and refitting final production model for %s (%s):\n"
         "  Schema: v%d | Window: %d | Features: %d | Total Samples: %d",
         ticker,
         model_type,
@@ -992,32 +1044,36 @@ def train_model(
         num_features,
         len(X_all),
     )
-
-    # Minimal val_split for early stopping on the final model (use last 10%)
-    val_split_n = max(1, int(len(X_all) * 0.1))
-    X_final_train, X_final_val = X_all[:-val_split_n], X_all[-val_split_n:]
-    y_final_train, y_final_val = y_all[:-val_split_n], y_all[-val_split_n:]
-
+    selection_train, selection_validation = purged_tail_split(
+        len(X_all), validation_fraction=0.1, purge=forecast_days - 1
+    )
+    selection_model = _build_model_for_type(model_type, forecast_days, num_features)
+    selection_stop = EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
     start_time = time.time()
-    history = final_model.fit(
-        X_final_train,
-        y_final_train,
+    selection_history = selection_model.fit(
+        X_all[selection_train],
+        y_all[selection_train],
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
-        validation_data=(X_final_val, y_final_val),
-        callbacks=[early_stop],
+        validation_data=(X_all[selection_validation], y_all[selection_validation]),
+        callbacks=[selection_stop],
+        shuffle=False,
+        verbose=0,
+    )
+    selection_epochs = len(selection_history.history["loss"])
+    best_epoch = int(np.argmin(selection_history.history["val_loss"]) + 1)
+    final_model = _build_model_for_type(model_type, forecast_days, num_features)
+    history = final_model.fit(
+        X_all,
+        y_all,
+        epochs=best_epoch,
+        batch_size=BATCH_SIZE,
         shuffle=False,
         verbose=0,
     )
     training_duration_seconds = round(time.time() - start_time, 2)
-
     epochs_trained = len(history.history["loss"])
-    best_epoch = (
-        int(np.argmin(history.history["val_loss"]) + 1)
-        if "val_loss" in history.history
-        else epochs_trained
-    )
-    early_stopped = epochs_trained < EPOCHS
+    early_stopped = selection_epochs < EPOCHS
 
     # ── Dataset fingerprint ───────────────────────────────────────────
     hasher = hashlib.sha256()
@@ -1048,7 +1104,7 @@ def train_model(
     # Published metrics are exclusively out-of-fold; the production model has seen all samples.
     published_metrics: dict = {
         "metric_source": "walk_forward_out_of_fold",
-        "metric_scope": cv_summary.get("metric_scope", "all_forecast_horizons"),
+        "metric_scope": cv_summary.get("metric_scope", "forecast_origin_horizon_pairs"),
     }
     for key in (
         "rmse",
@@ -1056,8 +1112,15 @@ def train_model(
         "mape",
         "r2",
         "direction_accuracy",
+        "mase",
+        "rmsse",
+        "relative_mae",
+        "relative_rmse",
         "precision",
         "recall",
+        "balanced_accuracy",
+        "brier_score",
+        "log_loss",
         "f1",
         "naive_baseline",
     ):
@@ -1097,7 +1160,11 @@ def train_model(
             "early_stopped": early_stopped,
             "best_epoch": best_epoch,
             "train_loss": history.history["loss"][-1] if "loss" in history.history else None,
-            "val_loss": history.history["val_loss"][-1] if "val_loss" in history.history else None,
+            "val_loss": (
+                selection_history.history["val_loss"][-1]
+                if "val_loss" in selection_history.history
+                else None
+            ),
             "training_duration_seconds": training_duration_seconds,
             "scaler": "MinMaxScaler",
             "validation_method": VALIDATION_CONFIG.method,
@@ -1108,7 +1175,7 @@ def train_model(
             "seed": VALIDATION_CONFIG.seed,
             "deterministic": VALIDATION_CONFIG.deterministic,
             "metric_source": "walk_forward_out_of_fold",
-            "metric_scope": "all_forecast_horizons",
+            "metric_scope": "forecast_origin_horizon_pairs",
             "data_snapshot": feature_metadata or {},
             "app_version": APP_VERSION,
             "tensorflow_version": tf.__version__,
@@ -1119,6 +1186,11 @@ def train_model(
                 "batch_size": BATCH_SIZE,
                 "epochs_max": EPOCHS,
                 "epochs_trained": len(history.history["loss"]) if history else 0,
+                "selection_epochs": selection_epochs,
+                "selection_best_epoch": best_epoch,
+                "production_refit_samples": len(X_all),
+                "selection_purge": forecast_days - 1,
+                "selection_validation_fraction": 0.1,
                 "patience": 10,
                 "dropout": 0.25,
                 "lstm_units": LSTM_UNITS,

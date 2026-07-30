@@ -12,6 +12,7 @@ from data_pipeline import fetch_data, prepare_return_data, preprocess
 from model import load_or_train
 
 MODEL_TYPES = ("lstm", "bilstm_attention_direction")
+SUPPORTED_MODEL_TYPES = MODEL_TYPES + ("gru", "bilstm_attention_regression")
 
 
 def normalise_ticker(value: str) -> str:
@@ -31,6 +32,8 @@ def _prepare_direction(feature_df):
 
 PREPARERS: dict[str, Callable] = {
     "lstm": _prepare_price,
+    "gru": _prepare_price,
+    "bilstm_attention_regression": _prepare_price,
     "bilstm_attention_direction": _prepare_direction,
 }
 
@@ -91,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model-type",
         action="append",
-        choices=MODEL_TYPES,
+        choices=SUPPORTED_MODEL_TYPES,
         help="Model type to prepare; defaults to both types and may be repeated.",
     )
     return parser
