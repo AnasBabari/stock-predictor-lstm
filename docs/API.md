@@ -30,6 +30,10 @@ Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, r
     "metric_scope": "forecast_origin_horizon_pairs",
     "rmse": 4.82,
     "mae": 3.61,
+    "mase": 0.84,
+    "rmsse": 0.89,
+    "relative_mae": 0.81,
+    "relative_rmse": 0.86,
     "mape": 1.74,
     "r2": 0.91,
     "directional_accuracy": 0.63
@@ -49,7 +53,7 @@ Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, r
 }
 ```
 
-Metrics can instead be `{"metric_source":"unavailable","detail":"..."}`. They are never computed on the final production model's training samples.
+Metrics can instead be `{"metric_source":"unavailable","detail":"..."}`. They are never computed on the final production model's training samples. MASE/RMSSE use training-only naïve scales; `relative_mae` and `relative_rmse` divide candidate error by the no-change persistence error for the same forecast origins. Values below `1.0` indicate improvement over their respective baseline.
 
 `timings_seconds` use caller-level semantics. Stages that did not run for that caller are `null`; a response-cache hit has `null` pipeline stages but a measured `total`. A coalesced caller receives its independently measured `total` while owner-executed pipeline stages remain `null`. `artifact_state_before` is `fresh`, `missing`, `stale`, or `incompatible` when artifact validation ran (otherwise `null` for a response-cache hit). `artifact_action` is `loaded`, `retrained`, or `not_applicable`. For a coalesced response, the artifact fields describe the shared job's validated outcome rather than a second artifact check by the joiner. `execution.mode` is `response_cache_hit`, `artifact_loaded`, `trained`, or `coalesced`.
 
@@ -65,13 +69,31 @@ Same parameters/cache/rate limit. `directions` contains strings (`"Up"`/`"Down"`
   "directions": ["Up", "Down", "Up"],
   "probabilities": [0.68, 0.43, 0.59],
   "attention_weights": [{"index": 0, "date": "2026-05-01", "weight": 0.012}],
-  "metrics": {"metric_source": "walk_forward_out_of_fold", "precision": 0.61, "recall": 0.58, "f1": 0.59},
-  "sentiment": {"score": 0.23, "status": "live", "provider": "yfinance", "method": "vader_financial"},
+  "metrics": {
+    "metric_source": "walk_forward_out_of_fold",
+    "precision": 0.61,
+    "recall": 0.58,
+    "f1": 0.59,
+    "balanced_accuracy": 0.60,
+    "brier_score": 0.23,
+    "log_loss": 0.65,
+    "naive_baseline": 0.53
+  },
+  "sentiment": {
+    "score": 0.23,
+    "status": "live",
+    "provider": "yfinance",
+    "method": "vader_financial",
+    "article_count": 8,
+    "timestamped_article_count": 7,
+    "freshest_article_at": "2026-07-26T14:32:00+00:00",
+    "reason": null
+  },
   "metadata": {"architecture": "bidirectional_lstm_with_attention", "output_width": 30, "calendar": "LSE"}
 }
 ```
 
-Sentiment is untrusted, headline-only external data. Failures produce a documented `fallback` score of `0.0`; the response includes article-coverage metadata. It does not enter model features unless a timestamped historical archive passes a controlled ablation and promotion gate.
+Sentiment is untrusted, headline-only external data. Failures produce a documented `fallback` score of `0.0`, `status: "fallback"`, zero coverage counts, and a generic `reason` such as `no_usable_news` or `upstream_error`. Live sentiment does not enter model features. Historical news can enter only an offline ablation, and only timestamped articles published before each session are eligible.
 
 ## `GET /api/v1/prediction-status/{request_id}`
 
@@ -81,4 +103,4 @@ Completed and failed status views are eligible to remain available for up to 10 
 
 ## `GET /api/v1/diagnostics/{ticker}`
 
-Query `model_type` is one of `lstm`, `attention`, or `bilstm_attention_direction`. Returns persisted fold boundaries, untouched-fold predictions/residuals, cross-validation aggregates, and model metadata. Returns `404` when no activated validation artifacts exist.
+Query `model_type` is one of `lstm`, `gru`, `attention`, `bilstm_attention_regression`, or `bilstm_attention_direction`. Returns persisted fold boundaries, untouched-fold predictions/residuals, cross-validation aggregates, per-horizon metrics for regression artifacts, and model metadata. Returns `404` when no activated validation artifacts exist.

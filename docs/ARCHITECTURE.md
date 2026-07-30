@@ -27,12 +27,33 @@ Prediction identity includes ticker, horizon, and type at the response/cache lay
 
 There are 22 ordered features: OHLCV (5), technical (9), market context (4), and cyclic calendar values (4). Market context schema v2 carries the last known close across a closed benchmark session before calculating its return. It never fills from the future. Any source that cannot be aligned from a prior observation fails closed with provenance rather than producing an indistinguishable zero.
 
+Live news does not cross the production feature boundary. It is normalized and scored only for response context. Offline historical-news experiments accept timestamped records, expose decayed sentiment/count/confidence columns, and reject untimestamped records from model features. News columns are opt-in ablations rather than part of the 22-feature artifact schema.
+
 Validation supports two real strategies:
 
 - `expanding`: training starts at row zero and grows each fold.
 - `rolling`: training uses exactly `min_train_size` rows before each gap.
 
-Each fold has an exact `horizon` and `gap`. A scaler fits only on the fold's training rows. An inner tail of that training fold supplies early stopping; the subsequent evaluation fold is not passed to `fit`. Metrics pool predictions across every forecast output; the direction majority baseline is selected from the training fold. Per-fold diagnostic rows remain first-step views and are labelled separately. Only aggregated out-of-fold results are published. The final serving model may train on all sequences after evaluation.
+Each fold has an exact `horizon` and `gap`. A scaler fits only on the fold's training rows. An inner tail of that training fold supplies early stopping, with an additional purge equal to the overlapping target width; the subsequent evaluation fold is not passed to `fit`.
+
+Regression forecasts retain a price origin for every row and a named horizon for every column. Metrics are calculated per horizon and over pooled origin–horizon pairs; directional accuracy compares each forecast with its own origin rather than taking differences over a flattened array. MASE and RMSSE use training-only scale data, and relative MAE/RMSE use a no-change persistence prediction from the same origin. Direction probability evaluation adds balanced accuracy, Brier score, and log loss, with the majority baseline selected from the training fold.
+
+Only aggregated out-of-fold results are published. Production fitting is two-stage: a purged chronological tail selects the epoch count, then a newly initialized model is trained on all labelled sequences for that fixed number of epochs. Artifact metadata distinguishes selection epochs, selected epoch, purge width, and final refit sample count.
+
+## Offline experiment and promotion flow
+
+```mermaid
+flowchart LR
+    snapshot[Coherent market snapshot] --> windows[Direct-horizon windows]
+    windows --> folds[Purged walk-forward folds]
+    folds --> baselines[Persistence / drift / ridge / tree]
+    baselines --> metrics[Per-horizon and pooled metrics]
+    metrics --> gate{Promotion gate}
+    gate -->|pass| eligible[Eligible for operator review]
+    gate -->|reject| retain[Retain current baseline/artifact]
+```
+
+The offline CLI evaluates persistence, drift, ridge, and histogram-gradient-boosting baselines and records the snapshot hash, dataset boundaries, fold indices, feature group, target representation, and promotion reasons. Promotion requires meaningful pooled improvement over persistence, wins across multiple folds, scaled errors below one, and no catastrophic fold. TensorFlow candidates are prepared and evaluated through the artifact-training workflow; the benchmark CLI does not train them. Neither workflow automatically changes the model selected by a public endpoint.
 
 Reproducibility metadata records Python/NumPy/scikit-learn/TensorFlow versions, seed, deterministic mode, feature schema, validation settings, input data range, snapshot hash, source provenance, and Git commit. Deterministic TensorFlow kernels remain platform-dependent; exact equivalence across different hardware/library builds is not promised.
 

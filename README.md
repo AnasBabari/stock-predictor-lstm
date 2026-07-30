@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI 0.115+](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/) [![TensorFlow 2.16+](https://img.shields.io/badge/TensorFlow-2.16+-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Render](https://img.shields.io/badge/Render-46E3B7?logo=render&logoColor=white)](https://stock-predictor-lstm.onrender.com) [![Vercel](https://img.shields.io/badge/Vercel-000000?logo=vercel&logoColor=white)](https://stock-predictor-lstm-two.vercel.app) [![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://github.com/AnasBabari/stock-predictor-lstm/pkgs/container/stock-predictor-lstm)
 
-StockLSTM is a React and FastAPI stock-forecasting application. It retrieves Yahoo Finance history, engineers market features, and offers an interactive Chart.js dashboard plus a REST API. An LSTM regression model forecasts closing prices, while a BiLSTM with temporal attention estimates up/down direction, probabilities, and attention weights.
+StockLSTM is a React and FastAPI stock-forecasting application. It retrieves Yahoo Finance history, engineers market features, and offers an interactive Chart.js dashboard plus a REST API. The default prepared artifacts use an LSTM for closing-price forecasts and a BiLSTM with temporal attention for up/down probabilities. GRU and BiLSTM-attention regression architectures are available as operator-selected comparison candidates.
 
 > [!WARNING]
 > Educational project only. Forecasts, indicators, and sentiment are not financial advice.
@@ -32,9 +32,13 @@ Public requests never train models. They serve only fresh, operator-prepared art
 
 ## Data, Models, and Runtime
 
-The tested feature pipeline has **22 ordered features**: 5 OHLCV fields, 9 technical values (SMA, EMA, RSI, MACD and signal, Bollinger bands, ATR, OBV), 4 market-context returns (SPY, QQQ, VIX, TNX), and 4 cyclic calendar values. Models receive a 60-session window. Artifacts have a 30-day maximum output width and return the requested 1-30-day slice.
+The production feature pipeline has **22 ordered features**: 5 OHLCV fields, 9 technical values (SMA, EMA, RSI, MACD and signal, Bollinger bands, ATR, OBV), 4 market-context returns (SPY, QQQ, VIX, TNX), and 4 cyclic calendar values. Models receive a 60-session window. Artifacts have a 30-day maximum output width and return the requested 1-30-day slice.
 
-Validation supports `expanding` and `rolling` walk-forward strategies; defaults use five expanding folds and publish untouched out-of-fold metrics when available. See [model evaluation](docs/MODEL_EVALUATION.md) for direct-horizon MAE/RMSE/MASE reporting, baseline gates, and reproducible ablations. Exchange calendars support selected international suffixes and 24/7 crypto pairs; unknown dotted symbols report an NYSE fallback. Yahoo Finance headline sentiment uses VADER with explicit finance-phrase adjustments, falls back safely to zero when unavailable, and never enters model features without a timestamped historical-data ablation.
+Validation supports `expanding` and `rolling` walk-forward strategies; defaults use five expanding folds and publish untouched out-of-fold metrics when available. Forecasts are scored as explicit origin–horizon pairs, with per-horizon and pooled MAE, MSE, RMSE, MAPE, bias, R², directional accuracy, MASE, RMSSE, and error relative to persistence. Direction models also report balanced accuracy, Brier score, and log loss.
+
+The offline experiment framework compares persistence, drift, ridge, and histogram-gradient-boosting baselines on identical purged folds. A candidate is not promoted unless it improves pooled MAE and RMSE over persistence by at least 5%, remains stable across folds, and satisfies scaled-error limits. See [model evaluation](docs/MODEL_EVALUATION.md) for the complete contract.
+
+Exchange calendars support selected international suffixes and 24/7 crypto pairs; unknown dotted symbols report an NYSE fallback. Yahoo Finance headline sentiment uses VADER with explicit finance-phrase adjustments and observable coverage metadata. Live sentiment remains response context only. Historical sentiment features require timestamped articles, exclude future and untimestamped records, and must pass the same controlled ablation and promotion gate before entering a production model.
 
 FastAPI validates input, rate-limits public predictions, caches responses, and keeps model training outside the public HTTP path. Versioned Keras artifacts, JSON scalers, metadata, and evaluation data are validated before activation. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for concurrency, locks, quotas, integrity, and readiness behavior.
 
@@ -49,6 +53,13 @@ docker compose up
 ```
 
 The example explicitly approves `AAPL`; repeat `--ticker` for other symbols. No ticker is prepared by default. Open `http://localhost:5500`. Nginx serves the frontend on `5500`, proxies `/api/` to FastAPI, waits for backend readiness, and persists models in `model_cache`. Use `docker compose ps`, `docker compose logs -f`, and `docker compose down`; add `--volumes` only to intentionally remove cached models.
+
+The default pretraining command prepares `lstm` and `bilstm_attention_direction`. Operators can prepare comparison candidates explicitly:
+
+```bash
+docker compose run --rm backend python pretrain.py --ticker AAPL --model-type gru
+docker compose run --rm backend python pretrain.py --ticker AAPL --model-type bilstm_attention_regression
+```
 
 ## Local Development
 
@@ -80,6 +91,21 @@ npm run dev
 
 Vite runs at `http://localhost:5500` and proxies `/api` to `http://127.0.0.1:8000`. Local Swagger and OpenAPI are `http://127.0.0.1:8000/docs` and `http://127.0.0.1:8000/openapi.json`. CI-aligned dependency setup is `uv sync --project backend --frozen`.
 
+## Reproducible Model Benchmark
+
+Run the offline benchmark separately from the public API:
+
+```powershell
+uv run --project backend python backend/benchmark.py `
+  --ticker AAPL `
+  --horizons 1,5,20 `
+  --feature-sets price,ohlcv,ohlcv_market,ohlcv_technical_market `
+  --output reports/aapl.json
+```
+
+The JSON report records the market-data snapshot identifier, date boundaries, target type, purge gap, fold indices, per-horizon metrics, pooled metrics, and promotion decision for each model and feature group. Generated reports are operator artifacts and should not be committed.
+
+The benchmark currently evaluates deterministic persistence, drift, ridge, and histogram-gradient-boosting baselines. It is evidence, not an automatic deployment action, and it does not train or activate the TensorFlow candidate architectures. A rejected baseline does not replace the active artifact. The reference AAPL run performed during this change used 734 rows from 2023-08-25 through 2026-07-30; persistence remained best with pooled MAE `8.5030` and RMSE `12.2591`, so every learned baseline was correctly rejected.
 ## Configuration
 
 See [.env.example](.env.example) for the full list and `backend/config.py` for defaults. Key groups are data/model (`HISTORICAL_YEARS`, `WINDOW_SIZE`, `LSTM_UNITS`, `EPOCHS`, `BATCH_SIZE`, `TRAIN_SPLIT`), forecast/artifact (`MODEL_DIR`, `MODEL_MAX_AGE_DAYS`, `DEFAULT_FORECAST_DAYS`, `MAX_FORECAST_DAYS`), cache, capacity, and storage settings. Defaults include a 60-session window, 7-day default forecast, 30-day maximum, 7-day artifact age, and `saved_models` directory.
