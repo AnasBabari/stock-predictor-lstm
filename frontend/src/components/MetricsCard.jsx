@@ -33,6 +33,8 @@ export default function MetricsCard({ stockData, forecastType }) {
   const priceMetrics = [
     { label: 'RMSE', value: m.rmse != null ? m.rmse.toFixed(2) : '—', title: 'Root Mean Squared Error — lower is better' },
     { label: 'MAE', value: m.mae != null ? m.mae.toFixed(2) : '—', title: 'Mean Absolute Error' },
+    { label: 'MASE', value: m.mase != null ? m.mase.toFixed(3) : '—', title: 'Mean Absolute Scaled Error; below 1 beats the in-sample naïve scale' },
+    { label: 'vs persistence', value: m.relative_rmse != null ? `${m.relative_rmse.toFixed(3)}×` : '—', title: 'RMSE divided by a no-change persistence forecast; below 1 is better' },
     { label: 'R²', value: m.r2 != null ? m.r2.toFixed(4) : '—', title: 'R Squared' },
     { label: 'MAPE', value: m.mape != null ? `${m.mape.toFixed(2)}%` : '—', title: 'Mean Absolute Percentage Error' },
     {
@@ -46,6 +48,8 @@ export default function MetricsCard({ stockData, forecastType }) {
     { label: 'Precision', value: m.precision != null ? m.precision.toFixed(4) : '—', title: 'Walk-forward out-of-fold precision' },
     { label: 'Recall', value: m.recall != null ? m.recall.toFixed(4) : '—', title: 'Walk-forward out-of-fold recall' },
     { label: 'F1', value: m.f1 != null ? m.f1.toFixed(4) : '—', title: 'Walk-forward out-of-fold F1 score' },
+    { label: 'Balanced acc.', value: m.balanced_accuracy != null ? `${(m.balanced_accuracy * 100).toFixed(1)}%` : '—', title: 'Average recall across up and down classes' },
+    { label: 'Brier score', value: m.brier_score != null ? m.brier_score.toFixed(4) : '—', title: 'Probability calibration error; lower is better' },
     {
       label: 'Naive Baseline',
       value: m.naive_baseline != null ? `${(m.naive_baseline * 100).toFixed(1)}%` : '—',
