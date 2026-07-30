@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.115.0,<1.0.0",
     "numpy>=1.26.0,<2.4.0",
     "pandas>=2.2.0,<3.0.0",
+    "pyarrow>=18.0.0,<24.0.0",
     "pandas-market-calendars>=4.4.0,<5.0.0",
     "pydantic-settings>=2.7.0,<3.0.0",
     "scikit-learn>=1.5.0,<2.0.0",
@@ -16,6 +17,7 @@ dependencies = [
     "uvicorn>=0.34.0,<1.0.0",
     "vadersentiment>=3.3.2,<4.0.0",
     "yfinance>=0.2.50,<1.0.0",
+    "cryptography>=45.0.0,<47.0.0",
 ]
 
 [dependency-groups]

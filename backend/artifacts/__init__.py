@@ -5,9 +5,12 @@ from artifacts.registry import (
     LocalArtifactRegistry,
     PromotionManifest,
 )
+from artifacts.signing import Ed25519ManifestSigner, Ed25519ManifestVerifier
 
 __all__ = [
     "ArtifactRegistryError",
+    "Ed25519ManifestSigner",
+    "Ed25519ManifestVerifier",
     "LocalArtifactRegistry",
     "PromotionManifest",
 ]
