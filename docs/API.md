@@ -27,7 +27,7 @@ Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, r
   "forecast_days": 3,
   "metrics": {
     "metric_source": "walk_forward_out_of_fold",
-    "metric_scope": "all_forecast_horizons",
+    "metric_scope": "forecast_origin_horizon_pairs",
     "rmse": 4.82,
     "mae": 3.61,
     "mape": 1.74,
@@ -71,7 +71,7 @@ Same parameters/cache/rate limit. `directions` contains strings (`"Up"`/`"Down"`
 }
 ```
 
-Sentiment is untrusted, headline-only external data. Failures produce a documented `fallback` score of `0.0`; sentiment does not enter model features.
+Sentiment is untrusted, headline-only external data. Failures produce a documented `fallback` score of `0.0`; the response includes article-coverage metadata. It does not enter model features unless a timestamped historical archive passes a controlled ablation and promotion gate.
 
 ## `GET /api/v1/prediction-status/{request_id}`
 
