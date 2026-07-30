@@ -28,7 +28,7 @@ StockLSTM is a React and FastAPI stock-forecasting application. It retrieves Yah
 - Attention weights and headline sentiment are supporting context, not financial advice; sentiment is not a model input.
 - Save price results to a browser-local watchlist, revisit prediction history, and export PNG, CSV, or complete ZIP analyses.
 
-Public requests never train models. They serve only fresh, operator-prepared artifacts; an unprepared, stale, or incompatible ticker/model returns `503`.
+Public requests never train models. They prefer fresh, operator-prepared artifacts and disclose the active engine. If an artifact is unavailable, the API may return a labelled persistence or base-rate baseline; it never silently presents a baseline as a learned model.
 
 ## Data, Models, and Runtime
 
@@ -105,7 +105,7 @@ uv run --project backend python backend/benchmark.py `
 
 The JSON report records the market-data snapshot identifier, date boundaries, target type, purge gap, fold indices, per-horizon metrics, pooled metrics, and promotion decision for each model and feature group. Generated reports are operator artifacts and should not be committed.
 
-The benchmark currently evaluates deterministic persistence, drift, ridge, and histogram-gradient-boosting baselines. It is evidence, not an automatic deployment action, and it does not train or activate the TensorFlow candidate architectures. A rejected baseline does not replace the active artifact. The reference AAPL run performed during this change used 734 rows from 2023-08-25 through 2026-07-30; persistence remained best with pooled MAE `8.5030` and RMSE `12.2591`, so every learned baseline was correctly rejected.
+The benchmark evaluates deterministic baselines and can consume verified frozen snapshots plus operator-selected neural candidates. It is evidence, not an automatic deployment action. Promotion is an explicit lifecycle command: `uv run --project backend python backend/promote.py --registry <dir> --source <candidate> --manifest <manifest.json>`; add `--private-key` and `--public-key` when signed evidence is required. Reports should always name the snapshot, date range, folds, seed, and feature set used for MAE/RMSE comparisons.
 ## Configuration
 
 See [.env.example](.env.example) for the full list and `backend/config.py` for defaults. Key groups are data/model (`HISTORICAL_YEARS`, `WINDOW_SIZE`, `LSTM_UNITS`, `EPOCHS`, `BATCH_SIZE`, `TRAIN_SPLIT`), forecast/artifact (`MODEL_DIR`, `MODEL_MAX_AGE_DAYS`, `DEFAULT_FORECAST_DAYS`, `MAX_FORECAST_DAYS`), cache, capacity, and storage settings. Defaults include a 60-session window, 7-day default forecast, 30-day maximum, 7-day artifact age, and `saved_models` directory.
@@ -122,7 +122,7 @@ See [.env.example](.env.example) for the full list and `backend/config.py` for d
 | `GET /api/v1/search`, `GET /api/v1/info` | Ticker discovery and fundamentals. |
 | `GET /api/v1/predict` | LSTM price forecast and metrics. |
 | `GET /api/v1/predict/direction` | Direction, probability, attention, sentiment, and metrics. |
-| `GET /api/v1/diagnostics/{ticker}` | Persisted walk-forward diagnostics. |
+| `GET /api/v1/diagnostics/{ticker}` | Persisted walk-forward diagnostics. |`n| `GET /api/v1/model-performance/{ticker}` | Active engine and persisted performance evidence. |
 
 Prediction requests accept tickers matching `[A-Z0-9.\-]{1,12}` and 1-30 days. `429` indicates rate limiting; `503` can indicate an unavailable prepared artifact, capacity, timeout, readiness, or retryable market-data failure.
 
