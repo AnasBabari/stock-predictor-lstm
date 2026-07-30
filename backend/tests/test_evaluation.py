@@ -6,7 +6,14 @@ from evaluation.metrics import (
     evaluate_probability_forecast,
     regression_metrics,
 )
-from evaluation.promotion import PromotionPolicy, assess_promotion
+from evaluation.promotion import (
+    DirectionPromotionPolicy,
+    PromotionPolicy,
+    UniversePromotionPolicy,
+    assess_direction_promotion,
+    assess_promotion,
+    assess_universe_promotion,
+)
 from evaluation.splits import generate_walk_forward_splits, purged_tail_split
 
 
@@ -108,3 +115,56 @@ def test_promotion_gate_requires_persistence_improvement_and_fold_stability():
     )
     assert not rejected.promoted
     assert any("relative RMSE" in reason for reason in rejected.reasons)
+
+
+def test_universe_gate_requires_broad_cross_asset_success():
+    reports = {
+        f"TICKER{index}": {
+            "pooled": {"relative_mae": 0.9, "relative_rmse": 0.9},
+            "promoted": index < 8,
+        }
+        for index in range(12)
+    }
+    assert assess_universe_promotion(reports).promoted
+
+    reports["TICKER11"]["pooled"]["relative_rmse"] = 1.5
+    reports["TICKER10"]["pooled"]["relative_rmse"] = 1.5
+    assert not assess_universe_promotion(reports).promoted
+
+
+def test_direction_gate_requires_calibrated_fold_stability():
+    pooled = {
+        "balanced_accuracy": 0.58,
+        "brier_score": 0.20,
+        "log_loss": 0.60,
+        "expected_calibration_error": 0.05,
+    }
+    folds = [
+        {
+            "balanced_accuracy": 0.55,
+            "brier_score": 0.20,
+            "baseline_brier_score": 0.25,
+        }
+        for _ in range(4)
+    ]
+    baseline = {"brier_score": 0.25, "log_loss": 0.70}
+    assert assess_direction_promotion(pooled, folds, baseline_metrics=baseline).promoted
+
+    strict = DirectionPromotionPolicy(maximum_expected_calibration_error=0.01)
+    assert not assess_direction_promotion(
+        pooled,
+        folds,
+        baseline_metrics=baseline,
+        policy=strict,
+    ).promoted
+
+
+def test_universe_policy_can_scale_down_for_smoke_suites():
+    reports = {
+        "AAPL": {
+            "pooled": {"relative_mae": 0.9, "relative_rmse": 0.9},
+            "promoted": True,
+        }
+    }
+    policy = UniversePromotionPolicy(minimum_assets=1, minimum_qualifying_assets=1)
+    assert assess_universe_promotion(reports, policy=policy).promoted
