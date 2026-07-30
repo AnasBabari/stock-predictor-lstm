@@ -65,6 +65,7 @@ from model import (
     predict_future,
 )
 from news_features import get_live_financial_sentiment as get_financial_sentiment
+from services.baselines import base_rate_direction_forecast, persistence_price_forecast
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
 logging.basicConfig(
@@ -160,7 +161,13 @@ TIMING_FIELDS = (
     "inference",
     "total",
 )
-EXECUTION_MODES = ("response_cache_hit", "artifact_loaded", "trained", "coalesced")
+EXECUTION_MODES = (
+    "response_cache_hit",
+    "artifact_loaded",
+    "baseline_fallback",
+    "trained",
+    "coalesced",
+)
 ARTIFACT_STATES = ("fresh", "missing", "stale", "incompatible")
 ARTIFACT_ACTIONS = ("loaded", "retrained", "not_applicable")
 STATUS_STAGES = (
@@ -205,7 +212,13 @@ class PredictionTimings(BaseModel):
 
 
 class PredictionExecution(BaseModel):
-    mode: Literal["response_cache_hit", "artifact_loaded", "trained", "coalesced"]
+    mode: Literal[
+        "response_cache_hit",
+        "artifact_loaded",
+        "baseline_fallback",
+        "trained",
+        "coalesced",
+    ]
     coalesced: bool
 
 
@@ -569,25 +582,44 @@ def _measure(job: PredictionJob, timing: str, stage: str, function):
 
 def _price_prediction_pipeline(ticker: str, days: int, job: PredictionJob | None = None) -> dict:
     job = job or PredictionJob(f"price_{ticker}_{days}")
-    model, model_scaler = _measure(
-        job,
-        "artifact_load_validation",
-        "checking_artifact",
-        lambda: load_fresh_artifact(ticker, "lstm", MAX_FORECAST_DAYS),
-    )
-    job.set_artifact("fresh", "loaded")
+    model = model_scaler = None
+    try:
+        model, model_scaler = _measure(
+            job,
+            "artifact_load_validation",
+            "checking_artifact",
+            lambda: load_fresh_artifact(ticker, "lstm", MAX_FORECAST_DAYS),
+        )
+        job.set_artifact("fresh", "loaded")
+    except ArtifactValidationError:
+        job.set_artifact("missing", "not_applicable")
     feature_df, closing_prices, historical_dates, feature_metadata = _measure(
         job, "market_data", "downloading_market_data", lambda: _fetch_snapshot(ticker)
     )
-    predictions, future_dates, calendar_id = _measure(
-        job,
-        "inference",
-        "generating_forecast",
-        lambda: (
-            predict_future(model, feature_df, model_scaler, days=days),
-            *_validated_future_dates(ticker, historical_dates[-1], days),
-        ),
-    )
+    if model is None:
+        predictions, metrics = persistence_price_forecast(closing_prices, days)
+        future_dates, calendar_id = _validated_future_dates(ticker, historical_dates[-1], days)
+        engine = {
+            "family": "persistence",
+            "role": "baseline_fallback",
+            "baseline_fallback": True,
+        }
+    else:
+        predictions, future_dates, calendar_id = _measure(
+            job,
+            "inference",
+            "generating_forecast",
+            lambda: (
+                predict_future(model, feature_df, model_scaler, days=days),
+                *_validated_future_dates(ticker, historical_dates[-1], days),
+            ),
+        )
+        metrics = load_metrics(ticker, "lstm")
+        engine = {
+            "family": "lstm",
+            "role": "learned_candidate",
+            "baseline_fallback": False,
+        }
     if len(predictions) != days:
         raise RuntimeError("Price model returned an incompatible forecast horizon.")
 
@@ -597,6 +629,7 @@ def _price_prediction_pipeline(ticker: str, days: int, job: PredictionJob | None
             "calendar": calendar_id,
             "data_snapshot": feature_metadata,
             "data_quality": feature_metadata.get("market_context", {}),
+            "engine": engine,
         }
     )
     return {
@@ -606,7 +639,7 @@ def _price_prediction_pipeline(ticker: str, days: int, job: PredictionJob | None
         "future_dates": future_dates,
         "predicted_prices": [float(value) for value in predictions],
         "forecast_days": days,
-        "metrics": load_metrics(ticker, "lstm"),
+        "metrics": metrics,
         "metadata": runtime,
     }
 
@@ -616,28 +649,47 @@ def _direction_prediction_pipeline(
 ) -> dict:
     job = job or PredictionJob(f"direction_{ticker}_{days}")
     model_type = "bilstm_attention_direction"
-    model, model_scaler = _measure(
-        job,
-        "artifact_load_validation",
-        "checking_artifact",
-        lambda: load_fresh_artifact(ticker, model_type, MAX_FORECAST_DAYS),
-    )
-    job.set_artifact("fresh", "loaded")
-    feature_df, _, historical_dates, feature_metadata = _measure(
+    model = model_scaler = None
+    try:
+        model, model_scaler = _measure(
+            job,
+            "artifact_load_validation",
+            "checking_artifact",
+            lambda: load_fresh_artifact(ticker, model_type, MAX_FORECAST_DAYS),
+        )
+        job.set_artifact("fresh", "loaded")
+    except ArtifactValidationError:
+        job.set_artifact("missing", "not_applicable")
+    feature_df, closing_prices, historical_dates, feature_metadata = _measure(
         job, "market_data", "downloading_market_data", lambda: _fetch_snapshot(ticker)
     )
-    directions, probabilities, attention_weights, future_dates, calendar_id = _measure(
-        job,
-        "inference",
-        "generating_forecast",
-        lambda: (
-            *predict_direction(model, feature_df, model_scaler, days=days),
-            *_validated_future_dates(ticker, historical_dates[-1], days),
-        ),
-    )
-    if not (
-        len(directions) == len(probabilities) == len(future_dates) == days
-        and len(attention_weights) == WINDOW_SIZE
+    if model is None:
+        directions, probabilities, metrics = base_rate_direction_forecast(closing_prices, days)
+        attention_weights = []
+        future_dates, calendar_id = _validated_future_dates(ticker, historical_dates[-1], days)
+        engine = {
+            "family": "recent_base_rate",
+            "role": "baseline_fallback",
+            "baseline_fallback": True,
+        }
+    else:
+        directions, probabilities, attention_weights, future_dates, calendar_id = _measure(
+            job,
+            "inference",
+            "generating_forecast",
+            lambda: (
+                *predict_direction(model, feature_df, model_scaler, days=days),
+                *_validated_future_dates(ticker, historical_dates[-1], days),
+            ),
+        )
+        metrics = load_metrics(ticker, model_type=model_type)
+        engine = {
+            "family": model_type,
+            "role": "learned_candidate",
+            "baseline_fallback": False,
+        }
+    if not (len(directions) == len(probabilities) == len(future_dates) == days) or (
+        model is not None and len(attention_weights) != WINDOW_SIZE
     ):
         raise RuntimeError("Direction model returned an incompatible response shape.")
     if not all(
@@ -645,7 +697,11 @@ def _direction_prediction_pipeline(
     ):
         raise RuntimeError("Direction model returned invalid probabilities.")
 
-    past_dates = historical_dates[-WINDOW_SIZE:].strftime("%Y-%m-%d").tolist()
+    past_dates = (
+        historical_dates[-len(attention_weights) :].strftime("%Y-%m-%d").tolist()
+        if attention_weights
+        else []
+    )
     formatted_attention = [
         {"index": index, "date": date, "weight": float(weight)}
         for index, (date, weight) in enumerate(zip(past_dates, attention_weights, strict=True))
@@ -657,6 +713,7 @@ def _direction_prediction_pipeline(
             "calendar": calendar_id,
             "data_snapshot": feature_metadata,
             "data_quality": feature_metadata.get("market_context", {}),
+            "engine": engine,
         }
     )
     return {
@@ -666,7 +723,7 @@ def _direction_prediction_pipeline(
         "directions": directions,
         "probabilities": probabilities,
         "attention_weights": formatted_attention,
-        "metrics": load_metrics(ticker, model_type=model_type),
+        "metrics": metrics,
         "sentiment": sentiment_data.get("sentiment", sentiment_data)
         or {
             "score": 0.0,
@@ -706,6 +763,8 @@ def _with_execution_metadata(
         mode = "response_cache_hit"
     elif coalesced:
         mode = "coalesced"
+    elif metadata.get("engine", {}).get("baseline_fallback"):
+        mode = "baseline_fallback"
     elif artifact_action == "retrained":
         mode = "trained"
     else:
@@ -727,6 +786,8 @@ async def _get_fresh_cached_response(cache_key: str, ticker: str, model_type: st
         cached = _predict_cache.get(cache_key)
     if cached is None:
         return None
+    if cached.get("metadata", {}).get("engine", {}).get("baseline_fallback"):
+        return cached
 
     try:
         await asyncio.to_thread(load_fresh_artifact, ticker, model_type, MAX_FORECAST_DAYS)

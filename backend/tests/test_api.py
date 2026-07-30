@@ -54,6 +54,7 @@ def setup_function():
     with api._info_cache_lock:
         api._info_cache.clear()
     api._status_registry = api.PredictionStatusRegistry()
+    api._record_upstream("available")
 
 
 def test_health_and_readiness(tmp_path, monkeypatch):
@@ -71,20 +72,25 @@ def test_validate_ticker_and_horizon():
     assert client.get("/api/v1/predict?ticker=AAPL&days=99").status_code == 422
 
 
-def test_missing_artifact_fails_before_market_data():
+def test_missing_artifact_serves_labelled_baseline_after_market_data():
+    snapshot = _feature_snapshot()
     with (
         patch(
             "api.load_fresh_artifact",
             side_effect=api.ArtifactValidationError("No versioned artifact is active."),
         ),
-        patch("api.fetch_data") as fetch,
+        patch(
+            "api.fetch_data",
+            return_value=(snapshot, snapshot.Close.values, snapshot.index, {}),
+        ) as fetch,
     ):
         response = client.get("/api/v1/predict?ticker=AAPL&days=7")
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "Forecast model is not currently available for this ticker."
-    }
-    fetch.assert_not_called()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metadata"]["engine"]["baseline_fallback"]
+    assert body["metadata"]["execution"]["mode"] == "baseline_fallback"
+    assert body["predicted_prices"] == [float(snapshot.Close.iloc[-1])] * 7
+    fetch.assert_called_once()
 
 
 def _request(peer: str, forwarded: str | None = None):
@@ -118,10 +124,10 @@ def test_rate_limit_identity_uses_only_explicitly_trusted_proxy(monkeypatch):
 
 def test_forecast_rate_limits_are_isolated_by_trusted_forwarded_client(monkeypatch):
     monkeypatch.setattr(api, "_trusted_proxy_ips", frozenset({"172.30.30.10"}))
-    unavailable = api.ArtifactValidationError("No versioned artifact is active.")
 
     with (
-        patch("api.load_fresh_artifact", side_effect=unavailable),
+        patch("api._price_prediction_pipeline", return_value=_response()),
+        patch("api.load_fresh_artifact", return_value=(MagicMock(), MagicMock())),
         TestClient(app, client=("172.30.30.10", 1234)) as proxy_client,
     ):
         for address in ("198.51.100.21", "198.51.100.22"):
@@ -129,7 +135,7 @@ def test_forecast_rate_limits_are_isolated_by_trusted_forwarded_client(monkeypat
             for _ in range(5):
                 assert (
                     proxy_client.get("/api/v1/predict?ticker=AAPL", headers=headers).status_code
-                    == 503
+                    == 200
                 )
             assert (
                 proxy_client.get("/api/v1/predict?ticker=AAPL", headers=headers).status_code == 429
@@ -138,10 +144,10 @@ def test_forecast_rate_limits_are_isolated_by_trusted_forwarded_client(monkeypat
 
 def test_direct_forecast_requests_cannot_spoof_rate_limit_identity(monkeypatch):
     monkeypatch.setattr(api, "_trusted_proxy_ips", frozenset({"172.30.30.10"}))
-    unavailable = api.ArtifactValidationError("No versioned artifact is active.")
 
     with (
-        patch("api.load_fresh_artifact", side_effect=unavailable),
+        patch("api._price_prediction_pipeline", return_value=_response()),
+        patch("api.load_fresh_artifact", return_value=(MagicMock(), MagicMock())),
         TestClient(app, client=("198.51.100.23", 1234)) as direct_client,
     ):
         for number in range(5):
@@ -149,7 +155,7 @@ def test_direct_forecast_requests_cannot_spoof_rate_limit_identity(monkeypatch):
                 "/api/v1/predict?ticker=AAPL",
                 headers={"X-Forwarded-For": f"203.0.113.{number + 1}"},
             )
-            assert response.status_code == 503
+            assert response.status_code == 200
         assert (
             direct_client.get(
                 "/api/v1/predict?ticker=AAPL",
@@ -273,6 +279,56 @@ def test_predict_response_schema():
         direction = client.get("/api/v1/predict/direction?ticker=AAPL&days=7")
     assert direction.status_code == 200
     assert direction.json()["directions"] == ["Up"] * 7
+
+
+def test_price_pipeline_serves_labelled_persistence_when_artifact_is_unavailable(
+    synthetic_feature_df,
+):
+    dates = synthetic_feature_df.index
+    closes = synthetic_feature_df["Close"].to_numpy()
+    with (
+        patch(
+            "api.load_fresh_artifact",
+            side_effect=api.ArtifactValidationError("missing"),
+        ),
+        patch(
+            "api._fetch_snapshot",
+            return_value=(synthetic_feature_df, closes, dates, {"market_context": {}}),
+        ),
+    ):
+        response = api._price_prediction_pipeline("AAPL", 3)
+
+    assert response["predicted_prices"] == [float(closes[-1])] * 3
+    assert response["metadata"]["engine"] == {
+        "family": "persistence",
+        "role": "baseline_fallback",
+        "baseline_fallback": True,
+    }
+    assert response["metrics"]["metric_source"] == "baseline_definition"
+
+
+def test_direction_pipeline_serves_labelled_base_rate_without_attention(
+    synthetic_feature_df,
+):
+    dates = synthetic_feature_df.index
+    closes = synthetic_feature_df["Close"].to_numpy()
+    with (
+        patch(
+            "api.load_fresh_artifact",
+            side_effect=api.ArtifactValidationError("missing"),
+        ),
+        patch(
+            "api._fetch_snapshot",
+            return_value=(synthetic_feature_df, closes, dates, {"market_context": {}}),
+        ),
+        patch("api.get_financial_sentiment", return_value={"score": 0.0}),
+    ):
+        response = api._direction_prediction_pipeline("AAPL", 3)
+
+    assert len(response["directions"]) == len(response["probabilities"]) == 3
+    assert response["attention_weights"] == []
+    assert response["metadata"]["engine"]["baseline_fallback"]
+    assert response["metrics"]["metric_source"] == "baseline_definition"
 
 
 def test_response_cache_timing_and_status_are_truthful():

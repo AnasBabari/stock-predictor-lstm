@@ -36,9 +36,13 @@ def base_rate_direction_forecast(
     # Beta(1, 1) smoothing avoids unjustified probabilities of exactly zero or one.
     probability = float((up_count + 1) / (len(changes) + 2))
     label = "Up" if probability >= 0.5 else "Down"
-    return [label] * days, [probability] * days, {
-        "metric_source": "baseline_definition",
-        "metric_scope": "recent_observed_base_rate",
-        "naive_baseline": round(max(probability, 1 - probability), 6),
-        "detail": "Direction probability is the smoothed recent up-session frequency.",
-    }
+    return (
+        [label] * days,
+        [probability] * days,
+        {
+            "metric_source": "baseline_definition",
+            "metric_scope": "recent_observed_base_rate",
+            "naive_baseline": round(max(probability, 1 - probability), 6),
+            "detail": "Direction probability is the smoothed recent up-session frequency.",
+        },
+    )
