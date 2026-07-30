@@ -64,7 +64,7 @@ from model import (
     predict_direction,
     predict_future,
 )
-from news_aggregator import get_financial_sentiment
+from news_features import get_live_financial_sentiment as get_financial_sentiment
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
 logging.basicConfig(
@@ -444,7 +444,13 @@ _upstream_state = {
     "consecutive_failures": 0,
 }
 
-VALID_MODEL_TYPES = {"lstm", "bilstm_attention_direction", "attention"}
+VALID_MODEL_TYPES = {
+    "lstm",
+    "gru",
+    "attention",
+    "bilstm_attention_regression",
+    "bilstm_attention_direction",
+}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -473,8 +479,12 @@ def get_runtime_metadata(ticker: str, model_type: str = "lstm") -> dict:
         "architecture": (
             "bidirectional_lstm_with_attention"
             if model_type == "bilstm_attention_direction"
+            else "bidirectional_lstm_with_attention_regression"
+            if model_type == "bilstm_attention_regression"
             else "attention_lstm"
             if model_type == "attention"
+            else "gru"
+            if model_type == "gru"
             else "lstm"
         ),
         "output_width": saved_meta.get("output_width"),
@@ -657,15 +667,13 @@ def _direction_prediction_pipeline(
         "probabilities": probabilities,
         "attention_weights": formatted_attention,
         "metrics": load_metrics(ticker, model_type=model_type),
-        "sentiment": sentiment_data.get(
-            "sentiment",
-            {
-                "score": 0.0,
-                "status": "fallback",
-                "provider": "yfinance",
-                "method": "vader_financial",
-            },
-        ),
+        "sentiment": sentiment_data.get("sentiment", sentiment_data)
+        or {
+            "score": 0.0,
+            "status": "fallback",
+            "provider": "yfinance",
+            "method": "vader_financial",
+        },
         "metadata": runtime,
     }
 
