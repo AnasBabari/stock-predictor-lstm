@@ -26,3 +26,8 @@ backend/saved_models/**
 diff.txt
 .coverage
 reports/
+
+# Licensed or generated research snapshots
+data/snapshots/
+*.parquet
+*.jsonl
