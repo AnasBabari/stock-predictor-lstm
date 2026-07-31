@@ -17,6 +17,14 @@ def prepare_hosted_artifacts() -> None:
         return
         return
     raw = os.getenv("RENDER_PRETRAIN_TICKERS", "AAPL,MSFT,TSLA")
+    model_types = [
+        value.strip()
+        for value in os.getenv("RENDER_PRETRAIN_MODEL_TYPES", "lstm").split(",")
+        if value.strip()
+    ]
+    invalid = [value for value in model_types if value not in MODEL_TYPES]
+    if invalid:
+        raise RuntimeError(f"Unsupported hosted model types: {invalid}")
     tickers = list(
         dict.fromkeys(normalise_ticker(value) for value in raw.split(",") if value.strip())
     )
@@ -24,7 +32,7 @@ def prepare_hosted_artifacts() -> None:
     missing = [
         (ticker, model_type)
         for ticker in tickers
-        for model_type in MODEL_TYPES
+        for model_type in model_types
         if not (root / ticker / model_type / "current.json").is_file()
     ]
     if not missing:
