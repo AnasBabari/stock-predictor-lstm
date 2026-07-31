@@ -6,7 +6,7 @@ services:
     buildCommand: "pip install uv==0.11.16 && uv sync --project backend --frozen --no-dev"
     # Free-plan mode uses ephemeral saved_models; paid plans may set a mounted path.
     # Training is startup/operator work, never public request work.
-    startCommand: "backend/.venv/bin/python backend/render_start.py"
+    startCommand: "backend/.venv/bin/uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -16,14 +16,16 @@ services:
         sync: false
       - key: MODEL_DIR
         value: saved_models
-      - key: RENDER_PRETRAIN_TICKERS
-        value: AAPL,MSFT,TSLA
       - key: PREDICTION_WORKERS
-        value: "2"
+        value: "1"
       - key: PREDICTION_QUEUE_SIZE
         value: "4"
       - key: PREDICTION_TIMEOUT_SECONDS
         value: "600"
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: TF_ENABLE_ONEDNN_OPTS
+        value: "0"
       - key: TRAINING_CONCURRENCY
         value: "1"
       - key: MODEL_MAX_COUNT

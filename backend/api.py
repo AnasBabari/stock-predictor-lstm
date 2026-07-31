@@ -68,6 +68,10 @@ from model import (
 from news_features import get_live_financial_sentiment as get_financial_sentiment
 from services.baselines import base_rate_direction_forecast, persistence_price_forecast
 
+# Throttle TensorFlow memory/threading for low-RAM 1-vCPU environments
+tf.config.threading.set_inter_op_parallelism_threads(1)
+tf.config.threading.set_intra_op_parallelism_threads(1)
+
 prepare_hosted_artifacts()
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
