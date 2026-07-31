@@ -32,6 +32,9 @@ def _missing_pairs(tickers: list[str]) -> list[tuple[str, str]]:
 
 
 def prepare_missing_artifacts() -> None:
+    if os.getenv("PREPARE_HOSTED_ARTIFACTS_ON_BOOT", "0") != "1":
+        print("Boot-time artifact preparation is disabled.", flush=True)
+        return
     tickers = _requested_tickers()
     missing = _missing_pairs(tickers)
     if not missing:

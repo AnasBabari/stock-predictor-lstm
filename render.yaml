@@ -28,6 +28,12 @@ services:
         value: "600"
       - key: MALLOC_ARENA_MAX
         value: "2"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
       - key: TF_ENABLE_ONEDNN_OPTS
         value: "0"
       - key: TRAINING_CONCURRENCY
