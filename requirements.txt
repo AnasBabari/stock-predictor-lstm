@@ -1,0 +1,3 @@
+# Render dashboard compatibility shim.
+# The canonical runtime dependency list remains backend/requirements.txt.
+-r backend/requirements.txt
