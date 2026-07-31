@@ -4,7 +4,7 @@ services:
     env: python
     region: oregon
     buildCommand: "pip install uv==0.11.16 && uv sync --project backend --frozen --no-dev"
-    # Prepare missing artifacts on the mounted disk before serving traffic.
+    # Free-plan mode uses ephemeral saved_models; paid plans may set a mounted path.
     # Training is startup/operator work, never public request work.
     startCommand: "backend/.venv/bin/python backend/render_start.py"
     envVars:
@@ -15,7 +15,7 @@ services:
       - key: CORS_ORIGIN
         sync: false
       - key: MODEL_DIR
-        value: /app/saved_models
+        value: saved_models
       - key: RENDER_PRETRAIN_TICKERS
         value: AAPL,MSFT,TSLA
       - key: PREDICTION_WORKERS
