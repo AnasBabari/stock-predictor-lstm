@@ -66,6 +66,16 @@ def test_health_and_readiness(tmp_path, monkeypatch):
     assert response.json()["dependencies"]["model_storage"]["writable"] is True
 
 
+def test_root_discloses_service_routes():
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "StockLSTM API"
+    assert body["status"] == "online"
+    assert body["docs"] == "/docs"
+    assert body["readiness"] == "/ready"
+
+
 def test_validate_ticker_and_horizon():
     assert client.get("/api/v1/predict?ticker=../etc/passwd").status_code == 400
     assert client.get("/api/v1/predict?ticker=ABCDEFGHIJKLM").status_code == 400

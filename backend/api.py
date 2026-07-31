@@ -911,6 +911,21 @@ async def _await_prediction(
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
+@app.get("/")
+def root():
+    """Return discoverable service metadata for the deployment root."""
+    return {
+        "name": app.title,
+        "status": "online",
+        "version": APP_VERSION,
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "openapi": "/openapi.json",
+        "health": "/health",
+        "readiness": "/ready",
+    }
+
+
 @app.get("/health")
 def health():
     """O(1) Liveness probe."""
