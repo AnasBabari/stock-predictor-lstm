@@ -4,10 +4,9 @@ services:
     env: python
     region: oregon
     buildCommand: "pip install uv==0.11.16 && uv sync --project backend --frozen --no-dev"
-    # Prepare approved artifacts on the persistent disk before the web process starts.
-    # Public requests never train models; deployment-time preparation is explicit.
-    preDeployCommand: "backend/.venv/bin/python backend/pretrain.py --ticker AAPL --ticker MSFT --ticker TSLA --model-type lstm --model-type bilstm_attention_direction"
-    startCommand: "backend/.venv/bin/uvicorn api:app --app-dir backend --host 0.0.0.0 --port $PORT"
+    # Prepare missing artifacts on the mounted disk before serving traffic.
+    # Training is startup/operator work, never public request work.
+    startCommand: "backend/.venv/bin/python backend/render_start.py"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -17,6 +16,8 @@ services:
         sync: false
       - key: MODEL_DIR
         value: /app/saved_models
+      - key: RENDER_PRETRAIN_TICKERS
+        value: AAPL,MSFT,TSLA
       - key: PREDICTION_WORKERS
         value: "2"
       - key: PREDICTION_QUEUE_SIZE

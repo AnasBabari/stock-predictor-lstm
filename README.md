@@ -128,7 +128,7 @@ Prediction requests accept tickers matching `[A-Z0-9.\-]{1,12}` and 1-30 days. `
 
 ## Deployment, Testing, and Contribution
 
-The frontend is hosted on Vercel at https://stock-predictor-lstm-two.vercel.app; [frontend/vercel.json](frontend/vercel.json) provides SPA rewrites. The Render API at https://stock-predictor-lstm.onrender.com uses [render.yaml](render.yaml) with Python 3.11.9 and persistent `/app/saved_models`; set `CORS_ORIGIN` to the exact public frontend origin. Render runs an explicit `preDeployCommand` for the approved `AAPL`, `MSFT`, and `TSLA` universe, preparing both production model types before Uvicorn starts. Add or change approved tickers in that command when expanding the hosted universe; do not move training into public request handling.
+The frontend is hosted on Vercel at https://stock-predictor-lstm-two.vercel.app; [frontend/vercel.json](frontend/vercel.json) provides SPA rewrites. The Render API at https://stock-predictor-lstm.onrender.com uses [render.yaml](render.yaml) with Python 3.11.9 and persistent `/app/saved_models`; set `CORS_ORIGIN` to the exact public frontend origin. Render runs `backend/render_start.py` before Uvicorn starts. It prepares missing artifacts on the mounted persistent disk for the approved `RENDER_PRETRAIN_TICKERS` universe (default `AAPL,MSFT,TSLA`) and then starts the API. Add or change approved tickers in Render configuration when expanding the hosted universe; do not move training into public request handling.
 
 ```bash
 uv run --project backend pytest backend/tests -q --cov=backend --cov-report=term-missing --cov-fail-under=70
