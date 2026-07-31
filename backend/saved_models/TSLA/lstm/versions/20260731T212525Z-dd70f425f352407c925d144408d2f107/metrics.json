@@ -1,0 +1,13 @@
+{
+  "metric_source": "walk_forward_out_of_fold",
+  "metric_scope": "forecast_origin_horizon_pairs",
+  "rmse": 65.511695,
+  "mae": 59.557431,
+  "mape": 15.302095,
+  "r2": -11.225119,
+  "directional_accuracy": 0.597634,
+  "mase": 7.780968,
+  "rmsse": 6.073809,
+  "relative_mae": 2.246941,
+  "relative_rmse": 1.950756
+}

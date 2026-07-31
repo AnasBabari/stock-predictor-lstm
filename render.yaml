@@ -4,8 +4,8 @@ services:
     env: python
     region: oregon
     buildCommand: "pip install uv==0.11.16 && uv sync --project backend --frozen --no-dev"
-    # Free-plan mode uses ephemeral saved_models; paid plans may set a mounted path.
-    # Training is startup/operator work, never public request work.
+    # Artifacts are pre-trained locally and committed to the repo; training never runs on the
+    # 512MB free instance (MODEL_MAX_AGE_DAYS keeps committed models serving without retraining).
     startCommand: "backend/.venv/bin/uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend"
     envVars:
       - key: PYTHON_VERSION
@@ -15,7 +15,11 @@ services:
       - key: CORS_ORIGIN
         sync: false
       - key: MODEL_DIR
-        value: saved_models
+        value: backend/saved_models
+      - key: MODEL_MAX_AGE_DAYS
+        value: "3650"
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "2"
       - key: PREDICTION_WORKERS
         value: "1"
       - key: PREDICTION_QUEUE_SIZE
@@ -34,7 +38,3 @@ services:
         value: "900"
       - key: MODEL_MIN_FREE_MB
         value: "100"
-    disk:
-      name: saved-models
-      mountPath: /app/saved_models
-      sizeGB: 1

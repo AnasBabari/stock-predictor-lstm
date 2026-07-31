@@ -1,0 +1,35 @@
+{
+  "AAPL_lstm": {
+    "ticker": "AAPL",
+    "model_type": "lstm",
+    "last_updated": "2026-07-31T21:21:24Z",
+    "version": "1.1.0",
+    "schema_version": 3,
+    "metadata": {
+      "status": "trained",
+      "schema_version": 3
+    }
+  },
+  "MSFT_lstm": {
+    "ticker": "MSFT",
+    "model_type": "lstm",
+    "last_updated": "2026-07-31T21:23:28Z",
+    "version": "1.1.0",
+    "schema_version": 3,
+    "metadata": {
+      "status": "trained",
+      "schema_version": 3
+    }
+  },
+  "TSLA_lstm": {
+    "ticker": "TSLA",
+    "model_type": "lstm",
+    "last_updated": "2026-07-31T21:25:26Z",
+    "version": "1.1.0",
+    "schema_version": 3,
+    "metadata": {
+      "status": "trained",
+      "schema_version": 3
+    }
+  }
+}

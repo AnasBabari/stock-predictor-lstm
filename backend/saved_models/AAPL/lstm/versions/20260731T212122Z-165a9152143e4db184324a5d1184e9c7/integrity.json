@@ -1,0 +1,8 @@
+{
+  "algorithm": "sha256",
+  "sha256": {
+    "model.keras": "7271c7825f82afe06de77fc1633bd7be9a06416fed875e88fc62281b086d94c8",
+    "scaler.json": "8915d64341602c1700a5e72e4b5e1749a6463c26fa806bb9803e0e7e678c4b61",
+    "metadata.json": "fbe6dca6d32855123da51756d779fd1888bf97bdb575b0324eecba0badd9fcf5"
+  }
+}

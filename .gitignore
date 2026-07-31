@@ -7,9 +7,8 @@ venv/
 env/
 .env
 
-# Models and generated data (all nested runtime artifacts)
-backend/saved_models/**
-!backend/saved_models/.gitkeep
+# Pre-trained artifacts are committed and shipped to Render (trained locally, never on the instance).
+# Generated data
 *.csv
 *.dat
 
