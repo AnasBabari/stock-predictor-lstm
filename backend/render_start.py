@@ -59,7 +59,7 @@ def main() -> None:
             "--app-dir",
             "backend",
             "--host",
-            "0.0.0.0",
+            "0.0.0.0",  # nosec B104 - Render requires binding to its public interface
             "--port",
             os.getenv("PORT", "8000"),
         ],
