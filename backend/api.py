@@ -52,6 +52,7 @@ from config import (
 )
 from data_pipeline import fetch_data
 from features.market import MarketContextUnavailable
+from hosted_startup import prepare_hosted_artifacts
 from model import (
     ArtifactValidationError,
     TrainingCapacityError,
@@ -66,6 +67,8 @@ from model import (
 )
 from news_features import get_live_financial_sentiment as get_financial_sentiment
 from services.baselines import base_rate_direction_forecast, persistence_price_forecast
+
+prepare_hosted_artifacts()
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
 logging.basicConfig(
