@@ -13,7 +13,7 @@ from pretrain import MODEL_TYPES, normalise_ticker
 
 def prepare_hosted_artifacts() -> None:
     """Prepare approved artifacts only for the production Render disk."""
-    if os.getenv("ENVIRONMENT") != "production" or MODEL_DIR != "/app/saved_models":
+    if MODEL_DIR != "/app/saved_models":
         return
     raw = os.getenv("RENDER_PRETRAIN_TICKERS", "AAPL,MSFT,TSLA")
     tickers = list(
