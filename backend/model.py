@@ -208,31 +208,15 @@ def _validate_integrity(directory: Path) -> None:
 @contextmanager
 def _process_file_lock(path: Path, timeout: float):
     """Cross-process lock using atomic exclusive creation with stale-lock recovery."""
+    import filelock
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, f"{os.getpid()}\n".encode())
-            os.close(fd)
-            break
-        # Windows can report a sharing violation (PermissionError) while another
-        # process owns the lock file, instead of the POSIX-style FileExistsError.
-        # Both states mean the lock is contended and must follow the same timeout path.
-        except (FileExistsError, PermissionError) as err:
-            if time.monotonic() >= deadline:
-                raise TrainingCapacityError("Timed out waiting for model artifact lock.") from err
-            try:
-                if time.time() - path.stat().st_mtime > settings.artifact_lock_timeout_seconds * 2:
-                    path.unlink(missing_ok=True)
-                    continue
-            except OSError:
-                pass
-            time.sleep(0.1)
+    lock = filelock.FileLock(str(path) + ".lock", timeout=timeout)
     try:
-        yield
-    finally:
-        path.unlink(missing_ok=True)
+        with lock:
+            yield
+    except filelock.Timeout as err:
+        raise TrainingCapacityError("Timed out waiting for model artifact lock.") from err
 
 
 # ── Git / environment helpers ────────────────────────────────────────
@@ -1263,6 +1247,7 @@ def train_model(
     finally:
         if tracemalloc.is_tracing():
             tracemalloc.stop()
+        tf.keras.backend.clear_session()
 
     update_manifest(ticker, model_type, {"status": "trained", "schema_version": SCHEMA_VERSION})
     return final_model, scaler
@@ -1340,7 +1325,13 @@ def enforce_storage_quota(exclude: tuple[str, str] | None = None) -> None:
                 _process_file_lock(victim / ".train.lock", timeout=0),
                 _process_file_lock(victim / ".access.lock", timeout=0),
             ):
-                shutil.rmtree(victim)
+                for child in victim.iterdir():
+                    if not child.name.endswith(".lock"):
+                        if child.is_dir():
+                            shutil.rmtree(child, ignore_errors=True)
+                        else:
+                            child.unlink(missing_ok=True)
+            shutil.rmtree(victim, ignore_errors=True)
         except (OSError, TrainingCapacityError):
             logger.info("Skipping busy artifact during quota eviction: %s", victim)
             continue

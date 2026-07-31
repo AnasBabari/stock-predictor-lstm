@@ -56,11 +56,11 @@ def build_features(
     df, market_metadata = add_market_context(df)
     df = add_calendar_features(df)
 
-    # Drop initial NaN rows created by rolling windows (e.g., SMA_20, MACD, ATR_14)
-    df = df.dropna()
-
     # Reorder columns explicitly to match expected_features schema
     df = df[expected_features]
+
+    # Drop initial NaN rows created by rolling windows (e.g., SMA_20, MACD, ATR_14)
+    df = df.dropna()
 
     # Validate output feature matrix
     validate_features(df, expected_features)

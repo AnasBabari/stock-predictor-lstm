@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from config import MODEL_DIR
@@ -47,8 +49,45 @@ def prepare_missing_artifacts() -> None:
         raise SystemExit(f"Hosted artifact preparation failed with exit code {result.returncode}.")
 
 
+def _hold_port(port: int, stop_event: threading.Event) -> None:
+    """Bind to the Render port so the platform's port scanner succeeds during training.
+
+    Accepts connections and returns HTTP 503 until stop_event is set.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", port))  # nosec B104 - Render requires 0.0.0.0
+        sock.listen(5)
+        sock.settimeout(1.0)
+        while not stop_event.is_set():
+            try:
+                conn, _ = sock.accept()
+                with conn:
+                    conn.sendall(
+                        b"HTTP/1.1 503 Service Unavailable\r\n"
+                        b"Content-Type: text/plain\r\n"
+                        b"Connection: close\r\n\r\n"
+                        b"Starting up: preparing hosted model artifacts..."
+                    )
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+
+
 def main() -> None:
-    prepare_missing_artifacts()
+    port = int(os.getenv("PORT", "8000"))
+
+    stop_event = threading.Event()
+    port_thread = threading.Thread(target=_hold_port, args=(port, stop_event), daemon=True)
+    port_thread.start()
+
+    try:
+        prepare_missing_artifacts()
+    finally:
+        stop_event.set()
+        port_thread.join(timeout=5.0)
+
     os.execv(
         sys.executable,
         [
@@ -61,7 +100,7 @@ def main() -> None:
             "--host",
             "0.0.0.0",  # nosec B104 - Render requires binding to its public interface
             "--port",
-            os.getenv("PORT", "8000"),
+            str(port),
         ],
     )
 

@@ -109,8 +109,8 @@ def run_baseline_experiment(
     splits = [(fold.training_indices, fold.validation_indices) for fold in fold_plan.folds]
     model_reports: dict[str, dict] = {}
     pooled_rows: dict[str, dict[str, list[np.ndarray]]] = {}
-    initial_scale_end = int(dataset.origin_indices[splits[0][0][-1]] + max(selected.horizons))
-    pooled_scale_series = np.asarray(close_values, dtype=float)[: initial_scale_end + 1]
+    pooled_scale_end = int(dataset.origin_indices[splits[-1][0][-1]] + max(selected.horizons))
+    pooled_scale_series = np.asarray(close_values, dtype=float)[: pooled_scale_end + 1]
 
     for fold_number, (training, validation) in enumerate(splits, start=1):
         raw_train = dataset.features[training]

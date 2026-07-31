@@ -43,6 +43,9 @@ class NeuralCandidate:
         ):
             raise ValueError("Neural features and targets must be aligned 3D/2D arrays.")
         set_reproducibility(self.seed)
+        import tensorflow as tf
+
+        tf.keras.backend.clear_session()
         self.model = _build_model_for_type(
             self.architecture, target_array.shape[1], feature_array.shape[2]
         )
@@ -83,6 +86,9 @@ class NeuralCandidate:
         feature_array = np.asarray(features, dtype=float)
         target_array = np.asarray(targets, dtype=float)
         set_reproducibility(self.seed)
+        import tensorflow as tf
+
+        tf.keras.backend.clear_session()
         self.model = _build_model_for_type(
             self.architecture, target_array.shape[1], feature_array.shape[2]
         )

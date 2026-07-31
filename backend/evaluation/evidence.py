@@ -72,9 +72,22 @@ def paired_loss_evidence(
     options = dict(bootstrap_options)
     options.setdefault("block_length", max(int(horizon), 20))
     interval = moving_block_bootstrap_interval(difference, **options)
-    # A normal approximation is a transparent DM-style supporting signal. It
-    # is not used as the sole promotion criterion.
-    standard_error = float(np.std(difference, ddof=1) / np.sqrt(len(difference)))
+    # Newey-West HAC variance
+    diff_arr = np.asarray(difference, dtype=float)
+    n = len(diff_arr)
+    if n > 1:
+        mean_diff = float(np.mean(diff_arr))
+        lag_max = int(np.floor(4 * ((n / 100) ** (2 / 9))))
+        var = float(np.var(diff_arr, ddof=0))
+        for lag in range(1, lag_max + 1):
+            if lag < n:
+                cov = float(np.mean((diff_arr[:-lag] - mean_diff) * (diff_arr[lag:] - mean_diff)))
+                weight = 1.0 - (lag / (lag_max + 1.0))
+                var += 2.0 * weight * cov
+        standard_error = float(np.sqrt(max(var, 0.0) / n))
+    else:
+        standard_error = 0.0
+
     statistic = float(np.mean(difference) / standard_error) if standard_error else 0.0
     p_value = float(2 * (1 - NormalDist().cdf(abs(statistic)))) if standard_error else 1.0
     return {

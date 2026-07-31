@@ -143,8 +143,13 @@ def create_market_snapshot(
         "assets": assets,
         "content_sha256": content_hash,
     }
+    import os
+    import uuid
+
     manifest["manifest_sha256"] = hashlib.sha256(_canonical_json(manifest)).hexdigest()
-    (output / "manifest.json").write_bytes(_canonical_json(manifest) + b"\n")
+    temp_path = output / f".manifest-{uuid.uuid4().hex}.json"
+    temp_path.write_bytes(_canonical_json(manifest) + b"\n")
+    os.replace(temp_path, output / "manifest.json")
     return manifest
 
 

@@ -15,7 +15,6 @@ def prepare_hosted_artifacts() -> None:
     """Prepare approved artifacts only for the production Render disk."""
     if not os.getenv("RENDER_PRETRAIN_TICKERS"):
         return
-        return
     raw = os.getenv("RENDER_PRETRAIN_TICKERS", "AAPL,MSFT,TSLA")
     model_types = [
         value.strip()

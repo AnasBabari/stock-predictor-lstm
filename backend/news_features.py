@@ -210,21 +210,21 @@ def filter_ticker_relevance(
 ) -> list[dict[str, Any]]:
     """Keep explicitly tagged records or unambiguous ticker/company references."""
     symbol = ticker.upper()
-    aliases = tuple(alias.casefold() for alias in company_aliases if len(alias.strip()) > 2)
+    aliases = [re.escape(alias.casefold()) for alias in company_aliases if len(alias.strip()) > 2]
+
+    symbol_pattern = re.compile(rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])", re.IGNORECASE)
+    alias_pattern = (
+        re.compile(r"(?:" + "|".join(aliases) + r")", re.IGNORECASE) if aliases else None
+    )
+
     kept = []
     for item in articles:
-        text = f"{item['title']} {item['summary']}".casefold()
+        text = f"{item['title']} {item['summary']}"
         tagged = item.get("ticker") == symbol
-        symbol_match = (
-            bool(
-                re.search(
-                    rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])",
-                    f"{item['title']} {item['summary']}",
-                )
-            )
-            and len(symbol) >= 2
-        )
-        alias_match = any(alias in text for alias in aliases)
+
+        symbol_match = bool(symbol_pattern.search(text)) and len(symbol) >= 2
+        alias_match = bool(alias_pattern.search(text)) if alias_pattern else False
+
         if tagged or symbol_match or alias_match:
             kept.append({**item, "relevance": 1.0 if tagged or alias_match else 0.7})
     return kept
@@ -361,26 +361,38 @@ def build_daily_sentiment_features(
     index = index.tz_localize(UTC) if index.tz is None else index.tz_convert(UTC)
     result = pd.DataFrame(0.0, index=index, columns=NEWS_FEATURE_COLUMNS)
     scored = score_news_articles(deduplicate_articles(articles))
+
+    valid_scored = []
+    for a in scored:
+        if a.get("published_at"):
+            ts = max(a["published_at"], a.get("received_at") or a["published_at"])
+            valid_scored.append((ts, a))
+    valid_scored.sort(key=lambda x: x[0])
+
+    left_idx = 0
+    right_idx = 0
+    from datetime import timedelta
+
     for timestamp in index:
-        # Strictly previous sessions retain protection for date-only historical indices.
-        eligible = [
-            a
-            for a in scored
-            if a.get("published_at")
-            and max(a["published_at"], a.get("received_at") or a["published_at"])
-            < timestamp.to_pydatetime()
-        ]
+        current_ts = timestamp.to_pydatetime()
+        cutoff_ts = current_ts - timedelta(days=half_life_days * 10)
+
+        while right_idx < len(valid_scored) and valid_scored[right_idx][0] < current_ts:
+            right_idx += 1
+
+        while left_idx < right_idx and valid_scored[left_idx][0] < cutoff_ts:
+            left_idx += 1
+
+        eligible = [item[1] for item in valid_scored[left_idx:right_idx]]
+
         if not eligible:
             result.loc[timestamp, "News_Missing_Indicator"] = 1.0
             continue
+
         ages = np.array(
             [
-                (
-                    timestamp.to_pydatetime()
-                    - max(a["published_at"], a.get("received_at") or a["published_at"])
-                ).total_seconds()
-                / 86400
-                for a in eligible
+                (current_ts - item[0]).total_seconds() / 86400
+                for item in valid_scored[left_idx:right_idx]
             ]
         )
         weights = np.exp(-math.log(2) * ages / half_life_days) * np.array(

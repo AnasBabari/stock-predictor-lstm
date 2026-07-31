@@ -69,7 +69,7 @@ def add_market_context_from_frames(
     }
 
 
-def add_market_context(df: pd.DataFrame, period: str = "5y") -> tuple[pd.DataFrame, dict]:
+def add_market_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """
     Fetch benchmark index prices, join on the target DataFrame's index,
     and compute 1-day log returns for stationarity.
@@ -77,11 +77,13 @@ def add_market_context(df: pd.DataFrame, period: str = "5y") -> tuple[pd.DataFra
     result = df.copy()
     sources: dict[str, dict] = {}
 
+    start_date = df.index.min().strftime("%Y-%m-%d") if not df.empty else None
+
     for ticker, feature_name in MARKET_TICKERS.items():
         try:
             m_data = yf.download(
                 ticker,
-                period=period,
+                start=start_date,
                 progress=False,
                 auto_adjust=True,
                 timeout=30,
@@ -102,7 +104,11 @@ def add_market_context(df: pd.DataFrame, period: str = "5y") -> tuple[pd.DataFra
             combined_index = m_close.index.union(df.index)
             aligned_close = m_close.reindex(combined_index).sort_index().ffill()
             returns = np.log(aligned_close / aligned_close.shift(1)).reindex(df.index)
-            if returns.isna().any() or not np.isfinite(returns.to_numpy(dtype=float)).all():
+            valid_returns = returns.loc[df.dropna().index]
+            if (
+                valid_returns.isna().any()
+                or not np.isfinite(valid_returns.to_numpy(dtype=float)).all()
+            ):
                 raise MarketContextUnavailable(
                     f"Benchmark {ticker} could not be aligned from prior observations."
                 )

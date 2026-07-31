@@ -34,13 +34,18 @@ def main(argv: list[str] | None = None) -> int:
     manifest = archive_manifest(articles, args.input)
     manifest["archive_path"] = archive_path.name
     manifest["archive_sha256"] = _sha256(archive_path)
+    import os
+    import uuid
+
     manifest["manifest_sha256"] = hashlib.sha256(
         json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    (args.output / "manifest.json").write_text(
+    temp_path = args.output / f".manifest-{uuid.uuid4().hex}.json"
+    temp_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    os.replace(temp_path, args.output / "manifest.json")
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
 

@@ -30,7 +30,7 @@ def compute_rsi(df: pd.DataFrame, window: int = 14, column: str = "Close") -> pd
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
 
-    rs = gain / (loss.replace(0, np.nan))
+    rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     return rsi.fillna(50.0)
 

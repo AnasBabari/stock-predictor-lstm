@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 Channel = Literal["candidate", "eligible", "current", "previous", "rejected"]
-_IDENTITY = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+_IDENTITY = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 
 
 class ArtifactRegistryError(RuntimeError):
