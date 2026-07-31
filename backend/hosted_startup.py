@@ -12,7 +12,14 @@ from pretrain import MODEL_TYPES, normalise_ticker
 
 
 def prepare_hosted_artifacts() -> None:
-    """Prepare approved artifacts only for the production Render disk."""
+    """Prepare approved artifacts only when boot-time preparation is explicitly enabled.
+
+    Training must never run by accident in the 512MB free web instance.  Both opt-in flags
+    are required; operators that want on-box training must set PREPARE_HOSTED_ARTIFACTS_ON_BOOT=1
+    and RENDER_PRETRAIN_TICKERS together.
+    """
+    if os.getenv("PREPARE_HOSTED_ARTIFACTS_ON_BOOT", "0") != "1":
+        return
     if not os.getenv("RENDER_PRETRAIN_TICKERS"):
         return
     raw = os.getenv("RENDER_PRETRAIN_TICKERS", "AAPL,MSFT,TSLA")
