@@ -126,7 +126,7 @@ Prediction requests accept tickers matching `[A-Z0-9.\-]{1,12}` and 1–30 days.
 
 ## Deployment, testing, and contribution
 
-The frontend is hosted on Vercel; [frontend/vercel.json](frontend/vercel.json) provides SPA rewrites. Render uses [render.yaml](render.yaml) with a lightweight Uvicorn command and no persistent disk or model directory. Set `CORS_ORIGIN` to the exact Vercel origin. Browser model files remain on each user's device.
+The frontend is hosted on Vercel; [frontend/vercel.json](frontend/vercel.json) provides SPA rewrites. Render uses [render.yaml](render.yaml) with the native Python environment, a TensorFlow-free `pip install -r requirements.txt` build, and a lightweight `python -m uvicorn` command. If the Render service was created manually, copy both commands into its Build Command and Start Command fields (a repository `render.yaml` change does not retroactively overwrite dashboard settings). No persistent disk or model directory is required. Set `CORS_ORIGIN` to the exact Vercel origin. Browser model files remain on each user's device.
 
 ```bash
 uv run --project backend pytest backend/tests -q --cov=backend --cov-report=term-missing --cov-fail-under=70

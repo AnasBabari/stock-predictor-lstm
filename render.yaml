@@ -3,9 +3,9 @@ services:
     name: stock-predictor-backend
     env: python
     region: oregon
-    buildCommand: "pip install uv==0.11.16 && uv sync --project backend --frozen --no-dev"
-    # Render is a lightweight feature service; models train and cache in the browser.
-    startCommand: "backend/.venv/bin/uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend"
+    buildCommand: "pip install -r requirements.txt"
+    # Use Render's native Python environment; the runtime dependency list is TensorFlow-free.
+    startCommand: "python -m uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
