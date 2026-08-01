@@ -975,8 +975,34 @@ def ready():
 
 @app.get("/models")
 def list_models():
-    """Return manifest of trained/cached models."""
-    return {"version": APP_VERSION, "manifest": get_manifest()}
+    """Return manifest plus explicit learned-engine availability."""
+    manifest = get_manifest()
+    price_tickers = sorted(
+        entry["ticker"] for entry in manifest.values() if entry.get("model_type") == "lstm"
+    )
+    direction_tickers = sorted(
+        entry["ticker"]
+        for entry in manifest.values()
+        if entry.get("model_type") == "bilstm_attention_direction"
+    )
+    return {
+        "version": APP_VERSION,
+        "manifest": manifest,
+        "availability": {
+            "price": {
+                "status": "available" if price_tickers else "unavailable",
+                "engine": "lstm" if price_tickers else "persistence_fallback",
+                "tickers": price_tickers,
+            },
+            "direction": {
+                "status": "available" if direction_tickers else "unavailable",
+                "engine": "bilstm_attention_direction"
+                if direction_tickers
+                else "base_rate_fallback",
+                "tickers": direction_tickers,
+            },
+        },
+    }
 
 
 @app.get("/api/v1/search")

@@ -17,7 +17,7 @@ services:
       - key: MODEL_DIR
         value: backend/saved_models
       - key: MODEL_MAX_AGE_DAYS
-        value: "3650"
+        value: "30"
       - key: TF_CPP_MIN_LOG_LEVEL
         value: "2"
       - key: PREDICTION_WORKERS
