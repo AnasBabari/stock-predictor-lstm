@@ -13,7 +13,7 @@ BASE_URL = os.getenv("DEPLOYMENT_BASE_URL", "https://stock-predictor-lstm.onrend
 
 def get(path: str) -> dict:
     request = Request(f"{BASE_URL}{path}", headers={"Accept": "application/json"})
-    with urlopen(request, timeout=90) as response:  # noqa: S310 - operator-supplied HTTPS endpoint
+    with urlopen(request, timeout=90) as response:
         return json.load(response)
 
 

@@ -36,7 +36,7 @@ def sign(manifest_path: Path, signature_path: Path) -> None:
         raise RuntimeError("MODEL_BUNDLE_PRIVATE_KEY_B64 is required for signing.")
     key = serialization.load_pem_private_key(base64.b64decode(encoded), password=None)
     if not isinstance(key, Ed25519PrivateKey):
-        raise RuntimeError("Bundle signing key must be Ed25519.")
+        raise TypeError("Bundle signing key must be Ed25519.")
     signature_path.write_text(base64.b64encode(key.sign(manifest_path.read_bytes())).decode(), encoding="ascii")
 
 
