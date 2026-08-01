@@ -1,72 +1,63 @@
 # Architecture
 
-## Request flow
+## Production request flow
 
-The React SPA calls same-origin `/api/` paths. In Compose, Nginx proxies those paths to FastAPI. A response-cache hit first revalidates its underlying artifact and is evicted with `503` if that artifact is no longer fresh. Cache misses enter a bounded, coalescing executor, but the worker first requires a fresh validated artifact. Missing or invalid artifacts fail with `503` before market data is fetched. TensorFlow training is reachable only from the operator CLI.
+The React SPA requests a fresh, validated feature snapshot from FastAPI. In Compose, Nginx proxies same-origin `/api/` paths to the backend and overwrites the forwarding chain at the trusted boundary. Render runs only the lightweight data service: no TensorFlow import, Keras artifact, model directory, boot-time pretraining, or model-weight upload is part of the production request path.
 
 ```mermaid
 flowchart LR
-    operator[Operator pretrain CLI] --> training[Bounded training]
-    training --> artifacts[Validated atomic artifacts]
-    browser[Browser / React SPA] --> nginx[Nginx]
+    browser[Browser / React SPA] --> nginx[Nginx or Vercel]
     nginx --> api[FastAPI: validation, rate limit, cache]
-    api -->|cache hit + fresh artifact| response[Response and diagnostics]
-    api -->|cache hit + stale artifact| unavailable
-    api -->|cache miss| coordinator[Bounded coordinator<br/>coalesced in-flight work]
-    coordinator --> artifact{Fresh artifact?}
-    artifact -->|no| unavailable[503 unavailable]
-    artifact -->|yes| market[Market data and features]
-    market --> inference[Inference]
-    inference --> response
-    response --> browser
+    api --> yahoo[Yahoo Finance + calendars]
+    yahoo --> snapshot[Validated 22-feature snapshot]
+    snapshot --> worker[TensorFlow.js Web Worker]
+    worker --> indexeddb[(Per-browser IndexedDB)]
+    worker --> metrics[Purged holdout metrics]
+    worker --> forecast[Browser forecast]
+    forecast --> browser
+    api -->|upstream failure| fallback[Explicit server persistence/base-rate fallback]
+    fallback --> browser
 ```
 
-Prediction identity includes ticker, horizon, and type at the response/cache layer. Direction artifact identity deliberately uses a fixed 30-session output width; metadata and the Keras signature are checked before a shorter response is sliced.
+`GET /api/v1/training-data?ticker=MSFT` is the only learned-forecast input. It validates the ticker, fetches one coherent market snapshot, preserves the 22-feature order, emits finite rows and backend calendar dates, and fingerprints the exact payload with a deterministic `snapshot_id`. The response is bounded to the historical period and 2,000 rows, rate-limited separately, and never accepts client feature matrices.
 
-## Data and ML boundaries
+The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain for rollback and unsupported clients. They return persistence or recent-base-rate outputs with `server_disabled_fallback` metadata. A flat compatibility response is never presented as a learned model.
 
-There are 22 ordered features: OHLCV (5), technical (9), market context (4), and cyclic calendar values (4). Market context schema v2 carries the last known close across a closed benchmark session before calculating its return. It never fills from the future. Any source that cannot be aligned from a prior observation fails closed with provenance rather than producing an indistinguishable zero.
+## Browser model boundary
 
-Live news does not cross the production feature boundary. It is normalized and scored only for response context. Offline historical-news experiments accept timestamped records, expose decayed sentiment/count/confidence columns, and reject untimestamped records from model features. News columns are opt-in ablations rather than part of the 22-feature artifact schema.
+The worker uses the same core semantics as the Python pipeline:
 
-Validation supports two real strategies:
+- 60 trading-day input window and 30-step output width.
+- 80% chronological split with a `forecast_days - 1` purge.
+- Min/max scaler fitted only on training rows.
+- Price target is scaled `Close`; direction target is positive future log return.
+- No shuffle, at most 12 epochs, batch size 32, validation early stopping after three unimproved epochs.
+- WebGL where available, CPU otherwise; all tensors are disposed on cancellation, error, and completion.
 
-- `expanding`: training starts at row zero and grows each fold.
-- `rolling`: training uses exactly `min_train_size` rows before each gap.
+Price uses `LSTM(32, return_sequences) -> Dropout(.2) -> LSTM(16) -> Dense(16, relu) -> Dense(30, linear)` with Adam/MSE. Direction uses the same body with a sigmoid output and binary cross-entropy. A model trains only for the selected type; Complete Analysis requests the missing type only.
 
-Each fold has an exact `horizon` and `gap`. A scaler fits only on the fold's training rows. An inner tail of that training fold supplies early stopping, with an additional purge equal to the overlapping target width; the subsequent evaluation fold is not passed to `fit`.
+The browser cache key includes model implementation version, schema version, ticker, forecast type, snapshot ID, window size, and output width. TensorFlow.js saves weights to `indexeddb://...`; companion metadata records metrics, schema, timestamps, and feature names. Cache entries are per browser and ticker/type, expire/evict under the seven-day and six-entry policy, and can be cleared by the user. IndexedDB failure downgrades persistence to a session-only model; worker/training failure uses a labelled baseline.
 
-Regression forecasts retain a price origin for every row and a named horizon for every column. Metrics are calculated per horizon and over pooled origin–horizon pairs; directional accuracy compares each forecast with its own origin rather than taking differences over a flattened array. MASE and RMSSE use training-only scale data, and relative MAE/RMSE use a no-change persistence prediction from the same origin. Direction probability evaluation adds balanced accuracy, Brier score, and log loss, with the majority baseline selected from the training fold.
+Browser metrics are calculated on untouched post-purge holdout samples and labelled `browser_purged_holdout`: price MAE/MSE/RMSE/MAPE/R² and relative errors versus persistence; direction accuracy/precision/recall/F1/balanced accuracy/Brier score and naive baseline. They are not the offline five-fold walk-forward metrics.
 
-Only aggregated out-of-fold results are published. Production fitting is two-stage: a purged chronological tail selects the epoch count, then a newly initialized model is trained on all labelled sequences for that fixed number of epochs. Artifact metadata distinguishes selection epochs, selected epoch, purge width, and final refit sample count.
+## Data and news boundary
 
-## Offline experiment and promotion flow
+The production feature matrix has 22 ordered columns: five OHLCV, nine technical, four market-context returns, and four cyclic calendar features. Market context is aligned to the last known close before each session; no future value is filled in. Exchange calendars support international suffixes and 24/7 crypto pairs, with unknown dotted symbols returned as an explicit NYSE fallback.
 
-```mermaid
-flowchart LR
-    snapshot[Coherent market snapshot] --> windows[Direct-horizon windows]
-    windows --> folds[Purged walk-forward folds]
-    folds --> baselines[Persistence / drift / ridge / tree]
-    baselines --> metrics[Per-horizon and pooled metrics]
-    metrics --> gate{Promotion gate}
-    gate -->|pass| eligible[Eligible for operator review]
-    gate -->|reject| retain[Retain current baseline/artifact]
-```
+Live Yahoo Finance headlines are normalized and scored for direction-response context only. Headline sentiment is not in the browser feature matrix, so the UI does not claim news improved the learned model. Historical news experiments accept timestamped articles only, align publication time before each session, expose coverage/decay metadata, and require controlled ablation and purged promotion evidence before any future schema change.
 
-The offline CLI evaluates persistence, drift, ridge, and histogram-gradient-boosting baselines and records the snapshot hash, dataset boundaries, fold indices, feature group, target representation, and promotion reasons. Promotion requires meaningful pooled improvement over persistence, wins across multiple folds, scaled errors below one, and no catastrophic fold. TensorFlow candidates are prepared and evaluated through the artifact-training workflow; the benchmark CLI does not train them. Neither workflow automatically changes the model selected by a public endpoint.
+## Offline research and training boundary
 
-Reproducibility metadata records Python/NumPy/scikit-learn/TensorFlow versions, seed, deterministic mode, feature schema, validation settings, input data range, snapshot hash, source provenance, and Git commit. Deterministic TensorFlow kernels remain platform-dependent; exact equivalence across different hardware/library builds is not promised.
+The Python TensorFlow trainer, artifact registry, walk-forward evaluator, candidate baselines, and promotion commands remain available in the opt-in `training` dependency group. They may write local artifacts under an operator-selected directory for research and benchmark reproducibility. They are not imported by `api.py`, installed by the Render production build, called by `render.yaml`, or reachable from public request handling.
 
-## Persistence and concurrency
+Offline validation supports expanding and rolling folds with training-only scalers, purged early-stopping tails, per-horizon and pooled origin/horizon metrics, persistence-relative errors, and direction baselines. Promotion is an explicit operator action; no offline artifact is deployed automatically to Render.
 
-Operator-controlled training uses in-process and O_EXCL process locks to prevent duplicate same-artifact work. A global semaphore bounds simultaneous CLI training; public HTTP requests cannot acquire it. A candidate version is written to a unique directory, hashed, then activated with atomic replacement of `current.json`; the prior version is not removed first. Readers resolve only activated versions and validate metadata, feature order/count, output width, scaler shape/finiteness, and SHA-256 hashes before Keras/scaler loading. Scalers are JSON, not pickle/joblib.
+## Caching and concurrency
 
-Count, byte, and free-space quotas evict old artifact roots. Readiness verifies the storage can create a file and retains a configured free-space floor.
+The backend response cache stores only bounded market-data-derived baseline responses. Its identity includes ticker, horizon, and forecast type, and cache hits do not load or validate model artifacts. The browser independently fetches a current snapshot before loading a cached model, so a changed snapshot forces retraining.
 
-## Calendars and fallbacks
-
-Suffix mapping covers `.L`, `.SW`, `.TO`, `.AX`, and `.HK`; unsuffixed instruments use NYSE. `-USD`, `-GBP`, `-EUR`, and `-USDT` pairs use a 24/7 calendar. Unknown dotted suffixes use `NYSE_FALLBACK`, which is returned in response metadata so consumers can identify the assumption.
+Compatibility requests still use a bounded coalescing executor, short-lived status registry, rate limits, upstream circuit breaker, and sanitized error responses. These controls protect the data service; browser training capacity is isolated to each user's device.
 
 ## Security boundaries
 
-Ticker/model identities are allowlisted before path construction. Public forecast endpoints have per-client rate limits plus bounded global capacity. Forwarded addresses affect the limiter only when the direct peer is an exact configured trusted proxy; all other callers are keyed by their direct address. CORS allows explicit origins and no credentials. Internal exceptions are not returned. External text renders through React text nodes, and export identity/length checks prevent cross-forecast ZIPs. CSV cells that begin with spreadsheet formula characters are neutralised. Model artifacts are trusted local server state and integrity checked; SHA-256 detects corruption but is not an authenticity signature against an attacker who can rewrite both data and hashes.
+Ticker identities are validated before any upstream or path selection. Forwarded client addresses affect rate limiting only when the direct peer is an exact configured trusted proxy; direct callers cannot spoof another bucket. Nginx replaces, rather than appends to, forwarding headers. CORS allows explicit origins without credentials, internal errors are sanitized, and no model weights or user identifiers are sent to Render. React renders external text as text nodes; export identity/length checks and CSV formula neutralization remain in place.

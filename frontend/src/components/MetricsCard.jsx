@@ -29,7 +29,9 @@ export default function MetricsCard({ stockData, forecastType }) {
   const metricSource =
     m.metric_source === 'walk_forward_out_of_fold'
       ? 'Walk-forward out-of-fold evaluation'
-      : 'Evaluation unavailable';
+      : m.metric_source === 'browser_purged_holdout'
+        ? 'Browser purged holdout evaluation'
+        : 'Baseline definition';
 
   const priceMetrics = [
     { label: 'RMSE', value: m.rmse != null ? m.rmse.toFixed(2) : '—', title: 'Root Mean Squared Error — lower is better' },
@@ -66,7 +68,9 @@ export default function MetricsCard({ stockData, forecastType }) {
     ? 'Baseline fallback'
     : engine?.role === 'learned_candidate'
       ? 'Learned candidate'
-      : 'Artifact evidence';
+      : engine?.role === 'browser_learned'
+        ? 'Learned locally'
+        : 'Baseline fallback';
 
   return (
     <section

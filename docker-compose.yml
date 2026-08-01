@@ -3,8 +3,6 @@ services:
     build: ./backend
     ports:
       - "127.0.0.1:8000:8000"
-    volumes:
-      - model_cache:/app/saved_models
     env_file:
       - path: .env
         required: false
@@ -31,8 +29,6 @@ services:
       stock_internal:
         ipv4_address: 172.30.30.10
 
-volumes:
-  model_cache:
 
 networks:
   stock_internal:

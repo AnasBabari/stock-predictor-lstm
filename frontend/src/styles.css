@@ -1343,3 +1343,20 @@ canvas {
         ),
         var(--bg-card);
 }
+
+.cache-clear-button {
+    display: block;
+    margin: 14px auto 0;
+    padding: 8px 14px;
+    border: 1px solid var(--border-hover);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color var(--transition), border-color var(--transition);
+}
+
+.cache-clear-button:hover {
+    color: var(--accent);
+    border-color: var(--border-accent);
+}

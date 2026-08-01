@@ -23,10 +23,12 @@ DOCUMENTED_PATHS = {
     "/models",
     "/api/v1/search",
     "/api/v1/info",
+    "/api/v1/training-data",
     "/api/v1/predict",
     "/api/v1/predict/direction",
     "/api/v1/prediction-status/{request_id}",
     "/api/v1/diagnostics/{ticker}",
+    "/api/v1/model-performance/{ticker}",
 }
 
 

@@ -9,7 +9,6 @@ COPY pyproject.toml uv.lock ./
 RUN pip install --no-cache-dir uv==0.11.16 && uv sync --frozen --no-dev --no-install-project
 
 COPY . .
-RUN mkdir -p saved_models && chown appuser:appgroup saved_models
 
 USER appuser
 

@@ -57,13 +57,14 @@ def setup_function():
     api._record_upstream("available")
 
 
-def test_health_and_readiness(tmp_path, monkeypatch):
-    monkeypatch.setattr(api, "MODEL_DIR", str(tmp_path))
+def test_health_and_readiness():
     api._record_upstream("available")
     assert client.get("/health").status_code == 200
     response = client.get("/ready")
     assert response.status_code == 200
-    assert response.json()["dependencies"]["model_storage"]["writable"] is True
+    body = response.json()
+    assert body["dependencies"]["model_storage"]["required"] is False
+    assert body["dependencies"]["model_storage"]["writable"] is None
 
 
 def test_root_discloses_service_routes():
@@ -182,6 +183,7 @@ def test_openapi_contains_public_routes_and_horizon_constraints():
         "/api/v1/predict/direction",
         "/api/v1/search",
         "/api/v1/info",
+        "/api/v1/training-data",
         "/api/v1/prediction-status/{request_id}",
         "/api/v1/model-performance/{ticker}",
     ):
@@ -195,34 +197,18 @@ def test_openapi_contains_public_routes_and_horizon_constraints():
     assert days["schema"]["maximum"] == MAX_FORECAST_DAYS
 
 
-def test_model_performance_discloses_learned_and_baseline_engines():
-    with (
-        patch("api.load_fresh_artifact", return_value=(MagicMock(), MagicMock())),
-        patch(
-            "api.load_metadata",
-            return_value={
-                "version_id": "v1",
-                "validation_method": "expanding",
-                "validation_folds": 5,
-                "metric_source": "walk_forward_out_of_fold",
-                "data_snapshot": {"snapshot_id": "one"},
-            },
-        ),
-        patch("api.load_metrics", return_value={"rmse": 2.0}),
-    ):
-        learned = client.get("/api/v1/model-performance/AAPL")
-    assert learned.status_code == 200
-    assert not learned.json()["engine"]["baseline_fallback"]
-    assert learned.json()["benchmark"]["validation_folds"] == 5
-
-    with patch(
-        "api.load_fresh_artifact",
-        side_effect=api.ArtifactValidationError("missing"),
-    ):
-        baseline = client.get("/api/v1/model-performance/AAPL?forecast_type=direction")
-    assert baseline.status_code == 200
-    assert baseline.json()["engine"]["family"] == "recent_base_rate"
-    assert baseline.json()["metrics"]["metric_source"] == "baseline_definition"
+def test_model_performance_discloses_browser_engine():
+    response = client.get("/api/v1/model-performance/AAPL")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["engine"] == {
+        "family": "compact_tfjs_lstm",
+        "role": "browser_training_available",
+        "baseline_fallback": False,
+        "artifact_version": None,
+    }
+    assert body["metrics"]["metric_source"] == "browser_purged_holdout"
+    assert body["benchmark"]["validation_folds"] is None
 
 
 def test_forecast_openapi_declares_shared_telemetry_contract():
@@ -342,7 +328,7 @@ def test_price_pipeline_serves_labelled_persistence_when_artifact_is_unavailable
     assert response["predicted_prices"] == [float(closes[-1])] * 3
     assert response["metadata"]["engine"] == {
         "family": "persistence",
-        "role": "baseline_fallback",
+        "role": "server_disabled_fallback",
         "baseline_fallback": True,
     }
     assert response["metrics"]["metric_source"] == "baseline_definition"
@@ -373,19 +359,14 @@ def test_direction_pipeline_serves_labelled_base_rate_without_attention(
 
 
 def test_response_cache_timing_and_status_are_truthful():
-    with (
-        patch("api._price_prediction_pipeline", return_value=_response()),
-        patch("api.load_fresh_artifact", return_value=(MagicMock(), MagicMock())) as load,
-    ):
+    with patch("api._price_prediction_pipeline", return_value=_response()):
         assert client.get("/api/v1/predict?ticker=AAPL&days=7").status_code == 200
-
         request_id = str(uuid.uuid4())
         response = client.get(
             "/api/v1/predict?ticker=AAPL&days=7",
             headers={"X-Prediction-Request-ID": request_id},
         )
     assert response.status_code == 200
-    load.assert_called_once_with("AAPL", "lstm", MAX_FORECAST_DAYS)
     metadata = response.json()["metadata"]
     assert metadata["execution"] == {"mode": "response_cache_hit", "coalesced": False}
     assert metadata["artifact_action"] == "not_applicable"
@@ -394,28 +375,19 @@ def test_response_cache_timing_and_status_are_truthful():
     assert all(
         metadata["timings_seconds"][name] is None for name in api.TIMING_FIELDS if name != "total"
     )
-
     status = client.get(f"/api/v1/prediction-status/{request_id}")
     assert status.status_code == 200
     assert status.headers["cache-control"] == "no-store"
     assert status.json()["stage"] == "completed"
 
 
-def test_response_cache_is_evicted_when_artifact_is_no_longer_fresh():
+def test_response_cache_does_not_depend_on_server_artifact_freshness():
     with patch("api._price_prediction_pipeline", return_value=_response()):
-        assert client.get("/api/v1/predict?ticker=AAPL&days=7").status_code == 200
-
-    with patch(
-        "api.load_fresh_artifact",
-        side_effect=api.ArtifactValidationError("Artifact is stale."),
-    ):
-        response = client.get("/api/v1/predict?ticker=AAPL&days=7")
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "Forecast model is not currently available for this ticker."
-    }
-    with api._predict_cache_lock:
-        assert "AAPL_7" not in api._predict_cache
+        first = client.get("/api/v1/predict?ticker=AAPL&days=7")
+    assert first.status_code == 200
+    response = client.get("/api/v1/predict?ticker=AAPL&days=7")
+    assert response.status_code == 200
+    assert response.json()["metadata"]["execution"]["mode"] == "response_cache_hit"
 
 
 def test_status_registry_coalesces_caller_views_and_hides_unknown_ids():
@@ -615,31 +587,20 @@ def test_direction_fixed_width_is_horizon_safe_in_both_request_orders():
 
 def test_price_pipeline_uses_one_coherent_snapshot():
     snapshot = _feature_snapshot()
-    original_id = id(snapshot)
-    observed = []
-    scaler = MagicMock()
-
-    def prediction(_model, frame, model_scaler, days):
-        observed.append((frame.attrs["snapshot"], model_scaler, days))
-        return [101.0] * days
-
-    snapshot.attrs["snapshot"] = "immutable-one"
+    closes = snapshot.Close.to_numpy()
+    dates = snapshot.index
     with (
         patch(
-            "api.fetch_data",
-            return_value=(snapshot, snapshot.Close.values, snapshot.index, {"snapshot_id": "one"}),
+            "api._fetch_snapshot",
+            return_value=(snapshot, closes, dates, {"snapshot_id": "one", "market_context": {}}),
         ) as fetch,
-        patch("api.load_fresh_artifact", return_value=(MagicMock(), scaler)) as load,
-        patch("api.predict_future", side_effect=prediction),
         patch("api.future_trading_dates", return_value=(["d1", "d2", "d3"], "NYSE")),
-        patch("api.load_metrics", return_value={"metric_source": "walk_forward_out_of_fold"}),
     ):
         result = api._price_prediction_pipeline("AAPL", 3)
-    assert id(snapshot) == original_id
     assert fetch.call_count == 1
-    assert load.call_args.args == ("AAPL", "lstm", MAX_FORECAST_DAYS)
-    assert observed == [("immutable-one", scaler, 3)]
     assert result["metadata"]["data_snapshot"]["snapshot_id"] == "one"
+    assert result["historical_prices"] == closes.tolist()
+    assert result["predicted_prices"] == [float(closes[-1])] * 3
 
 
 def test_work_coordinator_coalesces_and_bounds_queue():
@@ -681,3 +642,36 @@ def test_diagnostics_404_when_not_trained():
         patch("api.load_metadata", return_value={}),
     ):
         assert client.get("/api/v1/diagnostics/AAPL").status_code == 404
+
+
+def test_models_advertises_browser_training_and_disabled_server_models():
+    body = client.get("/models").json()
+    assert body["server_models"] == {
+        "status": "disabled",
+        "reason": "Models are trained and cached per user in the browser.",
+    }
+    assert body["browser_training"]["status"] == "available"
+    assert body["browser_training"]["storage"] == "indexeddb"
+
+
+def test_training_data_route_returns_validated_snapshot(monkeypatch):
+    snapshot = {
+        "ticker": "MSFT",
+        "schema_version": 3,
+        "snapshot_id": "snapshot-test",
+        "feature_names": list(FEATURES),
+        "window_size": WINDOW_SIZE,
+        "output_width": MAX_FORECAST_DAYS,
+        "close_index": FEATURES.index("Close"),
+        "dates": ["2026-07-30"],
+        "features": [[1.0] * len(FEATURES)],
+        "historical_prices": [100.0],
+        "future_dates": ["2026-07-31"],
+    }
+    monkeypatch.setattr(
+        api, "build_training_snapshot", lambda ticker: {**snapshot, "ticker": ticker}
+    )
+    response = client.get("/api/v1/training-data?ticker=MSFT")
+    assert response.status_code == 200
+    assert response.json()["feature_names"] == list(FEATURES)
+    assert client.get("/api/v1/training-data?ticker=../MSFT").status_code == 400

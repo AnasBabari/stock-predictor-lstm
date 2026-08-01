@@ -1,21 +1,21 @@
-# StockLSTM - AI Stock Price Predictor
+# StockLSTM - Browser-trained stock forecasting
 
-[![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI 0.115+](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/) [![TensorFlow 2.16+](https://img.shields.io/badge/TensorFlow-2.16+-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Render](https://img.shields.io/badge/Render-46E3B7?logo=render&logoColor=white)](https://stock-predictor-lstm.onrender.com) [![Vercel](https://img.shields.io/badge/Vercel-000000?logo=vercel&logoColor=white)](https://stock-predictor-lstm-two.vercel.app) [![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)](https://github.com/AnasBabari/stock-predictor-lstm/pkgs/container/stock-predictor-lstm)
+[![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI 0.115+](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/) [![TensorFlow.js](https://img.shields.io/badge/TensorFlow.js-4.22-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/js) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-StockLSTM is a React and FastAPI stock-forecasting application. It retrieves Yahoo Finance history, engineers market features, and offers an interactive Chart.js dashboard plus a REST API. The default prepared artifacts use an LSTM for closing-price forecasts and a BiLSTM with temporal attention for up/down probabilities. GRU and BiLSTM-attention regression architectures are available as operator-selected comparison candidates.
+StockLSTM is a React and FastAPI stock-forecasting application. The FastAPI service retrieves Yahoo Finance history and returns a validated feature snapshot. A compact TensorFlow.js LSTM trains in each user's browser, runs in a Web Worker, and stores that user's model in IndexedDB. Render supplies data and calendar dates; it does not train models, load Keras artifacts, or retain model weights.
 
 > [!WARNING]
 > Educational project only. Forecasts, indicators, and sentiment are not financial advice.
 
 > [!NOTE]
-> **Engineering Quality:** [GitHub Actions](https://github.com/AnasBabari/stock-predictor-lstm/actions) runs locked dependency checks, Ruff, Mypy, Bandit, pip-audit, API-documentation drift checks, backend and frontend tests/builds, and Docker Compose API smoke tests.
+> GitHub Actions runs locked dependency checks, Ruff, Mypy, Bandit, pip-audit, API-documentation drift checks, backend and frontend tests/builds, and Docker Compose smoke tests. The local verification workflow may intentionally skip Bandit, but the CI gate remains active.
 
 ## Live Demo
 
-- Frontend: https://stock-predictor-lstm-two.vercel.app
-- Backend API: https://stock-predictor-lstm.onrender.com
-- Swagger UI: https://stock-predictor-lstm.onrender.com/docs
-- OpenAPI schema: https://stock-predictor-lstm.onrender.com/openapi.json
+- Frontend: <https://stock-predictor-lstm-two.vercel.app>
+- Backend API: <https://stock-predictor-lstm.onrender.com>
+- Swagger UI: <https://stock-predictor-lstm.onrender.com/docs>
+- OpenAPI schema: <https://stock-predictor-lstm.onrender.com/openapi.json>
 
 ## Product Tour
 
@@ -24,23 +24,33 @@ StockLSTM is a React and FastAPI stock-forecasting application. It retrieves Yah
 | ![Price forecast dashboard with historical and predicted prices.](assets/dashboard.png) | ![Direction forecast dashboard with model analysis.](assets/prediction.png) |
 
 - Search for a ticker or enter an exact symbol, then choose a 1–30 trading-day horizon.
-- Run a price forecast with historical/predicted prices, or a direction forecast with up/down probabilities.
-- Attention weights and headline sentiment are supporting context, not financial advice; sentiment is not a model input.
-- Save price results to a browser-local watchlist, revisit prediction history, and export PNG, CSV, or complete ZIP analyses.
+- The first forecast downloads a bounded feature snapshot and trains a local model. Progress, the worker backend, holdout metrics, and cache status are shown in the UI.
+- Reloading the page can load the same ticker/type model from IndexedDB. Price and direction models are separate, per browser, per ticker, and never uploaded.
+- If workers, WebGL/CPU TensorFlow.js, or local storage are unavailable, the UI explicitly labels the deterministic persistence/base-rate fallback.
+- Save results to browser-local watchlists/history and export PNG, CSV, or complete ZIP analyses.
 
-Public requests never train models. They prefer fresh, operator-prepared artifacts and disclose the active engine. If an artifact is unavailable, the API may return a labelled persistence or base-rate baseline; it never silently presents a baseline as a learned model.
+## Architecture and data contract
 
-## Data, Models, and Runtime
+The production pipeline has **22 ordered features**: OHLCV, technical indicators, market-context returns, and cyclical calendar values. Browser training uses a 60-session input window, a 30-step model output, an 80% training split, a train-only min/max scaler, and a `forecast_days - 1` purge at the train/holdout boundary. The price target is scaled `Close`; the direction target is a positive future log return.
 
-The production feature pipeline has **22 ordered features**: 5 OHLCV fields, 9 technical values (SMA, EMA, RSI, MACD and signal, Bollinger bands, ATR, OBV), 4 market-context returns (SPY, QQQ, VIX, TNX), and 4 cyclic calendar values. Models receive a 60-session window. Artifacts have a 30-day maximum output width and return the requested 1-30-day slice.
+`GET /api/v1/training-data?ticker=MSFT` returns the validated feature matrix, historical closes, backend-generated future trading dates, feature schema version, and a deterministic `snapshot_id`. The frontend invalidates a cached model when that snapshot, schema, feature list, window, output width, or implementation version changes. The service bounds the snapshot to the configured historical period and 2,000 rows, returns finite numeric values only, and applies a dedicated 10-per-minute limit.
 
-Validation supports `expanding` and `rolling` walk-forward strategies; defaults use five expanding folds and publish untouched out-of-fold metrics when available. Forecasts are scored as explicit origin–horizon pairs, with per-horizon and pooled MAE, MSE, RMSE, MAPE, bias, R², directional accuracy, MASE, RMSSE, and error relative to persistence. Direction models also report balanced accuracy, Brier score, and log loss.
+The compact browser model is:
 
-The offline experiment framework compares persistence, drift, ridge, and histogram-gradient-boosting baselines on identical purged folds. A candidate is not promoted unless it improves pooled MAE and RMSE over persistence by at least 5%, remains stable across folds, and satisfies scaled-error limits. See [model evaluation](docs/MODEL_EVALUATION.md) for the complete contract.
+```text
+Input [60, 22] -> LSTM(32, sequences) -> Dropout(.20) -> LSTM(16)
+                -> Dense(16, relu) -> Dense(30)
+```
 
-Exchange calendars support selected international suffixes and 24/7 crypto pairs; unknown dotted symbols report an NYSE fallback. Yahoo Finance headline sentiment uses VADER with explicit finance-phrase adjustments and observable coverage metadata. Live sentiment remains response context only. Historical sentiment features require timestamped articles, exclude future and untimestamped records, and must pass the same controlled ablation and promotion gate before entering a production model.
+Price uses linear output/MSE; direction uses sigmoid output/binary cross-entropy. Training is capped at 12 epochs, batch size 32, no shuffle, validation early stopping after three unimproved epochs, and a cancel path that disposes tensors and terminates the worker request.
 
-FastAPI validates input, rate-limits public predictions, caches responses, and keeps model training outside the public HTTP path. Versioned Keras artifacts, JSON scalers, metadata, and evaluation data are validated before activation. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for concurrency, locks, quotas, integrity, and readiness behavior.
+Metrics are labelled `browser_purged_holdout`: MAE, MSE, RMSE, MAPE, R², relative MAE/RMSE versus persistence, and direction accuracy, precision, recall, F1, balanced accuracy, Brier score, and naive-baseline accuracy. They are not the historical five-fold walk-forward metrics unless a separate offline benchmark is run.
+
+The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available during migration. Their response metadata always identifies `server_disabled_fallback`; they are not used for learned browser forecasts. `/models` reports `server_models.status = disabled` and `browser_training.status = available`.
+
+## News and sentiment
+
+Live Yahoo Finance headlines are still fetched for the direction response as context (`sentiment.status`/coverage metadata). They are deliberately not sent in the 22-feature browser matrix, so headline sentiment cannot silently become a learned input. Historical news experiments remain offline-only and must use timestamped articles, leakage-safe alignment, controlled ablations, and the same purged holdout/promotion gates as price features. This separation keeps the browser model reproducible and makes the current news limitation explicit instead of claiming that sentiment improves the forecast.
 
 ## Docker Compose
 
@@ -48,39 +58,19 @@ FastAPI validates input, rate-limits public predictions, caches responses, and k
 git clone https://github.com/AnasBabari/stock-predictor-lstm.git
 cd stock-predictor-lstm
 docker compose build
-docker compose run --rm backend python pretrain.py --ticker AAPL
 docker compose up
 ```
 
-The example explicitly approves `AAPL`; repeat `--ticker` for other symbols. No ticker is prepared by default. Open `http://localhost:5500`. Nginx serves the frontend on `5500`, proxies `/api/` to FastAPI, waits for backend readiness, and persists models in `model_cache`. Use `docker compose ps`, `docker compose logs -f`, and `docker compose down`; add `--volumes` only to intentionally remove cached models.
+Open <http://localhost:5500>. Nginx serves the frontend on port 5500 and proxies `/api/` to the lightweight FastAPI service. The backend binds to loopback for local access and the internal Compose network for the proxy. No model volume is required. The same browser worker/IndexedDB flow is used locally and on Render.
 
-The default pretraining command prepares `lstm` and `bilstm_attention_direction`. Operators can prepare comparison candidates explicitly:
-
-```bash
-docker compose run --rm backend python pretrain.py --ticker AAPL --model-type gru
-docker compose run --rm backend python pretrain.py --ticker AAPL --model-type bilstm_attention_regression
-```
-
-## Local Development
+## Local development
 
 Requires Python 3.11+ and Node.js `>=20.19.0 <21` or `>=22.12.0` with npm. The backend reads `.env` from its working directory; copy the example to `backend/.env`.
 
 ```powershell
 cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-Copy-Item ..\.env.example .env
-pip install -r requirements.txt -r requirements-dev.txt
-uvicorn api:app --reload --port 8000
-```
-
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-cp ../.env.example .env
-pip install -r requirements.txt -r requirements-dev.txt
-uvicorn api:app --reload --port 8000
+uv sync --project . --frozen --no-dev
+uv run --project . uvicorn api:app --reload --port 8000
 ```
 
 ```bash
@@ -89,11 +79,18 @@ npm ci
 npm run dev
 ```
 
-Vite runs at `http://localhost:5500` and proxies `/api` to `http://127.0.0.1:8000`. Local Swagger and OpenAPI are `http://127.0.0.1:8000/docs` and `http://127.0.0.1:8000/openapi.json`. CI-aligned dependency setup is `uv sync --project backend --frozen`.
+Vite runs at <http://localhost:5500> and proxies `/api` to <http://127.0.0.1:8000>. CI-aligned production setup is `uv sync --project backend --frozen --no-dev`; it installs no TensorFlow package. The offline research/training environment is opt-in:
 
-## Reproducible Model Benchmark
+```bash
+uv sync --project backend --frozen --group training --group dev
+uv run --project backend python backend/pretrain.py --ticker AAPL --model-type lstm
+```
 
-Run the offline benchmark separately from the public API:
+Offline training may write local artifacts for research and benchmark work. It is not called by the production API, Render start command, or browser path.
+
+## Reproducible offline benchmark
+
+Run the benchmark separately from the public API:
 
 ```powershell
 uv run --project backend python backend/benchmark.py `
@@ -103,14 +100,13 @@ uv run --project backend python backend/benchmark.py `
   --output reports/aapl.json
 ```
 
-The JSON report records the market-data snapshot identifier, date boundaries, target type, purge gap, fold indices, per-horizon metrics, pooled metrics, and promotion decision for each model and feature group. Generated reports are operator artifacts and should not be committed.
+Reports record the snapshot identifier, date boundaries, target type, purge gap, folds, seed, feature set, per-horizon metrics, pooled metrics, and promotion decision. They are evidence, not an automatic deployment action, and generated reports should not be committed.
 
-The benchmark evaluates deterministic baselines and can consume verified frozen snapshots plus operator-selected neural candidates. It is evidence, not an automatic deployment action. Promotion is an explicit lifecycle command: `uv run --project backend python backend/promote.py --registry <dir> --source <candidate> --manifest <manifest.json>`; add `--private-key` and `--public-key` when signed evidence is required. Reports should always name the snapshot, date range, folds, seed, and feature set used for MAE/RMSE comparisons.
 ## Configuration
 
-See [.env.example](.env.example) for the full list and `backend/config.py` for defaults. Key groups are data/model (`HISTORICAL_YEARS`, `WINDOW_SIZE`, `LSTM_UNITS`, `EPOCHS`, `BATCH_SIZE`, `TRAIN_SPLIT`), forecast/artifact (`MODEL_DIR`, `MODEL_MAX_AGE_DAYS`, `DEFAULT_FORECAST_DAYS`, `MAX_FORECAST_DAYS`), cache, capacity, and storage settings. Defaults include a 60-session window, 7-day default forecast, 30-day maximum, 7-day artifact age, and `saved_models` directory.
+See [.env.example](.env.example) and [backend/config.py](backend/config.py). Production settings cover data, CORS, rate limiting, request queues, upstream circuit protection, and trusted proxy addresses. Model-directory, artifact-age, quota, and pretraining settings are retained only for the opt-in offline trainer; they are not present in `render.yaml` and are not read by the production API.
 
-`ALLOWED_ORIGINS` is a JSON-style list, for example `["http://localhost:5500"]`. `CORS_ORIGIN` appends one production frontend origin; Compose overrides local origins for `5500`. Nested validation uses `VALIDATION__...` settings for method, folds, minimum training size, horizon, gap, seed, and deterministic mode. Production should explicitly configure CORS and persistent model storage. `TRUSTED_PROXY_IPS` is an exact JSON IP list; leave it empty unless the direct peer is a controlled proxy.
+`ALLOWED_ORIGINS` is a JSON-style list, for example `["http://localhost:5500"]`. `CORS_ORIGIN` appends the production frontend origin. `TRUSTED_PROXY_IPS` is an exact JSON IP list; leave it empty unless the direct peer is a controlled proxy. Browser model storage is separate from existing localStorage theme/watchlist/history data. The frontend build flag VITE_BROWSER_TRAINING_ENABLED=false provides an emergency rollback to the explicitly labelled compatibility baseline.
 
 ## API
 
@@ -118,17 +114,19 @@ See [.env.example](.env.example) for the full list and `backend/config.py` for d
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /health`, `GET /ready`, `GET /models` | Liveness, readiness, and active artifact manifest. |
+| `GET /health`, `GET /ready`, `GET /models` | Liveness, readiness, and browser/server model status. |
 | `GET /api/v1/search`, `GET /api/v1/info` | Ticker discovery and fundamentals. |
-| `GET /api/v1/predict` | LSTM price forecast and metrics. |
-| `GET /api/v1/predict/direction` | Direction, probability, attention, sentiment, and metrics. |
-| `GET /api/v1/diagnostics/{ticker}` | Persisted walk-forward diagnostics. |`n| `GET /api/v1/model-performance/{ticker}` | Active engine and persisted performance evidence. |
+| `GET /api/v1/training-data?ticker=MSFT` | Validated 22-feature snapshot for browser training. |
+| `GET /api/v1/predict` | Compatibility persistence fallback during migration. |
+| `GET /api/v1/predict/direction` | Compatibility direction base-rate fallback and context sentiment. |
+| `GET /api/v1/diagnostics/{ticker}` | Offline artifact diagnostics, when explicitly available. |
+| `GET /api/v1/model-performance/{ticker}` | Browser-training availability and offline evidence status. |
 
-Prediction requests accept tickers matching `[A-Z0-9.\-]{1,12}` and 1-30 days. `429` indicates rate limiting; `503` can indicate an unavailable prepared artifact, capacity, timeout, readiness, or retryable market-data failure.
+Prediction requests accept tickers matching `[A-Z0-9.\-]{1,12}` and 1–30 days. `429` indicates rate limiting; `503` indicates retryable market-data or service failure. A baseline response is successful but always labelled in metadata.
 
-## Deployment, Testing, and Contribution
+## Deployment, testing, and contribution
 
-The frontend is hosted on Vercel at https://stock-predictor-lstm-two.vercel.app; [frontend/vercel.json](frontend/vercel.json) provides SPA rewrites. The Render API at https://stock-predictor-lstm.onrender.com uses [render.yaml](render.yaml) with Python 3.11.9 and persistent `/app/saved_models`; set `CORS_ORIGIN` to the exact public frontend origin. Render runs `backend/render_start.py` before Uvicorn starts. On the free plan, set `MODEL_DIR=saved_models`; startup prepares the approved `RENDER_PRETRAIN_TICKERS` universe (default `AAPL,MSFT,TSLA`) on ephemeral storage, so models are rebuilt after restarts. Paid plans may set `MODEL_DIR=/app/saved_models` with a persistent disk. Add or change approved tickers in Render configuration when expanding the hosted universe; do not move training into public request handling.
+The frontend is hosted on Vercel; [frontend/vercel.json](frontend/vercel.json) provides SPA rewrites. Render uses [render.yaml](render.yaml) with a lightweight Uvicorn command and no persistent disk or model directory. Set `CORS_ORIGIN` to the exact Vercel origin. Browser model files remain on each user's device.
 
 ```bash
 uv run --project backend pytest backend/tests -q --cov=backend --cov-report=term-missing --cov-fail-under=70
@@ -138,9 +136,7 @@ npm run test:run
 npm run build
 ```
 
-CI checks dependency locks, Ruff, Mypy, Bandit, pip-audit, API documentation, backend tests/coverage, frontend tests/build, policy checks, and a Compose build, health, and frontend-to-backend API smoke test. It does not publish containers or deploy. Do not commit `.env`, generated models, downloaded data, logs, coverage data, or editor files.
-
-Before serving forecasts, run `uv run --project backend python backend/pretrain.py --ticker SYMBOL` against persistent model storage and verify `/models`. The command exits non-zero if preparation fails; it never reports a stale fallback artifact as ready. Schedule the same explicit command at least daily to stay within the default seven-day artifact age. For a `503`, verify the requested artifact is fresh, then check storage and upstream status. For local API failures, ensure FastAPI is on `8000`, Vite is on `5500`, and frontend calls use `/api`.
+CI checks dependency locks, Ruff, Mypy, Bandit, pip-audit, API documentation, backend tests/coverage, frontend tests/build, policy checks, and Compose configuration/smoke tests. It does not publish containers or deploy. Do not commit `.env`, generated model artifacts, downloaded data, logs, coverage data, or editor files.
 
 ## License
 

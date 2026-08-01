@@ -13,8 +13,10 @@ import Watchlist from './components/Watchlist';
 import PredictionHistory from './components/PredictionHistory';
 import ToastContainer from './components/ToastContainer';
 import { exportCompleteAnalysis } from './utils/exportService';
+import { browserTrainingSupported, clearBrowserModelCache, trainBrowserForecast } from './ml/browserTrainingClient';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
+const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
 const THEME_KEY = 'stocklstm-theme:v1';
 const WL_KEY = 'stocklstm-watchlist:v1';
 const HIST_KEY = 'stocklstm-history:v1';
@@ -23,31 +25,18 @@ const FORECAST_TYPES = {
   PRICE: 'price',
   TREND: 'trend',
 };
-const STATUS_POLL_INTERVAL_MS = 1750;
 
 const stageLabels = {
-  queued: 'Waiting for prediction capacity…',
+  queued: 'Preparing browser training data…',
   downloading_market_data: 'Downloading market data…',
-  preparing_features: 'Preparing market features…',
-  checking_artifact: 'Checking for a compatible model…',
-  training: 'Training a new model for this ticker…',
-  generating_forecast: 'Generating forecast…',
+  preparing_features: 'Preparing browser features…',
+  checking_artifact: 'Checking your local model cache…',
+  cache_hit: 'Loading your cached browser model…',
+  training: 'Training your local model…',
+  generating_forecast: 'Generating browser forecast…',
   completed: 'Forecast ready.',
   failed: 'Forecast could not be completed.',
 };
-
-function createRequestId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  if (!globalThis.crypto?.getRandomValues) {
-    throw new Error('Secure request identifiers are unavailable in this browser.');
-  }
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
 function normalizePredictionError(reason) {
   if (reason instanceof Error) return reason;
@@ -112,6 +101,57 @@ function assertForecastIdentity(data, ticker, days, type) {
   return data;
 }
 
+function browserResponse(snapshot, result, forecastType, days) {
+  const engine = {
+    family: 'compact_tfjs_lstm',
+    role: 'browser_learned',
+    baseline_fallback: false,
+    cache_status: result.cacheStatus,
+    backend: result.backend,
+  };
+  const metadata = {
+    model_version: result.modelVersion || 'tfjs-lstm-v1',
+    schema_version: snapshot.schema_version,
+    window_size: snapshot.window_size,
+    feature_count: snapshot.feature_names.length,
+    output_width: snapshot.output_width,
+    architecture: 'compact_lstm_in_browser',
+    metric_source: result.metrics?.metric_source || 'browser_purged_holdout',
+    data_snapshot: snapshot.data_snapshot,
+    snapshot_id: snapshot.snapshot_id,
+    browser_training: true,
+    engine,
+    execution: {
+      mode: result.executionMode,
+      coalesced: false,
+    },
+    artifact_state_before: result.cacheStatus === 'hit' ? 'fresh' : 'missing',
+    artifact_action: result.cacheStatus === 'hit' ? 'loaded' : 'trained',
+  };
+  if (forecastType === FORECAST_TYPES.TREND) {
+    return {
+      ticker: snapshot.ticker,
+      forecast_days: days,
+      future_dates: snapshot.future_dates.slice(0, days),
+      directions: result.directions,
+      probabilities: result.probabilities,
+      attention_weights: [],
+      metrics: result.metrics,
+      sentiment: { status: 'context_only', detail: 'News is not used as a browser model feature.' },
+      metadata,
+    };
+  }
+  return {
+    ticker: snapshot.ticker,
+    forecast_days: days,
+    historical_dates: snapshot.dates,
+    historical_prices: snapshot.historical_prices,
+    future_dates: snapshot.future_dates.slice(0, days),
+    predicted_prices: result.predictedPrices,
+    metrics: result.metrics,
+    metadata,
+  };
+}
 export default function App() {
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem(THEME_KEY) || 'dark';
@@ -145,7 +185,6 @@ export default function App() {
   });
 
   const abortControllerRef = useRef(null);
-  const statusPollRef = useRef(null);
   const requestIdRef = useRef(0);
   const forecastCacheRef = useRef(new Map());
   const chartRef = useRef(null);
@@ -156,10 +195,7 @@ export default function App() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    if (statusPollRef.current) {
-      clearInterval(statusPollRef.current);
-      statusPollRef.current = null;
-    }
+
   }, []);
 
   useEffect(() => {
@@ -203,42 +239,67 @@ export default function App() {
     }, 3000);
   }, []);
 
-  const fetchPredictionData = useCallback(
-    async (symbol, days, type, signal, requestId) => {
-      const endpoint =
-        type === FORECAST_TYPES.TREND ? '/api/v1/predict/direction' : '/api/v1/predict';
-      const headers = requestId ? { 'X-Prediction-Request-ID': requestId } : undefined;
-      const res = await fetch(`${API_BASE}${endpoint}?ticker=${symbol}&days=${days}`, { signal, headers });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Prediction failed (${res.status})`);
-      }
-
-      return res.json();
-    },
-    []
-  );
-
-  const startStatusPolling = useCallback((requestId, requestIdNumber, signal) => {
-    const poll = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/v1/prediction-status/${requestId}`, { signal });
-        if (!res.ok) return;
-        const status = await res.json();
-        const stageLabel = stageLabels[status.stage];
-        if (requestIdRef.current === requestIdNumber && stageLabel) {
-          setLoadingStage(stageLabel);
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          // The prediction request remains the source of truth for user-facing errors.
-        }
-      }
+  const fetchServerBaseline = useCallback(async (symbol, days, type, signal, cause) => {
+    const endpoint = type === FORECAST_TYPES.TREND ? '/api/v1/predict/direction' : '/api/v1/predict';
+    const response = await fetch(`${API_BASE}${endpoint}?ticker=${encodeURIComponent(symbol)}&days=${days}`, { signal });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Prediction failed (${response.status})`);
+    }
+    const data = await response.json();
+    data.metadata = {
+      ...(data.metadata || {}),
+      browser_training: false,
+      browser_training_error: cause instanceof Error ? cause.message : 'unavailable',
+      engine: {
+        ...(data.metadata?.engine || {}),
+        role: 'baseline_fallback',
+        baseline_fallback: true,
+      },
     };
-    void poll();
-    statusPollRef.current = setInterval(() => void poll(), STATUS_POLL_INTERVAL_MS);
+    return data;
   }, []);
+  const fetchPredictionData = useCallback(
+    async (symbol, days, type, signal, onProgress) => {
+      if (!BROWSER_TRAINING_ENABLED) {
+        return fetchServerBaseline(symbol, days, type, signal, new Error('Browser training is disabled by the deployment flag.'));
+      }
+      const trainingEndpoint = `${API_BASE}/api/v1/training-data?ticker=${encodeURIComponent(symbol)}`;
+      let snapshot;
+      try {
+        const dataResponse = await fetch(trainingEndpoint, { signal });
+        if (!dataResponse.ok) {
+          const errorData = await dataResponse.json().catch(() => ({}));
+          throw new Error(errorData.detail || `Training data failed (${dataResponse.status})`);
+        }
+        snapshot = await dataResponse.json();
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        return fetchServerBaseline(symbol, days, type, signal, error);
+      }
+
+      if (!browserTrainingSupported()) {
+        return fetchServerBaseline(symbol, days, type, signal, new Error('Browser training is unavailable on this device.'));
+      }
+
+      try {
+        onProgress?.({ stage: 'checking_artifact', message: 'Checking your local model cache…' });
+        const result = await trainBrowserForecast({
+          snapshot,
+          forecastType: type,
+          days,
+          signal,
+          onProgress,
+        });
+        onProgress?.({ stage: 'generating_forecast', message: 'Generating browser forecast…' });
+        return browserResponse(snapshot, result, type, days);
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        return fetchServerBaseline(symbol, days, type, signal, error);
+      }
+    },
+    [fetchServerBaseline]
+  );
 
   const fetchStockInfo = useCallback(
     async (symbol, signal) => {
@@ -270,10 +331,12 @@ export default function App() {
       setStockInfo(null);
 
       try {
-        const requestToken = createRequestId();
-        startStatusPolling(requestToken, requestId, signal);
+        const onProgress = (progress) => {
+          if (requestIdRef.current !== requestId) return;
+          setLoadingStage(progress.message || stageLabels[progress.stage] || 'Training your local model…');
+        };
         const [predRes, infoRes] = await Promise.allSettled([
-          fetchPredictionData(symbol, forecastDays, requestedType, signal, requestToken),
+          fetchPredictionData(symbol, forecastDays, requestedType, signal, onProgress),
           fetchStockInfo(symbol, signal),
         ]);
 
@@ -335,10 +398,6 @@ export default function App() {
         addToast('error', msg);
       } finally {
         if (requestIdRef.current === requestId) {
-          if (statusPollRef.current) {
-            clearInterval(statusPollRef.current);
-            statusPollRef.current = null;
-          }
           setIsLoading(false);
           setLoadingStage('');
         }
@@ -351,7 +410,6 @@ export default function App() {
       fetchStockInfo,
       forecastDays,
       forecastType,
-      startStatusPolling,
     ]
   );
 
@@ -462,6 +520,16 @@ export default function App() {
     }
   }, [addToast, fetchPredictionData, forecastDays, ticker]);
 
+  const handleClearBrowserModels = useCallback(async () => {
+    try {
+      await clearBrowserModelCache();
+      forecastCacheRef.current.clear();
+      setPredictionData(null);
+      addToast('success', 'Locally trained browser models cleared');
+    } catch (error) {
+      addToast('error', error?.message || 'Could not clear browser models');
+    }
+  }, [addToast]);
   const handleAddWatchlist = useCallback(
     (data) => {
       if (!data || forecastType !== FORECAST_TYPES.PRICE || !data.historical_prices?.length) {
@@ -572,6 +640,12 @@ export default function App() {
         </div>
 
         <MetricsCard stockData={predictionData} forecastType={forecastType} />
+
+        {browserTrainingSupported() && (
+          <button type="button" className="cache-clear-button" onClick={handleClearBrowserModels}>
+            Clear locally trained models
+          </button>
+        )}
 
         <div className="bottom-panels">
           <Watchlist

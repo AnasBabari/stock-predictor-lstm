@@ -3,6 +3,26 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
+const browserTrainingState = vi.hoisted(() => ({ defer: false, resolve: null, reject: null, signal: null }));
+
+vi.mock('./ml/browserTrainingClient', () => ({
+  browserTrainingSupported: vi.fn(() => true),
+  clearBrowserModelCache: vi.fn(() => Promise.resolve()),
+  trainBrowserForecast: vi.fn(({ forecastType, days, signal, onProgress }) => {
+    browserTrainingState.signal = signal;
+    onProgress?.({ stage: 'training', message: 'Training epoch 4 of 12…' });
+    const result = forecastType === 'trend'
+      ? { directions: Array.from({ length: days }, () => 'Up'), probabilities: Array.from({ length: days }, () => 0.65), metrics: { metric_source: 'browser_purged_holdout', accuracy: 0.6 }, cacheStatus: 'stored', backend: 'cpu', executionMode: 'browser_trained' }
+      : { predictedPrices: Array.from({ length: days }, (_, index) => 405 + index), metrics: { metric_source: 'browser_purged_holdout', rmse: 1.2, mae: 0.8 }, cacheStatus: 'stored', backend: 'cpu', executionMode: 'browser_trained' };
+    return new Promise((resolve, reject) => {
+      browserTrainingState.reject = reject;
+      signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')), { once: true });
+      if (browserTrainingState.defer) browserTrainingState.resolve = () => resolve(result);
+      else resolve(result);
+    });
+  }),
+}));
+
 vi.mock('./components/SplashScreen', () => ({
   default: () => null,
 }));
@@ -78,6 +98,21 @@ const trendResponse = {
   sentiment: { score: 0.1, status: 'ok', provider: 'test', method: 'mock' },
 };
 
+const trainingSnapshot = {
+  ticker: 'TSLA',
+  schema_version: 3,
+  snapshot_id: 'snapshot-test',
+  feature_names: Array.from({ length: 22 }, (_, index) => `Feature_${index}`),
+  window_size: 60,
+  output_width: 30,
+  close_index: 3,
+  dates: ['2026-07-18', '2026-07-21'],
+  features: [],
+  historical_prices: [390.0, 400.0],
+  future_dates: Array.from({ length: 30 }, (_, index) => `2026-07-${24 + index}`),
+  data_snapshot: { snapshot_id: 'snapshot-test' },
+};
+
 const infoResponse = {
   ticker: 'TSLA',
   name: 'Tesla',
@@ -89,6 +124,9 @@ function mockFetchSequence() {
     const requestUrl = String(url);
     if (requestUrl.includes('/api/v1/search')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) });
+    }
+    if (requestUrl.includes('/api/v1/training-data')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(trainingSnapshot) });
     }
     if (requestUrl.includes('/api/v1/info')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
@@ -105,6 +143,10 @@ function mockFetchSequence() {
 
 describe('forecast toggle integration', () => {
   beforeEach(() => {
+    browserTrainingState.defer = false;
+    browserTrainingState.resolve = null;
+    browserTrainingState.reject = null;
+    browserTrainingState.signal = null;
     mockFetchSequence();
     localStorage.clear();
   });
@@ -172,68 +214,30 @@ describe('forecast toggle integration', () => {
     expect(screen.queryByText('Trend Forecast Metrics')).not.toBeInTheDocument();
   });
 
-  it('uses server-reported status stages and sends a request identifier', async () => {
-    let resolvePrediction;
-    global.fetch = vi.fn((url, options = {}) => {
-      const requestUrl = String(url);
-      if (requestUrl.includes('/api/v1/prediction-status/')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ status: 'running', stage: 'training', coalesced: false }),
-        });
-      }
-      if (requestUrl.includes('/api/v1/info')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
-      }
-      if (requestUrl.includes('/api/v1/predict')) {
-        expect(options.headers['X-Prediction-Request-ID']).toMatch(
-          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-        );
-        return new Promise((resolve) => {
-          resolvePrediction = () => resolve({ ok: true, json: () => Promise.resolve(priceResponse) });
-        });
-      }
-      return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
-    });
-
+  it('reports browser training progress and uses the feature snapshot', async () => {
+    browserTrainingState.defer = true;
     const user = userEvent.setup();
     render(<App />);
     await user.type(screen.getByPlaceholderText(/search tickers/i), 'TSLA');
     await user.click(screen.getByRole('button', { name: /^predict$/i }));
 
-    expect(await screen.findByText('Training a new model for this ticker…')).toBeInTheDocument();
-    resolvePrediction();
+    expect(await screen.findByText('Training epoch 4 of 12…')).toBeInTheDocument();
+    expect(browserTrainingState.signal).toBeTruthy();
+    browserTrainingState.resolve();
     await waitFor(() => expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument());
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/training-data?ticker=TSLA'), expect.anything());
   });
 
-  it('aborts the request and clears status polling on unmount', async () => {
-    let predictionOptions;
-    const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
-    global.fetch = vi.fn((url, options = {}) => {
-      const requestUrl = String(url);
-      if (requestUrl.includes('/api/v1/prediction-status/')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ stage: 'queued' }) });
-      }
-      if (requestUrl.includes('/api/v1/info')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
-      }
-      if (requestUrl.includes('/api/v1/predict')) {
-        predictionOptions = options;
-        return new Promise(() => {});
-      }
-      return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
-    });
-
+  it('aborts browser training on unmount without server status polling', async () => {
+    browserTrainingState.defer = true;
     const user = userEvent.setup();
     const { unmount } = render(<App />);
     await user.type(screen.getByPlaceholderText(/search tickers/i), 'TSLA');
     await user.click(screen.getByRole('button', { name: /^predict$/i }));
-    await screen.findByText('Waiting for prediction capacity…');
+    await screen.findByText('Training epoch 4 of 12…');
 
     unmount();
-    expect(predictionOptions.signal.aborted).toBe(true);
-    expect(clearIntervalSpy).toHaveBeenCalled();
-    clearIntervalSpy.mockRestore();
+    expect(browserTrainingState.signal.aborted).toBe(true);
   });
 
   it.each([

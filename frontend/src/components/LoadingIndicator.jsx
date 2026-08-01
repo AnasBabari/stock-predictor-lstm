@@ -24,7 +24,7 @@ export default function LoadingIndicator({ isLoading, stage }) {
       </div>
       <p className="loading-text">{stage || 'Forecast request in progress…'}</p>
       <p className="loading-hint">
-        This request may retrieve market data or train a compatible model.
+        The first browser training can take 30–90 seconds; later forecasts can load your cached model.
       </p>
     </div>
   );

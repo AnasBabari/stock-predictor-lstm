@@ -4,8 +4,7 @@ services:
     env: python
     region: oregon
     buildCommand: "pip install uv==0.11.16 && uv sync --project backend --frozen --no-dev"
-    # Artifacts are pre-trained locally and committed to the repo; training never runs on the
-    # 512MB free instance (MODEL_MAX_AGE_DAYS keeps committed models serving without retraining).
+    # Render is a lightweight feature service; models train and cache in the browser.
     startCommand: "backend/.venv/bin/uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend"
     envVars:
       - key: PYTHON_VERSION
@@ -14,33 +13,9 @@ services:
         value: production
       - key: CORS_ORIGIN
         sync: false
-      - key: MODEL_DIR
-        value: backend/saved_models
-      - key: MODEL_MAX_AGE_DAYS
-        value: "30"
-      - key: TF_CPP_MIN_LOG_LEVEL
-        value: "2"
       - key: PREDICTION_WORKERS
-        value: "1"
+        value: "2"
       - key: PREDICTION_QUEUE_SIZE
         value: "4"
       - key: PREDICTION_TIMEOUT_SECONDS
         value: "600"
-      - key: MALLOC_ARENA_MAX
-        value: "2"
-      - key: OMP_NUM_THREADS
-        value: "1"
-      - key: OPENBLAS_NUM_THREADS
-        value: "1"
-      - key: MKL_NUM_THREADS
-        value: "1"
-      - key: TF_ENABLE_ONEDNN_OPTS
-        value: "0"
-      - key: TRAINING_CONCURRENCY
-        value: "1"
-      - key: MODEL_MAX_COUNT
-        value: "20"
-      - key: MODEL_MAX_STORAGE_MB
-        value: "900"
-      - key: MODEL_MIN_FREE_MB
-        value: "100"

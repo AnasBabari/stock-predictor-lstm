@@ -2,109 +2,97 @@
 
 Local backend: `http://127.0.0.1:8000`. Interactive OpenAPI: `/docs`; schema: `/openapi.json`.
 
-All errors use `{"detail":"..."}`. `400` means invalid/insufficient instrument data, `422` means query-schema failure, `429` means per-client rate limiting, and `503` means no fresh prepared artifact, bounded capacity, timeout, readiness failure, or retryable benchmark unavailability.
+All errors use `{"detail":"..."}`. `400` means invalid or insufficient instrument data, `422` means query-schema failure, `429` means per-client rate limiting, and `503` means retryable market-data or service failure. Server forecast compatibility responses can be successful baselines; their metadata never claims a learned server model.
 
-## Probes and discovery`r`n`r`n- `GET /`: service metadata and links to health, readiness, and OpenAPI documentation.
+## Probes and discovery
 
+- `GET /`: service metadata and links to health, readiness, and OpenAPI documentation.
 - `GET /health`: process liveness only.
-- `GET /ready`: `200` only when model storage is writable/has its free-space floor and the last market-data dependency state is not unavailable; otherwise `503`.
-- `GET /models`: model manifest.
-- `GET /api/v1/search?query=AAPL`: up to eight Yahoo suggestions. A syntactically valid exact symbol remains available as a clearly generic `SYMBOL` fallback if autocomplete is down.
-- `GET /api/v1/info?ticker=AAPL`: fundamentals; thread-safe 3600-second cache by default.
-- `GET /api/v1/prediction-status/{request_id}`: short-lived progress for a request ID supplied to a forecast request. Rate limit: 60/minute/IP. Responses use `Cache-Control: no-store`.
+- `GET /ready`: readiness for the market-data dependency. Model storage is not required; browser IndexedDB is outside the server readiness probe.
+- `GET /models`: reports `server_models.status = disabled` and `browser_training.status = available` with `storage = indexeddb`.
+- `GET /api/v1/search?query=AAPL`: up to eight Yahoo suggestions. A syntactically valid exact symbol remains available as a generic `SYMBOL` fallback if autocomplete is down.
+- `GET /api/v1/info?ticker=AAPL`: fundamentals with a thread-safe cache.
+- `GET /api/v1/prediction-status/{request_id}`: short-lived compatibility telemetry for a request ID. Responses use `Cache-Control: no-store`.
 
-## `GET /api/v1/predict`
+## `GET /api/v1/training-data`
 
-Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, range 1–30). Rate limit: 5/minute/client. Prediction cache: 300 seconds by default; a cache hit revalidates its underlying artifact and is evicted if it is no longer fresh. Send an optional `X-Prediction-Request-ID` UUIDv4 header to enable short-lived status polling. Public requests load only fresh, validated 30-day artifacts and never initiate training. Missing, stale, or invalid artifacts may use a clearly labelled deterministic baseline after bounded market-data retrieval; upstream circuit failures return `503`.
+Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`). Rate limit: 10/minute/client. The server fetches and validates the bounded feature snapshot; it accepts no client-supplied feature matrix and writes no files.
+
+The response preserves the 22-feature order used by the offline pipeline, includes a deterministic `snapshot_id`, 60-session `window_size`, 30-step `output_width`, close-column index, historical prices, and backend-generated future trading dates.
 
 ```json
 {
-  "ticker": "AAPL",
-  "historical_dates": ["2026-07-24"],
-  "historical_prices": [213.88],
-  "future_dates": ["2026-07-27", "2026-07-28", "2026-07-29"],
-  "predicted_prices": [214.1, 214.5, 213.9],
-  "forecast_days": 3,
-  "metrics": {
-    "metric_source": "walk_forward_out_of_fold",
-    "metric_scope": "forecast_origin_horizon_pairs",
-    "rmse": 4.82,
-    "mae": 3.61,
-    "mase": 0.84,
-    "rmsse": 0.89,
-    "relative_mae": 0.81,
-    "relative_rmse": 0.86,
-    "mape": 1.74,
-    "r2": 0.91,
-    "directional_accuracy": 0.63
-  },
-  "metadata": {
-    "architecture": "lstm",
-    "output_width": 30,
-    "calendar": "NYSE",
-    "metric_source": "walk_forward_out_of_fold",
-    "data_snapshot": {"snapshot_id": "sha256..."},
-    "data_quality": {"schema_version": 2, "policy": "fail_closed", "status": "complete"},
-    "timings_seconds": {"queue_wait": "<measured seconds or null>", "market_data": "<measured seconds or null>", "feature_preparation": "<measured seconds or null>", "artifact_load_validation": "<measured seconds or null>", "training": "<measured seconds or null>", "inference": "<measured seconds or null>", "total": "<measured seconds>"},
-    "execution": {"mode": "artifact_loaded", "coalesced": false},
-    "artifact_state_before": "fresh",
-    "artifact_action": "loaded"
-  }
+  "ticker": "MSFT",
+  "schema_version": 3,
+  "snapshot_id": "sha256...",
+  "generated_at": "2026-08-01T12:00:00Z",
+  "feature_names": ["Open", "High", "Low", "Close", "Volume", "SMA_20", "EMA_20", "RSI_14", "MACD", "MACD_Signal", "BB_Upper", "BB_Lower", "ATR_14", "OBV", "SPY_Return_1D", "QQQ_Return_1D", "VIX_Return_1D", "TNX_Return_1D", "Month_Sin", "Month_Cos", "Day_Sin", "Day_Cos"],
+  "window_size": 60,
+  "output_width": 30,
+  "close_index": 3,
+  "dates": ["2026-07-29"],
+  "features": [["finite numeric values ..."]],
+  "historical_prices": ["finite positive closes ..."],
+  "future_dates": ["2026-07-30"],
+  "calendar": "NYSE",
+  "data_snapshot": {"snapshot_id": "sha256..."}
 }
 ```
 
-Metrics can instead be `{"metric_source":"unavailable","detail":"..."}`. They are never computed on the final production model's training samples. MASE/RMSSE use training-only naïve scales; `relative_mae` and `relative_rmse` divide candidate error by the no-change persistence error for the same forecast origins. Values below `1.0` indicate improvement over their respective baseline.
+Invalid tickers and insufficient data return sanitized `400` responses; upstream failures return `503`. Non-finite feature rows, invalid closes, and snapshots over the 2,000-row bound are rejected or trimmed before serialization.
 
-`timings_seconds` use caller-level semantics. Stages that did not run for that caller are `null`; a response-cache hit has `null` pipeline stages but a measured `total`. A coalesced caller receives its independently measured `total` while owner-executed pipeline stages remain `null`. `artifact_state_before` is `fresh`, `missing`, `stale`, or `incompatible` when artifact validation ran (otherwise `null` for a response-cache hit). `artifact_action` is `loaded`, `retrained`, or `not_applicable`. For a coalesced response, the artifact fields describe the shared job's validated outcome rather than a second artifact check by the joiner. `execution.mode` is `response_cache_hit`, `artifact_loaded`, `baseline_fallback`, `trained`, or `coalesced`. A baseline fallback is labelled in `metadata.engine` and never represented as learned-model evidence.
+## Compatibility forecast endpoints
 
-## `GET /api/v1/predict/direction`
+### `GET /api/v1/predict`
 
-Same parameters/cache/rate limit. `directions` contains strings (`"Up"`/`"Down"`), and `probabilities` contains sigmoid probabilities in `[0,1]`. Both arrays and `future_dates` have exactly `forecast_days` entries. `attention_weights` has exactly 60 dated entries. The cached model always has `output_width: 30`, regardless of request order.
+Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, range 1–30). Rate limit: 5/minute/client. The endpoint is retained while the frontend migration stabilizes. It fetches market data and returns a persistence forecast, not a server-trained LSTM. The response engine is:
 
 ```json
 {
-  "ticker": "VOD.L",
+  "family": "persistence",
+  "role": "server_disabled_fallback",
+  "baseline_fallback": true
+}
+```
+
+`metrics.metric_source` is `baseline_definition`; it is not a walk-forward score. The bounded response cache contains only baseline responses and does not store model weights.
+
+### `GET /api/v1/predict/direction`
+
+The same parameters and rate limit return a recent-up-session base-rate forecast. `directions` and `probabilities` have exactly `forecast_days` entries; `attention_weights` is an empty list because the server direction model is disabled. Live headline sentiment may be returned as response context only and is never a browser-model feature.
+
+```json
+{
+  "ticker": "MSFT",
   "forecast_days": 3,
-  "future_dates": ["2026-07-27", "2026-07-28", "2026-07-29"],
+  "future_dates": ["2026-08-03", "2026-08-04", "2026-08-05"],
   "directions": ["Up", "Down", "Up"],
-  "probabilities": [0.68, 0.43, 0.59],
-  "attention_weights": [{"index": 0, "date": "2026-05-01", "weight": 0.012}],
-  "metrics": {
-    "metric_source": "walk_forward_out_of_fold",
-    "precision": 0.61,
-    "recall": 0.58,
-    "f1": 0.59,
-    "balanced_accuracy": 0.60,
-    "brier_score": 0.23,
-    "log_loss": 0.65,
-    "naive_baseline": 0.53
-  },
-  "sentiment": {
-    "score": 0.23,
-    "status": "live",
-    "provider": "yfinance",
-    "method": "vader_financial",
-    "article_count": 8,
-    "timestamped_article_count": 7,
-    "freshest_article_at": "2026-07-26T14:32:00+00:00",
-    "reason": null
-  },
-  "metadata": {"architecture": "bidirectional_lstm_with_attention", "output_width": 30, "calendar": "LSE"}
+  "probabilities": [0.55, 0.55, 0.55],
+  "attention_weights": [],
+  "metrics": {"metric_source": "baseline_definition", "naive_baseline": 0.55},
+  "metadata": {"engine": {"family": "recent_base_rate", "role": "server_disabled_fallback", "baseline_fallback": true}}
 }
 ```
 
-Sentiment is untrusted, headline-only external data. Failures produce a documented `fallback` score of `0.0`, `status: "fallback"`, zero coverage counts, and a generic `reason` such as `no_usable_news` or `upstream_error`. Live sentiment does not enter model features. Historical news can enter only an offline ablation, and only timestamped articles published before each session are eligible.
+## Browser model response contract
 
-## `GET /api/v1/prediction-status/{request_id}`
+The Vercel frontend fetches `/api/v1/training-data`, then sends the snapshot to a TensorFlow.js Web Worker. The worker uses `model.fit()` with a compact LSTM, no shuffle, an 80% train split, and a `forecast_days - 1` purge. It reports progress after every epoch, supports cancellation, disposes tensors, and tries WebGL before CPU. The build-time VITE_BROWSER_TRAINING_ENABLED=false setting is an explicit rollback to the compatibility baseline.
 
-Use the UUIDv4 value sent in `X-Prediction-Request-ID` on a pending forecast request. The response contains generic request lifecycle/status fields and the current shared stage (`queued`, `downloading_market_data`, `preparing_features`, `checking_artifact`, `training`, `generating_forecast`, `completed`, or `failed`), plus whether the caller joined matching in-flight work. `training` remains a reserved telemetry value for compatibility but is not entered by public requests. Unknown, expired, or malformed IDs return a generic `404` response.
+A learned browser response is labelled `metadata.engine.role = browser_learned`, `metadata.browser_training = true`, and `metadata.metric_source = browser_purged_holdout`. A cached response uses `execution.mode = browser_artifact_loaded`; a newly trained response uses `execution.mode = browser_trained`. IndexedDB keys include the model version, schema, ticker, forecast type, snapshot, window, and output width. Models expire/evict according to the seven-day and six-entry per-browser policy, and the UI provides a clear-local-models control.
 
-Completed and failed status views are eligible to remain available for up to 10 minutes, but terminal views may be evicted earlier under registry capacity pressure. Status telemetry is short-lived and in-process: it is intended only for request UX and diagnostics, not durable storage, production observability, or a production benchmark.
+Price holdout metrics include MAE, MSE, RMSE, MAPE, R², relative MAE, and relative RMSE against persistence. Direction metrics include accuracy, precision, recall, F1, balanced accuracy, Brier score, and naive-baseline accuracy. These values are labelled `browser_purged_holdout`; they are not the offline five-fold walk-forward metrics.
 
-## `GET /api/v1/diagnostics/{ticker}`
+Unsupported workers or failed browser training use an explicit `baseline_fallback` response. A flat persistence result must never be presented as an LSTM result.
 
-Query `model_type` is one of `lstm`, `gru`, `attention`, `bilstm_attention_regression`, or `bilstm_attention_direction`. Returns persisted fold boundaries, untouched-fold predictions/residuals, cross-validation aggregates, per-horizon metrics for regression artifacts, and model metadata. Returns `404` when no activated validation artifacts exist.
+## Compatibility telemetry
 
-## `GET /api/v1/model-performance/{ticker}`
+`GET /api/v1/prediction-status/{request_id}` accepts the UUIDv4 value sent in `X-Prediction-Request-ID` on a compatibility forecast request. Status stages remain `queued`, `downloading_market_data`, `preparing_features`, `checking_artifact`, `training`, `generating_forecast`, `completed`, or `failed`; `training` is reserved compatibility telemetry and is not entered by the public browser path. Unknown, expired, or malformed IDs return a generic `404`.
 
-Query `forecast_type` is `price` or `direction`. Returns the currently selected engine family and role, its attached metrics, snapshot and validation provenance, or an explicit `baseline_definition` result when no learned candidate has qualifying fresh evidence.
+Forecast metadata includes `artifact_state_before` and `artifact_action` alongside the typed `timings_seconds` fields `queue_wait`, `market_data`, `feature_preparation`, `artifact_load_validation`, `training`, `inference`, and `total`. Stages that did not run are `null`, with a non-negative measured `total`. The typed execution modes remain `response_cache_hit`, `artifact_loaded`, `baseline_fallback`, `trained`, and `coalesced`; artifact states are `fresh`, `missing`, `stale`, and `incompatible`; artifact actions are `loaded`, `retrained`, and `not_applicable`. A response-cache hit has `null` pipeline stages and a measured total. This caller-level semantics is short-lived, in-process telemetry, not durable observability. Completed and failed views may remain for up to 10 minutes and can be evicted under registry capacity pressure.
+
+## Offline evidence endpoints
+
+- `GET /api/v1/diagnostics/{ticker}` exposes persisted walk-forward artifacts only when the opt-in offline trainer has produced them; production Render has no such files.
+- `GET /api/v1/model-performance/{ticker}` discloses browser-training availability and any offline evidence. It must not imply that a server model is active.
+
+Live sentiment is untrusted headline-only external data. Historical news can enter only an offline, timestamped, leakage-safe ablation and must pass the same purged holdout and promotion gates as other features.

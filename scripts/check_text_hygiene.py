@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 TEXT_SUFFIXES = {
     ".css",
     ".html",
@@ -37,7 +36,9 @@ def tracked_text_files() -> list[Path]:
     return [
         ROOT / path.decode("utf-8")
         for path in result.stdout.split(b"\0")
-        if path and Path(path.decode("utf-8")).suffix.lower() in TEXT_SUFFIXES
+        if path
+        and (ROOT / path.decode("utf-8")).suffix.lower() in TEXT_SUFFIXES
+        and (ROOT / path.decode("utf-8")).exists()
     ]
 
 

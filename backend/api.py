@@ -17,10 +17,8 @@ import ipaddress
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -28,8 +26,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Annotated, Any, Literal
 
 import numpy as np
-import sklearn  # type: ignore[import-untyped]
-import tensorflow as tf  # type: ignore[import-untyped]
 import yfinance as yf  # type: ignore[import-untyped]
 from cachetools import TTLCache
 from fastapi import FastAPI, Header, HTTPException, Query, Request
@@ -45,34 +41,57 @@ from config import (
     DEFAULT_FORECAST_DAYS,
     FEATURES,
     MAX_FORECAST_DAYS,
-    MODEL_DIR,
     SCHEMA_VERSION,
     WINDOW_SIZE,
     settings,
 )
 from data_pipeline import fetch_data
 from features.market import MarketContextUnavailable
-from hosted_startup import prepare_hosted_artifacts
-from model import (
-    ArtifactValidationError,
-    TrainingCapacityError,
-    get_manifest,
-    load_cross_validation,
-    load_fresh_artifact,
-    load_metadata,
-    load_metrics,
-    load_validation_results,
-    predict_direction,
-    predict_future,
-)
 from news_features import get_live_financial_sentiment as get_financial_sentiment
 from services.baselines import base_rate_direction_forecast, persistence_price_forecast
+from services.training_data import build_training_snapshot
 
-# Throttle TensorFlow memory/threading for low-RAM 1-vCPU environments
-tf.config.threading.set_inter_op_parallelism_threads(1)
-tf.config.threading.set_intra_op_parallelism_threads(1)
 
-prepare_hosted_artifacts()
+class ArtifactValidationError(RuntimeError):
+    """Compatibility exception retained while server artifacts are disabled."""
+
+
+class TrainingCapacityError(RuntimeError):
+    """Compatibility exception retained for legacy clients."""
+
+
+def load_fresh_artifact(*_args, **_kwargs):
+    """Server-side artifact loading is intentionally disabled in production."""
+    raise ArtifactValidationError("Server-side model artifacts are disabled.")
+
+
+def load_metadata(*_args, **_kwargs) -> dict:
+    return {}
+
+
+def load_metrics(*_args, **_kwargs) -> dict:
+    return {}
+
+
+def load_cross_validation(*_args, **_kwargs) -> dict:
+    return {}
+
+
+def load_validation_results(*_args, **_kwargs) -> list:
+    return []
+
+
+def get_manifest() -> dict:
+    return {}
+
+
+def predict_future(*_args, **_kwargs):
+    raise ArtifactValidationError("Server-side model artifacts are disabled.")
+
+
+def predict_direction(*_args, **_kwargs):
+    raise ArtifactValidationError("Server-side model artifacts are disabled.")
+
 
 # ── Logging (2.7) ───────────────────────────────────────────────────
 logging.basicConfig(
@@ -483,7 +502,7 @@ VALID_MODEL_TYPES = {
 
 # ── Helpers ──────────────────────────────────────────────────────────
 def get_runtime_metadata(ticker: str, model_type: str = "lstm") -> dict:
-    """Gather dynamic runtime environment and model metadata."""
+    """Return runtime metadata for a browser-trained or baseline forecast."""
     git_commit = os.environ.get("GIT_COMMIT")
     if not git_commit:
         try:
@@ -493,32 +512,18 @@ def get_runtime_metadata(ticker: str, model_type: str = "lstm") -> dict:
         except Exception:
             git_commit = "unknown"
 
-    saved_meta = load_metadata(ticker, model_type)
-
     return {
         "model_version": APP_VERSION,
-        "schema_version": saved_meta.get("schema_version", SCHEMA_VERSION),
+        "schema_version": SCHEMA_VERSION,
         "git_commit": git_commit,
-        "tensorflow_version": tf.__version__,
         "python_version": sys.version.split()[0],
-        "sklearn_version": sklearn.__version__,
         "window_size": WINDOW_SIZE,
-        "feature_count": saved_meta.get("feature_count", len(FEATURES)),
-        "architecture": (
-            "bidirectional_lstm_with_attention"
-            if model_type == "bilstm_attention_direction"
-            else "bidirectional_lstm_with_attention_regression"
-            if model_type == "bilstm_attention_regression"
-            else "attention_lstm"
-            if model_type == "attention"
-            else "gru"
-            if model_type == "gru"
-            else "lstm"
-        ),
-        "output_width": saved_meta.get("output_width"),
-        "metric_source": saved_meta.get("metric_source", "unavailable"),
-        "seed": saved_meta.get("seed"),
-        "deterministic": saved_meta.get("deterministic"),
+        "feature_count": len(FEATURES),
+        "architecture": "browser_trained_compact_lstm",
+        "output_width": MAX_FORECAST_DAYS,
+        "metric_source": "baseline_definition",
+        "browser_training": True,
+        "forecast_type": "direction" if "direction" in model_type else "price",
     }
 
 
@@ -596,55 +601,25 @@ def _measure(job: PredictionJob, timing: str, stage: str, function):
 
 
 def _price_prediction_pipeline(ticker: str, days: int, job: PredictionJob | None = None) -> dict:
+    """Return an explicit server baseline; learned inference runs in the browser."""
     job = job or PredictionJob(f"price_{ticker}_{days}")
-    model = model_scaler = None
-    try:
-        model, model_scaler = _measure(
-            job,
-            "artifact_load_validation",
-            "checking_artifact",
-            lambda: load_fresh_artifact(ticker, "lstm", MAX_FORECAST_DAYS),
-        )
-        job.set_artifact("fresh", "loaded")
-    except ArtifactValidationError:
-        job.set_artifact("missing", "not_applicable")
+    job.set_artifact("missing", "not_applicable")
     feature_df, closing_prices, historical_dates, feature_metadata = _measure(
         job, "market_data", "downloading_market_data", lambda: _fetch_snapshot(ticker)
     )
-    if model is None:
-        predictions, metrics = persistence_price_forecast(closing_prices, days)
-        future_dates, calendar_id = _validated_future_dates(ticker, historical_dates[-1], days)
-        engine = {
-            "family": "persistence",
-            "role": "baseline_fallback",
-            "baseline_fallback": True,
-        }
-    else:
-        predictions, future_dates, calendar_id = _measure(
-            job,
-            "inference",
-            "generating_forecast",
-            lambda: (
-                predict_future(model, feature_df, model_scaler, days=days),
-                *_validated_future_dates(ticker, historical_dates[-1], days),
-            ),
-        )
-        metrics = load_metrics(ticker, "lstm")
-        engine = {
-            "family": "lstm",
-            "role": "learned_candidate",
-            "baseline_fallback": False,
-        }
-    if len(predictions) != days:
-        raise RuntimeError("Price model returned an incompatible forecast horizon.")
-
+    predictions, metrics = persistence_price_forecast(closing_prices, days)
+    future_dates, calendar_id = _validated_future_dates(ticker, historical_dates[-1], days)
     runtime = get_runtime_metadata(ticker, "lstm")
     runtime.update(
         {
             "calendar": calendar_id,
             "data_snapshot": feature_metadata,
             "data_quality": feature_metadata.get("market_context", {}),
-            "engine": engine,
+            "engine": {
+                "family": "persistence",
+                "role": "server_disabled_fallback",
+                "baseline_fallback": True,
+            },
         }
     )
     return {
@@ -662,73 +637,26 @@ def _price_prediction_pipeline(ticker: str, days: int, job: PredictionJob | None
 def _direction_prediction_pipeline(
     ticker: str, days: int, job: PredictionJob | None = None
 ) -> dict:
+    """Return an explicit server direction baseline; learned inference is client-side."""
     job = job or PredictionJob(f"direction_{ticker}_{days}")
-    model_type = "bilstm_attention_direction"
-    model = model_scaler = None
-    try:
-        model, model_scaler = _measure(
-            job,
-            "artifact_load_validation",
-            "checking_artifact",
-            lambda: load_fresh_artifact(ticker, model_type, MAX_FORECAST_DAYS),
-        )
-        job.set_artifact("fresh", "loaded")
-    except ArtifactValidationError:
-        job.set_artifact("missing", "not_applicable")
+    job.set_artifact("missing", "not_applicable")
     feature_df, closing_prices, historical_dates, feature_metadata = _measure(
         job, "market_data", "downloading_market_data", lambda: _fetch_snapshot(ticker)
     )
-    if model is None:
-        directions, probabilities, metrics = base_rate_direction_forecast(closing_prices, days)
-        attention_weights = []
-        future_dates, calendar_id = _validated_future_dates(ticker, historical_dates[-1], days)
-        engine = {
-            "family": "recent_base_rate",
-            "role": "baseline_fallback",
-            "baseline_fallback": True,
-        }
-    else:
-        directions, probabilities, attention_weights, future_dates, calendar_id = _measure(
-            job,
-            "inference",
-            "generating_forecast",
-            lambda: (
-                *predict_direction(model, feature_df, model_scaler, days=days),
-                *_validated_future_dates(ticker, historical_dates[-1], days),
-            ),
-        )
-        metrics = load_metrics(ticker, model_type=model_type)
-        engine = {
-            "family": model_type,
-            "role": "learned_candidate",
-            "baseline_fallback": False,
-        }
-    if not (len(directions) == len(probabilities) == len(future_dates) == days) or (
-        model is not None and len(attention_weights) != WINDOW_SIZE
-    ):
-        raise RuntimeError("Direction model returned an incompatible response shape.")
-    if not all(
-        np.isfinite(probability) and 0.0 <= probability <= 1.0 for probability in probabilities
-    ):
-        raise RuntimeError("Direction model returned invalid probabilities.")
-
-    past_dates = (
-        historical_dates[-len(attention_weights) :].strftime("%Y-%m-%d").tolist()
-        if attention_weights
-        else []
-    )
-    formatted_attention = [
-        {"index": index, "date": date, "weight": float(weight)}
-        for index, (date, weight) in enumerate(zip(past_dates, attention_weights, strict=True))
-    ]
+    directions, probabilities, metrics = base_rate_direction_forecast(closing_prices, days)
+    future_dates, calendar_id = _validated_future_dates(ticker, historical_dates[-1], days)
     sentiment_data = get_financial_sentiment(ticker)
-    runtime = get_runtime_metadata(ticker, model_type)
+    runtime = get_runtime_metadata(ticker, "bilstm_attention_direction")
     runtime.update(
         {
             "calendar": calendar_id,
             "data_snapshot": feature_metadata,
             "data_quality": feature_metadata.get("market_context", {}),
-            "engine": engine,
+            "engine": {
+                "family": "recent_base_rate",
+                "role": "server_disabled_fallback",
+                "baseline_fallback": True,
+            },
         }
     )
     return {
@@ -737,7 +665,7 @@ def _direction_prediction_pipeline(
         "future_dates": future_dates,
         "directions": directions,
         "probabilities": probabilities,
-        "attention_weights": formatted_attention,
+        "attention_weights": [],
         "metrics": metrics,
         "sentiment": sentiment_data.get("sentiment", sentiment_data)
         or {
@@ -796,27 +724,13 @@ def _with_execution_metadata(
 
 
 async def _get_fresh_cached_response(cache_key: str, ticker: str, model_type: str) -> dict | None:
-    """Return a cached response only if its underlying serving artifact is still fresh."""
-    with _predict_cache_lock:
-        cached = _predict_cache.get(cache_key)
-    if cached is None:
-        return None
-    if cached.get("metadata", {}).get("engine", {}).get("baseline_fallback"):
-        return cached
+    """Return a bounded baseline response cache entry.
 
-    try:
-        await asyncio.to_thread(load_fresh_artifact, ticker, model_type, MAX_FORECAST_DAYS)
-    except ArtifactValidationError as err:
-        with _predict_cache_lock:
-            _predict_cache.pop(cache_key, None)
-        logger.info(
-            "Evicted response cache for unavailable forecast artifact %s/%s", ticker, model_type
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="Forecast model is not currently available for this ticker.",
-        ) from err
-    return cached
+    Learned model freshness is a browser concern now.  The server cache contains
+    only market-data-derived baseline responses and never stores model weights.
+    """
+    with _predict_cache_lock:
+        return _predict_cache.get(cache_key)
 
 
 async def _await_prediction(
@@ -941,17 +855,7 @@ def health():
 
 @app.get("/ready")
 def ready():
-    """Readiness checks storage admission and bounded upstream circuit state."""
-    model_dir_ok = False
-    free_mb = 0
-    try:
-        os.makedirs(MODEL_DIR, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=MODEL_DIR, prefix=".ready-", delete=True):
-            pass
-        free_mb = shutil.disk_usage(MODEL_DIR).free // (1024 * 1024)
-        model_dir_ok = free_mb >= settings.model_min_free_mb
-    except OSError:
-        logger.warning("Model storage readiness check failed", exc_info=True)
+    """Readiness checks the market-data dependency; no model disk is required."""
     with _upstream_lock:
         upstream = dict(_upstream_state)
     checked_at = upstream["checked_at_epoch"] or 0
@@ -961,13 +865,17 @@ def ready():
     )
     if upstream["circuit"] == "open" and not circuit_blocked:
         upstream["circuit"] = "half_open"
-    is_ready = model_dir_ok and not circuit_blocked
+    is_ready = not circuit_blocked
     content = {
         "status": "ready" if is_ready else "degraded",
         "version": APP_VERSION,
         "dependencies": {
             "market_data": upstream,
-            "model_storage": {"writable": model_dir_ok, "free_mb": free_mb},
+            "model_storage": {
+                "required": False,
+                "writable": None,
+                "detail": "Models are trained and cached in each user's browser.",
+            },
         },
     }
     return JSONResponse(status_code=200 if is_ready else 503, content=content)
@@ -975,34 +883,57 @@ def ready():
 
 @app.get("/models")
 def list_models():
-    """Return manifest plus explicit learned-engine availability."""
-    manifest = get_manifest()
-    price_tickers = sorted(
-        entry["ticker"] for entry in manifest.values() if entry.get("model_type") == "lstm"
-    )
-    direction_tickers = sorted(
-        entry["ticker"]
-        for entry in manifest.values()
-        if entry.get("model_type") == "bilstm_attention_direction"
-    )
+    """Describe browser-trained model availability; no server artifacts are exposed."""
     return {
         "version": APP_VERSION,
-        "manifest": manifest,
+        "manifest": {},
+        "server_models": {
+            "status": "disabled",
+            "reason": "Models are trained and cached per user in the browser.",
+        },
+        "browser_training": {
+            "status": "available",
+            "model_family": "compact_tfjs_lstm",
+            "storage": "indexeddb",
+            "cache_scope": "per_user_per_ticker",
+            "supported_forecast_types": ["price", "direction"],
+        },
         "availability": {
             "price": {
-                "status": "available" if price_tickers else "unavailable",
-                "engine": "lstm" if price_tickers else "persistence_fallback",
-                "tickers": price_tickers,
+                "status": "browser_available",
+                "engine": "compact_tfjs_lstm",
+                "tickers": [],
             },
             "direction": {
-                "status": "available" if direction_tickers else "unavailable",
-                "engine": "bilstm_attention_direction"
-                if direction_tickers
-                else "base_rate_fallback",
-                "tickers": direction_tickers,
+                "status": "browser_available",
+                "engine": "compact_tfjs_lstm",
+                "tickers": [],
             },
         },
     }
+
+
+@app.get("/api/v1/training-data")
+@limiter.limit("10/minute")
+async def training_data(request: Request, ticker: str = "AAPL"):
+    """Return a bounded feature snapshot for browser-side training."""
+    ticker = validate_ticker(ticker)
+    try:
+        return await asyncio.to_thread(build_training_snapshot, ticker)
+    except MarketContextUnavailable as err:
+        raise HTTPException(status_code=503, detail=str(err)) from err
+    except ValueError as err:
+        safe_messages = ("Not enough historical data", "Not enough feature rows")
+        detail = (
+            str(err) if str(err).startswith(safe_messages) else "Invalid input data for training."
+        )
+        raise HTTPException(status_code=400, detail=detail) from err
+    except Exception as err:
+        logger.exception("Training-data snapshot failed for %s", ticker)
+        raise HTTPException(
+            status_code=503,
+            detail="Training data is temporarily unavailable. Please try again later.",
+        ) from err
 
 
 @app.get("/api/v1/search")
@@ -1085,8 +1016,8 @@ def stock_info(request: Request, ticker: str = "AAPL"):
 FORECAST_UNAVAILABLE_RESPONSE = {
     503: {
         "description": (
-            "No fresh, pre-trained model artifact is available for the requested ticker, "
-            "or prediction capacity is temporarily full."
+            "The server-side learned model is disabled; browser training or a retryable data failure is required. "
+            "Compatibility requests return an explicitly labelled baseline when data is available."
         )
     }
 }
@@ -1242,50 +1173,26 @@ def model_performance(
     ticker: str,
     forecast_type: Literal["price", "direction"] = Query(default="price"),
 ):
-    """Disclose evidence for the engine selected by public serving."""
+    """Disclose the browser-training contract and any optional offline evidence."""
 
     ticker = validate_ticker(ticker)
-    model_type = "lstm" if forecast_type == "price" else "bilstm_attention_direction"
-    try:
-        load_fresh_artifact(ticker, model_type, MAX_FORECAST_DAYS)
-        metadata = load_metadata(ticker, model_type)
-        metrics = load_metrics(ticker, model_type)
-        engine = {
-            "family": model_type,
-            "role": "learned_candidate",
-            "baseline_fallback": False,
-            "artifact_version": metadata.get("version_id"),
-        }
-        benchmark = {
-            "snapshot": metadata.get("data_snapshot", {}),
-            "validation_method": metadata.get("validation_method"),
-            "validation_folds": metadata.get("validation_folds"),
-            "metric_source": metadata.get("metric_source"),
-        }
-    except ArtifactValidationError:
-        family = "persistence" if forecast_type == "price" else "recent_base_rate"
-        engine = {
-            "family": family,
-            "role": "baseline_fallback",
-            "baseline_fallback": True,
-            "artifact_version": None,
-        }
-        metrics = {
-            "metric_source": "baseline_definition",
-            "relative_mae": 1.0 if forecast_type == "price" else None,
-            "relative_rmse": 1.0 if forecast_type == "price" else None,
-            "detail": "No learned candidate currently has qualifying fresh evidence.",
-        }
-        benchmark = {
-            "snapshot": None,
-            "validation_method": None,
-            "validation_folds": None,
-            "metric_source": "baseline_definition",
-        }
     return {
         "ticker": ticker,
         "forecast_type": forecast_type,
-        "engine": engine,
-        "metrics": metrics,
-        "benchmark": benchmark,
+        "engine": {
+            "family": "compact_tfjs_lstm",
+            "role": "browser_training_available",
+            "baseline_fallback": False,
+            "artifact_version": None,
+        },
+        "metrics": {
+            "metric_source": "browser_purged_holdout",
+            "detail": "Metrics are produced locally in the browser after training.",
+        },
+        "benchmark": {
+            "snapshot": None,
+            "validation_method": "browser_purged_holdout",
+            "validation_folds": None,
+            "metric_source": "browser_purged_holdout",
+        },
     }

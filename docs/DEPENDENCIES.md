@@ -12,7 +12,7 @@ This inventory records a local baseline captured on 2026-07-28. It separates sec
 | `npm audit` (from `frontend/`) | Passed; 0 vulnerabilities across 291 installed packages |
 | Docker image scan | Not run; no image scanner is configured in CI |
 
-The raw command output was kept outside the repository during the review. The backend dependency tree contains the declared runtime and development tools; `pip-audit` reported no advisory for the resolved environment.
+The raw command output was kept outside the repository during the review. The backend runtime dependency tree intentionally excludes TensorFlow; TensorFlow is available only through the opt-in `training` group for offline research. The frontend ships TensorFlow.js for browser-side training. `pip-audit` reported no advisory for the resolved environment.
 
 ## Classified findings
 

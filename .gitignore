@@ -7,10 +7,17 @@ venv/
 env/
 .env
 
-# Pre-trained artifacts are committed and shipped to Render (trained locally, never on the instance).
-# Generated data
+# Offline model artifacts are local research outputs only; Render and the browser path do not ship them.
+# Offline model outputs and local dependency caches
+backend/saved_models/
+*.keras
+.uv-cache/
+frontend/.npm-cache/
+
 *.csv
 *.dat
+
+# Generated data
 
 # Logs
 *.log

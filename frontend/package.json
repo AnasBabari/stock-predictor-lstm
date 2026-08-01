@@ -16,6 +16,7 @@
     "smoke:compose": "node ./scripts/compose-proxy-smoke.mjs"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^7.0.0",
     "chart.js": "^4.4.3",
