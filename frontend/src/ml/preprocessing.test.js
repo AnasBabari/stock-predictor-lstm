@@ -57,6 +57,6 @@ test('uses the close column for inverse scaling and cache identity', () => {
   const snapshot = makeSnapshot();
   const prepared = preparePriceData(snapshot);
   expect(inverseClose(0, prepared.scaler, 3)).toBe(prepared.scaler.min[3]);
-  expect(modelKey(snapshot, 'price')).toContain('tfjs-lstm-v1/3/TEST/price/snapshot-test/60/30');
+  expect(modelKey(snapshot, 'price', 'research', 'webgpu')).toContain('tfjs-lstm-v2/local-lstm-profiles-v1/3/TEST/price/research/webgpu');
   expect(modelKey(snapshot, 'price')).not.toBe(modelKey(snapshot, 'direction'));
 });

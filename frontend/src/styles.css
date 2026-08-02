@@ -1360,3 +1360,64 @@ canvas {
     color: var(--accent);
     border-color: var(--border-accent);
 }
+.quality-selector select {
+    min-width: 190px;
+}
+
+.loading-detail {
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-family: var(--font-mono);
+}
+
+.loading-progress {
+    width: min(420px, 85vw);
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--border);
+}
+
+.loading-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
+    transition: width 240ms ease;
+}
+
+.loading-progress-fill.indeterminate {
+    width: 35%;
+    animation: loadBarSlide 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.training-cancel-button {
+    padding: 9px 16px;
+    border: 1px solid color-mix(in srgb, #ef4444 55%, var(--border));
+    border-radius: 10px;
+    background: transparent;
+    color: #ef7777;
+    font: inherit;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.training-cancel-button:hover {
+    border-color: #ef4444;
+    color: #ef4444;
+}
+
+.metrics-warning {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 9px;
+    background: color-mix(in srgb, #f59e0b 12%, transparent);
+    color: #fbbf24;
+    font-size: 0.8rem;
+}
+
+@media (max-width: 720px) {
+    .quality-selector,
+    .quality-selector select {
+        width: 100%;
+    }
+}

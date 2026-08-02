@@ -1,4 +1,5 @@
-export const MODEL_VERSION = 'tfjs-lstm-v1';
+export const MODEL_VERSION = 'tfjs-lstm-v2';
+export const ARCHITECTURE_VERSION = 'local-lstm-profiles-v1';
 export const WINDOW_SIZE = 60;
 export const OUTPUT_WIDTH = 30;
 export const TRAIN_SPLIT = 0.8;
@@ -114,10 +115,10 @@ function splitCount(rowCount) {
   return { sampleCount, split, trainCount };
 }
 
-export function preparePriceData(snapshot) {
+export function preparePriceData(snapshot, scalerEnd) {
   const rows = snapshot.features.map((row) => row.map(Number));
   const { sampleCount, split, trainCount } = splitCount(rows.length);
-  const scaler = fitMinMax(rows, split + WINDOW_SIZE);
+  const scaler = fitMinMax(rows, scalerEnd ?? split + WINDOW_SIZE);
   const scaled = scaleRows(rows, scaler);
   const closeIndex = Number(snapshot.close_index);
   const inputs = [];
@@ -131,12 +132,12 @@ export function preparePriceData(snapshot) {
   return { inputs, targets, origins, scaler, split, trainCount, scaled, closeIndex };
 }
 
-export function prepareDirectionData(snapshot) {
+export function prepareDirectionData(snapshot, scalerEnd) {
   const rawRows = snapshot.features.slice(1).map((row) => row.map(Number));
   const prices = snapshot.historical_prices.map(Number);
   const returns = prices.slice(1).map((price, index) => Math.log(price / prices[index]));
   const { sampleCount, split, trainCount } = splitCount(rawRows.length);
-  const scaler = fitMinMax(rawRows, split + WINDOW_SIZE);
+  const scaler = fitMinMax(rawRows, scalerEnd ?? split + WINDOW_SIZE);
   const scaled = scaleRows(rawRows, scaler);
   const inputs = [];
   const targets = [];
@@ -149,12 +150,25 @@ export function prepareDirectionData(snapshot) {
   return { inputs, targets, origins, scaler, split, trainCount, scaled, closeIndex: Number(snapshot.close_index) };
 }
 
-export function modelKey(snapshot, forecastType) {
+export function featureSignature(featureNames) {
+  let hash = 2166136261;
+  for (const character of featureNames.join('\u001f')) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export function modelKey(snapshot, forecastType, profile = 'balanced', backend = 'any') {
   return [
     MODEL_VERSION,
+    ARCHITECTURE_VERSION,
     snapshot.schema_version,
     snapshot.ticker,
     forecastType,
+    profile,
+    backend,
+    featureSignature(snapshot.feature_names),
     snapshot.snapshot_id,
     WINDOW_SIZE,
     OUTPUT_WIDTH,

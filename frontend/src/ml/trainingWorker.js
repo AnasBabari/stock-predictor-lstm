@@ -1,8 +1,11 @@
 import * as tf from '@tensorflow/tfjs';
+import '@tensorflow/tfjs-backend-webgpu';
 
 import {
+  ARCHITECTURE_VERSION,
   MODEL_VERSION,
   OUTPUT_WIDTH,
+  TRAIN_SPLIT,
   WINDOW_SIZE,
   inverseClose,
   latestInput,
@@ -11,13 +14,24 @@ import {
   preparePriceData,
   validateSnapshot,
 } from './preprocessing';
+import {
+  classificationMetrics,
+  flatten,
+  generateResearchSplits,
+  median,
+  regressionMetrics,
+} from './evaluation';
+import { resolveTrainingProfile } from './trainingProfiles';
+import { buildBrowserModel } from './modelFactory';
 
 const DB_NAME = 'stocklstm-browser-models';
 const DB_VERSION = 1;
 const STORE_NAME = 'metadata';
 const MAX_MODELS = 6;
+const MAX_MODEL_BYTES = 200 * 1024 * 1024;
 const MODEL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
+const CHECKPOINT_TTL_MS = 24 * 60 * 60 * 1000;
+const PROFILE_RANK = { quick: 1, balanced: 2, research: 3 };
 const cancelledIds = new Set();
 
 function dbRequest(request) {
@@ -32,9 +46,8 @@ function openDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(STORE_NAME)) {
-        database.createObjectStore(STORE_NAME, { keyPath: 'key' });
+      if (!request.result.objectStoreNames.contains(STORE_NAME)) {
+        request.result.createObjectStore(STORE_NAME, { keyPath: 'key' });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -42,328 +55,557 @@ function openDb() {
   });
 }
 
-async function getMetadata(key) {
+async function metadataOperation(mode, operation) {
   let database;
   try {
     database = await openDb();
-    const transaction = database.transaction(STORE_NAME, 'readonly');
-    return await dbRequest(transaction.objectStore(STORE_NAME).get(key));
+    const transaction = database.transaction(STORE_NAME, mode);
+    return await operation(transaction.objectStore(STORE_NAME));
   } finally {
     database?.close();
   }
 }
 
-async function listMetadata() {
-  let database;
-  try {
-    database = await openDb();
-    const transaction = database.transaction(STORE_NAME, 'readonly');
-    return (await dbRequest(transaction.objectStore(STORE_NAME).getAll())) || [];
-  } finally {
-    database?.close();
-  }
-}
+const getMetadata = (key) => metadataOperation('readonly', (store) => dbRequest(store.get(key)));
+const listMetadata = () => metadataOperation('readonly', (store) => dbRequest(store.getAll()));
+const putMetadata = (value) => metadataOperation('readwrite', (store) => dbRequest(store.put(value)));
+const deleteMetadata = (key) => metadataOperation('readwrite', (store) => dbRequest(store.delete(key)));
 
-async function putMetadata(value) {
-  let database;
-  try {
-    database = await openDb();
-    const transaction = database.transaction(STORE_NAME, 'readwrite');
-    await dbRequest(transaction.objectStore(STORE_NAME).put(value));
-  } finally {
-    database?.close();
+async function deleteEntry(entry) {
+  if (entry.kind !== 'checkpoint') {
+    await tf.io.removeModel(`indexeddb://${entry.key}`).catch(() => undefined);
   }
-}
-
-async function deleteMetadata(key) {
-  let database;
-  try {
-    database = await openDb();
-    const transaction = database.transaction(STORE_NAME, 'readwrite');
-    await dbRequest(transaction.objectStore(STORE_NAME).delete(key));
-  } finally {
-    database?.close();
-  }
+  await deleteMetadata(entry.key).catch(() => undefined);
 }
 
 async function pruneCache() {
-  const entries = await listMetadata();
+  const entries = await listMetadata().catch(() => []);
   const now = Date.now();
-  const expired = entries.filter((entry) => now - entry.created_at > MODEL_TTL_MS);
-  const overflow = entries.length > MAX_MODELS
-    ? [...entries].sort((a, b) => a.last_used_at - b.last_used_at).slice(0, entries.length - MAX_MODELS)
-    : [];
-  const seen = new Set();
-  for (const entry of [...expired, ...overflow]) {
-    if (seen.has(entry.key)) continue;
-    seen.add(entry.key);
-    await tf.io.removeModel(`indexeddb://${entry.key}`).catch(() => undefined);
-    await deleteMetadata(entry.key).catch(() => undefined);
+  for (const entry of entries.filter((item) =>
+    item.kind === 'checkpoint'
+      ? now - item.updated_at > CHECKPOINT_TTL_MS
+      : now - item.created_at > MODEL_TTL_MS)) {
+    await deleteEntry(entry);
+  }
+
+  const models = (await listMetadata().catch(() => []))
+    .filter((entry) => entry.kind !== 'checkpoint')
+    .sort((a, b) => a.last_used_at - b.last_used_at);
+  let bytes = models.reduce((sum, entry) => sum + Number(entry.size_bytes || 0), 0);
+  while (models.length > MAX_MODELS || bytes > MAX_MODEL_BYTES) {
+    const entry = models.shift();
+    bytes -= Number(entry.size_bytes || 0);
+    await deleteEntry(entry);
   }
 }
 
-async function removeStaleEntries(snapshot, forecastType) {
+async function removeIncompatibleEntries({ key, ticker, forecastType, profile, backend }) {
   const entries = await listMetadata().catch(() => []);
   for (const entry of entries) {
-    const sameModel = entry.ticker === snapshot.ticker && entry.forecast_type === forecastType;
-    const compatible = entry.snapshot_id === snapshot.snapshot_id &&
-      entry.schema_version === snapshot.schema_version && entry.model_version === MODEL_VERSION;
-    if (!sameModel || compatible) continue;
-    await tf.io.removeModel('indexeddb://' + entry.key).catch(() => undefined);
-    await deleteMetadata(entry.key).catch(() => undefined);
+    const sameSlot = entry.ticker === ticker && entry.forecast_type === forecastType &&
+      entry.training_profile === profile && (entry.backend == null || entry.backend === backend);
+    if (sameSlot && entry.key !== key && entry.key !== `checkpoint/${key}`) await deleteEntry(entry);
   }
 }
+
+async function pruneSuperseded(metadata) {
+  const entries = await listMetadata().catch(() => []);
+  const rank = PROFILE_RANK[metadata.training_profile] || 0;
+  for (const entry of entries) {
+    if (entry.kind === 'checkpoint' || entry.key === metadata.key) continue;
+    const sameForecast = entry.ticker === metadata.ticker && entry.forecast_type === metadata.forecast_type;
+    if (sameForecast && (PROFILE_RANK[entry.training_profile] || 0) < rank) await deleteEntry(entry);
+  }
+}
+
 async function clearCache() {
-  const entries = await listMetadata().catch(() => []);
-  for (const entry of entries) {
-    await tf.io.removeModel(`indexeddb://${entry.key}`).catch(() => undefined);
-    await deleteMetadata(entry.key).catch(() => undefined);
-  }
+  for (const entry of await listMetadata().catch(() => [])) await deleteEntry(entry);
 }
+
 function emit(id, payload) {
   self.postMessage({ id, ...payload });
+}
+
+function progress(id, startedAt, payload) {
+  emit(id, { type: 'progress', elapsed_ms: Math.round(performance.now() - startedAt), ...payload });
 }
 
 function checkCancelled(id) {
   if (cancelledIds.has(id)) throw new Error('Browser training was cancelled.');
 }
 
-function buildModel(forecastType, featureCount) {
-  const outputActivation = forecastType === 'direction' ? 'sigmoid' : undefined;
-  const model = tf.sequential();
-  model.add(tf.layers.lstm({ units: 32, returnSequences: true, inputShape: [WINDOW_SIZE, featureCount] }));
-  model.add(tf.layers.dropout({ rate: 0.2 }));
-  model.add(tf.layers.lstm({ units: 16 }));
-  model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
-  model.add(tf.layers.dense({ units: OUTPUT_WIDTH, activation: outputActivation }));
-  model.compile({
-    optimizer: tf.train.adam(0.001),
-    loss: forecastType === 'direction' ? 'binaryCrossentropy' : 'meanSquaredError',
-  });
-  return model;
-}
-
-function flatten(values) {
-  return values.flatMap((row) => (Array.isArray(row) ? row : [row])).map(Number);
-}
-
-function regressionMetrics(actual, predicted, persistence) {
-  const errors = actual.map((value, index) => value - predicted[index]);
-  const absolute = errors.map((value) => Math.abs(value));
-  const squared = errors.map((value) => value ** 2);
-  const mean = actual.reduce((sum, value) => sum + value, 0) / actual.length;
-  const ssTotal = actual.reduce((sum, value) => sum + (value - mean) ** 2, 0);
-  const mape = actual.reduce((sum, value, index) => sum + Math.abs(errors[index] / value), 0) / actual.length;
-  const baselineErrors = actual.map((value, index) => value - persistence[index]);
-  const mae = absolute.reduce((sum, value) => sum + value, 0) / actual.length;
-  const mse = squared.reduce((sum, value) => sum + value, 0) / actual.length;
-  const baselineMae = baselineErrors.reduce((sum, value) => sum + Math.abs(value), 0) / actual.length;
-  const baselineRmse = Math.sqrt(baselineErrors.reduce((sum, value) => sum + value ** 2, 0) / actual.length);
-  return {
-    metric_source: 'browser_purged_holdout',
-    metric_scope: 'untouched_post_purge_holdout',
-    mae,
-    mse,
-    rmse: Math.sqrt(mse),
-    mape: mape * 100,
-    r2: ssTotal === 0 ? 0 : 1 - squared.reduce((sum, value) => sum + value, 0) / ssTotal,
-    relative_mae: baselineMae === 0 ? null : mae / baselineMae,
-    relative_rmse: baselineRmse === 0 ? null : Math.sqrt(mse) / baselineRmse,
-  };
-}
-
-function classificationMetrics(actual, predicted) {
-  const labels = flatten(actual).map((value) => Number(value) > 0.5 ? 1 : 0);
-  const probabilities = flatten(predicted).map((value) => Math.min(1, Math.max(0, Number(value))));
-  const labelsPredicted = probabilities.map((value) => value >= 0.5 ? 1 : 0);
-  let tp = 0; let tn = 0; let fp = 0; let fn = 0;
-  labels.forEach((value, index) => {
-    if (value === 1 && labelsPredicted[index] === 1) tp += 1;
-    else if (value === 0 && labelsPredicted[index] === 0) tn += 1;
-    else if (value === 0) fp += 1;
-    else fn += 1;
-  });
-  const accuracy = (tp + tn) / labels.length;
-  const precision = tp + fp ? tp / (tp + fp) : 0;
-  const recall = tp + fn ? tp / (tp + fn) : 0;
-  const downRecall = tn + fp ? tn / (tn + fp) : 0;
-  const naiveBaseline = Math.max(labels.filter((value) => value === 1).length, labels.length - labels.filter((value) => value === 1).length) / labels.length;
-  const brier = probabilities.reduce((sum, value, index) => sum + (value - labels[index]) ** 2, 0) / labels.length;
-  return {
-    metric_source: 'browser_purged_holdout',
-    metric_scope: 'untouched_post_purge_holdout',
-    accuracy,
-    directional_accuracy: accuracy,
-    precision,
-    recall,
-    f1: precision + recall ? (2 * precision * recall) / (precision + recall) : 0,
-    balanced_accuracy: (recall + downRecall) / 2,
-    brier_score: brier,
-    naive_baseline: naiveBaseline,
-  };
-}
-
 async function selectBackend() {
+  for (const name of ['webgpu', 'webgl', 'cpu']) {
+    try {
+      if (name === 'webgpu' && !globalThis.navigator?.gpu) continue;
+      if (await tf.setBackend(name)) {
+        await tf.ready();
+        return name;
+      }
+    } catch {
+      // Try the next local backend.
+    }
+  }
+  throw new Error('No supported TensorFlow.js backend is available.');
+}
+
+async function benchmarkBackend() {
+  const left = tf.randomUniform([96, 96], 0, 1, 'float32', 51);
+  const right = tf.randomUniform([96, 96], 0, 1, 'float32', 52);
+  const started = performance.now();
+  const result = tf.matMul(left, right);
+  await result.data();
+  const duration = performance.now() - started;
+  left.dispose(); right.dispose(); result.dispose();
+  return Math.round(duration);
+}
+
+function prepare(snapshot, forecastType, scalerEnd) {
+  return forecastType === 'direction'
+    ? prepareDirectionData(snapshot, scalerEnd)
+    : preparePriceData(snapshot, scalerEnd);
+}
+
+async function predictRows(model, inputs) {
+  const tensor = tf.tensor3d(inputs);
+  let output;
   try {
-    const configured = await tf.setBackend('webgl');
-    if (!configured) throw new Error('WebGL backend is unavailable.');
-    await tf.ready();
-    return 'webgl';
-  } catch {
-    const configured = await tf.setBackend('cpu');
-    if (!configured) throw new Error('CPU backend is unavailable.');
-    await tf.ready();
-    return 'cpu';
+    output = model.predict(tensor);
+    return await output.array();
+  } finally {
+    output?.dispose();
+    tensor.dispose();
   }
 }
 
-async function trainAndPredict(id, snapshot, forecastType, days) {
+async function fitSelectionModel({ id, model, inputs, targets, fittingEnd, validationStart, validationEnd = inputs.length, profile, startedAt, stage, fold }) {
+  const xs = tf.tensor3d(inputs);
+  const ys = tf.tensor2d(targets);
+  const trainXs = xs.slice([0, 0, 0], [fittingEnd, -1, -1]);
+  const trainYs = ys.slice([0, 0], [fittingEnd, -1]);
+  const validationXs = xs.slice([validationStart, 0, 0], [validationEnd - validationStart, -1, -1]);
+  const validationYs = ys.slice([validationStart, 0], [validationEnd - validationStart, -1]);
+  let bestLoss = Infinity;
+  let bestEpoch = 1;
+  let waiting = 0;
+  let completedEpochs = 0;
+  let bestWeights;
+  try {
+    await model.fit(trainXs, trainYs, {
+      epochs: profile.epochs,
+      batchSize: 32,
+      shuffle: false,
+      validationData: [validationXs, validationYs],
+      callbacks: {
+        onEpochEnd: async (epoch, logs) => {
+          checkCancelled(id);
+          completedEpochs = epoch + 1;
+          const loss = Number(logs?.val_loss ?? logs?.loss ?? Infinity);
+          if (loss < bestLoss - 1e-6) {
+            bestLoss = loss; bestEpoch = completedEpochs; waiting = 0;
+            bestWeights?.forEach((weight) => weight.dispose());
+            bestWeights = model.getWeights().map((weight) => weight.clone());
+          } else {
+            waiting += 1;
+          }
+          progress(id, startedAt, {
+            stage, fold, folds: profile.folds, epoch: completedEpochs,
+            total_epochs: profile.epochs, loss, backend: tf.getBackend(), profile: profile.id,
+          });
+          if (waiting >= profile.patience) model.stopTraining = true;
+          await tf.nextFrame();
+        },
+      },
+    });
+    if (bestWeights) {
+      model.setWeights(bestWeights);
+      bestWeights.forEach((weight) => weight.dispose());
+      bestWeights = undefined;
+    }
+    return { bestEpoch, completedEpochs, bestLoss };
+  } finally {
+    bestWeights?.forEach((weight) => weight.dispose());
+    xs.dispose(); ys.dispose(); trainXs.dispose(); trainYs.dispose();
+    validationXs.dispose(); validationYs.dispose();
+  }
+}
+
+async function fitFinalModel({ id, model, prepared, epochs, profile, startedAt }) {
+  const xs = tf.tensor3d(prepared.inputs);
+  const ys = tf.tensor2d(prepared.targets);
+  try {
+    await model.fit(xs, ys, {
+      epochs,
+      batchSize: 32,
+      shuffle: false,
+      callbacks: {
+        onEpochEnd: async (epoch, logs) => {
+          checkCancelled(id);
+          progress(id, startedAt, {
+            stage: 'final_fit', epoch: epoch + 1, total_epochs: epochs,
+            loss: Number(logs?.loss), backend: tf.getBackend(), profile: profile.id,
+          });
+          await tf.nextFrame();
+        },
+      },
+    });
+  } finally {
+    xs.dispose(); ys.dispose();
+  }
+}
+
+async function evaluateRange(model, prepared, forecastType, start, end, metricSource) {
+  const predictedRows = await predictRows(model, prepared.inputs.slice(start, end));
+  if (forecastType === 'direction') {
+    const actual = prepared.targets.slice(start, end);
+    return {
+      actual,
+      predicted: predictedRows,
+      metrics: classificationMetrics(actual, predictedRows, metricSource),
+    };
+  }
+  const actual = flatten(prepared.targets.slice(start, end))
+    .map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex));
+  const predicted = flatten(predictedRows)
+    .map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex));
+  const persistence = prepared.origins.slice(start, end)
+    .flatMap((origin) => Array(OUTPUT_WIDTH).fill(inverseClose(origin, prepared.scaler, prepared.closeIndex)));
+  return {
+    actual,
+    predicted,
+    persistence,
+    metrics: regressionMetrics(actual, predicted, persistence, metricSource),
+  };
+}
+
+function aggregateFoldMetrics(records, forecastType) {
+  if (forecastType === 'direction') {
+    return classificationMetrics(
+      records.flatMap((record) => record.actual),
+      records.flatMap((record) => record.predicted),
+      'browser_walk_forward_out_of_fold',
+    );
+  }
+  return regressionMetrics(
+    records.flatMap((record) => record.actual),
+    records.flatMap((record) => record.predicted),
+    records.flatMap((record) => record.persistence),
+    'browser_walk_forward_out_of_fold',
+  );
+}
+
+async function trainHoldout(id, snapshot, forecastType, profile, startedAt) {
+  const rawRowCount = snapshot.features.length - (forecastType === 'direction' ? 1 : 0);
+  const sampleCount = rawRowCount - WINDOW_SIZE - OUTPUT_WIDTH + 1;
+  const split = Math.floor(sampleCount * TRAIN_SPLIT);
+  // Fit the selection scaler only through the purged training target boundary.
+  // The final model is fit separately on all rows below.
+  let selection = prepare(snapshot, forecastType, WINDOW_SIZE + split);
+  const selectionModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile);
+  let metrics;
+  let selectedEpochs;
+  try {
+    const innerValidationSize = Math.max(1, Math.floor(selection.trainCount * 0.1));
+    const innerValidationStart = selection.trainCount - innerValidationSize;
+    const fittingEnd = innerValidationStart - (OUTPUT_WIDTH - 1);
+    if (fittingEnd < 1) throw new Error('Not enough training data for a purged validation split.');
+    const fit = await fitSelectionModel({
+      id,
+      model: selectionModel,
+      inputs: selection.inputs,
+      targets: selection.targets,
+      fittingEnd,
+      validationStart: innerValidationStart,
+      validationEnd: selection.trainCount,
+      profile,
+      startedAt,
+      stage: 'training',
+    });
+    selectedEpochs = fit.bestEpoch;
+    metrics = (await evaluateRange(
+      selectionModel, selection, forecastType, selection.split, selection.inputs.length, profile.metricSource,
+    )).metrics;
+  } finally {
+    selectionModel.dispose();
+  }
+
+  checkCancelled(id);
+  selection = null;
+  const finalPrepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER);
+  const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile);
+  try {
+    await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, epochs: selectedEpochs, profile, startedAt });
+  } catch (error) {
+    finalModel.dispose();
+    throw error;
+  }
+  return {
+    model: finalModel,
+    prepared: finalPrepared,
+    metrics,
+    selectedEpochs,
+    completedEpochs: selectedEpochs,
+    evaluation: { completed_folds: 1, total_folds: 1, complete: true },
+  };
+}
+
+async function trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey) {
+  const rawRowCount = snapshot.features.length - (forecastType === 'direction' ? 1 : 0);
+  const sampleCount = rawRowCount - WINDOW_SIZE - OUTPUT_WIDTH + 1;
+  const splits = generateResearchSplits(sampleCount, {
+    folds: profile.folds,
+    validationHorizon: profile.validationHorizon,
+    minTrainSamples: profile.minTrainSamples,
+    purge: OUTPUT_WIDTH - 1,
+  });
+  const checkpoint = await getMetadata(checkpointKey).catch(() => null);
+  const validCheckpoint = checkpoint?.kind === 'checkpoint' &&
+    Array.isArray(checkpoint.fold_records) && checkpoint.fold_records.length <= profile.folds &&
+    checkpoint.fold_records.every((record, index) => record?.fold === index + 1 && Number.isFinite(record?.best_epoch));
+  if (checkpoint && !validCheckpoint) await deleteMetadata(checkpointKey).catch(() => undefined);
+  const records = validCheckpoint ? [...checkpoint.fold_records] : [];
+  if (records.length) {
+    progress(id, startedAt, {
+      stage: 'checkpoint_loaded', fold: records.length, folds: profile.folds,
+      profile: profile.id, backend: tf.getBackend(),
+    });
+  }
+
+  for (const split of splits.slice(records.length)) {
+    checkCancelled(id);
+    const foldPrepared = prepare(snapshot, forecastType, WINDOW_SIZE + split.validationStart);
+    const innerValidationSize = Math.max(1, Math.floor(split.trainEnd * 0.1));
+    const innerValidationStart = split.trainEnd - innerValidationSize;
+    const fittingEnd = innerValidationStart - (OUTPUT_WIDTH - 1);
+    if (fittingEnd < 1) throw new Error('Research fold purge leaves no fitting samples.');
+    const foldModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile);
+    try {
+      const fit = await fitSelectionModel({
+        id,
+        model: foldModel,
+        inputs: foldPrepared.inputs.slice(0, split.trainEnd),
+        targets: foldPrepared.targets.slice(0, split.trainEnd),
+        fittingEnd,
+        validationStart: innerValidationStart,
+        validationEnd: split.trainEnd,
+        profile,
+        startedAt,
+        stage: 'evaluating_fold',
+        fold: split.fold,
+      });
+      const evaluated = await evaluateRange(
+        foldModel,
+        foldPrepared,
+        forecastType,
+        split.validationStart,
+        split.validationEnd,
+        profile.metricSource,
+      );
+      records.push({
+        fold: split.fold,
+        best_epoch: fit.bestEpoch,
+        metrics: evaluated.metrics,
+        actual: evaluated.actual,
+        predicted: evaluated.predicted,
+        ...(evaluated.persistence ? { persistence: evaluated.persistence } : {}),
+      });
+      await putMetadata({
+        key: checkpointKey,
+        kind: 'checkpoint',
+        ticker: snapshot.ticker,
+        forecast_type: forecastType,
+        training_profile: profile.id,
+        snapshot_id: snapshot.snapshot_id,
+        fold_records: records,
+        updated_at: Date.now(),
+      }).catch(() => undefined);
+    } finally {
+      foldModel.dispose();
+    }
+    await tf.nextFrame();
+  }
+
+  const metrics = aggregateFoldMetrics(records, forecastType);
+  const selectedEpochs = Math.max(1, median(records.map((record) => record.best_epoch)));
+  const finalPrepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER);
+  const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile);
+  try {
+    await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, epochs: selectedEpochs, profile, startedAt });
+  } catch (error) {
+    finalModel.dispose();
+    throw error;
+  }
+  await deleteMetadata(checkpointKey).catch(() => undefined);
+  return {
+    model: finalModel,
+    prepared: finalPrepared,
+    metrics,
+    selectedEpochs,
+    completedEpochs: records.reduce((sum, record) => sum + record.best_epoch, 0) + selectedEpochs,
+    evaluation: {
+      completed_folds: records.length,
+      total_folds: profile.folds,
+      complete: records.length === profile.folds,
+      fold_summaries: records.map(({ fold, best_epoch, metrics: foldMetrics }) => ({ fold, best_epoch, metrics: foldMetrics })),
+    },
+  };
+}
+
+function validCachedModel(model, metadata, snapshot, profile, backend) {
+  const inputShape = model.inputs?.[0]?.shape || [];
+  const outputShape = model.outputs?.[0]?.shape || [];
+  return metadata.model_version === MODEL_VERSION &&
+    metadata.architecture_version === ARCHITECTURE_VERSION &&
+    metadata.snapshot_id === snapshot.snapshot_id &&
+    metadata.training_profile === profile.id &&
+    metadata.backend === backend &&
+    metadata.metrics && metadata.evaluation?.complete === true &&
+    Number.isFinite(metadata.selected_epochs) &&
+    JSON.stringify(metadata.feature_names) === JSON.stringify(snapshot.feature_names) &&
+    inputShape[1] === WINDOW_SIZE && inputShape[2] === snapshot.feature_names.length &&
+    outputShape[outputShape.length - 1] === OUTPUT_WIDTH;
+}
+
+async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
   validateSnapshot(snapshot);
+  const profile = resolveTrainingProfile(profileName);
+  const startedAt = performance.now();
   checkCancelled(id);
   const backend = await selectBackend();
-  const key = modelKey(snapshot, forecastType);
+  const benchmarkMs = await benchmarkBackend();
+  const key = modelKey(snapshot, forecastType, profile.id, backend);
   const cacheUrl = `indexeddb://${key}`;
-  await removeStaleEntries(snapshot, forecastType);
-  const prepared = forecastType === 'direction' ? prepareDirectionData(snapshot) : preparePriceData(snapshot);
+  const checkpointKey = `checkpoint/${key}`;
+  progress(id, startedAt, {
+    stage: 'capability_check', profile: profile.id, backend, benchmark_ms: benchmarkMs,
+    estimated_seconds: profile.expectedSeconds,
+  });
+  await pruneCache();
+  await removeIncompatibleEntries({ key, ticker: snapshot.ticker, forecastType, profile: profile.id, backend });
+
   let model;
-  let cacheStatus = 'miss';
+  let prepared;
   let metrics;
+  let evaluation;
+  let selectedEpochs;
+  let completedEpochs;
+  let cacheStatus = 'miss';
+  let storageStatus = 'persistent';
   const cachedMetadata = await getMetadata(key).catch(() => null);
-  const cacheMatchesSnapshot = cachedMetadata?.snapshot_id === snapshot.snapshot_id;
-  if (cachedMetadata && cacheMatchesSnapshot) {
+  if (cachedMetadata?.kind !== 'checkpoint') {
     try {
       model = await tf.loadLayersModel(cacheUrl);
-      cacheStatus = 'hit';
+      if (!validCachedModel(model, cachedMetadata, snapshot, profile, backend)) {
+        throw new Error('Cached browser model is incompatible.');
+      }
+      prepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER);
       metrics = cachedMetadata.metrics;
-      await putMetadata({ ...cachedMetadata, last_used_at: Date.now() });
-      emit(id, { type: 'progress', stage: 'cache_hit', message: 'Loaded your cached browser model.' });
+      evaluation = cachedMetadata.evaluation;
+      selectedEpochs = cachedMetadata.selected_epochs;
+      completedEpochs = cachedMetadata.completed_epochs;
+      cacheStatus = 'hit';
+      await putMetadata({ ...cachedMetadata, last_used_at: Date.now() }).catch(() => undefined);
+      progress(id, startedAt, { stage: 'cache_hit', profile: profile.id, backend });
     } catch {
-      await deleteMetadata(key).catch(() => undefined);
+      model?.dispose(); model = undefined;
       await tf.io.removeModel(cacheUrl).catch(() => undefined);
+      if (cachedMetadata) await deleteMetadata(key).catch(() => undefined);
     }
   }
 
   if (!model) {
-    model = buildModel(forecastType, snapshot.feature_names.length);
-    const xs = tf.tensor3d(prepared.inputs);
-    const ys = tf.tensor2d(prepared.targets);
-    const trainXs = xs.slice([0, 0, 0], [prepared.trainCount, -1, -1]);
-    const trainYs = ys.slice([0, 0], [prepared.trainCount, -1]);
-    const validationXs = xs.slice([prepared.split, 0, 0], [-1, -1, -1]);
-    const validationYs = ys.slice([prepared.split, 0], [-1, -1]);
-    emit(id, { type: 'progress', stage: 'training', epoch: 0, total_epochs: 12, backend });
+    const trained = profile.id === 'research'
+      ? await trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey)
+      : await trainHoldout(id, snapshot, forecastType, profile, startedAt);
+    ({ model, prepared, metrics, evaluation, selectedEpochs, completedEpochs } = trained);
+    const runtime = {
+      tfjs_version: tf.version.tfjs,
+      backend,
+      benchmark_ms: benchmarkMs,
+      device_memory_gb: Number(globalThis.navigator?.deviceMemory || 0) || null,
+      hardware_concurrency: Number(globalThis.navigator?.hardwareConcurrency || 0) || null,
+      user_agent: globalThis.navigator?.userAgent || 'unknown',
+    };
+    const metadata = {
+      key,
+      kind: 'model',
+      ticker: snapshot.ticker,
+      forecast_type: forecastType,
+      snapshot_id: snapshot.snapshot_id,
+      schema_version: snapshot.schema_version,
+      model_version: MODEL_VERSION,
+      architecture_version: ARCHITECTURE_VERSION,
+      training_profile: profile.id,
+      backend,
+      created_at: Date.now(),
+      last_used_at: Date.now(),
+      feature_names: snapshot.feature_names,
+      output_width: snapshot.output_width,
+      scaler: prepared.scaler,
+      metrics,
+      evaluation,
+      selected_epochs: selectedEpochs,
+      completed_epochs: completedEpochs,
+      training_duration_ms: Math.round(performance.now() - startedAt),
+      runtime,
+    };
     try {
-      let bestLoss = Infinity;
-      let waiting = 0;
-      await model.fit(trainXs, trainYs, {
-        epochs: 12,
-        batchSize: 32,
-        shuffle: false,
-        validationData: [validationXs, validationYs],
-        callbacks: {
-          onEpochEnd: async (epoch, logs) => {
-            checkCancelled(id);
-            const loss = Number(logs?.val_loss ?? logs?.loss ?? Infinity);
-            if (loss < bestLoss - 1e-6) { bestLoss = loss; waiting = 0; } else { waiting += 1; }
-            emit(id, { type: 'progress', stage: 'training', epoch: epoch + 1, total_epochs: 12, loss, backend });
-            if (waiting >= 3) model.stopTraining = true;
-            await tf.nextFrame();
-          },
-        },
-      });
-      checkCancelled(id);
-      const holdoutXs = tf.tensor3d(prepared.inputs.slice(prepared.split));
-      try {
-        const output = model.predict(holdoutXs);
-        try {
-          const predictedHoldout = await output.array();
-          if (forecastType === "direction") {
-            metrics = classificationMetrics(prepared.targets.slice(prepared.split), predictedHoldout);
-          } else {
-            const actual = flatten(prepared.targets.slice(prepared.split)).map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex));
-            const predicted = flatten(predictedHoldout).map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex));
-            const persistence = prepared.origins.slice(prepared.split).flatMap((origin) => Array(OUTPUT_WIDTH).fill(inverseClose(origin, prepared.scaler, prepared.closeIndex)));
-            metrics = regressionMetrics(actual, predicted, persistence);
-          }
-        } finally {
-          output.dispose();
-        }
-      } finally {
-        holdoutXs.dispose();
-      }
-      try {
-        await model.save(cacheUrl);
-        await putMetadata({
-          key,
-          ticker: snapshot.ticker,
-          forecast_type: forecastType,
-          snapshot_id: snapshot.snapshot_id,
-          schema_version: snapshot.schema_version,
-          model_version: MODEL_VERSION,
-          created_at: Date.now(),
-          last_used_at: Date.now(),
-          feature_names: snapshot.feature_names,
-          output_width: snapshot.output_width,
-          metrics,
-        });
-        await pruneCache();
-        cacheStatus = "stored";
-      } catch {
-        cacheStatus = "session_only";
-      }
-    } catch (error) {
-      model.dispose();
-      throw error;
-    } finally {
-      xs.dispose();
-      ys.dispose();
-      trainXs.dispose();
-      trainYs.dispose();
-      validationXs.dispose();
-      validationYs.dispose();
+      await model.save(cacheUrl);
+      const stored = (await tf.io.listModels())[cacheUrl];
+      metadata.size_bytes = Number(stored?.weightDataBytes || 0) + Number(stored?.modelTopologyBytes || 0);
+      await putMetadata(metadata);
+      await pruneSuperseded(metadata);
+      await pruneCache();
+      cacheStatus = 'stored';
+    } catch {
+      await tf.io.removeModel(cacheUrl).catch(() => undefined);
+      await deleteMetadata(key).catch(() => undefined);
+      storageStatus = 'session_only';
+      cacheStatus = 'session_only';
     }
   }
+
   try {
     checkCancelled(id);
-    const input = tf.tensor3d([latestInput(prepared)]);
-    let predicted;
-    let output;
-    try {
-      output = model.predict(input);
-      predicted = await output.array();
-    } finally {
-      output?.dispose();
-      input.dispose();
+    const predicted = await predictRows(model, [latestInput(prepared)]);
+    if (!predicted?.[0]?.slice(0, days).every((value) => Number.isFinite(Number(value)))) {
+      throw new Error('The local model produced invalid forecast values.');
     }
-
+    const common = {
+      forecastType,
+      metrics,
+      evaluation,
+      cacheStatus,
+      storageStatus,
+      backend,
+      benchmarkMs,
+      trainingProfile: profile.id,
+      modelVersion: MODEL_VERSION,
+      architectureVersion: ARCHITECTURE_VERSION,
+      selectedEpochs,
+      completedEpochs,
+      trainingDurationMs: Math.round(performance.now() - startedAt),
+      tfjsVersion: tf.version.tfjs,
+      executionMode: cacheStatus === 'hit' ? 'browser_artifact_loaded' : 'browser_trained',
+    };
     if (forecastType === 'direction') {
       const probabilities = predicted[0].slice(0, days).map((value) => Math.min(1, Math.max(0, Number(value))));
-      return {
-        forecastType,
-        directions: probabilities.map((value) => value >= 0.5 ? 'Up' : 'Down'),
-        probabilities,
-        metrics,
-        cacheStatus,
-        backend,
-        executionMode: cacheStatus === 'hit' ? 'browser_artifact_loaded' : 'browser_trained',
-      };
+      return { ...common, directions: probabilities.map((value) => value >= 0.5 ? 'Up' : 'Down'), probabilities };
     }
     return {
-      forecastType,
-      predictedPrices: predicted[0].slice(0, days).map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex)),
-      metrics,
-      cacheStatus,
-      backend,
-      executionMode: cacheStatus === 'hit' ? 'browser_artifact_loaded' : 'browser_trained',
+      ...common,
+      predictedPrices: predicted[0].slice(0, days)
+        .map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex)),
     };
   } finally {
     model?.dispose();
   }
 }
 
-self.onmessage = async (event) => {
-  const { id, type, snapshot, forecastType, days } = event.data || {};
-  if (type === 'cancel') { cancelledIds.add(id); return; }
+let workQueue = Promise.resolve();
+
+async function processMessage(event) {
+  const { id, type, snapshot, forecastType, days, profile = 'balanced' } = event.data || {};
   if (type === 'clear-cache') {
     try {
       await selectBackend();
@@ -375,13 +617,22 @@ self.onmessage = async (event) => {
     return;
   }
   if (type !== 'forecast' || !id) return;
-  cancelledIds.delete(id);
   try {
-    const result = await trainAndPredict(id, snapshot, forecastType, Number(days));
+    const result = await trainAndPredict(id, snapshot, forecastType, Number(days), profile);
     emit(id, { type: 'complete', result });
-    cancelledIds.delete(id);
   } catch (error) {
     emit(id, { type: 'error', message: error instanceof Error ? error.message : 'Browser training failed.' });
+  } finally {
     cancelledIds.delete(id);
   }
+}
+
+self.onmessage = (event) => {
+  const { id, type } = event.data || {};
+  if (type === 'cancel') {
+    cancelledIds.add(id);
+    return;
+  }
+  if (type === 'forecast') cancelledIds.delete(id);
+  workQueue = workQueue.then(() => processMessage(event), () => processMessage(event));
 };

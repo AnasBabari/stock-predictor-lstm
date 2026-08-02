@@ -63,7 +63,7 @@ that the baseline should continue serving.
 
 ## Training lifecycle
 
-Walk-forward folds provide published offline out-of-fold metrics. The Python trainer uses a purged tail to select its epoch count and can write a research artifact only when the opt-in `training` dependency group is enabled. Production does not load that artifact. The browser instead trains a compact TensorFlow.js model per user, ticker, and forecast type on the latest feature snapshot, evaluates an untouched post-purge holdout, and stores weights only in IndexedDB.
+Walk-forward folds provide published offline out-of-fold metrics. The Python trainer uses a purged tail to select its epoch count and can write a research artifact only when the opt-in `training` dependency group is enabled. Production does not load that artifact. Browser Quick and Balanced profiles report one untouched purged holdout as `browser_purged_holdout`. Browser Research performs five expanding, 60-session, train-only-scaled and purged folds, pools their untouched predictions as `browser_walk_forward_out_of_fold`, then fits the final local model. Browser and Python evidence are methodologically comparable only when the snapshot, schema, split, architecture, and metric source are disclosed; TensorFlow.js GPU weights are not expected to be bit-identical to Python TensorFlow.
 
 The benchmark promotion decision is advisory and offline. It does not write a Render model directory, update a production endpoint, or change the browser model selected by a user.
 

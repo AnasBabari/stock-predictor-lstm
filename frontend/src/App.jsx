@@ -14,12 +14,14 @@ import PredictionHistory from './components/PredictionHistory';
 import ToastContainer from './components/ToastContainer';
 import { exportCompleteAnalysis } from './utils/exportService';
 import { browserTrainingSupported, clearBrowserModelCache, trainBrowserForecast } from './ml/browserTrainingClient';
+import { defaultTrainingProfile, expectedDurationLabel } from './ml/trainingProfiles';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
 const THEME_KEY = 'stocklstm-theme:v1';
 const WL_KEY = 'stocklstm-watchlist:v1';
 const HIST_KEY = 'stocklstm-history:v1';
+const PROFILE_KEY = 'stocklstm-training-profile:v1';
 const MAX_HISTORY = 15;
 const FORECAST_TYPES = {
   PRICE: 'price',
@@ -32,6 +34,10 @@ const stageLabels = {
   preparing_features: 'Preparing browser features…',
   checking_artifact: 'Checking your local model cache…',
   cache_hit: 'Loading your cached browser model…',
+  capability_check: 'Checking this device’s training speed…',
+  checkpoint_loaded: 'Resuming your local research benchmark…',
+  evaluating_fold: 'Running walk-forward evaluation…',
+  final_fit: 'Fitting the final local model…',
   training: 'Training your local model…',
   generating_forecast: 'Generating browser forecast…',
   completed: 'Forecast ready.',
@@ -83,8 +89,8 @@ function predictionErrorMessage(error) {
   return 'Prediction could not be completed. Please try again.';
 }
 
-const forecastIdentity = (ticker, days, type) =>
-  `${ticker.trim().toUpperCase()}::${Number(days)}::${type}`;
+const forecastIdentity = (ticker, days, type, profile) =>
+  `${ticker.trim().toUpperCase()}::${Number(days)}::${type}::${profile}`;
 
 function assertForecastIdentity(data, ticker, days, type) {
   const symbol = ticker.trim().toUpperCase();
@@ -103,19 +109,28 @@ function assertForecastIdentity(data, ticker, days, type) {
 
 function browserResponse(snapshot, result, forecastType, days) {
   const engine = {
-    family: 'compact_tfjs_lstm',
+    family: `${result.trainingProfile || 'balanced'}_tfjs_lstm`,
     role: 'browser_learned',
     baseline_fallback: false,
     cache_status: result.cacheStatus,
     backend: result.backend,
+    execution_mode: result.executionMode,
   };
   const metadata = {
-    model_version: result.modelVersion || 'tfjs-lstm-v1',
+    model_version: result.modelVersion || 'tfjs-lstm-v2',
+    architecture_version: result.architectureVersion,
+    training_profile: result.trainingProfile,
+    training_duration_ms: result.trainingDurationMs,
+    selected_epochs: result.selectedEpochs,
+    completed_epochs: result.completedEpochs,
+    tfjs_version: result.tfjsVersion,
+    storage_status: result.storageStatus,
+    evaluation: result.evaluation,
     schema_version: snapshot.schema_version,
     window_size: snapshot.window_size,
     feature_count: snapshot.feature_names.length,
     output_width: snapshot.output_width,
-    architecture: 'compact_lstm_in_browser',
+    architecture: `${result.trainingProfile || 'balanced'}_lstm_in_browser`,
     metric_source: result.metrics?.metric_source || 'browser_purged_holdout',
     data_snapshot: snapshot.data_snapshot,
     snapshot_id: snapshot.snapshot_id,
@@ -161,8 +176,13 @@ export default function App() {
   const [forecastDays, setForecastDays] = useState(7);
   const [daysView, setDaysView] = useState(21);
   const [forecastType, setForecastType] = useState(FORECAST_TYPES.PRICE);
+  const [trainingProfile, setTrainingProfile] = useState(() => {
+    const stored = localStorage.getItem(PROFILE_KEY);
+    return ['quick', 'balanced', 'research'].includes(stored) ? stored : defaultTrainingProfile();
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState('');
+  const [trainingProgress, setTrainingProgress] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [predictionData, setPredictionData] = useState(null);
   const [stockInfo, setStockInfo] = useState(null);
@@ -206,6 +226,14 @@ export default function App() {
       // Ignore storage errors
     }
   }, [theme]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PROFILE_KEY, trainingProfile);
+    } catch {
+      // The selected profile remains active for this session.
+    }
+  }, [trainingProfile]);
 
   useEffect(() => {
     try {
@@ -288,6 +316,7 @@ export default function App() {
           snapshot,
           forecastType: type,
           days,
+          profile: trainingProfile,
           signal,
           onProgress,
         });
@@ -298,7 +327,7 @@ export default function App() {
         return fetchServerBaseline(symbol, days, type, signal, error);
       }
     },
-    [fetchServerBaseline]
+    [fetchServerBaseline, trainingProfile]
   );
 
   const fetchStockInfo = useCallback(
@@ -319,6 +348,13 @@ export default function App() {
         return;
       }
 
+      if (trainingProfile === 'research') {
+        const accepted = window.confirm(
+          `Research mode runs a five-fold local benchmark and may take ${expectedDurationLabel('research')}. Continue?`
+        );
+        if (!accepted) return;
+      }
+
       abortActiveRequest();
       const requestId = requestIdRef.current;
       abortControllerRef.current = new AbortController();
@@ -327,6 +363,7 @@ export default function App() {
       setErrorMsg('');
       setIsLoading(true);
       setLoadingStage('');
+      setTrainingProgress(null);
       setPredictionData(null);
       setStockInfo(null);
 
@@ -334,6 +371,7 @@ export default function App() {
         const onProgress = (progress) => {
           if (requestIdRef.current !== requestId) return;
           setLoadingStage(progress.message || stageLabels[progress.stage] || 'Training your local model…');
+          setTrainingProgress(progress);
         };
         const [predRes, infoRes] = await Promise.allSettled([
           fetchPredictionData(symbol, forecastDays, requestedType, signal, onProgress),
@@ -352,7 +390,7 @@ export default function App() {
             requestedType
           );
           forecastCacheRef.current.set(
-            forecastIdentity(symbol, forecastDays, requestedType),
+            forecastIdentity(symbol, forecastDays, requestedType, trainingProfile),
             fetchedData
           );
           setPredictionData(fetchedData);
@@ -400,6 +438,7 @@ export default function App() {
         if (requestIdRef.current === requestId) {
           setIsLoading(false);
           setLoadingStage('');
+          setTrainingProgress(null);
         }
       }
     },
@@ -410,6 +449,7 @@ export default function App() {
       fetchStockInfo,
       forecastDays,
       forecastType,
+      trainingProfile,
     ]
   );
 
@@ -452,6 +492,17 @@ export default function App() {
     [abortActiveRequest]
   );
 
+  const handleTrainingProfileChange = useCallback((nextProfile) => {
+    abortActiveRequest();
+    setTrainingProfile(nextProfile);
+    setPredictionData(null);
+    setStockInfo(null);
+    setErrorMsg('');
+    setIsLoading(false);
+    setLoadingStage('');
+    setTrainingProgress(null);
+  }, [abortActiveRequest]);
+
   const handleExportCompleteAnalysis = useCallback(async () => {
     const tickerSymbol = (ticker || '').trim().toUpperCase();
     if (!tickerSymbol) {
@@ -460,30 +511,43 @@ export default function App() {
       return;
     }
 
-    const priceKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.PRICE);
-    const trendKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.TREND);
+    const priceKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.PRICE, trainingProfile);
+    const trendKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.TREND, trainingProfile);
     const cachedPrice = forecastCacheRef.current.get(priceKey);
     const cachedTrend = forecastCacheRef.current.get(trendKey);
 
     const ensureForecast = async (type) => {
-      const key = forecastIdentity(tickerSymbol, forecastDays, type);
+      const key = forecastIdentity(tickerSymbol, forecastDays, type, trainingProfile);
       if (forecastCacheRef.current.has(key)) {
         return forecastCacheRef.current.get(key);
       }
 
-      const controller = new AbortController();
-      const data = await fetchPredictionData(tickerSymbol, forecastDays, type, controller.signal);
+      const signal = abortControllerRef.current?.signal;
+      const onProgress = (progress) => {
+        setLoadingStage(progress.message || stageLabels[progress.stage] || 'Training your local model…');
+        setTrainingProgress(progress);
+      };
+      const data = await fetchPredictionData(tickerSymbol, forecastDays, type, signal, onProgress);
       const validated = assertForecastIdentity(data, tickerSymbol, forecastDays, type);
       forecastCacheRef.current.set(key, validated);
       return validated;
     };
 
+    if (trainingProfile === 'research') {
+      const accepted = window.confirm(
+        `Complete Analysis may run two five-fold local benchmarks and take longer than ${expectedDurationLabel('research')}. Continue?`
+      );
+      if (!accepted) return;
+    }
+
+    abortActiveRequest();
+    abortControllerRef.current = new AbortController();
     try {
       setIsLoading(true);
-      const [priceData, trendData] = await Promise.all([
-        cachedPrice ? Promise.resolve(cachedPrice) : ensureForecast(FORECAST_TYPES.PRICE),
-        cachedTrend ? Promise.resolve(cachedTrend) : ensureForecast(FORECAST_TYPES.TREND),
-      ]);
+      setLoadingStage('');
+      setTrainingProgress(null);
+      const priceData = cachedPrice || await ensureForecast(FORECAST_TYPES.PRICE);
+      const trendData = cachedTrend || await ensureForecast(FORECAST_TYPES.TREND);
 
       if (!priceData || !trendData) {
         throw new Error('Both forecast types are required to export the complete analysis.');
@@ -512,13 +576,17 @@ export default function App() {
       });
       addToast('success', 'Complete analysis exported as ZIP');
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       const msg = err.message || 'Failed to export complete analysis.';
       setErrorMsg(msg);
       addToast('error', msg);
     } finally {
       setIsLoading(false);
+      setLoadingStage('');
+      setTrainingProgress(null);
+      abortControllerRef.current = null;
     }
-  }, [addToast, fetchPredictionData, forecastDays, ticker]);
+  }, [abortActiveRequest, addToast, fetchPredictionData, forecastDays, ticker, trainingProfile]);
 
   const handleClearBrowserModels = useCallback(async () => {
     try {
@@ -606,6 +674,8 @@ export default function App() {
           forecastDays={forecastDays}
           setForecastDays={handleForecastDaysChange}
           forecastType={forecastType}
+          trainingProfile={trainingProfile}
+          setTrainingProfile={handleTrainingProfileChange}
           onForecastTypeChange={handleForecastTypeChange}
           onPredict={handlePredict}
           isLoading={isLoading}
@@ -614,7 +684,13 @@ export default function App() {
 
         {errorMsg && <div className="error">{errorMsg}</div>}
 
-        <LoadingIndicator isLoading={isLoading} stage={loadingStage} />
+        <LoadingIndicator
+          isLoading={isLoading}
+          stage={loadingStage}
+          progress={trainingProgress}
+          profile={trainingProfile}
+          onCancel={abortActiveRequest}
+        />
 
         <StockInfoGrid info={stockInfo} />
 

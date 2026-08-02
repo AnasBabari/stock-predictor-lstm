@@ -12,7 +12,7 @@ flowchart LR
     yahoo --> snapshot[Validated 22-feature snapshot]
     snapshot --> worker[TensorFlow.js Web Worker]
     worker --> indexeddb[(Per-browser IndexedDB)]
-    worker --> metrics[Purged holdout metrics]
+    worker --> metrics[Purged holdout or five-fold metrics]
     worker --> forecast[Browser forecast]
     forecast --> browser
     api -->|upstream failure| fallback[Explicit server persistence/base-rate fallback]
@@ -25,20 +25,19 @@ The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints re
 
 ## Browser model boundary
 
-The worker uses the same core semantics as the Python pipeline:
+The worker offers three immutable profiles. Quick uses a 32/16-unit LSTM for a single purged holdout; Balanced uses a 64/32-unit LSTM with two dropout layers and a single purged holdout; Research uses the Balanced architecture for five expanding 60-session folds before a final fit. The shared semantics are:
 
-- 60 trading-day input window and 30-step output width.
-- 80% chronological split with a `forecast_days - 1` purge.
-- Min/max scaler fitted only on training rows.
-- Price target is scaled `Close`; direction target is positive future log return.
-- No shuffle, at most 12 epochs, batch size 32, validation early stopping after three unimproved epochs.
-- WebGL where available, CPU otherwise; all tensors are disposed on cancellation, error, and completion.
+- 60-session inputs, 30 outputs, batch size 32, Adam 0.001, and no shuffle.
+- A train-only min/max scaler and a 29-sample purge at every evaluation or early-stopping boundary.
+- Linear/MSE price output and sigmoid/binary-cross-entropy direction output.
+- WebGPU, WebGL, then CPU selection, with runtime and capability metadata recorded.
+- Cooperative cancellation, tensor disposal, and final-model refitting using the selected epoch count.
 
-Price uses `LSTM(32, return_sequences) -> Dropout(.2) -> LSTM(16) -> Dense(16, relu) -> Dense(30, linear)` with Adam/MSE. Direction uses the same body with a sigmoid output and binary cross-entropy. A model trains only for the selected type; Complete Analysis requests the missing type only.
+Research requires at least 300 fitting sequences before its first validation fold. Each fold has its own scaler and purged early-stopping tail; untouched out-of-fold predictions are pooled before metrics are calculated. Completed fold summaries are checkpointed for 24 hours, but partial work is never labelled as a completed benchmark.
 
-The browser cache key includes model implementation version, schema version, ticker, forecast type, snapshot ID, window size, and output width. TensorFlow.js saves weights to `indexeddb://...`; companion metadata records metrics, schema, timestamps, and feature names. Cache entries are per browser and ticker/type, expire/evict under the seven-day and six-entry policy, and can be cleared by the user. IndexedDB failure downgrades persistence to a session-only model; worker/training failure uses a labelled baseline.
+Cache keys include architecture/model versions, schema, ordered-feature signature, ticker, forecast type, profile, backend, snapshot, window, and output width. Final models and companion evidence use IndexedDB, expire after seven days, and are bounded to six models and 200 MiB. Higher-quality successful profiles evict lower-quality variants for the same ticker/type. Storage failures retain only the current session model.
 
-Browser metrics are calculated on untouched post-purge holdout samples and labelled `browser_purged_holdout`: price MAE/MSE/RMSE/MAPE/R² and relative errors versus persistence; direction accuracy/precision/recall/F1/balanced accuracy/Brier score and naive baseline. They are not the offline five-fold walk-forward metrics.
+Quick/Balanced evidence uses `browser_purged_holdout`; Research uses `browser_walk_forward_out_of_fold`. Price results show errors and persistence-relative ratios, not “accuracy.” Direction results disclose accuracy and the majority-class baseline. TensorFlow.js GPU kernels may differ numerically by browser, so reproducibility is defined by the recorded snapshot, seed, profile, splits, TensorFlow.js version, and backend rather than bit-identical weights.
 
 ## Data and news boundary
 

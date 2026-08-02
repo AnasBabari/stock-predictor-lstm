@@ -26,7 +26,7 @@ StockLSTM is a React and FastAPI stock-forecasting application. The FastAPI serv
 - Search for a ticker or enter an exact symbol, then choose a 1–30 trading-day horizon.
 - The first forecast downloads a bounded feature snapshot and trains a local model. Progress, the worker backend, holdout metrics, and cache status are shown in the UI.
 - Reloading the page can load the same ticker/type model from IndexedDB. Price and direction models are separate, per browser, per ticker, and never uploaded.
-- If workers, WebGL/CPU TensorFlow.js, or local storage are unavailable, the UI explicitly labels the deterministic persistence/base-rate fallback.
+- If workers, WebGPU/WebGL/CPU TensorFlow.js, or local storage are unavailable, the UI explicitly labels the deterministic persistence/base-rate fallback.
 - Save results to browser-local watchlists/history and export PNG, CSV, or complete ZIP analyses.
 
 ## Architecture and data contract
@@ -35,16 +35,17 @@ The production pipeline has **22 ordered features**: OHLCV, technical indicators
 
 `GET /api/v1/training-data?ticker=MSFT` returns the validated feature matrix, historical closes, backend-generated future trading dates, feature schema version, and a deterministic `snapshot_id`. The frontend invalidates a cached model when that snapshot, schema, feature list, window, output width, or implementation version changes. The service bounds the snapshot to the configured historical period and 2,000 rows, returns finite numeric values only, and applies a dedicated 10-per-minute limit.
 
-The compact browser model is:
+Three local training profiles are available:
 
-```text
-Input [60, 22] -> LSTM(32, sequences) -> Dropout(.20) -> LSTM(16)
-                -> Dense(16, relu) -> Dense(30)
-```
+| Profile | Model and evaluation | Typical capable-desktop time |
+| --- | --- | --- |
+| Quick | LSTM 32/16, 12 epochs maximum, one untouched purged holdout | 30–90 seconds |
+| Balanced | LSTM 64/32, 25 epochs maximum, one untouched purged holdout | 2–10 minutes |
+| Research | Balanced model, five expanding 60-session purged folds, then a final fit | 10–45+ minutes |
 
-Price uses linear output/MSE; direction uses sigmoid output/binary cross-entropy. Training is capped at 12 epochs, batch size 32, no shuffle, validation early stopping after three unimproved epochs, and a cancel path that disposes tensors and terminates the worker request.
+Balanced is the capable-desktop default; constrained or mobile devices default to Quick. Research is always an explicit choice. The worker tries WebGPU, then WebGL, then CPU. All profiles use batch size 32, Adam 0.001, no shuffle, train-only scaling, early stopping, and a final refit for local inference. Browser GPU results are methodologically reproducible from the recorded snapshot, profile, seed, split, and runtime metadata, but are not guaranteed to be bit-identical across browsers.
 
-Metrics are labelled `browser_purged_holdout`: MAE, MSE, RMSE, MAPE, R², relative MAE/RMSE versus persistence, and direction accuracy, precision, recall, F1, balanced accuracy, Brier score, and naive-baseline accuracy. They are not the historical five-fold walk-forward metrics unless a separate offline benchmark is run.
+Quick and Balanced metrics are labelled `browser_purged_holdout`. Research metrics are aggregated from untouched predictions and labelled `browser_walk_forward_out_of_fold`; incomplete or cancelled folds never receive that label. Price evidence includes MAE, MSE, RMSE, MAPE, R², and relative MAE/RMSE versus persistence. Direction evidence includes accuracy, precision, recall, F1, balanced accuracy, Brier score, and majority-class accuracy. Price forecasts do not claim an “accuracy” percentage.
 
 The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available during migration. Their response metadata always identifies `server_disabled_fallback`; they are not used for learned browser forecasts. `/models` reports `server_models.status = disabled` and `browser_training.status = available`.
 
@@ -106,7 +107,7 @@ Reports record the snapshot identifier, date boundaries, target type, purge gap,
 
 See [.env.example](.env.example) and [backend/config.py](backend/config.py). Production settings cover data, CORS, rate limiting, request queues, upstream circuit protection, and trusted proxy addresses. Model-directory, artifact-age, quota, and pretraining settings are retained only for the opt-in offline trainer; they are not present in `render.yaml` and are not read by the production API.
 
-`ALLOWED_ORIGINS` is a JSON-style list, for example `["http://localhost:5500"]`. `CORS_ORIGIN` appends the production frontend origin. `TRUSTED_PROXY_IPS` is an exact JSON IP list; leave it empty unless the direct peer is a controlled proxy. Browser model storage is separate from existing localStorage theme/watchlist/history data. The frontend build flag VITE_BROWSER_TRAINING_ENABLED=false provides an emergency rollback to the explicitly labelled compatibility baseline.
+`ALLOWED_ORIGINS` is a JSON-style list, for example `["http://localhost:5500"]`. `CORS_ORIGIN` appends the production frontend origin. `TRUSTED_PROXY_IPS` is an exact JSON IP list; leave it empty unless the direct peer is a controlled proxy. Browser model storage is separate from existing localStorage theme/watchlist/history data. Model weights, scalers, fold evidence, and forecasts remain on the local device unless an analysis is explicitly exported; Render and Vercel do not receive them. The frontend build flag VITE_BROWSER_TRAINING_ENABLED=false provides an emergency rollback to the explicitly labelled compatibility baseline.
 
 ## API
 
