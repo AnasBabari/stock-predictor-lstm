@@ -60,3 +60,7 @@ Compatibility requests still use a bounded coalescing executor, short-lived stat
 ## Security boundaries
 
 Ticker identities are validated before any upstream or path selection. Forwarded client addresses affect rate limiting only when the direct peer is an exact configured trusted proxy; direct callers cannot spoof another bucket. Nginx replaces, rather than appends to, forwarding headers. CORS allows explicit origins without credentials, internal errors are sanitized, and no model weights or user identifiers are sent to Render. React renders external text as text nodes; export identity/length checks and CSV formula neutralization remain in place.
+
+## Deployment gate
+
+The Render backend and Vercel frontend are guarded by repository smoke, resource-budget, and browser E2E checks. The gate intentionally separates repository validation from provider dashboard actions; see [DEPLOYMENT_GATE.md](DEPLOYMENT_GATE.md).

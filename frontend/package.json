@@ -13,7 +13,9 @@
     "doctor": "react-doctor",
     "test": "vitest",
     "test:run": "vitest run",
-    "smoke:compose": "node ./scripts/compose-proxy-smoke.mjs"
+    "smoke:compose": "node ./scripts/compose-proxy-smoke.mjs",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
@@ -27,6 +29,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@testing-library/react": "^16.0.1",
     "@testing-library/user-event": "^14.5.2",
     "@types/react": "^18.3.3",

@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     )
 
     cors_origin: str | None = None
+    preview_cors_origin_regex: str | None = None
 
     cache_ttl: int = 300
     info_cache_ttl: int = 3600
@@ -83,6 +84,9 @@ class Settings(BaseSettings):
     model_versions_to_keep: int = Field(default=2, ge=1, le=10)
     artifact_lock_timeout_seconds: int = Field(default=900, ge=30, le=3600)
     trusted_proxy_ips: list[str] = Field(default_factory=list)
+    deployment_provider: str | None = None
+    deployment_environment: str | None = None
+    deployment_commit: str | None = None
 
     @field_validator("trusted_proxy_ips")
     @classmethod

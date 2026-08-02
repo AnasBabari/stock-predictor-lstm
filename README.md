@@ -142,3 +142,7 @@ CI checks dependency locks, Ruff, Mypy, Bandit, pip-audit, API documentation, ba
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
+## Deployment gate
+
+Render/Vercel release gating, provider variables, free-tier constraints, local verification, and rollback scaffolding are documented in [docs/DEPLOYMENT_GATE.md](docs/DEPLOYMENT_GATE.md). Run ./scripts/verify_release.ps1 before requesting provider deployment checks.

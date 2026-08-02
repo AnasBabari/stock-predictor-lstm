@@ -104,6 +104,41 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="StockLSTM API", version=APP_VERSION)
 
 
+def _deployment_environment() -> str:
+    if os.getenv("IS_PULL_REQUEST", "").strip().lower() in {"1", "true", "yes"}:
+        return "preview"
+    return (
+        settings.deployment_environment
+        or os.getenv("RENDER_SERVICE_TYPE")
+        or os.getenv("VERCEL_ENV")
+        or os.getenv("ENVIRONMENT")
+        or "local"
+    )
+
+
+def _deployment_commit() -> str | None:
+    value = (
+        settings.deployment_commit
+        or os.getenv("RENDER_GIT_COMMIT")
+        or os.getenv("VERCEL_GIT_COMMIT_SHA")
+        or os.getenv("GITHUB_SHA")
+    )
+    if not value or not re.fullmatch(r"[0-9a-fA-F]{7,40}", value):
+        return None
+    return value[:12].lower()
+
+
+def _deployment_identity() -> dict[str, Any]:
+    environment = _deployment_environment()
+    provider = settings.deployment_provider or ("render" if os.getenv("RENDER") else "unknown")
+    return {
+        "provider": provider,
+        "environment": environment,
+        "commit": _deployment_commit(),
+        "preview": environment.lower() in {"preview", "pr", "pull_request"},
+    }
+
+
 _trusted_proxy_ips = frozenset(settings.trusted_proxy_ips)
 
 
@@ -153,9 +188,16 @@ async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
 
 
 # CORS (1.1) — explicit origins, no credentials
+_preview_cors_regex = (
+    settings.preview_cors_origin_regex
+    if _deployment_identity()["preview"] and settings.preview_cors_origin_regex
+    else None
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,
+    allow_origin_regex=_preview_cors_regex,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["Content-Type", "X-Prediction-Request-ID"],
@@ -839,6 +881,7 @@ def root():
         "name": app.title,
         "status": "online",
         "version": APP_VERSION,
+        "deployment": _deployment_identity(),
         "docs": "/docs",
         "redoc": "/redoc",
         "openapi": "/openapi.json",
@@ -850,7 +893,7 @@ def root():
 @app.get("/health")
 def health():
     """O(1) Liveness probe."""
-    return {"status": "ok", "version": APP_VERSION}
+    return {"status": "ok", "version": APP_VERSION, "deployment": _deployment_identity()}
 
 
 @app.get("/ready")
@@ -869,6 +912,7 @@ def ready():
     content = {
         "status": "ready" if is_ready else "degraded",
         "version": APP_VERSION,
+        "deployment": _deployment_identity(),
         "dependencies": {
             "market_data": upstream,
             "model_storage": {

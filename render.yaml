@@ -2,16 +2,38 @@ services:
   - type: web
     name: stock-predictor-backend
     env: python
+    plan: free
     region: oregon
+    branch: main
+    autoDeploy: checksPass
+    healthCheckPath: /health
     buildCommand: "pip install -r requirements.txt"
     # Use Render's native Python environment; the runtime dependency list is TensorFlow-free.
     startCommand: "python -m uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend"
+    buildFilter:
+      paths:
+        - backend/**
+        - requirements.txt
+        - render.yaml
+        - scripts/check_deployment.py
+      ignoredPaths:
+        - assets/**
+        - docs/**
+        - frontend/**
+    previews:
+      generation: automatic
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: ENVIRONMENT
         value: production
+      - key: DEPLOYMENT_PROVIDER
+        value: render
+      - key: DEPLOYMENT_ENVIRONMENT
+        value: production
       - key: CORS_ORIGIN
+        sync: false
+      - key: PREVIEW_CORS_ORIGIN_REGEX
         sync: false
       - key: PREDICTION_WORKERS
         value: "2"
