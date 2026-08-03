@@ -108,17 +108,19 @@ function assertForecastIdentity(data, ticker, days, type) {
 }
 
 function browserResponse(snapshot, result, forecastType, days) {
+  const baselineFallback = result.baselineFallback === true || result.promotion?.promoted === false;
   const engine = {
     family: `${result.trainingProfile || 'balanced'}_tfjs_lstm`,
-    role: 'browser_learned',
-    baseline_fallback: false,
+    role: baselineFallback ? 'baseline_fallback' : 'browser_learned',
+    baseline_fallback: baselineFallback,
     cache_status: result.cacheStatus,
     backend: result.backend,
     execution_mode: result.executionMode,
   };
   const metadata = {
-    model_version: result.modelVersion || 'tfjs-lstm-v2',
+    model_version: result.modelVersion || 'tfjs-return-lstm-v4',
     architecture_version: result.architectureVersion,
+    target_mode: result.targetMode,
     training_profile: result.trainingProfile,
     training_duration_ms: result.trainingDurationMs,
     selected_epochs: result.selectedEpochs,
@@ -126,10 +128,11 @@ function browserResponse(snapshot, result, forecastType, days) {
     tfjs_version: result.tfjsVersion,
     storage_status: result.storageStatus,
     evaluation: result.evaluation,
+    promotion: result.promotion,
     schema_version: snapshot.schema_version,
     window_size: snapshot.window_size,
     feature_count: snapshot.feature_names.length,
-    output_width: snapshot.output_width,
+    output_width: result.horizon || snapshot.output_width,
     architecture: `${result.trainingProfile || 'balanced'}_lstm_in_browser`,
     metric_source: result.metrics?.metric_source || 'browser_purged_holdout',
     data_snapshot: snapshot.data_snapshot,
@@ -163,6 +166,7 @@ function browserResponse(snapshot, result, forecastType, days) {
     historical_prices: snapshot.historical_prices,
     future_dates: snapshot.future_dates.slice(0, days),
     predicted_prices: result.predictedPrices,
+    learned_prices: result.learnedPrices,
     metrics: result.metrics,
     metadata,
   };

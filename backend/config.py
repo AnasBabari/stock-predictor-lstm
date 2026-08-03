@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     """All settings can be overridden via environment variables or a .env file."""
 
     default_ticker: str = "AAPL"
-    historical_years: int = 3
+    historical_years: int = 8
     window_size: int = 60
     train_split: float = 0.80
     lstm_units: int = 64
@@ -127,7 +127,18 @@ VALIDATION_CONFIG = settings.validation
 VALIDATION_SEED = settings.validation.seed
 
 # Feature Schema Versioning & Centralized Config
+# Legacy offline trainer schema (kept for the server-side research pipelines).
 SCHEMA_VERSION = 3
+
+# Browser snapshot schema. Schema v4 replaces absolute price-level features
+# with stationary ratios, returns, realized volatility, and market-relative
+# measures so models learn movement instead of historical price levels.
+SNAPSHOT_SCHEMA_VERSION = 4
+
+# The training target contract for schema-v4 browser snapshots: the model
+# predicts cumulative log returns (log close[t+h] / close[t-1]) instead of
+# absolute prices, and prices are reconstructed from the latest close.
+TARGET_MODE = "cumulative_log_return_v1"
 
 FEATURE_CONFIG = {
     "base": ["Open", "High", "Low", "Close", "Volume"],
@@ -151,4 +162,51 @@ FEATURES: list[str] = (
     + FEATURE_CONFIG["technical"]
     + FEATURE_CONFIG["market"]
     + FEATURE_CONFIG["calendar"]
+)
+
+# Stationary feature schema for browser-trained models (schema v4). Every
+# price-level indicator is replaced by a ratio or return measured against the
+# current close or previous close. All rolling transforms are causal.
+FEATURE_CONFIG_V4 = {
+    "price_returns": [
+        "Log_Open_Rel",
+        "Log_High_Rel",
+        "Log_Low_Rel",
+        "Return_1D",
+        "Volume_Log1p_Change",
+    ],
+    "technical_ratio": [
+        "Close_SMA_20",
+        "Close_EMA_20",
+        "RSI_14_Centered",
+        "MACD_Close",
+        "MACD_Signal_Close",
+        "BB_Upper_Rel",
+        "BB_Lower_Rel",
+        "ATR_14_Rel",
+        "OBV_Change_Z",
+    ],
+    "momentum_vol": [
+        "Return_5D",
+        "Return_20D",
+        "Realized_Vol_5D",
+        "Realized_Vol_20D",
+    ],
+    "market": [
+        "SPY_Return_1D",
+        "QQQ_Return_1D",
+        "VIX_Return_1D",
+        "TNX_Return_1D",
+        "Return_Rel_SPY_1D",
+        "Beta_SPY_20D",
+    ],
+    "calendar": ["Month_Sin", "Month_Cos", "Day_Sin", "Day_Cos"],
+}
+
+FEATURES_V4: list[str] = (
+    FEATURE_CONFIG_V4["price_returns"]
+    + FEATURE_CONFIG_V4["technical_ratio"]
+    + FEATURE_CONFIG_V4["momentum_vol"]
+    + FEATURE_CONFIG_V4["market"]
+    + FEATURE_CONFIG_V4["calendar"]
 )

@@ -3,6 +3,9 @@
 The public backend is deliberately a data service. It builds the same feature
 matrix used by the offline Python trainer, but never imports TensorFlow, loads
 model artifacts, or writes training output to disk.
+
+Schema v4 serves stationary, price-relative features so browser models learn
+movement rather than historical price levels.
 """
 
 from __future__ import annotations
@@ -15,8 +18,14 @@ from typing import Any
 import numpy as np
 
 from calendars import future_trading_dates
-from config import FEATURES, MAX_FORECAST_DAYS, SCHEMA_VERSION, WINDOW_SIZE
-from data_pipeline import fetch_data
+from config import (
+    FEATURES_V4,
+    MAX_FORECAST_DAYS,
+    SNAPSHOT_SCHEMA_VERSION,
+    TARGET_MODE,
+    WINDOW_SIZE,
+)
+from data_pipeline import fetch_browser_data
 
 MAX_SNAPSHOT_ROWS = 2000
 
@@ -26,8 +35,8 @@ def _snapshot_id(feature_values: np.ndarray, dates: list[str], ticker: str) -> s
 
     hasher = hashlib.sha256()
     hasher.update(ticker.encode("utf-8"))
-    hasher.update(str(SCHEMA_VERSION).encode("ascii"))
-    hasher.update("|".join(FEATURES).encode("utf-8"))
+    hasher.update(str(SNAPSHOT_SCHEMA_VERSION).encode("ascii"))
+    hasher.update("|".join(FEATURES_V4).encode("utf-8"))
     hasher.update("|".join(dates).encode("utf-8"))
     hasher.update(np.asarray(feature_values, dtype=np.float64).tobytes())
     return hasher.hexdigest()
@@ -37,7 +46,7 @@ def _finite_rows(values: np.ndarray) -> list[list[float]]:
     """Convert a matrix to JSON-safe finite floats and reject invalid data."""
 
     matrix = np.asarray(values, dtype=np.float64)
-    if matrix.ndim != 2 or matrix.shape[1] != len(FEATURES):
+    if matrix.ndim != 2 or matrix.shape[1] != len(FEATURES_V4):
         raise ValueError("Feature matrix has an incompatible shape.")
     if not np.isfinite(matrix).all():
         raise ValueError("Feature matrix contains non-finite values.")
@@ -51,17 +60,18 @@ def build_training_snapshot(ticker: str, days: int = MAX_FORECAST_DAYS) -> dict[
     if not 1 <= days <= MAX_FORECAST_DAYS:
         raise ValueError("Forecast horizon is outside the supported range.")
 
-    feature_df, closing_prices, dates, metadata = fetch_data(ticker)
-    feature_values = feature_df[FEATURES].to_numpy(dtype=np.float64)
+    feature_df, closing_prices, dates, metadata = fetch_browser_data(ticker)
+    feature_values = feature_df[FEATURES_V4].to_numpy(dtype=np.float64)
+    raw_rows = int(len(feature_values))
     if len(feature_values) > MAX_SNAPSHOT_ROWS:
         start = len(feature_values) - MAX_SNAPSHOT_ROWS
         feature_values = feature_values[start:]
         closing_prices = np.asarray(closing_prices)[start:]
         dates = dates[start:]
-    date_values = dates.strftime("%Y-%m-%d").tolist()
     if len(feature_values) < WINDOW_SIZE + MAX_FORECAST_DAYS + 1:
         raise ValueError("Not enough feature rows for browser training.")
 
+    date_values = dates.strftime("%Y-%m-%d").tolist()
     future_dates, calendar_id = future_trading_dates(ticker, dates[-1], days)
     rows = _finite_rows(feature_values)
     close_values = np.asarray(closing_prices, dtype=np.float64).reshape(-1)
@@ -73,22 +83,28 @@ def build_training_snapshot(ticker: str, days: int = MAX_FORECAST_DAYS) -> dict[
     snapshot_metadata = dict(metadata)
     snapshot_metadata.update(
         {
-            "schema_version": SCHEMA_VERSION,
-            "feature_schema_version": SCHEMA_VERSION,
-            "feature_names": list(FEATURES),
+            "schema_version": SNAPSHOT_SCHEMA_VERSION,
+            "feature_schema_version": SNAPSHOT_SCHEMA_VERSION,
+            "target_mode": TARGET_MODE,
+            "feature_names": list(FEATURES_V4),
             "snapshot_id": _snapshot_id(feature_values, date_values, ticker),
             "ticker": ticker,
+            "start_date": date_values[0],
+            "end_date": date_values[-1],
+            "raw_rows": raw_rows,
+            "usable_sequences": len(rows) - WINDOW_SIZE - MAX_FORECAST_DAYS + 1,
+            "adjusted_prices": bool(metadata.get("adjusted_prices", True)),
+            "quality": metadata.get("quality", {}),
         }
     )
     result = {
         "ticker": ticker,
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
         "snapshot_id": snapshot_metadata["snapshot_id"],
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "feature_names": list(FEATURES),
+        "feature_names": list(FEATURES_V4),
         "window_size": WINDOW_SIZE,
         "output_width": MAX_FORECAST_DAYS,
-        "close_index": FEATURES.index("Close"),
         "dates": date_values,
         "features": rows,
         "historical_prices": close_values.tolist(),
@@ -107,13 +123,13 @@ def validate_training_snapshot(snapshot: dict[str, Any]) -> None:
     required = {"ticker", "snapshot_id", "feature_names", "dates", "features", "historical_prices"}
     if not required.issubset(snapshot):
         raise ValueError("Training snapshot is missing required fields.")
-    if snapshot["feature_names"] != list(FEATURES):
+    if snapshot["feature_names"] != list(FEATURES_V4):
         raise ValueError("Training snapshot feature order is incompatible.")
     features = snapshot["features"]
     if len(features) != len(snapshot["dates"]):
         raise ValueError("Training snapshot dates and rows must have equal length.")
     for row in features:
-        if len(row) != len(FEATURES) or not all(math.isfinite(float(value)) for value in row):
+        if len(row) != len(FEATURES_V4) or not all(math.isfinite(float(value)) for value in row):
             raise ValueError("Training snapshot contains invalid feature values.")
     prices = snapshot["historical_prices"]
     if len(prices) != len(features) or not all(

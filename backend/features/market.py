@@ -58,6 +58,9 @@ def add_market_context_from_frames(
             "ticker": ticker,
             "status": "snapshot",
             "rows": int(len(source)),
+            "last_date": close.dropna().index[-1].strftime("%Y-%m-%d")
+            if len(close.dropna())
+            else None,
             "alignment": "prior_observation_carry_forward_v2",
         }
     return result, {
@@ -121,6 +124,9 @@ def add_market_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 "ticker": ticker,
                 "status": "live",
                 "rows": int(len(m_data)),
+                "last_date": m_close.dropna().index[-1].strftime("%Y-%m-%d")
+                if len(m_close.dropna())
+                else None,
                 "alignment": "prior_observation_carry_forward_v2",
             }
 

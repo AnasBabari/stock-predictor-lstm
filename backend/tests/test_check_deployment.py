@@ -49,12 +49,16 @@ def test_smoke_run_accepts_expected_identity_and_contract(monkeypatch):
             }, {}
         if path.startswith("/api/v1/training-data"):
             return {
-                "schema_version": 3,
+                "schema_version": 4,
                 "feature_names": smoke.EXPECTED_FEATURES,
                 "window_size": 60,
                 "output_width": 30,
                 "dates": ["d"],
                 "features": [[1.0] * len(smoke.EXPECTED_FEATURES)],
+                "data_snapshot": {
+                    "target_mode": smoke.EXPECTED_TARGET_MODE,
+                    "quality": {"status": "clean", "checks": {}, "issues": []},
+                },
             }, {}
         if path.startswith("/api/v1/predict/direction"):
             return {

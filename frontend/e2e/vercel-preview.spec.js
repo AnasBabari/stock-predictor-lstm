@@ -36,5 +36,8 @@ test('Vercel preview trains an independent direction model', async ({ page }) =>
   await expect(trendButton).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
   await expect(page.getByText('Trend Forecast Metrics')).toBeVisible({ timeout: 150_000 });
-  await expect(page.getByText(/flat|baseline fallback/i)).toHaveCount(0);
+  // The synthetic fixture has an almost-perfect up-day majority, so the learned
+  // direction model cannot beat the majority-class baseline: the gate must
+  // visibly fall back to the baseline forecast.
+  await expect(page.getByText(/majority class displayed/i)).toBeVisible({ timeout: 30_000 });
 });

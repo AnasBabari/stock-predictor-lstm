@@ -38,22 +38,32 @@ def test_price_train_and_test_targets_do_not_overlap(synthetic_feature_df):
 
 
 def test_scaler_fit_on_train_only(synthetic_feature_df):
-    """Scaler max must not exceed the training-partition max across all features."""
+    """Scaler center must not exceed the training-partition median across all features."""
+    import numpy as np
+
     from data_pipeline import preprocess
 
     X_train, _, y_train, _, scaler, _, _ = preprocess(synthetic_feature_df)
     n_samples = len(synthetic_feature_df) - WINDOW_SIZE - MAX_FORECAST_DAYS + 1
     split = int(n_samples * TRAIN_SPLIT)
     train_values = synthetic_feature_df[FEATURES].values[: split + WINDOW_SIZE]
-    train_max = train_values.max(axis=0)
+    train_median = np.median(train_values, axis=0)
 
     for col_idx in range(len(FEATURES)):
-        assert scaler.data_max_[col_idx] <= train_max[col_idx] + 1e-5
+        assert abs(scaler.center_[col_idx] - train_median[col_idx]) < 1e-5
 
 
-def test_scaler_values_in_01(preprocessed):
-    X_train, X_test, _, _, _ = preprocessed
-    assert X_train.min() >= -0.01 and X_train.max() <= 1.01
+def test_scaler_is_robust_and_train_only(preprocessed):
+    """Robust scaling centers on the train median and scales by the train IQR."""
+    import numpy as np
+
+    X_train, X_test, _, _, scaler = preprocessed
+    # Robust scaling is unbounded; the train partition should be centered near zero.
+    assert abs(X_train.mean()) < 1.0
+    assert abs(X_test.mean()) < 1.0
+    assert (scaler.scale_ > 0).all()
+    train_median = X_train.reshape(X_train.shape[0], -1)
+    assert np.isfinite(train_median).all()
 
 
 def test_fetch_data_bad_ticker_raises():
@@ -139,6 +149,8 @@ def test_create_sequences_no_leakage(synthetic_feature_df):
 
 def test_prepare_return_data_lookahead_bias(synthetic_feature_df):
     """Ensure return scaler is fitted only on training data, preventing look-ahead bias."""
+    import numpy as np
+
     from data_pipeline import prepare_return_data
 
     X_train, X_test, y_train, y_test, scaler, train_dates, test_dates = prepare_return_data(
@@ -148,11 +160,11 @@ def test_prepare_return_data_lookahead_bias(synthetic_feature_df):
     n_samples = len(synthetic_feature_df) - 1 - WINDOW_SIZE - MAX_FORECAST_DAYS + 1
     split = int(n_samples * TRAIN_SPLIT)
 
-    train_values = synthetic_feature_df[FEATURES].values[1 : split + WINDOW_SIZE]
-    train_max = train_values.max(axis=0)
+    train_values = synthetic_feature_df[FEATURES].values[1 : 1 + split + WINDOW_SIZE]
+    train_median = np.median(train_values, axis=0)
 
     for col_idx in range(len(FEATURES)):
-        assert scaler.data_max_[col_idx] <= train_max[col_idx] + 1e-5
+        assert abs(scaler.center_[col_idx] - train_median[col_idx]) < 1e-5
 
 
 def test_prepare_return_data_shapes_and_values(synthetic_feature_df):

@@ -60,6 +60,46 @@ export function classificationMetrics(actual, predicted, metricSource) {
       ? probabilities.reduce((sum, value, index) => sum + (value - labels[index]) ** 2, 0) / labels.length
       : 0,
     naive_baseline: labels.length ? Math.max(positives, labels.length - positives) / labels.length : 0,
+    evaluation_rows: labels.length,
+  };
+}
+
+export function directionalAccuracy(actualReturns, predictedReturns) {
+  const actual = flatten(actualReturns);
+  const predicted = flatten(predictedReturns);
+  const pairs = actual.map((value, index) => [value, predicted[index]])
+    .filter(([value, forecast]) => Number.isFinite(value) && Number.isFinite(forecast));
+  if (!pairs.length) return null;
+  const agreement = pairs.filter(([value, forecast]) =>
+    (value > 0 && forecast > 0) || (value < 0 && forecast < 0) || (value === 0 && forecast === 0)).length;
+  return agreement / pairs.length;
+}
+
+export function horizonRegressionMetrics(actualRows, predictedRows, persistenceRows, horizon, metricSource) {
+  const pooled = regressionMetrics(
+    flatten(actualRows), flatten(predictedRows), flatten(persistenceRows), metricSource,
+  );
+  const perHorizon = Array.from({ length: Math.max(1, Math.round(Number(horizon) || 1)) }, (_, step) => {
+    const actual = actualRows.map((row) => Number(row[step]));
+    const predicted = predictedRows.map((row) => Number(row[step]));
+    const persistence = persistenceRows.map((row) => Number(row[step]));
+    const metrics = regressionMetrics(actual, predicted, persistence, metricSource);
+    return {
+      horizon: step + 1,
+      rows: actual.length,
+      mae: metrics.mae,
+      rmse: metrics.rmse,
+      mape: metrics.mape,
+      relative_mae: metrics.relative_mae,
+      relative_rmse: metrics.relative_rmse,
+      directional_accuracy: directionalAccuracy(actual, predicted),
+    };
+  });
+  return {
+    pooled,
+    per_horizon: perHorizon,
+    directional_accuracy: directionalAccuracy(actualRows, predictedRows),
+    evaluation_rows: actualRows.length,
   };
 }
 

@@ -1,19 +1,19 @@
 export const TRAINING_PROFILES = Object.freeze({
   quick: Object.freeze({
     id: 'quick', label: 'Quick', description: 'Fastest',
-    lstmUnits: [32, 16], denseUnits: 16, dropout: 0.2,
+    lstmUnits: [16, 8], denseUnits: 8, dropout: 0.2,
     epochs: 12, patience: 3, folds: 1,
     expectedSeconds: [30, 90], metricSource: 'browser_purged_holdout',
   }),
   balanced: Object.freeze({
     id: 'balanced', label: 'Balanced', description: 'Recommended',
-    lstmUnits: [64, 32], denseUnits: 32, dropout: 0.25,
+    lstmUnits: [32, 16], denseUnits: 16, dropout: 0.2,
     epochs: 25, patience: 5, folds: 1,
     expectedSeconds: [120, 600], metricSource: 'browser_purged_holdout',
   }),
   research: Object.freeze({
     id: 'research', label: 'Research', description: 'Five-fold benchmark',
-    lstmUnits: [64, 32], denseUnits: 32, dropout: 0.25,
+    lstmUnits: [32, 16], denseUnits: 16, dropout: 0.2,
     epochs: 25, patience: 5, folds: 5,
     validationHorizon: 60, minTrainSamples: 300,
     expectedSeconds: [600, 2700], metricSource: 'browser_walk_forward_out_of_fold',

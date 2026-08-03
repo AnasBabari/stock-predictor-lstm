@@ -28,6 +28,7 @@ export default function StatsBar({ stockData, forecastType }) {
     const lastClose = stockData.historical_prices[stockData.historical_prices.length - 1];
     const forecast = stockData.predicted_prices[stockData.predicted_prices.length - 1];
     const isUp = forecast > lastClose;
+    const isFlat = forecast === lastClose;
     const change = forecast - lastClose;
     const changePct = ((change / lastClose) * 100).toFixed(2);
 
@@ -36,15 +37,16 @@ export default function StatsBar({ stockData, forecastType }) {
       forecastLabel: 'Price Forecast',
       lastClose: `$${lastClose.toFixed(2)}`,
       forecast: `$${forecast.toFixed(2)}`,
-      changeText: `${isUp ? '+' : ''}${changePct}%`,
-      trendText: isUp ? '▲ Bullish' : '▼ Bearish',
+      changeText: isFlat ? '0.00%' : `${isUp ? '+' : ''}${changePct}%`,
+      trendText: isFlat ? 'Neutral' : isUp ? '▲ Bullish' : '▼ Bearish',
       isUp,
+      isFlat,
     };
   }, [forecastType, stockData]);
 
   if (!stats) return null;
 
-  const color = stats.isUp ? 'var(--bullish)' : 'var(--bearish)';
+  const color = stats.isFlat ? 'var(--neutral)' : stats.isUp ? 'var(--bullish)' : 'var(--bearish)';
 
   return (
     <section id="statsBar" className="stats-bar">

@@ -18,18 +18,26 @@ All errors use `{"detail":"..."}`. `400` means invalid or insufficient instrumen
 
 Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`). Rate limit: 10/minute/client. The server fetches and validates the bounded feature snapshot; it accepts no client-supplied feature matrix and writes no files.
 
-The response preserves the 22-feature order used by the offline pipeline, includes a deterministic `snapshot_id`, 60-session `window_size`, 30-step `output_width`, close-column index, historical prices, and backend-generated future trading dates.
+The response preserves the 28-feature order (Stationary Schema v4), includes a deterministic `snapshot_id`, 60-session `window_size`, 30-step `output_width`, historical prices, and backend-generated future trading dates.
 
 ```json
 {
   "ticker": "MSFT",
-  "schema_version": 3,
+  "schema_version": 4,
   "snapshot_id": "sha256...",
   "generated_at": "2026-08-01T12:00:00Z",
-  "feature_names": ["Open", "High", "Low", "Close", "Volume", "SMA_20", "EMA_20", "RSI_14", "MACD", "MACD_Signal", "BB_Upper", "BB_Lower", "ATR_14", "OBV", "SPY_Return_1D", "QQQ_Return_1D", "VIX_Return_1D", "TNX_Return_1D", "Month_Sin", "Month_Cos", "Day_Sin", "Day_Cos"],
+  "feature_names": [
+    "Log_Open_Rel", "Log_High_Rel", "Log_Low_Rel", "Return_1D", "Volume_Log1p_Change",
+    "Close_SMA_20", "Close_EMA_20", "RSI_14_Centered", "MACD_Close", "MACD_Signal_Close",
+    "BB_Upper_Rel", "BB_Lower_Rel", "ATR_14_Rel", "OBV_Change_Z",
+    "Return_5D", "Return_20D", "Realized_Vol_5D", "Realized_Vol_20D",
+    "SPY_Return_1D", "QQQ_Return_1D", "VIX_Return_1D", "TNX_Return_1D",
+    "Return_Rel_SPY_1D", "Beta_SPY_20D",
+    "Month_Sin", "Month_Cos", "Day_Sin", "Day_Cos"
+  ],
   "window_size": 60,
   "output_width": 30,
-  "close_index": 3,
+  "target_mode": "cumulative_log_return_v1",
   "dates": ["2026-07-29"],
   "features": [["finite numeric values ..."]],
   "historical_prices": ["finite positive closes ..."],
@@ -88,7 +96,7 @@ Unsupported workers or failed browser training use an explicit `baseline_fallbac
 
 `GET /api/v1/prediction-status/{request_id}` accepts the UUIDv4 value sent in `X-Prediction-Request-ID` on a compatibility forecast request. Status stages remain `queued`, `downloading_market_data`, `preparing_features`, `checking_artifact`, `training`, `generating_forecast`, `completed`, or `failed`; `training` is reserved compatibility telemetry and is not entered by the public browser path. Unknown, expired, or malformed IDs return a generic `404`.
 
-Forecast metadata includes `artifact_state_before` and `artifact_action` alongside the typed `timings_seconds` fields `queue_wait`, `market_data`, `feature_preparation`, `artifact_load_validation`, `training`, `inference`, and `total`. Stages that did not run are `null`, with a non-negative measured `total`. The typed execution modes remain `response_cache_hit`, `artifact_loaded`, `baseline_fallback`, `trained`, and `coalesced`; artifact states are `fresh`, `missing`, `stale`, and `incompatible`; artifact actions are `loaded`, `retrained`, and `not_applicable`. A response-cache hit has `null` pipeline stages and a measured total. This caller-level semantics is short-lived, in-process telemetry, not durable observability. Completed and failed views may remain for up to 10 minutes and can be evicted under registry capacity pressure.
+Forecast metadata includes `artifact_state_before` and `artifact_action` alongside the typed `timings_seconds` fields `queue_wait`, `market_data`, `feature_preparation`, `artifact_load_validation`, `training`, `inference`, and `total`. Stages that did not run are `null`, with a non-negative measured `total`. The typed execution modes remain `response_cache_hit`, `artifact_loaded`, `baseline_fallback`, `trained`, and `coalesced`; artifact states are `fresh`, `missing`, `stale`, and `incompatible`; artifact actions are `loaded`, `retrained`, and `not_applicable`. A response-cache hit has `null` pipeline stages and a measured total. This caller-level semantics is short-lived, in-process telemetry, not durable observability. Completed and failed views may remain for up to 10 minutes and can be evicted under capacity pressure.
 
 ## Offline evidence endpoints
 

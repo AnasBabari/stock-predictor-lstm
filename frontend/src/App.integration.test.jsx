@@ -100,12 +100,11 @@ const trendResponse = {
 
 const trainingSnapshot = {
   ticker: 'TSLA',
-  schema_version: 3,
+  schema_version: 4,
   snapshot_id: 'snapshot-test',
-  feature_names: Array.from({ length: 22 }, (_, index) => `Feature_${index}`),
+  feature_names: Array.from({ length: 29 }, (_, index) => `Feature_${index}`),
   window_size: 60,
   output_width: 30,
-  close_index: 3,
   dates: ['2026-07-18', '2026-07-21'],
   features: [],
   historical_prices: [390.0, 400.0],

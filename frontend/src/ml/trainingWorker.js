@@ -5,29 +5,32 @@ import {
   ARCHITECTURE_VERSION,
   MODEL_VERSION,
   OUTPUT_WIDTH,
+  TARGET_MODE,
   TRAIN_SPLIT,
   WINDOW_SIZE,
-  inverseClose,
   latestInput,
   modelKey,
   prepareDirectionData,
   preparePriceData,
+  resolveHorizon,
   validateSnapshot,
 } from './preprocessing';
 import {
   classificationMetrics,
   flatten,
   generateResearchSplits,
+  horizonRegressionMetrics,
   median,
   regressionMetrics,
 } from './evaluation';
+import { buildPersistenceForecast, evaluatePromotion } from './promotionPolicy';
 import { resolveTrainingProfile } from './trainingProfiles';
 import { buildBrowserModel } from './modelFactory';
 
 const DB_NAME = 'stocklstm-browser-models';
 const DB_VERSION = 1;
 const STORE_NAME = 'metadata';
-const MAX_MODELS = 6;
+const MAX_MODELS = 8;
 const MAX_MODEL_BYTES = 200 * 1024 * 1024;
 const MODEL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CHECKPOINT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -99,11 +102,12 @@ async function pruneCache() {
   }
 }
 
-async function removeIncompatibleEntries({ key, ticker, forecastType, profile, backend }) {
+async function removeIncompatibleEntries({ key, ticker, forecastType, profile, backend, horizon }) {
   const entries = await listMetadata().catch(() => []);
   for (const entry of entries) {
     const sameSlot = entry.ticker === ticker && entry.forecast_type === forecastType &&
-      entry.training_profile === profile && (entry.backend == null || entry.backend === backend);
+      entry.training_profile === profile && entry.horizon === horizon &&
+      (entry.backend == null || entry.backend === backend);
     if (sameSlot && entry.key !== key && entry.key !== `checkpoint/${key}`) await deleteEntry(entry);
   }
 }
@@ -160,10 +164,10 @@ async function benchmarkBackend() {
   return Math.round(duration);
 }
 
-function prepare(snapshot, forecastType, scalerEnd) {
+function prepare(snapshot, forecastType, scalerEnd, horizon) {
   return forecastType === 'direction'
-    ? prepareDirectionData(snapshot, scalerEnd)
-    : preparePriceData(snapshot, scalerEnd);
+    ? prepareDirectionData(snapshot, scalerEnd, horizon)
+    : preparePriceData(snapshot, scalerEnd, horizon);
 }
 
 async function predictRows(model, inputs) {
@@ -225,7 +229,7 @@ async function fitSelectionModel({ id, model, inputs, targets, fittingEnd, valid
     return { bestEpoch, completedEpochs, bestLoss };
   } finally {
     bestWeights?.forEach((weight) => weight.dispose());
-    xs.dispose(); ys.dispose(); trainXs.dispose(); trainYs.dispose();
+    trainXs.dispose(); trainYs.dispose();
     validationXs.dispose(); validationYs.dispose();
   }
 }
@@ -254,7 +258,38 @@ async function fitFinalModel({ id, model, prepared, epochs, profile, startedAt }
   }
 }
 
-async function evaluateRange(model, prepared, forecastType, start, end, metricSource) {
+function combineMetrics(returnMetrics, dollarMetrics, horizon, metricSource) {
+  const pooled = returnMetrics.pooled;
+  const perHorizon = returnMetrics.per_horizon.map((entry, index) => ({
+    ...entry,
+    dollar_mae: dollarMetrics.per_horizon[index].mae,
+    dollar_rmse: dollarMetrics.per_horizon[index].rmse,
+    dollar_relative_mae: dollarMetrics.per_horizon[index].relative_mae,
+    dollar_relative_rmse: dollarMetrics.per_horizon[index].relative_rmse,
+  }));
+  return {
+    metric_source: metricSource,
+    metric_scope: pooled.metric_scope,
+    horizon,
+    target_mode: TARGET_MODE,
+    mae: pooled.mae,
+    mse: pooled.mse,
+    rmse: pooled.rmse,
+    mape: pooled.mape,
+    r2: pooled.r2,
+    relative_mae: pooled.relative_mae,
+    relative_rmse: pooled.relative_rmse,
+    dollar_mae: dollarMetrics.pooled.mae,
+    dollar_rmse: dollarMetrics.pooled.rmse,
+    dollar_relative_mae: dollarMetrics.pooled.relative_mae,
+    dollar_relative_rmse: dollarMetrics.pooled.relative_rmse,
+    directional_accuracy: returnMetrics.directional_accuracy,
+    per_horizon: perHorizon,
+    evaluation_rows: returnMetrics.evaluation_rows,
+  };
+}
+
+async function evaluateRange(model, prepared, forecastType, start, end, metricSource, horizon) {
   const predictedRows = await predictRows(model, prepared.inputs.slice(start, end));
   if (forecastType === 'direction') {
     const actual = prepared.targets.slice(start, end);
@@ -264,50 +299,66 @@ async function evaluateRange(model, prepared, forecastType, start, end, metricSo
       metrics: classificationMetrics(actual, predictedRows, metricSource),
     };
   }
-  const actual = flatten(prepared.targets.slice(start, end))
-    .map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex));
-  const predicted = flatten(predictedRows)
-    .map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex));
-  const persistence = prepared.origins.slice(start, end)
-    .flatMap((origin) => Array(OUTPUT_WIDTH).fill(inverseClose(origin, prepared.scaler, prepared.closeIndex)));
+  const actualRows = prepared.targets.slice(start, end);
+  const origins = prepared.origins.slice(start, end);
+  const actualPrices = actualRows.map((row, sample) => row.map((value) => origins[sample] * Math.exp(value)));
+  const predictedPrices = predictedRows.map((row, sample) => row.map((value) => origins[sample] * Math.exp(value)));
+  const persistenceRows = actualRows.map((row) => row.map(() => 0));
+  const persistencePrices = actualPrices.map((row, sample) => row.map(() => origins[sample]));
+  const returnMetrics = horizonRegressionMetrics(actualRows, predictedRows, persistenceRows, horizon, metricSource);
+  const dollarMetrics = horizonRegressionMetrics(actualPrices, predictedPrices, persistencePrices, horizon, metricSource);
   return {
-    actual,
-    predicted,
-    persistence,
-    metrics: regressionMetrics(actual, predicted, persistence, metricSource),
+    actual: actualRows,
+    predicted: predictedRows,
+    persistence: persistenceRows,
+    actualPrices,
+    predictedPrices,
+    persistencePrices,
+    returnMetrics,
+    dollarMetrics,
   };
 }
 
-function aggregateFoldMetrics(records, forecastType) {
+function aggregateFoldMetrics(records, forecastType, horizon) {
   if (forecastType === 'direction') {
-    return classificationMetrics(
-      records.flatMap((record) => record.actual),
-      records.flatMap((record) => record.predicted),
-      'browser_walk_forward_out_of_fold',
-    );
+    return {
+      metrics: classificationMetrics(
+        records.flatMap((record) => record.actual),
+        records.flatMap((record) => record.predicted),
+        'browser_walk_forward_out_of_fold',
+      ),
+      dollarMetrics: null,
+    };
   }
-  return regressionMetrics(
+  const returnMetrics = horizonRegressionMetrics(
     records.flatMap((record) => record.actual),
     records.flatMap((record) => record.predicted),
     records.flatMap((record) => record.persistence),
+    horizon,
     'browser_walk_forward_out_of_fold',
   );
+  const dollarMetrics = horizonRegressionMetrics(
+    records.flatMap((record) => record.actualPrices),
+    records.flatMap((record) => record.predictedPrices),
+    records.flatMap((record) => record.persistencePrices),
+    horizon,
+    'browser_walk_forward_out_of_fold',
+  );
+  return { metrics: combineMetrics(returnMetrics, dollarMetrics, horizon, 'browser_walk_forward_out_of_fold'), dollarMetrics };
 }
 
-async function trainHoldout(id, snapshot, forecastType, profile, startedAt) {
-  const rawRowCount = snapshot.features.length - (forecastType === 'direction' ? 1 : 0);
-  const sampleCount = rawRowCount - WINDOW_SIZE - OUTPUT_WIDTH + 1;
+async function trainHoldout(id, snapshot, forecastType, profile, startedAt, horizon) {
+  const sampleCount = snapshot.features.length - WINDOW_SIZE - horizon + 1;
   const split = Math.floor(sampleCount * TRAIN_SPLIT);
-  // Fit the selection scaler only through the purged training target boundary.
-  // The final model is fit separately on all rows below.
-  let selection = prepare(snapshot, forecastType, WINDOW_SIZE + split);
-  const selectionModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile);
+  let selection = prepare(snapshot, forecastType, WINDOW_SIZE + split, horizon);
+  const selectionModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
   let metrics;
+  let dollarMetrics;
   let selectedEpochs;
   try {
     const innerValidationSize = Math.max(1, Math.floor(selection.trainCount * 0.1));
     const innerValidationStart = selection.trainCount - innerValidationSize;
-    const fittingEnd = innerValidationStart - (OUTPUT_WIDTH - 1);
+    const fittingEnd = innerValidationStart - (horizon - 1);
     if (fittingEnd < 1) throw new Error('Not enough training data for a purged validation split.');
     const fit = await fitSelectionModel({
       id,
@@ -322,41 +373,61 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt) {
       stage: 'training',
     });
     selectedEpochs = fit.bestEpoch;
-    metrics = (await evaluateRange(
-      selectionModel, selection, forecastType, selection.split, selection.inputs.length, profile.metricSource,
-    )).metrics;
+    const evaluated = await evaluateRange(
+      selectionModel, selection, forecastType, selection.split, selection.inputs.length, profile.metricSource, horizon,
+    );
+    metrics = evaluated.metrics ?? combineMetrics(
+      evaluated.returnMetrics,
+      evaluated.dollarMetrics,
+      horizon,
+      profile.metricSource,
+    );
+    dollarMetrics = evaluated.dollarMetrics;
   } finally {
     selectionModel.dispose();
   }
 
   checkCancelled(id);
   selection = null;
-  const finalPrepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER);
-  const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile);
+  const finalPrepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER, horizon);
+  const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
   try {
     await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, epochs: selectedEpochs, profile, startedAt });
   } catch (error) {
     finalModel.dispose();
     throw error;
   }
+  const foldRelativeRmse = metrics.relative_rmse;
   return {
     model: finalModel,
     prepared: finalPrepared,
     metrics,
+    dollarMetrics,
     selectedEpochs,
     completedEpochs: selectedEpochs,
-    evaluation: { completed_folds: 1, total_folds: 1, complete: true },
+    evaluation: {
+      completed_folds: 1,
+      total_folds: 1,
+      complete: true,
+      fold_summaries: [{
+        fold: 1,
+        relative_rmse: forecastType === 'direction' ? null : metrics.relative_rmse,
+        ...(forecastType === 'direction' ? {
+          balanced_accuracy: metrics.balanced_accuracy,
+          brier_score: metrics.brier_score,
+          naive_baseline: metrics.naive_baseline,
+        } : {}),
+      }],
+    },
   };
 }
 
-async function trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey) {
-  const rawRowCount = snapshot.features.length - (forecastType === 'direction' ? 1 : 0);
-  const sampleCount = rawRowCount - WINDOW_SIZE - OUTPUT_WIDTH + 1;
+async function trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey, horizon) {  const sampleCount = snapshot.features.length - WINDOW_SIZE - horizon + 1;
   const splits = generateResearchSplits(sampleCount, {
     folds: profile.folds,
     validationHorizon: profile.validationHorizon,
     minTrainSamples: profile.minTrainSamples,
-    purge: OUTPUT_WIDTH - 1,
+    purge: horizon - 1,
   });
   const checkpoint = await getMetadata(checkpointKey).catch(() => null);
   const validCheckpoint = checkpoint?.kind === 'checkpoint' &&
@@ -373,12 +444,12 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
 
   for (const split of splits.slice(records.length)) {
     checkCancelled(id);
-    const foldPrepared = prepare(snapshot, forecastType, WINDOW_SIZE + split.validationStart);
+    const foldPrepared = prepare(snapshot, forecastType, WINDOW_SIZE + split.validationStart, horizon);
     const innerValidationSize = Math.max(1, Math.floor(split.trainEnd * 0.1));
     const innerValidationStart = split.trainEnd - innerValidationSize;
-    const fittingEnd = innerValidationStart - (OUTPUT_WIDTH - 1);
+    const fittingEnd = innerValidationStart - (horizon - 1);
     if (fittingEnd < 1) throw new Error('Research fold purge leaves no fitting samples.');
-    const foldModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile);
+    const foldModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
     try {
       const fit = await fitSelectionModel({
         id,
@@ -400,6 +471,7 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         split.validationStart,
         split.validationEnd,
         profile.metricSource,
+        horizon,
       );
       records.push({
         fold: split.fold,
@@ -408,6 +480,10 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         actual: evaluated.actual,
         predicted: evaluated.predicted,
         ...(evaluated.persistence ? { persistence: evaluated.persistence } : {}),
+        ...(evaluated.actualPrices ? { actualPrices: evaluated.actualPrices } : {}),
+        ...(evaluated.predictedPrices ? { predictedPrices: evaluated.predictedPrices } : {}),
+        ...(evaluated.persistencePrices ? { persistencePrices: evaluated.persistencePrices } : {}),
+        fold_relative_rmse: evaluated.returnMetrics ? evaluated.returnMetrics.pooled.relative_rmse : null,
       });
       await putMetadata({
         key: checkpointKey,
@@ -416,6 +492,8 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         forecast_type: forecastType,
         training_profile: profile.id,
         snapshot_id: snapshot.snapshot_id,
+        horizon,
+        target_mode: TARGET_MODE,
         fold_records: records,
         updated_at: Date.now(),
       }).catch(() => undefined);
@@ -425,10 +503,12 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
     await tf.nextFrame();
   }
 
-  const metrics = aggregateFoldMetrics(records, forecastType);
+  const aggregated = aggregateFoldMetrics(records, forecastType, horizon);
+  const metrics = aggregated.metrics;
+  const dollarMetrics = aggregated.dollarMetrics;
   const selectedEpochs = Math.max(1, median(records.map((record) => record.best_epoch)));
-  const finalPrepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER);
-  const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile);
+  const finalPrepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER, horizon);
+  const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
   try {
     await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, epochs: selectedEpochs, profile, startedAt });
   } catch (error) {
@@ -440,22 +520,34 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
     model: finalModel,
     prepared: finalPrepared,
     metrics,
+    dollarMetrics,
     selectedEpochs,
     completedEpochs: records.reduce((sum, record) => sum + record.best_epoch, 0) + selectedEpochs,
     evaluation: {
       completed_folds: records.length,
       total_folds: profile.folds,
       complete: records.length === profile.folds,
-      fold_summaries: records.map(({ fold, best_epoch, metrics: foldMetrics }) => ({ fold, best_epoch, metrics: foldMetrics })),
+      fold_summaries: records.map((record) => ({
+        fold: record.fold,
+        best_epoch: record.best_epoch,
+        relative_rmse: record.fold_relative_rmse,
+        ...(record.metrics ? {
+          balanced_accuracy: record.metrics.balanced_accuracy,
+          brier_score: record.metrics.brier_score,
+          naive_baseline: record.metrics.naive_baseline,
+        } : {}),
+      })),
     },
   };
 }
 
-function validCachedModel(model, metadata, snapshot, profile, backend) {
+function validCachedModel(model, metadata, snapshot, profile, backend, horizon) {
   const inputShape = model.inputs?.[0]?.shape || [];
   const outputShape = model.outputs?.[0]?.shape || [];
   return metadata.model_version === MODEL_VERSION &&
     metadata.architecture_version === ARCHITECTURE_VERSION &&
+    metadata.target_mode === TARGET_MODE &&
+    metadata.horizon === horizon &&
     metadata.snapshot_id === snapshot.snapshot_id &&
     metadata.training_profile === profile.id &&
     metadata.backend === backend &&
@@ -463,25 +555,42 @@ function validCachedModel(model, metadata, snapshot, profile, backend) {
     Number.isFinite(metadata.selected_epochs) &&
     JSON.stringify(metadata.feature_names) === JSON.stringify(snapshot.feature_names) &&
     inputShape[1] === WINDOW_SIZE && inputShape[2] === snapshot.feature_names.length &&
-    outputShape[outputShape.length - 1] === OUTPUT_WIDTH;
+    outputShape[outputShape.length - 1] === horizon;
 }
 
-async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
+async function saveModelWithTimeout(model, cacheUrl, timeoutMs = 10_000) {
+  let timedOut = false;
+  const timeout = new Promise((_, reject) => setTimeout(() => {
+    timedOut = true;
+    reject(new Error('IndexedDB model save timed out.'));
+  }, timeoutMs));
+  try {
+    await Promise.race([model.save(cacheUrl), timeout]);
+    return { saved: true, timedOut: false };
+  } catch (error) {
+    if (timedOut) return { saved: false, timedOut: true };
+    throw error;
+  }
+}
+async function trainAndPredict(id, snapshot, rawForecastType, days, profileName) {
   validateSnapshot(snapshot);
+  const forecastType = (rawForecastType === 'trend' || rawForecastType === 'direction') ? 'direction' : 'price';
   const profile = resolveTrainingProfile(profileName);
+  const horizon = resolveHorizon(days);
+  const requestedDays = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(days) || 1)));
   const startedAt = performance.now();
   checkCancelled(id);
   const backend = await selectBackend();
   const benchmarkMs = await benchmarkBackend();
-  const key = modelKey(snapshot, forecastType, profile.id, backend);
+  const key = modelKey(snapshot, forecastType, profile.id, backend, horizon);
   const cacheUrl = `indexeddb://${key}`;
   const checkpointKey = `checkpoint/${key}`;
   progress(id, startedAt, {
     stage: 'capability_check', profile: profile.id, backend, benchmark_ms: benchmarkMs,
-    estimated_seconds: profile.expectedSeconds,
+    estimated_seconds: profile.expectedSeconds, horizon,
   });
   await pruneCache();
-  await removeIncompatibleEntries({ key, ticker: snapshot.ticker, forecastType, profile: profile.id, backend });
+  await removeIncompatibleEntries({ key, ticker: snapshot.ticker, forecastType, profile: profile.id, backend, horizon });
 
   let model;
   let prepared;
@@ -495,17 +604,17 @@ async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
   if (cachedMetadata?.kind !== 'checkpoint') {
     try {
       model = await tf.loadLayersModel(cacheUrl);
-      if (!validCachedModel(model, cachedMetadata, snapshot, profile, backend)) {
+      if (!validCachedModel(model, cachedMetadata, snapshot, profile, backend, horizon)) {
         throw new Error('Cached browser model is incompatible.');
       }
-      prepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER);
+      prepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER, horizon);
       metrics = cachedMetadata.metrics;
       evaluation = cachedMetadata.evaluation;
       selectedEpochs = cachedMetadata.selected_epochs;
       completedEpochs = cachedMetadata.completed_epochs;
       cacheStatus = 'hit';
       await putMetadata({ ...cachedMetadata, last_used_at: Date.now() }).catch(() => undefined);
-      progress(id, startedAt, { stage: 'cache_hit', profile: profile.id, backend });
+      progress(id, startedAt, { stage: 'cache_hit', profile: profile.id, backend, horizon });
     } catch {
       model?.dispose(); model = undefined;
       await tf.io.removeModel(cacheUrl).catch(() => undefined);
@@ -515,8 +624,8 @@ async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
 
   if (!model) {
     const trained = profile.id === 'research'
-      ? await trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey)
-      : await trainHoldout(id, snapshot, forecastType, profile, startedAt);
+      ? await trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey, horizon)
+      : await trainHoldout(id, snapshot, forecastType, profile, startedAt, horizon);
     ({ model, prepared, metrics, evaluation, selectedEpochs, completedEpochs } = trained);
     const runtime = {
       tfjs_version: tf.version.tfjs,
@@ -535,12 +644,14 @@ async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
       schema_version: snapshot.schema_version,
       model_version: MODEL_VERSION,
       architecture_version: ARCHITECTURE_VERSION,
+      target_mode: TARGET_MODE,
+      horizon,
       training_profile: profile.id,
       backend,
       created_at: Date.now(),
       last_used_at: Date.now(),
       feature_names: snapshot.feature_names,
-      output_width: snapshot.output_width,
+      output_width: horizon,
       scaler: prepared.scaler,
       metrics,
       evaluation,
@@ -549,16 +660,23 @@ async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
       training_duration_ms: Math.round(performance.now() - startedAt),
       runtime,
     };
+    let saveTimedOut = false;
     try {
-      await model.save(cacheUrl);
-      const stored = (await tf.io.listModels())[cacheUrl];
-      metadata.size_bytes = Number(stored?.weightDataBytes || 0) + Number(stored?.modelTopologyBytes || 0);
-      await putMetadata(metadata);
-      await pruneSuperseded(metadata);
-      await pruneCache();
-      cacheStatus = 'stored';
+      const saveResult = await saveModelWithTimeout(model, cacheUrl);
+      saveTimedOut = saveResult.timedOut;
+      if (!saveResult.saved) {
+        storageStatus = 'session_only';
+        cacheStatus = 'session_only';
+      } else {
+        const stored = (await tf.io.listModels())[cacheUrl];
+        metadata.size_bytes = Number(stored?.weightDataBytes || 0) + Number(stored?.modelTopologyBytes || 0);
+        await putMetadata(metadata);
+        await pruneSuperseded(metadata);
+        await pruneCache();
+        cacheStatus = 'stored';
+      }
     } catch {
-      await tf.io.removeModel(cacheUrl).catch(() => undefined);
+      if (!saveTimedOut) await tf.io.removeModel(cacheUrl).catch(() => undefined);
       await deleteMetadata(key).catch(() => undefined);
       storageStatus = 'session_only';
       cacheStatus = 'session_only';
@@ -568,7 +686,8 @@ async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
   try {
     checkCancelled(id);
     const predicted = await predictRows(model, [latestInput(prepared)]);
-    if (!predicted?.[0]?.slice(0, days).every((value) => Number.isFinite(Number(value)))) {
+    const predictedReturns = predicted[0].slice(0, requestedDays);
+    if (!predictedReturns.every((value) => Number.isFinite(Number(value)))) {
       throw new Error('The local model produced invalid forecast values.');
     }
     const common = {
@@ -582,6 +701,9 @@ async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
       trainingProfile: profile.id,
       modelVersion: MODEL_VERSION,
       architectureVersion: ARCHITECTURE_VERSION,
+      targetMode: TARGET_MODE,
+      horizon,
+      days: requestedDays,
       selectedEpochs,
       completedEpochs,
       trainingDurationMs: Math.round(performance.now() - startedAt),
@@ -589,13 +711,57 @@ async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
       executionMode: cacheStatus === 'hit' ? 'browser_artifact_loaded' : 'browser_trained',
     };
     if (forecastType === 'direction') {
-      const probabilities = predicted[0].slice(0, days).map((value) => Math.min(1, Math.max(0, Number(value))));
-      return { ...common, directions: probabilities.map((value) => value >= 0.5 ? 'Up' : 'Down'), probabilities };
+      const clamp = (value) => Math.min(1, Math.max(0, Number(value)));
+      const rawProbabilities = predictedReturns.map(clamp);
+      if (!rawProbabilities.every((value) => Number.isFinite(value))) {
+        throw new Error('The local direction model produced non-finite probability values.');
+      }
+      const promotion = evaluatePromotion({
+        forecastType,
+        metrics,
+        evaluation,
+        horizon,
+      });
+      const flatTargets = flatten(prepared.targets);
+      const totalTargetCount = flatTargets.length;
+      const majorityRate = totalTargetCount > 0
+        ? clamp(flatTargets.reduce((sum, value) => sum + Number(value), 0) / totalTargetCount)
+        : 0.5;
+      const baselineFallback = !promotion.promoted;
+      const directions = baselineFallback
+        ? rawProbabilities.map(() => (majorityRate >= 0.5 ? 'Up' : 'Down'))
+        : rawProbabilities.map((value) => (value >= 0.5 ? 'Up' : 'Down'));
+      const fallbackProbabilities = baselineFallback
+        ? rawProbabilities.map(() => majorityRate)
+        : rawProbabilities;
+      return {
+        ...common,
+        directions,
+        probabilities: fallbackProbabilities,
+        baselineFallback,
+        promotion,
+      };
     }
+    const latestClose = Number(snapshot.historical_prices.at(-1));
+    const learnedPrices = predictedReturns.map((value) => latestClose * Math.exp(Number(value)));
+    const promotion = evaluatePromotion({
+      forecastType,
+      metrics,
+      evaluation,
+      horizon,
+      predictedCumulativeReturn: Number(predicted[0][horizon - 1]),
+      closingPrices: snapshot.historical_prices,
+    });
+    const baselineFallback = !promotion.promoted;
+    const predictedPrices = baselineFallback
+      ? buildPersistenceForecast(snapshot.historical_prices, requestedDays)
+      : learnedPrices;
     return {
       ...common,
-      predictedPrices: predicted[0].slice(0, days)
-        .map((value) => inverseClose(value, prepared.scaler, prepared.closeIndex)),
+      predictedPrices,
+      learnedPrices,
+      baselineFallback,
+      promotion,
     };
   } finally {
     model?.dispose();
@@ -603,6 +769,22 @@ async function trainAndPredict(id, snapshot, forecastType, days, profileName) {
 }
 
 let workQueue = Promise.resolve();
+
+function categorizeWorkerError(error) {
+  const msg = error instanceof Error ? error.message : String(error || '');
+  if (msg.includes('cancelled')) return 'Training was cancelled.';
+  if (msg.includes('evaluation') || msg.includes('evaluat')) return 'Model evaluation failed.';
+  if (msg.includes('IndexedDB') || msg.includes('storage') || msg.includes('QuotaExceeded')) {
+    return 'Local storage unavailable; using this-session-only model.';
+  }
+  if (msg.includes('memory') || msg.includes('GPU') || msg.includes('OOM') || msg.includes('allocation')) {
+    return 'Device ran out of GPU or system memory.';
+  }
+  if (msg.includes('Cached') || msg.includes('cache')) {
+    return 'Cached model could not be loaded and was removed.';
+  }
+  return 'Browser model training failed.';
+}
 
 async function processMessage(event) {
   const { id, type, snapshot, forecastType, days, profile = 'balanced' } = event.data || {};
@@ -612,7 +794,8 @@ async function processMessage(event) {
       await clearCache();
       emit(id, { type: 'complete', result: { cleared: true } });
     } catch (error) {
-      emit(id, { type: 'error', message: error instanceof Error ? error.message : 'Could not clear browser models.' });
+      const message = error instanceof Error ? error.message : 'Could not clear browser models.';
+      emit(id, { type: 'error', message, category: categorizeWorkerError(error) });
     }
     return;
   }
@@ -621,7 +804,8 @@ async function processMessage(event) {
     const result = await trainAndPredict(id, snapshot, forecastType, Number(days), profile);
     emit(id, { type: 'complete', result });
   } catch (error) {
-    emit(id, { type: 'error', message: error instanceof Error ? error.message : 'Browser training failed.' });
+    const message = error instanceof Error ? error.message : 'Browser training failed.';
+    emit(id, { type: 'error', message, category: categorizeWorkerError(error) });
   } finally {
     cancelledIds.delete(id);
   }
@@ -635,4 +819,11 @@ self.onmessage = (event) => {
   }
   if (type === 'forecast') cancelledIds.delete(id);
   workQueue = workQueue.then(() => processMessage(event), () => processMessage(event));
+};
+
+self.onerror = (event) => {
+  console.error('[worker-uncaught]', event?.message || String(event));
+};
+self.onunhandledrejection = (event) => {
+  console.error('[worker-unhandled-rejection]', event?.reason?.stack || String(event?.reason));
 };

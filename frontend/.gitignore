@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Temporary diagnostic material and Playwright outputs
+e2e-debug.mjs
+playwright-report/
+test-results/
+preview.log
+

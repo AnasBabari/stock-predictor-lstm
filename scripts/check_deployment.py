@@ -13,11 +13,16 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 EXPECTED_FEATURES = [
-    "Open", "High", "Low", "Close", "Volume", "SMA_20", "EMA_20", "RSI_14",
-    "MACD", "MACD_Signal", "BB_Upper", "BB_Lower", "ATR_14", "OBV",
+    "Log_Open_Rel", "Log_High_Rel", "Log_Low_Rel", "Return_1D", "Volume_Log1p_Change",
+    "Close_SMA_20", "Close_EMA_20", "RSI_14_Centered", "MACD_Close", "MACD_Signal_Close",
+    "BB_Upper_Rel", "BB_Lower_Rel", "ATR_14_Rel", "OBV_Change_Z",
+    "Return_5D", "Return_20D", "Realized_Vol_5D", "Realized_Vol_20D",
     "SPY_Return_1D", "QQQ_Return_1D", "VIX_Return_1D", "TNX_Return_1D",
+    "Return_Rel_SPY_1D", "Beta_SPY_20D",
     "Month_Sin", "Month_Cos", "Day_Sin", "Day_Cos",
 ]
+
+EXPECTED_TARGET_MODE = "cumulative_log_return_v1"
 
 
 @dataclass
@@ -74,10 +79,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
         snapshot, _ = get_json(base_url, f"/api/v1/training-data?ticker={ticker}", timeout=args.timeout)
         rows = snapshot.get("features") or []
-        add(results, "schema_version", snapshot.get("schema_version") == 3, "training-data schema version is not 3")
+        add(results, "schema_version", snapshot.get("schema_version") == 4, "training-data schema version is not 4")
         add(results, "feature_order", snapshot.get("feature_names") == EXPECTED_FEATURES, "training-data feature ordering is incompatible")
         add(results, "snapshot_shape", snapshot.get("window_size") == 60 and snapshot.get("output_width") == 30 and len(rows) == len(snapshot.get("dates", [])), "training-data shape/date contract is incompatible")
         add(results, "finite_features", bool(rows) and all(math.isfinite(float(value)) for row in rows for value in row), "training-data returned no finite feature rows")
+        data_snapshot = snapshot.get("data_snapshot") or {}
+        quality = data_snapshot.get("quality") or {}
+        add(results, "quality_metadata", quality.get("status") in ("clean", "annotated") and isinstance(quality.get("checks"), dict) and isinstance(quality.get("issues"), list), "training-data quality diagnostics are missing or malformed")
+        add(results, "target_mode", data_snapshot.get("target_mode") == EXPECTED_TARGET_MODE, "training-data target mode is incompatible")
 
         price, _ = get_json(base_url, f"/api/v1/predict?ticker={ticker}&days=1", timeout=args.timeout)
         price_engine = price.get("metadata", {}).get("engine", {})

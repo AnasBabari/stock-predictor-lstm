@@ -1,7 +1,10 @@
 import * as tf from '@tensorflow/tfjs';
-import { OUTPUT_WIDTH, WINDOW_SIZE } from './preprocessing';
+import { WINDOW_SIZE } from './preprocessing';
 
-export function buildBrowserModel(forecastType, featureCount, profile) {
+export const HUBER_DELTA = 0.02;
+
+export function buildBrowserModel(forecastType, featureCount, profile, outputWidth = 30) {
+  const isDirection = forecastType === 'direction' || forecastType === 'trend';
   const model = tf.sequential();
   model.add(tf.layers.lstm({
     units: profile.lstmUnits[0],
@@ -19,12 +22,14 @@ export function buildBrowserModel(forecastType, featureCount, profile) {
   if (profile.id !== 'quick') model.add(tf.layers.dropout({ rate: profile.dropout, seed: 47 }));
   model.add(tf.layers.dense({ units: profile.denseUnits, activation: 'relu' }));
   model.add(tf.layers.dense({
-    units: OUTPUT_WIDTH,
-    activation: forecastType === 'direction' ? 'sigmoid' : undefined,
+    units: Math.max(1, Math.round(Number(outputWidth) || 30)),
+    activation: isDirection ? 'sigmoid' : undefined,
   }));
   model.compile({
     optimizer: tf.train.adam(0.001),
-    loss: forecastType === 'direction' ? 'binaryCrossentropy' : 'meanSquaredError',
+    loss: isDirection
+      ? 'binaryCrossentropy'
+      : (yTrue, yPred) => tf.losses.huberLoss(yTrue, yPred, HUBER_DELTA),
   });
   return model;
 }

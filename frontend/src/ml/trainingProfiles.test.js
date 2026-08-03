@@ -7,7 +7,8 @@ test('uses quick on constrained or mobile devices and balanced on capable deskto
 });
 
 test('locks profile architecture and duration contracts', () => {
-  expect(resolveTrainingProfile('quick').lstmUnits).toEqual([32, 16]);
+  expect(resolveTrainingProfile('quick').lstmUnits).toEqual([16, 8]);
+  expect(resolveTrainingProfile('balanced').lstmUnits).toEqual([32, 16]);
   expect(resolveTrainingProfile('balanced').epochs).toBe(25);
   expect(resolveTrainingProfile('research').folds).toBe(5);
   expect(expectedDurationLabel('research')).toContain('min');

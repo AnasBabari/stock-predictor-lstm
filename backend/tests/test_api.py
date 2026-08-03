@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 import api
 from api import WorkCoordinator, app
-from config import FEATURES, MAX_FORECAST_DAYS, WINDOW_SIZE
+from config import FEATURES, FEATURES_V4, MAX_FORECAST_DAYS, WINDOW_SIZE
 
 client = TestClient(app)
 
@@ -657,14 +657,13 @@ def test_models_advertises_browser_training_and_disabled_server_models():
 def test_training_data_route_returns_validated_snapshot(monkeypatch):
     snapshot = {
         "ticker": "MSFT",
-        "schema_version": 3,
+        "schema_version": 4,
         "snapshot_id": "snapshot-test",
-        "feature_names": list(FEATURES),
+        "feature_names": list(FEATURES_V4),
         "window_size": WINDOW_SIZE,
         "output_width": MAX_FORECAST_DAYS,
-        "close_index": FEATURES.index("Close"),
         "dates": ["2026-07-30"],
-        "features": [[1.0] * len(FEATURES)],
+        "features": [[1.0] * len(FEATURES_V4)],
         "historical_prices": [100.0],
         "future_dates": ["2026-07-31"],
     }
@@ -673,5 +672,5 @@ def test_training_data_route_returns_validated_snapshot(monkeypatch):
     )
     response = client.get("/api/v1/training-data?ticker=MSFT")
     assert response.status_code == 200
-    assert response.json()["feature_names"] == list(FEATURES)
+    assert response.json()["feature_names"] == list(FEATURES_V4)
     assert client.get("/api/v1/training-data?ticker=../MSFT").status_code == 400

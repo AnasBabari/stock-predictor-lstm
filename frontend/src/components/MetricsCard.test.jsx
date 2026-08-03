@@ -19,7 +19,7 @@ const baselineResponse = {
 test('identifies a baseline without presenting it as a learned model', () => {
   render(<MetricsCard stockData={baselineResponse} forecastType="price" />);
 
-  expect(screen.getByText('persistence · Baseline fallback')).toBeInTheDocument();
+  expect(screen.getByText('persistence · Baseline fallback — persistence displayed')).toBeInTheDocument();
   expect(screen.getByText('Baseline definition')).toBeInTheDocument();
   expect(document.querySelector('.metrics-card--baseline')).toBeInTheDocument();
 });

@@ -1,13 +1,13 @@
-import { FEATURE_NAMES } from './preprocessing';
+import { FEATURE_NAMES, FEATURE_SCHEMA_VERSION } from './preprocessing';
 
 function snapshot() {
   const rows = 100;
   const features = Array.from({ length: rows }, (_, row) => FEATURE_NAMES.map((_, column) => row + column + 1));
   return {
-    ticker: 'TEST', schema_version: 3, snapshot_id: 'snapshot-client', feature_names: FEATURE_NAMES,
-    window_size: 60, output_width: 30, close_index: 3,
+    ticker: 'TEST', schema_version: FEATURE_SCHEMA_VERSION, snapshot_id: 'snapshot-client', feature_names: FEATURE_NAMES,
+    window_size: 60, output_width: 30,
     dates: Array.from({ length: rows }, (_, index) => `day-${index}`),
-    features, historical_prices: features.map((row) => row[3]),
+    features, historical_prices: features.map((row) => row[0]),
     future_dates: Array.from({ length: 30 }, (_, index) => `future-${index}`),
   };
 }

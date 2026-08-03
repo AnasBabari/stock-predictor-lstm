@@ -31,7 +31,7 @@ from sklearn.metrics import (  # type: ignore[import-untyped]
     r2_score,
     recall_score,
 )
-from sklearn.preprocessing import MinMaxScaler  # type: ignore[import-untyped]
+from sklearn.preprocessing import MinMaxScaler, RobustScaler  # type: ignore[import-untyped]
 from tensorflow.keras.callbacks import EarlyStopping  # type: ignore[import-untyped]
 from tensorflow.keras.layers import (  # type: ignore[import-untyped]
     GRU,
@@ -114,52 +114,83 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _save_scaler_json(scaler: MinMaxScaler, path: Path) -> None:
-    payload = {
-        "format": "sklearn_minmax_v1",
-        "feature_range": list(scaler.feature_range),
-        "n_features_in": int(scaler.n_features_in_),
-        "data_min": scaler.data_min_.tolist(),
-        "data_max": scaler.data_max_.tolist(),
-        "data_range": scaler.data_range_.tolist(),
-        "scale": scaler.scale_.tolist(),
-        "min": scaler.min_.tolist(),
-        "n_samples_seen": int(scaler.n_samples_seen_),
-    }
+def _save_scaler_json(scaler, path: Path) -> None:
+    """Serialize either a MinMaxScaler or RobustScaler to a versioned JSON payload."""
+    if hasattr(scaler, "data_min_") and hasattr(scaler, "feature_range"):
+        payload = {
+            "format": "sklearn_minmax_v1",
+            "feature_range": list(scaler.feature_range),
+            "n_features_in": int(scaler.n_features_in_),
+            "data_min": scaler.data_min_.tolist(),
+            "data_max": scaler.data_max_.tolist(),
+            "data_range": scaler.data_range_.tolist(),
+            "scale": scaler.scale_.tolist(),
+            "min": scaler.min_.tolist(),
+            "n_samples_seen": int(scaler.n_samples_seen_),
+        }
+    else:
+        payload = {
+            "format": "sklearn_robust_v1",
+            "quantile_range": [float(scaler.quantile_range[0]), float(scaler.quantile_range[1])],
+            "n_features_in": int(scaler.n_features_in_),
+            "center": scaler.center_.tolist(),
+            "scale": scaler.scale_.tolist(),
+        }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _load_scaler_json(path: Path) -> MinMaxScaler:
+def _load_scaler_json(path: Path) -> MinMaxScaler | RobustScaler:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("format") != "sklearn_minmax_v1":
+        fmt = payload.get("format")
+        if fmt not in {"sklearn_minmax_v1", "sklearn_robust_v1"}:
             raise ArtifactValidationError("Unsupported scaler format.")
         count = int(payload["n_features_in"])
-        names = ("data_min", "data_max", "data_range", "scale", "min")
-        arrays = {name: np.asarray(payload[name], dtype=float) for name in names}
-        feature_range = tuple(float(value) for value in payload["feature_range"])
-        samples_seen = int(payload["n_samples_seen"])
+        if count != len(FEATURES):
+            raise ArtifactValidationError("Scaler feature shape or range is incompatible.")
+        if fmt == "sklearn_minmax_v1":
+            samples_seen = int(payload["n_samples_seen"])
+            if samples_seen < 1:
+                raise ArtifactValidationError("Scaler feature shape or range is incompatible.")
+            names = ("data_min", "data_max", "data_range", "scale", "min")
+            arrays = {name: np.asarray(payload[name], dtype=float) for name in names}
+            feature_range = tuple(float(value) for value in payload["feature_range"])
+            if (
+                len(feature_range) != 2
+                or not np.isfinite(feature_range).all()
+                or feature_range[0] >= feature_range[1]
+                or any(value.shape != (count,) for value in arrays.values())
+                or not all(np.isfinite(value).all() for value in arrays.values())
+            ):
+                raise ArtifactValidationError("Scaler feature shape or range is incompatible.")
+            scaler = MinMaxScaler(feature_range=feature_range)
+            scaler.n_features_in_ = count
+            scaler.n_samples_seen_ = samples_seen
+            for name, value in arrays.items():
+                setattr(scaler, f"{name}_", value)
+            return scaler
+        quantile_range = tuple(float(value) for value in payload["quantile_range"])
+        center = np.asarray(payload["center"], dtype=float)
+        scale = np.asarray(payload["scale"], dtype=float)
+        if (
+            len(quantile_range) != 2
+            or not 0.0 <= quantile_range[0] < quantile_range[1] <= 100.0
+            or center.shape != (count,)
+            or scale.shape != (count,)
+            or not np.isfinite(center).all()
+            or not np.isfinite(scale).all()
+            or (scale <= 0).any()
+        ):
+            raise ArtifactValidationError("Scaler feature shape or range is incompatible.")
+        scaler = RobustScaler(quantile_range=quantile_range)
+        scaler.n_features_in_ = count
+        scaler.center_ = center
+        scaler.scale_ = scale
+        return scaler
     except ArtifactValidationError:
         raise
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ArtifactValidationError("Scaler metadata is malformed.") from exc
-    if (
-        count != len(FEATURES)
-        or len(feature_range) != 2
-        or not np.isfinite(feature_range).all()
-        or feature_range[0] >= feature_range[1]
-        or samples_seen < 1
-        or any(value.shape != (count,) for value in arrays.values())
-    ):
-        raise ArtifactValidationError("Scaler feature shape or range is incompatible.")
-    if not all(np.isfinite(value).all() for value in arrays.values()):
-        raise ArtifactValidationError("Scaler contains non-finite values.")
-    scaler = MinMaxScaler(feature_range=feature_range)
-    scaler.n_features_in_ = count
-    scaler.n_samples_seen_ = samples_seen
-    for name, value in arrays.items():
-        setattr(scaler, f"{name}_", value)
-    return scaler
 
 
 def _artifact_root(ticker: str, model_type: str) -> Path:
@@ -326,10 +357,15 @@ def _unscale_close(scaled_values: np.ndarray, scaler) -> np.ndarray:
     """Unscale predictions using the scaler's 'Close' feature parameters."""
     close_idx = FEATURES.index("Close")
     close_scale = scaler.scale_[close_idx]
-    if close_scale == 0:
-        return np.full_like(scaled_values, scaler.data_min_[close_idx])
-    close_min = scaler.min_[close_idx]
-    return (scaled_values - close_min) / close_scale
+    if not np.isfinite(close_scale) or close_scale <= 0:
+        if hasattr(scaler, "data_min_"):
+            return np.full_like(scaled_values, scaler.data_min_[close_idx])
+        return np.full_like(scaled_values, scaler.center_[close_idx])
+    if hasattr(scaler, "min_"):  # MinMaxScaler inverse: x = (x_scaled - min_) / scale_
+        close_min = scaler.min_[close_idx]
+        return (scaled_values - close_min) / close_scale
+    # RobustScaler inverse: x = x_scaled * scale_ + center_
+    return scaled_values * close_scale + scaler.center_[close_idx]
 
 
 # ── Build ────────────────────────────────────────────────────────────
@@ -1150,7 +1186,7 @@ def train_model(
                 else None
             ),
             "training_duration_seconds": training_duration_seconds,
-            "scaler": "MinMaxScaler",
+            "scaler": type(scaler).__name__ if scaler is not None else "none",
             "validation_method": VALIDATION_CONFIG.method,
             "validation_folds": VALIDATION_CONFIG.folds,
             "validation_horizon": VALIDATION_CONFIG.horizon,

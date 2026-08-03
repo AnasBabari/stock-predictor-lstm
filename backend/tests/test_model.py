@@ -138,7 +138,13 @@ def test_scaler_persistence_and_metadata_loading(preprocessed, tmp_path, monkeyp
         "PERSISTTEST", X_train, y_train, X_test, y_test, scaler=scaler
     )
     assert loaded_s is not None
-    assert getattr(loaded_s, "data_min_", None) is not None
+    assert hasattr(loaded_s, "center_") or hasattr(loaded_s, "data_min_")
+    if hasattr(scaler, "center_"):
+        np.testing.assert_allclose(loaded_s.center_, scaler.center_)
+        np.testing.assert_allclose(loaded_s.scale_, scaler.scale_)
+    else:
+        np.testing.assert_allclose(loaded_s.data_min_, scaler.data_min_)
+        np.testing.assert_allclose(loaded_s.scale_, scaler.scale_)
 
 
 def test_build_bilstm_attention_model_outputs():

@@ -1,34 +1,43 @@
-export const MODEL_VERSION = 'tfjs-lstm-v2';
-export const ARCHITECTURE_VERSION = 'local-lstm-profiles-v1';
+export const MODEL_VERSION = 'tfjs-return-lstm-v4';
+export const ARCHITECTURE_VERSION = 'local-return-lstm-v2';
+export const TARGET_MODE = 'cumulative_log_return_v1';
 export const WINDOW_SIZE = 60;
 export const OUTPUT_WIDTH = 30;
+export const HORIZONS = [1, 3, 5, 7, 14, 30];
 export const TRAIN_SPLIT = 0.8;
 export const VALIDATION_FRACTION = 0.2;
-export const FEATURE_SCHEMA_VERSION = 3;
+export const FEATURE_SCHEMA_VERSION = 4;
 export const FEATURE_NAMES = [
-  'Open',
-  'High',
-  'Low',
-  'Close',
-  'Volume',
-  'SMA_20',
-  'EMA_20',
-  'RSI_14',
-  'MACD',
-  'MACD_Signal',
-  'BB_Upper',
-  'BB_Lower',
-  'ATR_14',
-  'OBV',
+  'Log_Open_Rel',
+  'Log_High_Rel',
+  'Log_Low_Rel',
+  'Return_1D',
+  'Volume_Log1p_Change',
+  'Close_SMA_20',
+  'Close_EMA_20',
+  'RSI_14_Centered',
+  'MACD_Close',
+  'MACD_Signal_Close',
+  'BB_Upper_Rel',
+  'BB_Lower_Rel',
+  'ATR_14_Rel',
+  'OBV_Change_Z',
+  'Return_5D',
+  'Return_20D',
+  'Realized_Vol_5D',
+  'Realized_Vol_20D',
   'SPY_Return_1D',
   'QQQ_Return_1D',
   'VIX_Return_1D',
   'TNX_Return_1D',
+  'Return_Rel_SPY_1D',
+  'Beta_SPY_20D',
   'Month_Sin',
   'Month_Cos',
   'Day_Sin',
   'Day_Cos',
 ];
+
 function finite(value) {
   return Number.isFinite(Number(value));
 }
@@ -49,9 +58,6 @@ export function validateSnapshot(snapshot) {
   }
   if (Number(snapshot.window_size) !== WINDOW_SIZE || Number(snapshot.output_width) !== OUTPUT_WIDTH) {
     throw new Error('Training window/output contract is incompatible.');
-  }
-  if (Number(snapshot.close_index) !== FEATURE_NAMES.indexOf('Close')) {
-    throw new Error('Training close-price index is incompatible.');
   }
   if (!Array.isArray(snapshot.features) || !Array.isArray(snapshot.dates)) {
     throw new Error('Training feature data is incomplete.');
@@ -80,74 +86,82 @@ export function validateSnapshot(snapshot) {
   }
 }
 
-export function fitMinMax(rows, endExclusive) {
-  const limit = Math.max(1, Math.min(endExclusive, rows.length));
+export function resolveHorizon(days) {
+  const requested = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(days) || 1)));
+  return HORIZONS.find((horizon) => horizon >= requested) ?? OUTPUT_WIDTH;
+}
+
+export function fitRobustScaler(rows, endExclusive) {
+  const limit = Math.max(2, Math.min(endExclusive == null ? rows.length : endExclusive, rows.length));
   const count = rows[0].length;
-  const min = Array.from({ length: count }, () => Infinity);
-  const max = Array.from({ length: count }, () => -Infinity);
-  for (let index = 0; index < limit; index += 1) {
-    rows[index].forEach((value, column) => {
-      min[column] = Math.min(min[column], Number(value));
-      max[column] = Math.max(max[column], Number(value));
-    });
+  const median = [];
+  const iqr = [];
+  for (let column = 0; column < count; column += 1) {
+    const values = rows.slice(0, limit).map((row) => Number(row[column])).sort((a, b) => a - b);
+    const quantile = (position) => {
+      const index = position * (values.length - 1);
+      const lower = Math.floor(index);
+      const upper = Math.ceil(index);
+      if (lower === upper) return values[lower];
+      return values[lower] + (values[upper] - values[lower]) * (index - lower);
+    };
+    const med = quantile(0.5);
+    const spread = Math.max(quantile(0.75) - quantile(0.25), 1e-12);
+    median.push(med);
+    iqr.push(spread);
   }
-  return { min, max };
+  return { median, iqr };
 }
 
 export function scaleRows(rows, scaler) {
-  return rows.map((row) => row.map((value, column) => {
-    const range = scaler.max[column] - scaler.min[column];
-    return range === 0 ? 0 : (Number(value) - scaler.min[column]) / range;
-  }));
+  return rows.map((row) => row.map((value, column) => (Number(value) - scaler.median[column]) / scaler.iqr[column]));
 }
 
-export function inverseClose(value, scaler, closeIndex) {
-  const range = scaler.max[closeIndex] - scaler.min[closeIndex];
-  return Number(value) * range + scaler.min[closeIndex];
+export function inverseRobust(value, scaler, column) {
+  return Number(value) * scaler.iqr[column] + scaler.median[column];
 }
 
-function splitCount(rowCount) {
-  const sampleCount = rowCount - WINDOW_SIZE - OUTPUT_WIDTH + 1;
+export function preparePriceData(snapshot, scalerEnd, horizon = OUTPUT_WIDTH) {
+  const rows = snapshot.features.map((row) => row.map(Number));
+  const closes = snapshot.historical_prices.map(Number);
+  const h = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(horizon) || OUTPUT_WIDTH)));
+  const sampleCount = rows.length - WINDOW_SIZE - h + 1;
   if (sampleCount <= 0) throw new Error('Not enough rows for browser training.');
   const split = Math.floor(sampleCount * TRAIN_SPLIT);
-  const trainCount = split - OUTPUT_WIDTH + 1;
+  const trainCount = split - h + 1;
   if (trainCount < 1 || split >= sampleCount) throw new Error('Training split is too small.');
-  return { sampleCount, split, trainCount };
-}
-
-export function preparePriceData(snapshot, scalerEnd) {
-  const rows = snapshot.features.map((row) => row.map(Number));
-  const { sampleCount, split, trainCount } = splitCount(rows.length);
-  const scaler = fitMinMax(rows, scalerEnd ?? split + WINDOW_SIZE);
+  const scaler = fitRobustScaler(rows, scalerEnd ?? split + WINDOW_SIZE);
   const scaled = scaleRows(rows, scaler);
-  const closeIndex = Number(snapshot.close_index);
   const inputs = [];
   const targets = [];
   const origins = [];
   for (let index = WINDOW_SIZE; index < WINDOW_SIZE + sampleCount; index += 1) {
     inputs.push(scaled.slice(index - WINDOW_SIZE, index));
-    targets.push(scaled.slice(index, index + OUTPUT_WIDTH).map((row) => row[closeIndex]));
-    origins.push(scaled[index - 1][closeIndex]);
+    targets.push(closes.slice(index, index + h).map((close, step) => Math.log(close / closes[index - 1])));
+    origins.push(closes[index - 1]);
   }
-  return { inputs, targets, origins, scaler, split, trainCount, scaled, closeIndex };
+  return { inputs, targets, origins, scaler, split, trainCount, scaled, horizon: h, closes };
 }
 
-export function prepareDirectionData(snapshot, scalerEnd) {
+export function prepareDirectionData(snapshot, scalerEnd, horizon = OUTPUT_WIDTH) {
+  const h = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(horizon) || OUTPUT_WIDTH)));
   const rawRows = snapshot.features.slice(1).map((row) => row.map(Number));
   const prices = snapshot.historical_prices.map(Number);
   const returns = prices.slice(1).map((price, index) => Math.log(price / prices[index]));
-  const { sampleCount, split, trainCount } = splitCount(rawRows.length);
-  const scaler = fitMinMax(rawRows, scalerEnd ?? split + WINDOW_SIZE);
+  const sampleCount = rawRows.length - WINDOW_SIZE - h + 1;
+  if (sampleCount <= 0) throw new Error('Not enough rows for browser training.');
+  const split = Math.floor(sampleCount * TRAIN_SPLIT);
+  const trainCount = split - h + 1;
+  if (trainCount < 1 || split >= sampleCount) throw new Error('Training split is too small.');
+  const scaler = fitRobustScaler(rawRows, scalerEnd ?? split + WINDOW_SIZE);
   const scaled = scaleRows(rawRows, scaler);
   const inputs = [];
   const targets = [];
-  const origins = [];
   for (let index = WINDOW_SIZE; index < WINDOW_SIZE + sampleCount; index += 1) {
     inputs.push(scaled.slice(index - WINDOW_SIZE, index));
-    targets.push(returns.slice(index, index + OUTPUT_WIDTH).map((value) => (value > 0 ? 1 : 0)));
-    origins.push(scaled[index - 1][Number(snapshot.close_index)]);
+    targets.push(returns.slice(index, index + h).map((value) => (value > 0 ? 1 : 0)));
   }
-  return { inputs, targets, origins, scaler, split, trainCount, scaled, closeIndex: Number(snapshot.close_index) };
+  return { inputs, targets, scaler, split, trainCount, scaled, horizon: h };
 }
 
 export function featureSignature(featureNames) {
@@ -159,10 +173,11 @@ export function featureSignature(featureNames) {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-export function modelKey(snapshot, forecastType, profile = 'balanced', backend = 'any') {
+export function modelKey(snapshot, forecastType, profile = 'balanced', backend = 'any', horizon = OUTPUT_WIDTH) {
   return [
     MODEL_VERSION,
     ARCHITECTURE_VERSION,
+    TARGET_MODE,
     snapshot.schema_version,
     snapshot.ticker,
     forecastType,
@@ -171,7 +186,7 @@ export function modelKey(snapshot, forecastType, profile = 'balanced', backend =
     featureSignature(snapshot.feature_names),
     snapshot.snapshot_id,
     WINDOW_SIZE,
-    OUTPUT_WIDTH,
+    horizon,
   ].join('/');
 }
 

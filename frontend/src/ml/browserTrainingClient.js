@@ -1,4 +1,4 @@
-import { modelKey, validateSnapshot } from './preprocessing';
+import { modelKey, resolveHorizon, validateSnapshot } from './preprocessing';
 import { resolveTrainingProfile } from './trainingProfiles';
 
 let worker;
@@ -48,10 +48,10 @@ export function browserTrainingSupported() {
   return typeof Worker !== 'undefined';
 }
 
-export function forecastCacheIdentity(snapshot, forecastType, profile = 'balanced', backend = 'any') {
+export function forecastCacheIdentity(snapshot, forecastType, profile = 'balanced', backend = 'any', days = 30) {
   validateSnapshot(snapshot);
   resolveTrainingProfile(profile);
-  return modelKey(snapshot, forecastType, profile, backend);
+  return modelKey(snapshot, forecastType, profile, backend, resolveHorizon(days));
 }
 
 function subscribe(request, signal, onProgress) {
