@@ -90,7 +90,14 @@ def evaluate_multi_seed(
             )
             summary = result.summary(policy)
         except Exception as exc:  # Per-seed failures are counted, not raised.
-            per_seed.append({"seed": seed, "status": "failed", "error": str(exc)})
+            per_seed.append(
+                {
+                    "seed": seed,
+                    "status": "failed",
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+            )
             continue
         successful_summaries.append(summary)
         per_seed.append({"seed": seed, "status": "success", "summary": summary})
@@ -122,4 +129,11 @@ def evaluate_multi_seed(
     for metric in SCALAR_METRICS:
         record[metric] = aggregate[metric]["median"]
     record["promotable"] = failure_count == 0 and promotable_seed_count == len(seed_values)
+    # Surface the first distinct per-seed error so callers (and the locked
+    # ledger schema, which drops per_seed detail) can record why seeds failed.
+    record["failure_reason"] = "; ".join(
+        f"seed {entry['seed']}: {entry.get('error_type', 'Error')}: {entry.get('error', '')}"
+        for entry in per_seed
+        if entry["status"] == "failed"
+    )
     return record

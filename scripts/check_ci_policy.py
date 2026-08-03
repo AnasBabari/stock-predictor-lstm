@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import re
 import sys
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = list((ROOT / ".github" / "workflows").glob("*.yml"))
@@ -18,9 +17,7 @@ if "@latest" in workflow_text:
 
 # Third-party actions are executable supply-chain inputs.  Keep the reviewable
 # workflow references immutable rather than relying on mutable major tags.
-for action_ref in re.findall(
-    r"^\s*-?\s*uses:\s*[^\s#]+@([^\s#]+)", workflow_text, re.MULTILINE
-):
+for action_ref in re.findall(r"^\s*-?\s*uses:\s*[^\s#]+@([^\s#]+)", workflow_text, re.MULTILINE):
     if not re.fullmatch(r"[0-9a-f]{40}", action_ref):
         errors.append("GitHub Actions must be pinned to a full commit SHA.")
         break
@@ -50,15 +47,11 @@ def requirement_names(path: Path) -> set[str]:
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
-            names.add(
-                re.split(r"[<>=!~\[]", line, maxsplit=1)[0].lower().replace("_", "-")
-            )
+            names.add(re.split(r"[<>=!~\[]", line, maxsplit=1)[0].lower().replace("_", "-"))
     return names
 
 
-project = tomllib.loads(
-    (ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
-)
+project = tomllib.loads((ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8"))
 runtime_names = {
     re.split(r"[<>=!~\[]", item, maxsplit=1)[0].lower().replace("_", "-")
     for item in project["project"]["dependencies"]
@@ -68,13 +61,9 @@ dev_names = {
     for item in project["dependency-groups"]["dev"]
 }
 if runtime_names != requirement_names(ROOT / "backend" / "requirements.txt"):
-    errors.append(
-        "requirements.txt names have drifted from pyproject runtime dependencies."
-    )
+    errors.append("requirements.txt names have drifted from pyproject runtime dependencies.")
 if dev_names != requirement_names(ROOT / "backend" / "requirements-dev.txt"):
-    errors.append(
-        "requirements-dev.txt names have drifted from the dev dependency group."
-    )
+    errors.append("requirements-dev.txt names have drifted from the dev dependency group.")
 if (ROOT / "backend" / "uv.lock").stat().st_size < 1000:
     errors.append("backend/uv.lock is missing or incomplete.")
 

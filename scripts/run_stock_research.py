@@ -89,8 +89,27 @@ def main() -> int:
         return 1
 
     frame = pd.read_csv(args.snapshot, index_col=0, parse_dates=True)
-    sn_id = compute_snapshot_id(frame, args.features)
-    snapshot = Snapshot(frame=frame, snapshot_id=sn_id, feature_names=tuple(args.features))
+    # The controller subprocess derives features from every non-Close column in
+    # the snapshot, ignoring --features. The in-process multi-seed path must
+    # stay at parity: if the requested feature columns are absent from the
+    # snapshot, fall back to the available non-Close columns (with a warning)
+    # instead of crashing every seed on snapshot validation.
+    feature_names = list(args.features)
+    missing_features = [name for name in feature_names if name not in frame.columns]
+    if missing_features:
+        fallback = [column for column in frame.columns if column != "Close"]
+        print(
+            f"Warning: snapshot is missing requested features {missing_features}; "
+            f"falling back to available non-Close columns {fallback} "
+            "(matches the controller subprocess behavior).",
+            file=sys.stderr,
+        )
+        feature_names = fallback
+    if not feature_names:
+        print("Error: snapshot contains no usable feature columns.", file=sys.stderr)
+        return 1
+    sn_id = compute_snapshot_id(frame, feature_names)
+    snapshot = Snapshot(frame=frame, snapshot_id=sn_id, feature_names=tuple(feature_names))
 
     factories = {
         "persistence": lambda seed: PersistenceCandidate(),
@@ -132,11 +151,7 @@ def main() -> int:
                     "horizon": args.horizon,
                     "seeds": multi_seed_record["seeds"],
                     "status": multi_seed_record["status"],
-                    "failure_reason": (
-                        f"{multi_seed_record['failure_count']} seed run(s) failed"
-                        if multi_seed_record["failure_count"]
-                        else ""
-                    ),
+                    "failure_reason": multi_seed_record["failure_reason"],
                     "median_relative_mae": multi_seed_record["median_relative_mae"],
                     "median_relative_rmse": multi_seed_record["median_relative_rmse"],
                     "worst_fold_relative_rmse": multi_seed_record["worst_fold_relative_rmse"],

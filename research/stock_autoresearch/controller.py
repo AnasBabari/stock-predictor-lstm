@@ -7,7 +7,6 @@ immutable file protection, git worktree/branch management, and append-only exper
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 import time
@@ -18,7 +17,6 @@ from typing import Any
 from .config import EVALUATION_POLICY, RUNTIME_BUDGET, EvaluationPolicy, RuntimeBudget
 from .ledger import append_record, export_tsv_summary, generate_markdown_report
 from .resources import sample_cuda_memory
-
 
 PROHIBITED_FILES = (
     "research/stock_autoresearch/config.py",
@@ -288,7 +286,9 @@ class ExperimentController:
             "worst_fold_relative_rmse": payload.get("worst_fold_relative_rmse"),
             "folds_beating_persistence": payload.get("folds_beating_persistence"),
             "promotable": payload.get("promotable", False),
-            "decision": "keep" if payload.get("promotable") and sub.status == "success" else "discard",
+            "decision": "keep"
+            if payload.get("promotable") and sub.status == "success"
+            else "discard",
         }
 
         entry = append_record(self.ledger_path, record)

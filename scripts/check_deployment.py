@@ -13,13 +13,34 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 EXPECTED_FEATURES = [
-    "Log_Open_Rel", "Log_High_Rel", "Log_Low_Rel", "Return_1D", "Volume_Log1p_Change",
-    "Close_SMA_20", "Close_EMA_20", "RSI_14_Centered", "MACD_Close", "MACD_Signal_Close",
-    "BB_Upper_Rel", "BB_Lower_Rel", "ATR_14_Rel", "OBV_Change_Z",
-    "Return_5D", "Return_20D", "Realized_Vol_5D", "Realized_Vol_20D",
-    "SPY_Return_1D", "QQQ_Return_1D", "VIX_Return_1D", "TNX_Return_1D",
-    "Return_Rel_SPY_1D", "Beta_SPY_20D",
-    "Month_Sin", "Month_Cos", "Day_Sin", "Day_Cos",
+    "Log_Open_Rel",
+    "Log_High_Rel",
+    "Log_Low_Rel",
+    "Return_1D",
+    "Volume_Log1p_Change",
+    "Close_SMA_20",
+    "Close_EMA_20",
+    "RSI_14_Centered",
+    "MACD_Close",
+    "MACD_Signal_Close",
+    "BB_Upper_Rel",
+    "BB_Lower_Rel",
+    "ATR_14_Rel",
+    "OBV_Change_Z",
+    "Return_5D",
+    "Return_20D",
+    "Realized_Vol_5D",
+    "Realized_Vol_20D",
+    "SPY_Return_1D",
+    "QQQ_Return_1D",
+    "VIX_Return_1D",
+    "TNX_Return_1D",
+    "Return_Rel_SPY_1D",
+    "Beta_SPY_20D",
+    "Month_Sin",
+    "Month_Cos",
+    "Day_Sin",
+    "Day_Cos",
 ]
 
 EXPECTED_TARGET_MODE = "cumulative_log_return_v1"
@@ -36,7 +57,9 @@ def safe_error(exc: BaseException) -> str:
     return str(exc).replace("\n", " ").strip()[:240] or type(exc).__name__
 
 
-def get_json(base_url: str, path: str, *, timeout: float, origin: str | None = None) -> tuple[dict[str, Any], dict[str, str]]:
+def get_json(
+    base_url: str, path: str, *, timeout: float, origin: str | None = None
+) -> tuple[dict[str, Any], dict[str, str]]:
     headers = {"Accept": "application/json"}
     if origin:
         headers["Origin"] = origin
@@ -56,46 +79,136 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     observed_commit = None
     observed_environment = None
     try:
-        first_health, health_headers = get_json(base_url, "/health", timeout=args.timeout, origin=args.cors_origin)
-        add(results, "health_status", first_health.get("status") == "ok", "/health did not return status=ok")
+        first_health, health_headers = get_json(
+            base_url, "/health", timeout=args.timeout, origin=args.cors_origin
+        )
+        add(
+            results,
+            "health_status",
+            first_health.get("status") == "ok",
+            "/health did not return status=ok",
+        )
         deployment = first_health.get("deployment") or {}
         observed_commit = deployment.get("commit")
         observed_environment = deployment.get("environment")
         if args.expected_commit:
-            add(results, "expected_commit", observed_commit == args.expected_commit[:12].lower(), "deployment commit did not match expected commit")
+            add(
+                results,
+                "expected_commit",
+                observed_commit == args.expected_commit[:12].lower(),
+                "deployment commit did not match expected commit",
+            )
         if args.expected_environment:
-            add(results, "expected_environment", observed_environment == args.expected_environment, "deployment environment did not match expected environment")
+            add(
+                results,
+                "expected_environment",
+                observed_environment == args.expected_environment,
+                "deployment environment did not match expected environment",
+            )
         if args.cors_origin:
-            add(results, "cors_origin", health_headers.get("access-control-allow-origin") == args.cors_origin, "CORS did not echo the expected origin")
+            add(
+                results,
+                "cors_origin",
+                health_headers.get("access-control-allow-origin") == args.cors_origin,
+                "CORS did not echo the expected origin",
+            )
         if args.restart_window > 0:
             time.sleep(args.restart_window)
             second_health, _ = get_json(base_url, "/health", timeout=args.timeout)
-            add(results, "restart_detection", second_health.get("deployment") == first_health.get("deployment"), "health identity changed during smoke window")
+            add(
+                results,
+                "restart_detection",
+                second_health.get("deployment") == first_health.get("deployment"),
+                "health identity changed during smoke window",
+            )
 
         models, _ = get_json(base_url, "/models", timeout=args.timeout)
-        add(results, "server_models_disabled", models.get("server_models", {}).get("status") == "disabled", "/models did not disable server-side model storage")
+        add(
+            results,
+            "server_models_disabled",
+            models.get("server_models", {}).get("status") == "disabled",
+            "/models did not disable server-side model storage",
+        )
         browser = models.get("browser_training", {})
-        add(results, "browser_training_contract", browser.get("status") == "available" and browser.get("storage") == "indexeddb", "/models did not advertise browser IndexedDB training")
+        add(
+            results,
+            "browser_training_contract",
+            browser.get("status") == "available" and browser.get("storage") == "indexeddb",
+            "/models did not advertise browser IndexedDB training",
+        )
 
-        snapshot, _ = get_json(base_url, f"/api/v1/training-data?ticker={ticker}", timeout=args.timeout)
+        snapshot, _ = get_json(
+            base_url, f"/api/v1/training-data?ticker={ticker}", timeout=args.timeout
+        )
         rows = snapshot.get("features") or []
-        add(results, "schema_version", snapshot.get("schema_version") == 4, "training-data schema version is not 4")
-        add(results, "feature_order", snapshot.get("feature_names") == EXPECTED_FEATURES, "training-data feature ordering is incompatible")
-        add(results, "snapshot_shape", snapshot.get("window_size") == 60 and snapshot.get("output_width") == 30 and len(rows) == len(snapshot.get("dates", [])), "training-data shape/date contract is incompatible")
-        add(results, "finite_features", bool(rows) and all(math.isfinite(float(value)) for row in rows for value in row), "training-data returned no finite feature rows")
+        add(
+            results,
+            "schema_version",
+            snapshot.get("schema_version") == 4,
+            "training-data schema version is not 4",
+        )
+        add(
+            results,
+            "feature_order",
+            snapshot.get("feature_names") == EXPECTED_FEATURES,
+            "training-data feature ordering is incompatible",
+        )
+        add(
+            results,
+            "snapshot_shape",
+            snapshot.get("window_size") == 60
+            and snapshot.get("output_width") == 30
+            and len(rows) == len(snapshot.get("dates", [])),
+            "training-data shape/date contract is incompatible",
+        )
+        add(
+            results,
+            "finite_features",
+            bool(rows) and all(math.isfinite(float(value)) for row in rows for value in row),
+            "training-data returned no finite feature rows",
+        )
         data_snapshot = snapshot.get("data_snapshot") or {}
         quality = data_snapshot.get("quality") or {}
-        add(results, "quality_metadata", quality.get("status") in ("clean", "annotated") and isinstance(quality.get("checks"), dict) and isinstance(quality.get("issues"), list), "training-data quality diagnostics are missing or malformed")
-        add(results, "target_mode", data_snapshot.get("target_mode") == EXPECTED_TARGET_MODE, "training-data target mode is incompatible")
+        add(
+            results,
+            "quality_metadata",
+            quality.get("status") in ("clean", "annotated")
+            and isinstance(quality.get("checks"), dict)
+            and isinstance(quality.get("issues"), list),
+            "training-data quality diagnostics are missing or malformed",
+        )
+        add(
+            results,
+            "target_mode",
+            data_snapshot.get("target_mode") == EXPECTED_TARGET_MODE,
+            "training-data target mode is incompatible",
+        )
 
-        price, _ = get_json(base_url, f"/api/v1/predict?ticker={ticker}&days=1", timeout=args.timeout)
+        price, _ = get_json(
+            base_url, f"/api/v1/predict?ticker={ticker}&days=1", timeout=args.timeout
+        )
         price_engine = price.get("metadata", {}).get("engine", {})
         price_mode = price.get("metadata", {}).get("execution", {}).get("mode")
-        add(results, "price_baseline_label", bool(price_engine.get("baseline_fallback")) and price_engine.get("role") == "server_disabled_fallback" and price_mode == "baseline_fallback", "price forecast was not explicitly labelled baseline fallback")
+        add(
+            results,
+            "price_baseline_label",
+            bool(price_engine.get("baseline_fallback"))
+            and price_engine.get("role") == "server_disabled_fallback"
+            and price_mode == "baseline_fallback",
+            "price forecast was not explicitly labelled baseline fallback",
+        )
 
-        direction, _ = get_json(base_url, f"/api/v1/predict/direction?ticker={ticker}&days=1", timeout=args.timeout)
+        direction, _ = get_json(
+            base_url, f"/api/v1/predict/direction?ticker={ticker}&days=1", timeout=args.timeout
+        )
         direction_engine = direction.get("metadata", {}).get("engine", {})
-        add(results, "direction_baseline_label", bool(direction_engine.get("baseline_fallback")) and direction_engine.get("role") == "server_disabled_fallback", "direction forecast was not explicitly labelled baseline fallback")
+        add(
+            results,
+            "direction_baseline_label",
+            bool(direction_engine.get("baseline_fallback"))
+            and direction_engine.get("role") == "server_disabled_fallback",
+            "direction forecast was not explicitly labelled baseline fallback",
+        )
     except (HTTPError, URLError, TimeoutError, ValueError, RuntimeError) as exc:
         add(results, "request", False, safe_error(exc))
     passed = all(item.passed for item in results)
@@ -128,7 +241,10 @@ def main() -> int:
     else:
         for check in result["checks"]:
             if not check["passed"]:
-                print(f"deployment smoke test failed: {check['name']}: {check['detail']}", file=sys.stderr)
+                print(
+                    f"deployment smoke test failed: {check['name']}: {check['detail']}",
+                    file=sys.stderr,
+                )
     return 0 if result["status"] == "passed" else 1
 
 

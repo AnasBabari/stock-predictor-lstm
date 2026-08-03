@@ -44,9 +44,7 @@ def tracked_text_files() -> list[Path]:
 
 def main() -> None:
     affected = [
-        path.relative_to(ROOT)
-        for path in tracked_text_files()
-        if path.read_bytes().startswith(BOM)
+        path.relative_to(ROOT) for path in tracked_text_files() if path.read_bytes().startswith(BOM)
     ]
     if affected:
         print("UTF-8 BOM found in:\n" + "\n".join(map(str, affected)), file=sys.stderr)

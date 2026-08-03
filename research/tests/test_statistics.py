@@ -69,9 +69,7 @@ def test_fold_metric_evidence_degrades_gracefully_on_tiny_inputs() -> None:
 
 def test_fold_metric_evidence_bootstraps_sufficient_folds() -> None:
     rng = np.random.default_rng(3)
-    folds = [
-        {"relative_rmse": float(value)} for value in 0.9 + rng.normal(0.0, 0.03, 8)
-    ]
+    folds = [{"relative_rmse": float(value)} for value in 0.9 + rng.normal(0.0, 0.03, 8)]
     evidence = fold_metric_evidence(folds, resamples=200, block_length=2)
     assert evidence["reliable"] is True
     interval = evidence["confidence_interval"]

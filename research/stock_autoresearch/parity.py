@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
@@ -18,7 +17,9 @@ class ParityResult:
     details: str
 
 
-def make_parity_fixture(samples: int = 10, window: int = 60, features: int = 28, seed: int = 42) -> np.ndarray:
+def make_parity_fixture(
+    samples: int = 10, window: int = 60, features: int = 28, seed: int = 42
+) -> np.ndarray:
     """Generate a deterministic synthetic input tensor fixture (N, window, features)."""
     rng = np.random.default_rng(seed)
     return rng.normal(loc=0.0, scale=0.02, size=(samples, window, features)).astype(np.float32)
@@ -63,5 +64,7 @@ def verify_prediction_parity(
         finite=True,
         max_abs_diff=max_diff,
         tolerance=tolerance,
-        details="Predictions match within tolerance" if passed else f"Max difference {max_diff:.6f} exceeded tolerance {tolerance}",
+        details="Predictions match within tolerance"
+        if passed
+        else f"Max difference {max_diff:.6f} exceeded tolerance {tolerance}",
     )

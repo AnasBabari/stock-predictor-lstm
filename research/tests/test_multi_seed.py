@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from stock_autoresearch import multi_seed
-from stock_autoresearch.candidates import PersistenceCandidate
+from stock_autoresearch.candidates import PersistenceCandidate, RidgeCandidate
 from stock_autoresearch.config import EvaluationPolicy
 from stock_autoresearch.data import Snapshot
 from stock_autoresearch.multi_seed import evaluate_multi_seed
@@ -158,3 +158,57 @@ def test_multi_seed_aggregate_respects_metric_direction(
     mae = record["seed_aggregate"]["median_relative_mae"]
     assert mae["best"] == pytest.approx(1.0)
     assert mae["worst"] == pytest.approx(1.2)
+
+
+def test_multi_seed_real_ridge_end_to_end() -> None:
+    """Regression: exercise the locked evaluate_candidate through the wrapper.
+
+    Reproduces the user-reported crash where the in-process multi-seed path
+    failed on snapshots whose requested feature columns were absent. No mocks
+    on evaluate_candidate; uses a real RidgeCandidate on a noisy trend.
+    """
+    rows = 700
+    rng = np.random.default_rng(7)
+    index = pd.date_range("2016-08-03", periods=rows, freq="B")
+    log_close = np.log(100.0) + np.cumsum(rng.normal(0.0005, 0.01, rows))
+    close = np.exp(log_close)
+    ret_1 = np.concatenate([[0.0], np.diff(log_close)])
+    vol_20 = pd.Series(ret_1).rolling(20, min_periods=2).std().fillna(0.0).to_numpy()
+    frame = pd.DataFrame(
+        {"Close": close, "ret_1": ret_1, "vol_20": vol_20},
+        index=index,
+    )
+    snapshot = Snapshot(
+        frame=frame,
+        snapshot_id="regression-snapshot",
+        feature_names=("ret_1", "vol_20"),
+    )
+
+    record = evaluate_multi_seed(
+        snapshot,
+        lambda seed: RidgeCandidate(),
+        horizon=5,
+        policy=EvaluationPolicy(),
+        seeds=(0, 1),
+    )
+
+    assert record["seeds"] == [0, 1]
+    assert record["failure_count"] == 0
+    assert record["status"] == "success"
+    assert record["failure_reason"] == ""
+    for entry in record["per_seed"]:
+        assert entry["status"] == "success"
+        summary = entry["summary"]
+        assert np.isfinite(float(summary["median_relative_mae"]))
+        assert np.isfinite(float(summary["median_relative_rmse"]))
+
+    # Ledger-compatible top-level aggregates are populated, not None.
+    for metric in (
+        "median_relative_mae",
+        "median_relative_rmse",
+        "worst_fold_relative_rmse",
+        "folds_beating_persistence",
+    ):
+        assert record[metric] is not None
+        assert np.isfinite(record[metric])
+        assert record[metric] == record["seed_aggregate"][metric]["median"]

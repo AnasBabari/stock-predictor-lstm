@@ -10,7 +10,9 @@ from .candidates import Candidate
 class TorchLSTMCandidate(Candidate):
     name = "torch_lstm"
 
-    def __init__(self, *, hidden_size=32, dropout=0.2, epochs=8, learning_rate=1e-3, seed=0, device=None):
+    def __init__(
+        self, *, hidden_size=32, dropout=0.2, epochs=8, learning_rate=1e-3, seed=0, device=None
+    ):
         self.hidden_size = hidden_size
         self.dropout = dropout
         self.epochs = epochs
@@ -20,7 +22,7 @@ class TorchLSTMCandidate(Candidate):
         self._model = None
         self._torch = None
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> "TorchLSTMCandidate":
+    def fit(self, x: np.ndarray, y: np.ndarray) -> TorchLSTMCandidate:
         import torch
         from torch import nn
 
@@ -66,6 +68,12 @@ class TorchLSTMCandidate(Candidate):
         return np.asarray(output, dtype=np.float64)
 
     def describe(self):
-        return {"family": self.name, "hidden_size": self.hidden_size, "dropout": self.dropout,
-                "epochs": self.epochs, "learning_rate": self.learning_rate, "seed": self.seed,
-                "device": self.device_name or "auto"}
+        return {
+            "family": self.name,
+            "hidden_size": self.hidden_size,
+            "dropout": self.dropout,
+            "epochs": self.epochs,
+            "learning_rate": self.learning_rate,
+            "seed": self.seed,
+            "device": self.device_name or "auto",
+        }

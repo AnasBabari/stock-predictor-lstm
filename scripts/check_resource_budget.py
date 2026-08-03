@@ -43,7 +43,14 @@ def main() -> int:
     started = time.monotonic()
     peak = 0
     restarts = 0
-    process = subprocess.Popen(command, cwd=ROOT / "backend", env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT / "backend",
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
         while process.poll() is None:
             current = rss_bytes(process.pid)

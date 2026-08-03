@@ -4,7 +4,6 @@ import sys
 
 import numpy as np
 import pytest
-
 from stock_autoresearch.candidates import ElasticNetCandidate, RidgeCandidate
 from stock_autoresearch.resources import sample_cuda_memory
 
@@ -52,7 +51,9 @@ def test_elastic_net_candidate_is_deterministic_like_ridge() -> None:
     assert ridge.parameter_count() == elastic_net.parameter_count()
 
 
-@pytest.mark.skipif(sys.version_info >= (3, 14), reason="PyTorch CUDA wheel is not compatible with Python 3.14")
+@pytest.mark.skipif(
+    sys.version_info >= (3, 14), reason="PyTorch CUDA wheel is not compatible with Python 3.14"
+)
 def test_torch_lstm_candidate_has_finite_output() -> None:
     pytest.importorskip("torch")
     from stock_autoresearch.torch_candidates import TorchLSTMCandidate

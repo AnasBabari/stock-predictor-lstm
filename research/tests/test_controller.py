@@ -8,7 +8,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-
 from stock_autoresearch.candidates import (
     CompactMLPCandidate,
     DLinearCandidate,
@@ -17,9 +16,7 @@ from stock_autoresearch.candidates import (
     RidgeCandidate,
     SmallTCNCandidate,
 )
-from stock_autoresearch.config import EVALUATION_POLICY, RUNTIME_BUDGET
 from stock_autoresearch.controller import ExperimentController, check_harness_integrity
-from stock_autoresearch.data import Snapshot
 from stock_autoresearch.parity import make_parity_fixture, verify_prediction_parity
 
 

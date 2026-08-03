@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from stock_autoresearch.candidates import PersistenceCandidate
 from stock_autoresearch.config import EvaluationPolicy
 from stock_autoresearch.data import Snapshot, build_examples, expanding_folds
