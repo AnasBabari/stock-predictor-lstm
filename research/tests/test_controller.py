@@ -9,12 +9,15 @@ import numpy as np
 import pandas as pd
 import pytest
 from stock_autoresearch.candidates import (
+    ELASTIC_NET_TUNING_GRID,
     CompactMLPCandidate,
     DLinearCandidate,
     ElasticNetCandidate,
     PersistenceCandidate,
     RidgeCandidate,
     SmallTCNCandidate,
+    elastic_net_family_factories,
+    elastic_net_family_name,
 )
 from stock_autoresearch.controller import ExperimentController, check_harness_integrity
 from stock_autoresearch.parity import make_parity_fixture, verify_prediction_parity
@@ -67,6 +70,9 @@ def test_all_candidates_implement_interface() -> None:
         DLinearCandidate(kernel_size=3),
         SmallTCNCandidate(channels=8),
     ]
+    # Tuned Elastic Net grid variants share the same interface contract.
+    factories = elastic_net_family_factories()
+    candidates.extend(factories[name](seed=0) for name in sorted(factories))
 
     for model in candidates:
         fitted = model.fit(x, y)
@@ -76,6 +82,40 @@ def test_all_candidates_implement_interface() -> None:
         desc = model.describe()
         assert "family" in desc
         assert model.parameter_count() >= 0
+
+
+def test_controller_registers_tuned_elastic_net_families(tmp_path: Path) -> None:
+    """The controller subprocess factory dict must resolve every grid variant.
+
+    An unregistered family exits the subprocess with code 2, which the
+    controller reports as a 'crash'; a 'success' status therefore proves the
+    embedded factory dictionary knows the variant. The fixture snapshot is
+    sized so the 5-fold expanding policy has enough rows.
+    """
+    rows = 900
+    rng = np.random.default_rng(7)
+    dates = pd.date_range("2022-01-01", periods=rows, freq="B")
+    close = 100.0 * np.exp(np.cumsum(rng.normal(0.001, 0.01, size=rows)))
+    frame = pd.DataFrame(
+        {"Close": close, "feat_1": rng.normal(size=rows), "feat_2": rng.normal(size=rows)},
+        index=dates,
+    )
+    snapshot_path = tmp_path / "registry_snapshot.csv"
+    frame.to_csv(snapshot_path)
+
+    ledger_path = tmp_path / "ledger.jsonl"
+    controller = ExperimentController(
+        snapshot_path=snapshot_path,
+        ledger_path=ledger_path,
+        run_tag="registry_test",
+    )
+
+    family = elastic_net_family_name(*ELASTIC_NET_TUNING_GRID[3])
+    entry = controller.execute_trial(family, level=0)
+    assert entry["candidate_family"] == family
+    assert entry["status"] == "success"
+    assert entry["decision"] in ("keep", "discard")
+    assert isinstance(entry["relative_mae"], float)
 
 
 def test_controller_trial_execution(sample_snapshot_csv: Path, tmp_path: Path) -> None:

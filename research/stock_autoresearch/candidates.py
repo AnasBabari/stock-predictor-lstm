@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,6 +70,16 @@ class RidgeCandidate(Candidate):
 
 @dataclass
 class ElasticNetCandidate(Candidate):
+    """Elastic Net linear model over the latest window step.
+
+    Tuned grid variants are named ``elastic_net_a<alpha>_l<l1_ratio * 100>``
+    where the alpha tag drops the decimal point (``a01`` = alpha 0.1,
+    ``a001`` = alpha 0.01, ``a100`` = alpha 10.0) and the l1 tag is the
+    l1_ratio percentage (``l15`` = 0.15, ``l50`` = 0.5, ``l85`` = 0.85).
+    ``describe()`` always reports the exact ``alpha`` and ``l1_ratio`` so the
+    encoded name is only a convenience for ledger grouping.
+    """
+
     alpha: float = 1.0
     l1_ratio: float = 0.5
     name: str = "elastic_net"
@@ -90,6 +101,56 @@ class ElasticNetCandidate(Candidate):
         if hasattr(self._model, "coef_") and self._model.coef_ is not None:
             return int(self._model.coef_.size + 1)
         return 0
+
+
+# Tuned Elastic Net grid explored against the horizon-10 promotion gates.
+# Family names follow ``elastic_net_a<alpha>_l<l1_ratio * 100>`` (see the
+# ElasticNetCandidate docstring). The baseline ``elastic_net`` family
+# (alpha=1.0, l1_ratio=0.5) is deliberately not part of this grid.
+#
+# Wave-1 probing (run tag tune-h10) showed that every l1_ratio >= 0.15 with
+# alpha >= 0.1 zeroes all coefficients on this snapshot, collapsing to the
+# same constant predictor as the baseline. The grid therefore concentrates on
+# the ridge-leaning corner (l1_ratio <= 0.15) where coefficients survive.
+ELASTIC_NET_TUNING_GRID: tuple[tuple[float, float], ...] = (
+    (0.01, 0.01),  # near-OLS, ridge-dominated penalty
+    (0.01, 0.05),  # weak shrinkage, slight lasso share
+    (0.01, 0.15),  # weak shrinkage, strongest surviving lasso share
+    (0.1, 0.01),  # mild shrinkage, ridge-dominated
+    (0.3, 0.01),  # moderate shrinkage, ridge-dominated
+    (1.0, 0.01),  # baseline alpha with ridge-dominated penalty
+    (3.0, 0.01),  # stronger shrinkage than baseline
+    (10.0, 0.01),  # much stronger shrinkage than baseline
+)
+
+
+def elastic_net_family_name(alpha: float, l1_ratio: float) -> str:
+    """Encode (alpha, l1_ratio) as ``elastic_net_a<alpha>_l<l1_ratio * 100>``."""
+    alpha_tag = str(alpha).replace(".", "")
+    l1_tag = str(int(round(l1_ratio * 100)))
+    return f"elastic_net_a{alpha_tag}_l{l1_tag}"
+
+
+def elastic_net_family_factories() -> dict[str, Callable[[int], ElasticNetCandidate]]:
+    """Return named factories for every tuned Elastic Net grid point.
+
+    Each factory builds an ``ElasticNetCandidate`` with the grid point's
+    ``alpha``/``l1_ratio`` and the family name from
+    ``elastic_net_family_name``. Registration dictionaries merge the returned
+    mapping so the existing ``elastic_net`` baseline factory stays unchanged.
+    """
+
+    def make_factory(
+        family: str, alpha: float, l1_ratio: float
+    ) -> Callable[[int], ElasticNetCandidate]:
+        return lambda seed: ElasticNetCandidate(alpha=alpha, l1_ratio=l1_ratio, name=family)
+
+    return {
+        elastic_net_family_name(alpha, l1_ratio): make_factory(
+            elastic_net_family_name(alpha, l1_ratio), alpha, l1_ratio
+        )
+        for alpha, l1_ratio in ELASTIC_NET_TUNING_GRID
+    }
 
 
 class CompactMLPCandidate(Candidate):

@@ -87,7 +87,8 @@ from stock_autoresearch.config import EVALUATION_POLICY
 from stock_autoresearch.evaluation import evaluate_candidate
 from stock_autoresearch.candidates import (
     PersistenceCandidate, RidgeCandidate, ElasticNetCandidate,
-    CompactMLPCandidate, DLinearCandidate, SmallTCNCandidate
+    CompactMLPCandidate, DLinearCandidate, SmallTCNCandidate,
+    elastic_net_family_factories
 )
 
 frame = pd.read_csv(r'{snapshot_path.as_posix()}', index_col=0, parse_dates=True)
@@ -102,6 +103,8 @@ factories = {{
     'dlinear': lambda seed: DLinearCandidate(),
     'small_tcn': lambda seed: SmallTCNCandidate(seed=seed),
 }}
+# Tuned Elastic Net grid variants (elastic_net_a*_l*); baseline above unchanged.
+factories.update(elastic_net_family_factories())
 
 factory = factories.get('{candidate_family}')
 if not factory:

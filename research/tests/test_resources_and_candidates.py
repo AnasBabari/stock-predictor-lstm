@@ -4,7 +4,13 @@ import sys
 
 import numpy as np
 import pytest
-from stock_autoresearch.candidates import ElasticNetCandidate, RidgeCandidate
+from stock_autoresearch.candidates import (
+    ELASTIC_NET_TUNING_GRID,
+    ElasticNetCandidate,
+    RidgeCandidate,
+    elastic_net_family_factories,
+    elastic_net_family_name,
+)
 from stock_autoresearch.resources import sample_cuda_memory
 
 
@@ -49,6 +55,42 @@ def test_elastic_net_candidate_is_deterministic_like_ridge() -> None:
         elastic_net.predict(x),
     )
     assert ridge.parameter_count() == elastic_net.parameter_count()
+
+
+def test_elastic_net_tuning_grid_variants_train_and_predict() -> None:
+    factories = elastic_net_family_factories()
+    assert len(factories) == len(ELASTIC_NET_TUNING_GRID) == 8
+    # Family names are unique and follow elastic_net_a<alpha>_l<l1_ratio*100>.
+    names = [elastic_net_family_name(alpha, l1) for alpha, l1 in ELASTIC_NET_TUNING_GRID]
+    assert len(set(names)) == len(names)
+    assert set(names) == set(factories)
+    assert "elastic_net" not in factories  # baseline family stays separate
+
+    rng = np.random.default_rng(11)
+    x = rng.normal(size=(32, 4, 5)).astype(np.float64)
+    y = x[:, -1, 0] - 0.5 * x[:, -1, 2] + 0.1 * rng.normal(size=32)
+
+    for alpha, l1_ratio in ELASTIC_NET_TUNING_GRID:
+        name = elastic_net_family_name(alpha, l1_ratio)
+        candidate = factories[name](seed=0)
+        fitted = candidate.fit(x, y)
+        assert fitted is candidate
+        prediction = candidate.predict(x[:5])
+        assert prediction.shape == (5,)
+        assert np.isfinite(prediction).all()
+
+        description = candidate.describe()
+        assert description["family"] == name
+        assert description["alpha"] == alpha
+        assert description["l1_ratio"] == l1_ratio
+        assert candidate.parameter_count() == x.shape[2] + 1
+
+
+def test_elastic_net_baseline_family_unchanged() -> None:
+    candidate = ElasticNetCandidate()
+    assert candidate.name == "elastic_net"
+    assert candidate.alpha == 1.0
+    assert candidate.l1_ratio == 0.5
 
 
 @pytest.mark.skipif(
