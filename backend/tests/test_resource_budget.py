@@ -7,7 +7,7 @@ def test_resource_budget_catches_exit_137():
     completed = subprocess.run(
         [
             sys.executable,
-            "scripts/check_resource_budget.py",
+            "../scripts/check_resource_budget.py",
             "--json",
             sys.executable,
             "-c",
