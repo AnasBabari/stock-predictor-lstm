@@ -1,9 +1,9 @@
 # Stock Autoresearch Ledger Report
 
-- **Total Experiments**: 84
-- **Kept (Promotable)**: 0
-- **Discarded**: 84
-- **Failed / Invalid**: 0
+- **Total Experiments**: 178
+- **Kept (Promotable)**: 9
+- **Discarded**: 169
+- **Failed / Invalid**: 2
 
 | ID | Family | Status | Decision | Rel MAE | Rel RMSE | Peak VRAM | Time (s) |
 |---|---|---|---|---|---|---|---|
@@ -91,3 +91,97 @@
 | `exp_17857769` | `elastic_net_a10_l1` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
 | `exp_17857769` | `elastic_net_a30_l1` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
 | `exp_17857769` | `elastic_net_a100_l1` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
+| `exp_17857933` | `ridge` | crash | **discard** | - | - | - | 0.8s |
+| `exp_17857933` | `ridge` | crash | **discard** | - | - | - | 0.7s |
+| `exp_17857934` | `ridge` | success | **discard** | 1.0083 | 1.0017 | - | 2.7s |
+| `exp_17857934` | `ridge` | success | **discard** | 0.9857 | 1.0101 | - | 2.5s |
+| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857939` | `ridge` | success | **discard** | 1.0014 | 0.9891 | - | 0.0s |
+| `exp_17857939` | `elastic_net` | success | **discard** | 0.9918 | 0.9979 | - | 0.0s |
+| `exp_17857939` | `compact_mlp` | success | **discard** | 3.4439 | 3.2448 | - | 0.0s |
+| `exp_17857939` | `dlinear` | success | **discard** | 1.9218 | 1.8571 | - | 0.0s |
+| `exp_17857939` | `small_tcn` | success | **discard** | 1.0006 | 0.9910 | - | 0.0s |
+| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857939` | `ridge` | success | **discard** | 0.9935 | 1.0088 | - | 0.0s |
+| `exp_17857939` | `elastic_net` | success | **discard** | 0.9860 | 0.9922 | - | 0.0s |
+| `exp_17857939` | `compact_mlp` | success | **discard** | 2.5197 | 2.3939 | - | 0.0s |
+| `exp_17857939` | `dlinear` | success | **discard** | 1.7523 | 1.7857 | - | 0.0s |
+| `exp_17857939` | `small_tcn` | success | **discard** | 1.0054 | 1.0101 | - | 0.0s |
+| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857939` | `ridge` | success | **discard** | 0.9835 | 1.0176 | - | 0.0s |
+| `exp_17857939` | `elastic_net` | success | **discard** | 0.9763 | 0.9803 | - | 0.0s |
+| `exp_17857939` | `compact_mlp` | success | **discard** | 1.8595 | 2.0290 | - | 0.0s |
+| `exp_17857939` | `dlinear` | success | **discard** | 1.6192 | 1.8710 | - | 0.0s |
+| `exp_17857939` | `small_tcn` | success | **discard** | 0.9925 | 1.0012 | - | 0.0s |
+| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857939` | `ridge` | success | **discard** | 0.9791 | 1.0228 | - | 0.0s |
+| `exp_17857939` | `elastic_net` | success | **keep** | 0.9381 | 0.9495 | - | 0.0s |
+| `exp_17857939` | `compact_mlp` | success | **discard** | 2.0810 | 2.0333 | - | 0.0s |
+| `exp_17857939` | `dlinear` | success | **discard** | 2.0086 | 2.1221 | - | 0.0s |
+| `exp_17857939` | `small_tcn` | success | **discard** | 0.9650 | 1.0056 | - | 0.0s |
+| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857939` | `ridge` | success | **keep** | 0.8567 | 0.8618 | - | 0.0s |
+| `exp_17857939` | `elastic_net` | success | **keep** | 0.8131 | 0.8614 | - | 0.0s |
+| `exp_17857939` | `compact_mlp` | success | **discard** | 1.4674 | 1.6810 | - | 0.0s |
+| `exp_17857939` | `dlinear` | success | **discard** | 1.7272 | 2.0428 | - | 0.0s |
+| `exp_17857939` | `small_tcn` | success | **keep** | 0.8425 | 0.8577 | - | 0.0s |
+| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857939` | `ridge` | success | **discard** | 0.9824 | 0.9898 | - | 0.0s |
+| `exp_17857939` | `elastic_net` | success | **discard** | 0.9887 | 0.9987 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 2.7592 | 2.7791 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.8910 | 1.9095 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9901 | 0.9990 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **discard** | 0.9911 | 1.0060 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **discard** | 0.9618 | 0.9960 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 2.0316 | 2.0855 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.5072 | 1.5974 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9870 | 0.9976 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **discard** | 1.0064 | 1.0101 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **discard** | 0.9761 | 0.9903 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 1.6707 | 1.7659 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.7491 | 1.8277 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9857 | 0.9952 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **discard** | 0.9517 | 1.0153 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **discard** | 0.9334 | 0.9887 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 1.4218 | 1.4998 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.6169 | 1.7771 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9474 | 1.0035 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **keep** | 0.8095 | 0.8474 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **keep** | 0.7874 | 0.8572 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 1.1831 | 1.2875 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.7241 | 1.8321 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **keep** | 0.8569 | 0.8732 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **discard** | 0.9870 | 0.9940 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **discard** | 0.9977 | 0.9971 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 2.7662 | 2.7476 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 2.1472 | 1.8908 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9921 | 0.9983 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **discard** | 0.9812 | 0.9944 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **discard** | 0.9847 | 0.9732 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 2.2268 | 1.9400 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.8935 | 1.8106 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9955 | 1.0027 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **discard** | 0.9876 | 0.9819 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **discard** | 0.9846 | 0.9774 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 1.8731 | 1.7797 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.7594 | 1.6791 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9790 | 0.9815 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **discard** | 0.9484 | 0.9959 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **discard** | 0.9456 | 0.9837 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 1.4680 | 1.5815 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.6292 | 1.7546 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9467 | 1.0024 | - | 0.0s |
+| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
+| `exp_17857940` | `ridge` | success | **keep** | 0.8578 | 0.8358 | - | 0.0s |
+| `exp_17857940` | `elastic_net` | success | **keep** | 0.9226 | 0.8848 | - | 0.0s |
+| `exp_17857940` | `compact_mlp` | success | **discard** | 1.2923 | 1.3394 | - | 0.0s |
+| `exp_17857940` | `dlinear` | success | **discard** | 1.7052 | 1.7654 | - | 0.0s |
+| `exp_17857940` | `small_tcn` | success | **discard** | 0.9301 | 0.8896 | - | 0.0s |

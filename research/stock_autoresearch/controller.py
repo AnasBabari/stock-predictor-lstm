@@ -78,9 +78,14 @@ def run_isolated_candidate_eval(
             failure_reason="Candidate touched prohibited harness files.",
         )
 
+    # Resolve the research package root from this module's location so the
+    # subprocess can import stock_autoresearch regardless of snapshot path
+    # depth or inherited PYTHONPATH.
+    research_root = Path(__file__).resolve().parent.parent.as_posix()
+
     eval_script = f"""
 import sys, json, pathlib
-sys.path.insert(0, str(pathlib.Path('{snapshot_path.parent.parent.parent.as_posix()}')))
+sys.path.insert(0, str(pathlib.Path('{research_root}')))
 import pandas as pd
 from stock_autoresearch.data import Snapshot
 from stock_autoresearch.config import EVALUATION_POLICY
@@ -250,12 +255,14 @@ class ExperimentController:
             repo_root=self.repo_root,
         )
 
-    def run_level_2_confirmation(self, candidate_family: str) -> SubprocessResult:
-        """Level 2: Full multi-horizon multi-fold confirmation (20 mins max)."""
+    def run_level_2_confirmation(
+        self, candidate_family: str, horizon: int = 20
+    ) -> SubprocessResult:
+        """Level 2: Full confirmation at the requested horizon (20 mins max)."""
         return run_isolated_candidate_eval(
             self.snapshot_path,
             candidate_family,
-            horizon=20,
+            horizon=horizon,
             timeout_seconds=self.budget.confirm_seconds,
             budget=self.budget,
             repo_root=self.repo_root,
@@ -266,13 +273,21 @@ class ExperimentController:
         candidate_family: str,
         hypothesis: str = "Candidate search trial",
         level: int = 1,
+        horizon: int = 5,
     ) -> dict[str, Any]:
-        """Execute a full multi-fidelity candidate trial and record in ledger."""
+        """Execute a full multi-fidelity candidate trial and record in ledger.
+
+        ``horizon`` applies to the level-2 confirmation path; levels 0 and 1
+        intentionally keep their fixed smoke (1) and screening (5) horizons.
+        """
         if level == 0:
+            trial_horizon = 1
             sub = self.run_level_0_smoke(candidate_family)
         elif level == 2:
-            sub = self.run_level_2_confirmation(candidate_family)
+            trial_horizon = horizon
+            sub = self.run_level_2_confirmation(candidate_family, horizon=horizon)
         else:
+            trial_horizon = 5
             sub = self.run_level_1_screening(candidate_family)
 
         payload = sub.payload or {}
@@ -280,6 +295,7 @@ class ExperimentController:
             "run_tag": self.run_tag,
             "candidate_family": candidate_family,
             "hypothesis": hypothesis,
+            "horizon": trial_horizon,
             "status": sub.status,
             "failure_reason": sub.failure_reason,
             "peak_vram_mb": sub.peak_vram_mb,

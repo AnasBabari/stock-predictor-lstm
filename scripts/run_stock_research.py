@@ -172,6 +172,7 @@ def main() -> int:
             candidate_family=family,
             hypothesis=f"Evaluation of {family} candidate family",
             level=args.level,
+            horizon=args.horizon,
         )
         summaries.append(entry)
         if entry.get("status") == "violates_harness_lock":
