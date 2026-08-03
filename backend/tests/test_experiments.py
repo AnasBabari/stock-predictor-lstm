@@ -1,7 +1,9 @@
 import numpy as np
+import pytest
 
 from experiments.baselines import (
     DriftForecaster,
+    ElasticNetForecaster,
     HistogramGradientBoostingForecaster,
     PersistenceForecaster,
     RidgeForecaster,
@@ -59,6 +61,35 @@ def test_ridge_learns_direct_horizon_targets():
     targets = np.column_stack([flattened[:, 0] * 2, flattened[:, 1] * -3])
     model = RidgeForecaster(alpha=1e-8).fit(features, targets)
     np.testing.assert_allclose(model.predict(features), targets, atol=1e-6)
+
+
+def test_elastic_net_learns_direct_horizon_targets():
+    rng = np.random.default_rng(4)
+    features = rng.normal(size=(40, 3, 2))
+    flattened = features.reshape(40, -1)
+    targets = np.column_stack([flattened[:, 0] * 2, flattened[:, 1] * -3])
+    model = ElasticNetForecaster(alpha=1e-8, l1_ratio=0.5).fit(features, targets)
+    assert model.name == "elastic_net"
+    np.testing.assert_allclose(model.predict(features), targets, atol=1e-3)
+
+
+def test_elastic_net_predict_returns_one_column_per_horizon():
+    rng = np.random.default_rng(5)
+    features = rng.normal(size=(50, 4, 2))
+    targets = np.column_stack([features[:, -1, 0], features[:, -1, 1]])
+    model = ElasticNetForecaster().fit(features, targets)
+    assert model.predict(features).shape == targets.shape
+
+
+def test_elastic_net_rejects_non_finite_features_and_bad_targets():
+    features = np.full((4, 2, 2), np.nan)
+    targets = np.zeros((4, 2))
+    with pytest.raises(ValueError):
+        ElasticNetForecaster().fit(features, targets)
+
+    valid_features = np.ones((4, 2, 2))
+    with pytest.raises(ValueError):
+        ElasticNetForecaster().fit(valid_features, np.zeros(4))
 
 
 def test_histogram_gradient_boosting_returns_one_column_per_horizon():

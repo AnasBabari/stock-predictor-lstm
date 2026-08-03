@@ -12,6 +12,7 @@ import pytest
 from stock_autoresearch.candidates import (
     CompactMLPCandidate,
     DLinearCandidate,
+    ElasticNetCandidate,
     PersistenceCandidate,
     RidgeCandidate,
     SmallTCNCandidate,
@@ -64,6 +65,7 @@ def test_all_candidates_implement_interface() -> None:
     candidates = [
         PersistenceCandidate(),
         RidgeCandidate(alpha=5.0),
+        ElasticNetCandidate(alpha=1.0, l1_ratio=0.5),
         CompactMLPCandidate(max_iter=10),
         DLinearCandidate(kernel_size=3),
         SmallTCNCandidate(channels=8),

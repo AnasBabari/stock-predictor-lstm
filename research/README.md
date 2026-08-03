@@ -1,4 +1,4 @@
-﻿# Stock autoresearch harness
+# Stock autoresearch harness
 
 This is an isolated offline research harness inspired by the MIT-licensed `autoresearch-win-rtx` experiment loop. It does not run in Render, the browser, or the production request path.
 

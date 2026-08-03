@@ -27,7 +27,7 @@ The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints re
 
 The worker offers three immutable profiles. Quick uses a 32/16-unit LSTM for a single purged holdout; Balanced uses a 64/32-unit LSTM with two dropout layers and a single purged holdout; Research uses the Balanced architecture for five expanding 60-session folds before a final fit. The shared semantics are:
 
-- 60-session inputs, 30 outputs, batch size 32, Adam 0.001, and no shuffle.
+- 60-session inputs with horizon-sized outputs, batch size 32, Adam 0.001, and no shuffle. The requested horizon is bucketed to one of {1, 3, 5, 7, 14, 30}, and each trained model's output width equals its resolved horizon bucket. The API snapshot still carries 30 future dates under `output_width` as the payload contract, but a trained model predicts only its selected horizon span.
 - A train-only min/max or robust scaler and a 29-sample purge at every evaluation or early-stopping boundary.
 - Linear cumulative log-return price output ($r_{t,h} = \ln(P_{t+h}/P_t)$) and sigmoid/binary-cross-entropy direction output.
 - WebGPU, WebGL, then CPU selection, with runtime and capability metadata recorded.
@@ -35,7 +35,7 @@ The worker offers three immutable profiles. Quick uses a 32/16-unit LSTM for a s
 
 Research requires at least 300 fitting sequences before its first validation fold. Each fold has its own scaler and purged early-stopping tail; untouched out-of-fold predictions are pooled before metrics are calculated. Completed fold summaries are checkpointed for 24 hours, but partial work is never labelled as a completed benchmark.
 
-Cache keys include architecture/model versions, schema, ordered-feature signature, ticker, forecast type, profile, backend, snapshot, window, and output width. Final models and companion evidence use IndexedDB, expire after seven days, and are bounded to six models and 200 MiB. Higher-quality successful profiles evict lower-quality variants for the same ticker/type. Storage failures retain only the current session model.
+Cache keys include architecture/model versions, schema, ordered-feature signature, ticker, forecast type, profile, backend, snapshot, window, and horizon. Final models and companion evidence use IndexedDB, expire after seven days, and are bounded to six models and 200 MiB. Higher-quality successful profiles evict lower-quality variants for the same ticker/type. Storage failures retain only the current session model.
 
 Quick/Balanced evidence uses `browser_purged_holdout`; Research uses `browser_walk_forward_out_of_fold`. Price results show errors and persistence-relative ratios, not “accuracy.” Direction results disclose accuracy and the majority-class baseline. TensorFlow.js GPU kernels may differ numerically by browser, so reproducibility is defined by the recorded snapshot, seed, profile, splits, TensorFlow.js version, and backend rather than bit-identical weights.
 

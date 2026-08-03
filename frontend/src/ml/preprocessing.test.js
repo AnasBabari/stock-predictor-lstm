@@ -112,6 +112,17 @@ test('aligns direction returns to the shifted 60-day feature windows', () => {
   expect(prepared.targets.flat().every((value) => value === 0 || value === 1)).toBe(true);
 });
 
+test('produces horizon-specific target widths for every sample', () => {
+  const snapshot = makeSnapshot();
+  const prepared = preparePriceData(snapshot, undefined, 5);
+  expect(prepared.horizon).toBe(5);
+  expect(prepared.targets.length).toBeGreaterThan(0);
+  expect(prepared.targets.every((target) => target.length === 5)).toBe(true);
+  const full = preparePriceData(snapshot);
+  expect(full.horizon).toBe(OUTPUT_WIDTH);
+  expect(full.targets.every((target) => target.length === OUTPUT_WIDTH)).toBe(true);
+});
+
 test('horizon-specific models use more samples than the fixed 30-day design', () => {
   const prepared = preparePriceData(makeSnapshot(), undefined, 3);
   const full = preparePriceData(makeSnapshot(), undefined, 30);

@@ -88,7 +88,8 @@ from stock_autoresearch.data import Snapshot
 from stock_autoresearch.config import EVALUATION_POLICY
 from stock_autoresearch.evaluation import evaluate_candidate
 from stock_autoresearch.candidates import (
-    PersistenceCandidate, RidgeCandidate, CompactMLPCandidate, DLinearCandidate, SmallTCNCandidate
+    PersistenceCandidate, RidgeCandidate, ElasticNetCandidate,
+    CompactMLPCandidate, DLinearCandidate, SmallTCNCandidate
 )
 
 frame = pd.read_csv(r'{snapshot_path.as_posix()}', index_col=0, parse_dates=True)
@@ -98,6 +99,7 @@ snapshot = Snapshot(frame=frame, snapshot_id='eval_snapshot', feature_names=tupl
 factories = {{
     'persistence': lambda seed: PersistenceCandidate(),
     'ridge': lambda seed: RidgeCandidate(),
+    'elastic_net': lambda seed: ElasticNetCandidate(),
     'compact_mlp': lambda seed: CompactMLPCandidate(),
     'dlinear': lambda seed: DLinearCandidate(),
     'small_tcn': lambda seed: SmallTCNCandidate(seed=seed),

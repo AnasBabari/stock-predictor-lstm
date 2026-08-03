@@ -1,4 +1,4 @@
-﻿"""Runtime resource checks for local experiments."""
+"""Runtime resource checks for local experiments."""
 
 from __future__ import annotations
 

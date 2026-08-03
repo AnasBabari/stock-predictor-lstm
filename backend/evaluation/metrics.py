@@ -136,6 +136,27 @@ def regression_metrics(
     }
 
 
+def pinball_loss(actual, quantile_pred, tau) -> float:
+    """Return the quantile (pinball) loss of a quantile forecast.
+
+    The loss for each observation is ``max(tau * (y - q), (tau - 1) * (y - q))``
+    where ``y`` is the realised value and ``q`` the quantile forecast. At
+    ``tau = 0.5`` this equals half the mean absolute error. Actual and
+    quantile predictions must be finite, non-empty, aligned arrays.
+    """
+
+    actual_array, quantile_array = _same_shape(actual, quantile_pred)
+    try:
+        tau_value = float(tau)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tau must be a numeric value.") from exc
+    if not np.isfinite(tau_value) or not 0.0 < tau_value < 1.0:
+        raise ValueError("tau must lie strictly between zero and one.")
+    errors = actual_array - quantile_array
+    losses = np.maximum(tau_value * errors, (tau_value - 1.0) * errors)
+    return float(np.mean(losses))
+
+
 def evaluate_forecast_horizons(
     actual,
     predicted,

@@ -2,8 +2,10 @@
 
 from .baselines import (
     DriftForecaster,
+    ElasticNetForecaster,
     HistogramGradientBoostingForecaster,
     PersistenceForecaster,
+    QuantileForecaster,
     RidgeForecaster,
 )
 from .candidates import NeuralCandidate
@@ -17,11 +19,13 @@ from .targets import (
 
 __all__ = [
     "DriftForecaster",
+    "ElasticNetForecaster",
     "ExperimentDataset",
     "Fold",
     "FoldPlan",
     "HistogramGradientBoostingForecaster",
     "PersistenceForecaster",
+    "QuantileForecaster",
     "RidgeForecaster",
     "NeuralCandidate",
     "SupervisedDataset",

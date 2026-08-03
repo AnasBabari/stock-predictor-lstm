@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.neural_network import MLPRegressor
 
 
@@ -60,6 +60,31 @@ class RidgeCandidate(Candidate):
 
     def describe(self) -> dict[str, Any]:
         return {"family": self.name, "alpha": self.alpha}
+
+    def parameter_count(self) -> int:
+        if hasattr(self._model, "coef_") and self._model.coef_ is not None:
+            return int(self._model.coef_.size + 1)
+        return 0
+
+
+@dataclass
+class ElasticNetCandidate(Candidate):
+    alpha: float = 1.0
+    l1_ratio: float = 0.5
+    name: str = "elastic_net"
+
+    def __post_init__(self) -> None:
+        self._model = ElasticNet(alpha=self.alpha, l1_ratio=self.l1_ratio, max_iter=2000)
+
+    def fit(self, x: np.ndarray, y: np.ndarray) -> ElasticNetCandidate:
+        self._model.fit(x[:, -1, :], y)
+        return self
+
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        return np.asarray(self._model.predict(x[:, -1, :]), dtype=np.float64)
+
+    def describe(self) -> dict[str, Any]:
+        return {"family": self.name, "alpha": self.alpha, "l1_ratio": self.l1_ratio}
 
     def parameter_count(self) -> int:
         if hasattr(self._model, "coef_") and self._model.coef_ is not None:

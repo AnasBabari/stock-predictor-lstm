@@ -24,6 +24,7 @@ def test_walk_forward_runner_scores_all_models_on_identical_folds():
         "persistence",
         "drift",
         "ridge",
+        "elastic_net",
         "hist_gradient_boosting",
     }
     for model_report in report["models"].values():
