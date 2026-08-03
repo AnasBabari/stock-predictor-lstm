@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from experiments.runner import ExperimentConfig, run_baseline_experiment
 
@@ -192,6 +193,27 @@ def test_drift_diagnostics_are_opt_in_and_finite():
         assert isinstance(residual["drift_detected"], bool)
 
 
+def test_small_tcn_is_absent_by_default():
+    report = _run()
+    assert "small_tcn" not in report["models"]
+    assert report["config"]["include_tcn"] is False
+    assert set(report["models"]) == _BASELINE_MODELS
+
+
+def test_small_tcn_joins_model_loop_when_enabled():
+    pytest.importorskip("torch")
+    report = _run(include_tcn=True)
+    assert set(report["models"]) == _BASELINE_MODELS | {"small_tcn"}
+    model_report = report["models"]["small_tcn"]
+    assert len(model_report["folds"]) == 2
+    assert model_report["aggregate"]["horizons"] == [1, 3]
+    assert model_report["aggregate"]["pooled"]["sample_count"] == 80
+    assert "promotion" in model_report and "evidence" in model_report
+    for horizon in ("1", "3"):
+        assert _finite(model_report["aggregate"]["per_horizon"][horizon]["relative_mae"])
+        assert _finite(model_report["aggregate"]["per_horizon"][horizon]["relative_rmse"])
+
+
 def test_default_config_report_keeps_pre_existing_keys():
     report = _run()
     assert set(report["config"]) >= {
@@ -209,6 +231,7 @@ def test_default_config_report_keeps_pre_existing_keys():
         "include_blends",
         "include_quantiles",
         "include_drift",
+        "include_tcn",
     }
     assert report["config"]["seeds"] == (42,)
     assert set(report["dataset"]) == {

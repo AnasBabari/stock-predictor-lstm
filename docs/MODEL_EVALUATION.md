@@ -62,6 +62,37 @@ persistence, MASE and RMSSE below one, wins in at least four folds, and no
 fold worse than 1.25× persistence RMSE. A rejected report is valuable evidence
 that the baseline should continue serving.
 
+## Promoted research survivors
+
+Five configurations survived the full research holdout protocol, with
+persistence-relative MAE/RMSE whose 95% confidence-interval upper bounds all
+sit below 1.0:
+
+| model | ticker | horizon | relative MAE | relative RMSE |
+| --- | --- | ---: | ---: | ---: |
+| `ridge` (pooled) | SPY | 20 | 0.860 | 0.895 |
+| `small_tcn` | SPY | 20 | 0.890 | 0.916 |
+| `ridge` | QQQ | 20 | 0.878 | 0.882 |
+| `elastic_net` | QQQ | 20 | 0.907 | 0.924 |
+| `small_tcn` | QQQ | 20 | 0.889 | 0.895 |
+
+Promotion pathway: purged expanding folds → three-condition promotion gates →
+a locked 252-session holdout → 4-window rolling confirmation. Two caveats
+apply. First, recency decay: in the most recent rolling window every
+surviving candidate compresses toward a 1.0 ratio, so the edge is real but
+shrinking; the MSFT edges decayed below the gate and were rejected. Second,
+these are snapshot-specific results measured against persistence, not
+durable performance claims.
+
+`ridge` and `elastic_net` already run in the backend benchmark ladder. The
+surviving `small_tcn` architecture is now available there too, behind the
+opt-in `include_tcn` flag on `ExperimentConfig`: when enabled, `small_tcn`
+joins the stochastic model loop (seeded, like `hist_gradient_boosting`) and
+is absent from every default report. The backend implementation requires
+PyTorch, which remains an opt-in dependency; without torch installed,
+constructing the forecaster raises a clear error and the default ladder is
+untouched.
+
 ## Training lifecycle
 
 Walk-forward folds provide published offline out-of-fold metrics. The Python trainer uses a purged tail to select its epoch count and can write a research artifact only when the opt-in `training` dependency group is enabled. Production does not load that artifact. Browser Quick and Balanced profiles report one untouched purged holdout as `browser_purged_holdout`. Browser Research performs five expanding, 60-session, train-only-scaled and purged folds, pools their untouched predictions as `browser_walk_forward_out_of_fold`, then fits the final local model. Browser and Python evidence are methodologically comparable only when the snapshot, schema, split, architecture, and metric source are disclosed; TensorFlow.js GPU weights are not expected to be bit-identical to Python TensorFlow.
@@ -184,8 +215,9 @@ keys are unchanged:
   combining the candidate with the persistence forecast.
 
 The optional blocks are gated by `ExperimentConfig` opt-in flags: `blend` by
-`include_blends`, `quantile_diagnostics` by `include_quantiles`, and `drift`
-by `include_drift`. All other extension keys are emitted by default.
+`include_blends`, `quantile_diagnostics` by `include_quantiles`, `drift`
+by `include_drift`, and the `small_tcn` challenger model by `include_tcn`.
+All other extension keys are emitted by default.
 
 
 ## Reference result

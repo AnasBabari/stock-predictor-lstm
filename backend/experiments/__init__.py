@@ -7,6 +7,7 @@ from .baselines import (
     PersistenceForecaster,
     QuantileForecaster,
     RidgeForecaster,
+    SmallTCNForecaster,
 )
 from .candidates import NeuralCandidate
 from .contracts import ExperimentDataset, Fold, FoldPlan, build_experiment_dataset
@@ -27,6 +28,7 @@ __all__ = [
     "PersistenceForecaster",
     "QuantileForecaster",
     "RidgeForecaster",
+    "SmallTCNForecaster",
     "NeuralCandidate",
     "SupervisedDataset",
     "build_supervised_dataset",

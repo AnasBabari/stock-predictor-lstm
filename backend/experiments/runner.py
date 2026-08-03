@@ -29,6 +29,7 @@ from experiments.baselines import (
     PersistenceForecaster,
     QuantileForecaster,
     RidgeForecaster,
+    SmallTCNForecaster,
     quantile_crossing_rate,
 )
 from experiments.contracts import FoldPlan, build_experiment_dataset
@@ -56,6 +57,7 @@ class ExperimentConfig:
     include_blends: bool = False
     include_quantiles: bool = False
     include_drift: bool = False
+    include_tcn: bool = False
 
     @property
     def effective_gap(self) -> int:
@@ -308,6 +310,24 @@ def run_baseline_experiment(
                     if first_seed_run:
                         raise
                     failed_models.append(QuantileForecaster.name)
+
+            if selected.include_tcn:
+                # TCN training is stochastic, so the challenger lives in the
+                # seed loop like HGB and stays out of DETERMINISTIC_MODELS.
+                try:
+                    tcn_forecaster = SmallTCNForecaster(seed=seed).fit(
+                        scaled_train, training_targets
+                    )
+                    predicted_targets = tcn_forecaster.predict(scaled_validation)
+                    stochastic_candidates[tcn_forecaster.name] = reconstruct_prices(
+                        validation_origins,
+                        predicted_targets,
+                        selected.target_type,
+                    )
+                except Exception:
+                    if first_seed_run:
+                        raise
+                    failed_models.append(SmallTCNForecaster.name)
 
             # Neural (or other) candidates use the exact outer folds as every
             # baseline. Their early-stopping validation is a purged tail of the

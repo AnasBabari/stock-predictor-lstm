@@ -9,6 +9,17 @@ import numpy as np
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import ElasticNet, Ridge
 
+# PyTorch is an opt-in research dependency of the offline benchmark ladder.
+# Import it lazily-tolerantly so importing this module never breaks CPU-only
+# environments; SmallTCNForecaster raises a clear error at construction when
+# torch is unavailable.
+try:
+    import torch
+    from torch import nn
+except ImportError:  # pragma: no cover - depends on the environment
+    torch = None
+    nn = None
+
 # scikit-learn renamed the quantile-loss parameter between releases
 # (alpha -> quantile_alpha -> quantile); detect the supported spelling.
 _HGB_PARAMETERS = inspect.signature(HistGradientBoostingRegressor.__init__).parameters
@@ -24,6 +35,17 @@ def _flatten_features(features) -> np.ndarray:
     if not np.isfinite(array).all():
         raise ValueError("Features contain non-finite values.")
     return array.reshape(array.shape[0], -1)
+
+
+def _window_features(features) -> np.ndarray:
+    """Validate features for window-consuming models, keeping the 3D layout."""
+
+    array = np.asarray(features, dtype=float)
+    if array.ndim != 3 or array.shape[0] == 0:
+        raise ValueError("Features must be a non-empty (samples, lookback, features) array.")
+    if not np.isfinite(array).all():
+        raise ValueError("Features contain non-finite values.")
+    return array
 
 
 class PersistenceForecaster:
@@ -209,6 +231,204 @@ class QuantileForecaster:
         predicted = self.predict(features)
         closest = min(range(len(self.quantiles)), key=lambda i: abs(self.quantiles[i] - 0.5))
         return predicted[:, :, closest]
+
+
+_TCN_TORCH_ERROR = (
+    "SmallTCNForecaster requires PyTorch, which is not a backend dependency. "
+    "Install torch into the active environment before enabling include_tcn."
+)
+
+
+if torch is not None:
+
+    class _SmallTCNResidualBlock(torch.nn.Module):
+        """Causal dilated convolution with a residual connection."""
+
+        def __init__(self, channels: int, kernel_size: int, dilation: int):
+            super().__init__()
+            self.padding = (kernel_size - 1) * dilation
+            self.conv = torch.nn.Conv1d(
+                channels,
+                channels,
+                kernel_size,
+                dilation=dilation,
+                padding=self.padding,
+            )
+
+        def forward(self, values: torch.Tensor) -> torch.Tensor:
+            convolved = self.conv(values)[..., : values.shape[-1]]
+            return torch.relu(convolved) + values
+
+    class _SmallTCNModule(torch.nn.Module):
+        """Bounded causal dilated TCN: pointwise input projection, stacked
+        residual blocks with exponentially growing dilation, last-step pool,
+        and one linear head producing every direct horizon at once."""
+
+        def __init__(
+            self,
+            feature_count: int,
+            horizon_count: int,
+            channels: int,
+            kernel_size: int,
+            blocks: int,
+        ):
+            super().__init__()
+            self.input_projection = torch.nn.Conv1d(feature_count, channels, kernel_size=1)
+            self.residual_blocks = torch.nn.ModuleList(
+                [_SmallTCNResidualBlock(channels, kernel_size, 2**depth) for depth in range(blocks)]
+            )
+            self.head = torch.nn.Linear(channels, horizon_count)
+
+        def forward(self, values: torch.Tensor) -> torch.Tensor:
+            hidden = torch.relu(self.input_projection(values.transpose(1, 2)))
+            for block in self.residual_blocks:
+                hidden = block(hidden)
+            return self.head(hidden[..., -1])
+
+
+class SmallTCNForecaster:
+    """Small causal dilated temporal-convolutional direct-horizon forecaster.
+
+    Mirrors the research ``small_tcn`` holdout survivor family: bounded
+    channel count, causal dilated convolutions with residual connections, and
+    L2 regularisation applied as weight decay. Training is stochastic and
+    fully determined by ``seed`` (fixed seed, full-batch, unshuffled).
+
+    Construction raises a clear ``RuntimeError`` when PyTorch is missing; the
+    default benchmark ladder never instantiates this forecaster.
+    """
+
+    name = "small_tcn"
+
+    def __init__(
+        self,
+        *,
+        channels: int = 16,
+        kernel_size: int = 3,
+        blocks: int = 3,
+        l2: float = 0.01,
+        epochs: int = 12,
+        learning_rate: float = 0.01,
+        seed: int = 42,
+    ):
+        if torch is None or nn is None:
+            raise RuntimeError(_TCN_TORCH_ERROR)
+        if channels < 1 or kernel_size < 2 or blocks < 1 or epochs < 1:
+            raise ValueError("TCN architecture and training settings must be positive.")
+        if l2 < 0.0 or learning_rate <= 0.0:
+            raise ValueError("TCN regularisation and learning rate settings are invalid.")
+        self.channels = channels
+        self.kernel_size = kernel_size
+        self.blocks = blocks
+        self.l2 = l2
+        self.epochs = epochs
+        self.learning_rate = learning_rate
+        self.seed = seed
+        self.model = None
+        self.selected_epoch: int | None = None
+
+    def _build_model(self, feature_count: int, horizon_count: int):
+        assert torch is not None
+        torch.manual_seed(self.seed)
+        return _SmallTCNModule(
+            feature_count, horizon_count, self.channels, self.kernel_size, self.blocks
+        )
+
+    def _train(
+        self,
+        model,
+        training_tensor,
+        target_tensor,
+        epochs: int,
+        validation_tensors: tuple | None,
+    ) -> int:
+        assert torch is not None
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=self.learning_rate, weight_decay=self.l2
+        )
+        loss_fn = nn.MSELoss()
+        best_epoch = epochs
+        best_validation_loss = float("inf")
+        model.train()
+        for epoch in range(1, epochs + 1):
+            optimizer.zero_grad(set_to_none=True)
+            loss_fn(model(training_tensor), target_tensor).backward()
+            optimizer.step()
+            if validation_tensors is not None:
+                validation_features, validation_targets = validation_tensors
+                model.eval()
+                with torch.no_grad():
+                    validation_loss = float(loss_fn(model(validation_features), validation_targets))
+                model.train()
+                if validation_loss < best_validation_loss:
+                    best_validation_loss = validation_loss
+                    best_epoch = epoch
+        return best_epoch
+
+    def _prepare(self, features, targets=None):
+        assert torch is not None
+        feature_array = _window_features(features)
+        tensor = torch.as_tensor(feature_array, dtype=torch.float32)
+        if targets is None:
+            return tensor
+        target_array = np.asarray(targets, dtype=float)
+        if target_array.ndim != 2 or len(target_array) != len(feature_array):
+            raise ValueError("Targets must align with feature samples.")
+        if not np.isfinite(target_array).all():
+            raise ValueError("Targets contain non-finite values.")
+        return tensor, torch.as_tensor(target_array, dtype=torch.float32)
+
+    def fit(self, features, targets, *, validation_data=None):
+        feature_tensor, target_tensor = self._prepare(features, targets)
+        validation_tensors = None
+        if validation_data is not None:
+            validation_features, validation_targets = validation_data
+            validation_tensors = self._prepare(validation_features, validation_targets)
+        self.model = self._build_model(feature_tensor.shape[2], target_tensor.shape[1])
+        self.selected_epoch = self._train(
+            self.model, feature_tensor, target_tensor, self.epochs, validation_tensors
+        )
+        return self
+
+    def refit(self, features, targets):
+        """Rebuild a fresh model and refit all rows for the selected epoch."""
+
+        if self.selected_epoch is None:
+            raise ValueError("Candidate must select an epoch before final refitting.")
+        feature_tensor, target_tensor = self._prepare(features, targets)
+        self.model = self._build_model(feature_tensor.shape[2], target_tensor.shape[1])
+        self._train(self.model, feature_tensor, target_tensor, self.selected_epoch, None)
+        return self
+
+    def predict(self, features) -> np.ndarray:
+        if self.model is None:
+            raise ValueError("Forecaster must be fitted before prediction.")
+        assert torch is not None
+        feature_tensor = self._prepare(features)
+        self.model.eval()
+        with torch.no_grad():
+            output = self.model(feature_tensor).numpy()
+        return np.asarray(output, dtype=float).reshape(len(feature_tensor), -1)
+
+    def parameter_count(self) -> int:
+        if self.model is None:
+            return 0
+        return int(sum(parameter.numel() for parameter in self.model.parameters()))
+
+    def metadata(self) -> dict:
+        return {
+            "architecture": self.name,
+            "target_type": "regression",
+            "channels": self.channels,
+            "kernel_size": self.kernel_size,
+            "blocks": self.blocks,
+            "l2": self.l2,
+            "epochs": self.epochs,
+            "selected_epoch": self.selected_epoch,
+            "learning_rate": self.learning_rate,
+            "seed": self.seed,
+            "parameter_count": self.parameter_count(),
+        }
 
 
 def quantile_crossing_rate(predicted) -> float:
