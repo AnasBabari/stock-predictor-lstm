@@ -119,8 +119,6 @@ def run_baseline_experiment(
     """Compare baselines on identical purged walk-forward observations."""
 
     selected = config or ExperimentConfig()
-    if "Close" not in feature_names:
-        raise ValueError("feature_names must identify the Close feature.")
     date_index = (
         pd.DatetimeIndex(dates)
         if dates is not None
@@ -249,12 +247,15 @@ def run_baseline_experiment(
             "persistence": PersistenceForecaster().predict_prices(
                 origins=validation_origins, horizons=selected.horizons
             ),
-            "drift": DriftForecaster(feature_names.index("Close")).predict_prices(
+        }
+        if "Close" in feature_names:
+            deterministic_candidates["drift"] = DriftForecaster(
+                feature_names.index("Close")
+            ).predict_prices(
                 raw_validation,
                 origins=validation_origins,
                 horizons=selected.horizons,
-            ),
-        }
+            )
         for model in (
             RidgeForecaster().fit(scaled_train, training_targets),
             ElasticNetForecaster().fit(scaled_train, training_targets),

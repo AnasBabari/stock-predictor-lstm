@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import RobustScaler
 
 
 class Candidate:
@@ -51,13 +52,18 @@ class RidgeCandidate(Candidate):
 
     def __post_init__(self) -> None:
         self._model = Ridge(alpha=self.alpha)
+        self._scaler = RobustScaler()
 
     def fit(self, x: np.ndarray, y: np.ndarray) -> RidgeCandidate:
-        self._model.fit(x[:, -1, :], y)
+        x_flat = x[:, -1, :]
+        x_scaled = self._scaler.fit_transform(x_flat)
+        self._model.fit(x_scaled, y)
         return self
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        return np.asarray(self._model.predict(x[:, -1, :]), dtype=np.float64)
+        x_flat = x[:, -1, :]
+        x_scaled = self._scaler.transform(x_flat)
+        return np.asarray(self._model.predict(x_scaled), dtype=np.float64)
 
     def describe(self) -> dict[str, Any]:
         return {"family": self.name, "alpha": self.alpha}
@@ -86,13 +92,18 @@ class ElasticNetCandidate(Candidate):
 
     def __post_init__(self) -> None:
         self._model = ElasticNet(alpha=self.alpha, l1_ratio=self.l1_ratio, max_iter=2000)
+        self._scaler = RobustScaler()
 
     def fit(self, x: np.ndarray, y: np.ndarray) -> ElasticNetCandidate:
-        self._model.fit(x[:, -1, :], y)
+        x_flat = x[:, -1, :]
+        x_scaled = self._scaler.fit_transform(x_flat)
+        self._model.fit(x_scaled, y)
         return self
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        return np.asarray(self._model.predict(x[:, -1, :]), dtype=np.float64)
+        x_flat = x[:, -1, :]
+        x_scaled = self._scaler.transform(x_flat)
+        return np.asarray(self._model.predict(x_scaled), dtype=np.float64)
 
     def describe(self) -> dict[str, Any]:
         return {"family": self.name, "alpha": self.alpha, "l1_ratio": self.l1_ratio}
@@ -169,16 +180,19 @@ class CompactMLPCandidate(Candidate):
             early_stopping=True,
             n_iter_no_change=5,
         )
+        self._scaler = RobustScaler()
 
     def fit(self, x: np.ndarray, y: np.ndarray) -> CompactMLPCandidate:
         # Flatten input window (samples, window * features)
         x_flat = x.reshape(x.shape[0], -1)
-        self._model.fit(x_flat, y)
+        x_scaled = self._scaler.fit_transform(x_flat)
+        self._model.fit(x_scaled, y)
         return self
 
     def predict(self, x: np.ndarray) -> np.ndarray:
         x_flat = x.reshape(x.shape[0], -1)
-        return np.asarray(self._model.predict(x_flat), dtype=np.float64)
+        x_scaled = self._scaler.transform(x_flat)
+        return np.asarray(self._model.predict(x_scaled), dtype=np.float64)
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -206,6 +220,8 @@ class DLinearCandidate(Candidate):
         self.alpha = alpha
         self._trend_model = Ridge(alpha=self.alpha)
         self._seasonal_model = Ridge(alpha=self.alpha)
+        self._trend_scaler = RobustScaler()
+        self._seasonal_scaler = RobustScaler()
 
     def _decompose(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         # Moving average along sequence dimension (axis 1)
@@ -221,16 +237,20 @@ class DLinearCandidate(Candidate):
         trend, seasonal = self._decompose(x)
         t_flat = trend.reshape(x.shape[0], -1)
         s_flat = seasonal.reshape(x.shape[0], -1)
-        self._trend_model.fit(t_flat, y)
-        self._seasonal_model.fit(s_flat, y)
+        t_scaled = self._trend_scaler.fit_transform(t_flat)
+        s_scaled = self._seasonal_scaler.fit_transform(s_flat)
+        self._trend_model.fit(t_scaled, y)
+        self._seasonal_model.fit(s_scaled, y)
         return self
 
     def predict(self, x: np.ndarray) -> np.ndarray:
         trend, seasonal = self._decompose(x)
         t_flat = trend.reshape(x.shape[0], -1)
         s_flat = seasonal.reshape(x.shape[0], -1)
-        p_trend = self._trend_model.predict(t_flat)
-        p_seasonal = self._seasonal_model.predict(s_flat)
+        t_scaled = self._trend_scaler.transform(t_flat)
+        s_scaled = self._seasonal_scaler.transform(s_flat)
+        p_trend = self._trend_model.predict(t_scaled)
+        p_seasonal = self._seasonal_model.predict(s_scaled)
         return np.asarray(p_trend + p_seasonal, dtype=np.float64)
 
     def describe(self) -> dict[str, Any]:

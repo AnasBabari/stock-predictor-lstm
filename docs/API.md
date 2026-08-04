@@ -104,3 +104,10 @@ Forecast metadata includes `artifact_state_before` and `artifact_action` alongsi
 - `GET /api/v1/model-performance/{ticker}` discloses browser-training availability and any offline evidence. It must not imply that a server model is active.
 
 Live sentiment is untrusted headline-only external data. Historical news can enter only an offline, timestamped, leakage-safe ablation and must pass the same purged holdout and promotion gates as other features.
+
+## Server Pretrained Forecasts
+
+The following endpoints are enabled only when `SERVER_FORECAST_SERVING_ENABLED` is true.
+
+- `GET /api/v1/server-forecasts/availability`: Returns the currently running mode, configured allowlist, and the status of each allowlisted ticker (fresh, stale, missing). Cached for 300 seconds.
+- `GET /api/v1/server-forecasts/{ticker}?forecast_type=price&days=N`: Serves a pre-trained server forecast if one is available, fresh, and compatible. The response format matches the client-trained output, allowing the UI to render it natively. On miss, stale, disabled, or incompatible, returns a `200 OK` containing a fallback instruction (`{available: false, reason: "...", fallback: "browser_training"}`) rather than failing closed with a 5xx error. Cached for 900 seconds.

@@ -14,6 +14,7 @@ import PredictionHistory from './components/PredictionHistory';
 import ToastContainer from './components/ToastContainer';
 import { exportCompleteAnalysis } from './utils/exportService';
 import { browserTrainingSupported, clearBrowserModelCache, trainBrowserForecast } from './ml/browserTrainingClient';
+import { fetchServerPrediction } from './ml/serverModelClient';
 import { defaultTrainingProfile, expectedDurationLabel } from './ml/trainingProfiles';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
@@ -293,9 +294,18 @@ export default function App() {
   }, []);
   const fetchPredictionData = useCallback(
     async (symbol, days, type, signal, onProgress) => {
+      // Try fetching a high-quality server-pretrained model first
+      onProgress?.({ stage: 'checking_server', message: 'Checking for server-pretrained models...' });
+      const serverPrediction = await fetchServerPrediction(symbol, days, type, signal);
+      if (serverPrediction) {
+        onProgress?.({ stage: 'server_model_loaded', message: 'Loaded server-pretrained model.' });
+        return serverPrediction;
+      }
+
       if (!BROWSER_TRAINING_ENABLED) {
         return fetchServerBaseline(symbol, days, type, signal, new Error('Browser training is disabled by the deployment flag.'));
       }
+      
       const trainingEndpoint = `${API_BASE}/api/v1/training-data?ticker=${encodeURIComponent(symbol)}`;
       let snapshot;
       try {

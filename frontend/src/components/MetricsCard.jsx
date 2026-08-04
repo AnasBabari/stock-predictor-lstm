@@ -117,16 +117,21 @@ export default function MetricsCard({ stockData, forecastType }) {
   const metrics = (isTrend ? trendMetrics : priceMetrics).map(([label, value, title]) => ({
     label, value: value ?? '—', title,
   }));
-  const engineLabel = engine?.family ? engine.family.replaceAll('_', ' ') : 'Prepared model';
+  const engineLabel = stockData.metadata?.server_pretrained 
+    ? stockData.metadata.model_name || 'Server-Pretrained Model' 
+    : engine?.family ? engine.family.replaceAll('_', ' ') : 'Prepared model';
+    
   const localStatus = engine?.baseline_fallback
     ? isTrend ? 'Baseline fallback — majority class displayed' : 'Baseline fallback — persistence displayed'
-    : engine?.role === 'learned_candidate'
-      ? 'Learned candidate'
-      : engine?.execution_mode === 'browser_artifact_loaded'
-        ? 'Cached on this device'
-        : engine?.execution_mode === 'browser_trained'
-          ? 'Trained in this browser'
-          : 'Learned locally';
+    : stockData.metadata?.server_pretrained
+      ? 'Trained offline on server'
+      : engine?.role === 'learned_candidate'
+        ? 'Learned candidate'
+        : engine?.execution_mode === 'browser_artifact_loaded'
+          ? 'Cached on this device'
+          : engine?.execution_mode === 'browser_trained'
+            ? 'Trained in this browser'
+            : 'Learned locally';
   const underperforms = !isTrend && (
     (m.relative_rmse != null && m.relative_rmse >= 1) ||
     (m.relative_mae != null && m.relative_mae >= 1)

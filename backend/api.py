@@ -200,7 +200,7 @@ app.add_middleware(
     allow_origin_regex=_preview_cors_regex,
     allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["Content-Type", "X-Prediction-Request-ID"],
+    allow_headers=["Content-Type", "X-Prediction-Request-ID", "X-Client-Class"],
 )
 
 # ── Bounded caches (2.3) ────────────────────────────────────────────
@@ -1240,3 +1240,9 @@ def model_performance(
             "metric_source": "browser_purged_holdout",
         },
     }
+
+
+if settings.server_forecast_serving_enabled:
+    from server_models.api import router as server_forecasts_router
+
+    app.include_router(server_forecasts_router)

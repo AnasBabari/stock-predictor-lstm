@@ -29,6 +29,8 @@ DOCUMENTED_PATHS = {
     "/api/v1/prediction-status/{request_id}",
     "/api/v1/diagnostics/{ticker}",
     "/api/v1/model-performance/{ticker}",
+    "/api/v1/server-forecasts/availability",
+    "/api/v1/server-forecasts/{ticker}",
 }
 
 

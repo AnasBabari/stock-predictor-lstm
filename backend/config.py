@@ -88,6 +88,26 @@ class Settings(BaseSettings):
     deployment_environment: str | None = None
     deployment_commit: str | None = None
 
+    # Hybrid server/browser training foundation (defaults keep today's behaviour).
+    server_forecast_serving_enabled: bool = False
+    server_training_enabled: bool = False
+    server_forecast_allowlist: list[str] = Field(default_factory=list)
+    server_forecast_max_age_hours: int = Field(default=36, ge=1, le=24 * 30)
+    server_forecast_cache_ttl: int = Field(default=900, ge=0, le=86400)
+    registry_database_url: str | None = None
+    s3_endpoint_url: str | None = None
+    s3_bucket: str | None = None
+    s3_key_prefix: str = "artifacts"
+    training_mode: Literal["browser_only", "hybrid", "server_pretrained"] = "browser_only"
+
+    @field_validator("server_forecast_allowlist", mode="before")
+    @classmethod
+    def parse_server_forecast_allowlist(cls, value: object) -> object:
+        """Accept a comma-separated env string in addition to JSON lists."""
+        if isinstance(value, str):
+            return [item.strip().upper() for item in value.split(",") if item.strip()]
+        return value
+
     @field_validator("trusted_proxy_ips")
     @classmethod
     def validate_trusted_proxy_ips(cls, values: list[str]) -> list[str]:

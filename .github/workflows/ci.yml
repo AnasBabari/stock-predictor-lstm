@@ -22,7 +22,7 @@ jobs:
       - run: uv sync --project backend --frozen --group training
       - run: uv run --project backend ruff check backend
       - run: uv run --project backend ruff format --check backend
-      - run: uv run --project backend mypy --config-file backend/pyproject.toml backend/api.py backend/model.py backend/data_pipeline.py backend/config.py backend/features
+      - run: uv run --project backend mypy --config-file backend/pyproject.toml backend/api.py backend/model.py backend/data_pipeline.py backend/config.py backend/features backend/server_models
       - run: uv run --project backend bandit -r backend -x backend/tests,backend/.venv -ll -q
       - run: uv run --project backend pip-audit
       - run: uv run --project backend python scripts/check_api_docs.py
