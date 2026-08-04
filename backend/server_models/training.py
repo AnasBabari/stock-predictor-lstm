@@ -8,7 +8,7 @@ from sklearn.preprocessing import RobustScaler
 
 from config import FEATURES_V4, MAX_FORECAST_DAYS, WINDOW_SIZE
 from data_pipeline import fetch_browser_data
-from experiments.baselines import ElasticNetForecaster, RidgeForecaster
+from experiments.baselines import ElasticNetForecaster, SmallTCNForecaster
 from experiments.runner import ExperimentConfig, run_baseline_experiment
 from experiments.targets import reconstruct_prices
 from server_models.contracts import (
@@ -46,7 +46,7 @@ def train_server_forecast(ticker: str, registry, storage, signer) -> ServerModel
     best_candidate = None
     best_rmse = float("inf")
 
-    for candidate_name in ("elastic_net", "ridge"):
+    for candidate_name in ("elastic_net", "small_tcn"):
         report = result["models"][candidate_name]
         if report["promotion"]["promoted"]:
             rmse = report["aggregate"]["pooled"]["relative_rmse"]
@@ -86,7 +86,7 @@ def train_server_forecast(ticker: str, registry, storage, signer) -> ServerModel
 
     from typing import Any
 
-    model: Any = ElasticNetForecaster() if best_candidate == "elastic_net" else RidgeForecaster()
+    model: Any = ElasticNetForecaster() if best_candidate == "elastic_net" else SmallTCNForecaster()
 
     model.fit(scaled_features, dataset.targets)
 

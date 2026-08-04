@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     deployment_commit: str | None = None
 
     # Hybrid server/browser training foundation (defaults keep today's behaviour).
-    server_forecast_serving_enabled: bool = False
+    server_forecast_serving_enabled: bool = True
     server_training_enabled: bool = False
     server_forecast_allowlist: list[str] = Field(default_factory=list)
     server_forecast_max_age_hours: int = Field(default=36, ge=1, le=24 * 30)

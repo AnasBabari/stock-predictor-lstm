@@ -1,8 +1,8 @@
 # Stock Autoresearch Ledger Report
 
-- **Total Experiments**: 227
+- **Total Experiments**: 238
 - **Kept (Promotable)**: 19
-- **Discarded**: 208
+- **Discarded**: 219
 - **Failed / Invalid**: 2
 
 | ID | Family | Status | Decision | Rel MAE | Rel RMSE | Peak VRAM | Time (s) |
@@ -234,3 +234,14 @@
 | `exp_17858763` | `small_tcn` | success | **keep** | 0.8894 | 0.8946 | - | 0.0s |
 | `exp_17858763` | `small_tcn` | success | **discard** | 0.9658 | 1.0265 | - | 0.0s |
 | `exp_17858763` | `elastic_net` | success | **discard** | 0.9508 | 0.9625 | - | 0.0s |
+| `exp_17858806` | `elastic_net_a001_l1` | success | **discard** | 1.1077 | 1.0878 | - | 3.7s |
+| `exp_17858806` | `elastic_net_a001_l5` | success | **discard** | 1.0476 | 1.0542 | - | 3.1s |
+| `exp_17858806` | `elastic_net_a001_l5` | success | **discard** | 1.0088 | 0.9863 | - | 3.1s |
+| `exp_17858806` | `elastic_net_a001_l15` | success | **discard** | 0.9838 | 0.9816 | - | 3.2s |
+| `exp_17858806` | `elastic_net_a01_l1` | success | **discard** | 0.9941 | 0.9975 | - | 3.1s |
+| `exp_17858806` | `elastic_net_a03_l1` | success | **discard** | 1.0024 | 1.0104 | - | 3.0s |
+| `exp_17858806` | `elastic_net_a10_l1` | success | **discard** | 0.9763 | 0.9803 | - | 3.1s |
+| `exp_17858806` | `elastic_net_a30_l1` | success | **discard** | 0.9763 | 0.9803 | - | 3.0s |
+| `exp_17858806` | `elastic_net_a30_l1` | success | **discard** | 0.9761 | 0.9903 | - | 3.0s |
+| `exp_17858806` | `elastic_net_a100_l1` | success | **discard** | 0.9763 | 0.9803 | - | 2.9s |
+| `exp_17858806` | `elastic_net_a100_l1` | success | **discard** | 0.9761 | 0.9903 | - | 2.9s |
