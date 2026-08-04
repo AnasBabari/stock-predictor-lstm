@@ -84,7 +84,7 @@ def run_isolated_candidate_eval(
     research_root = Path(__file__).resolve().parent.parent.as_posix()
 
     eval_script = f"""
-import sys, json, pathlib
+import sys, json, pathlib, hashlib
 sys.path.insert(0, str(pathlib.Path('{research_root}')))
 import pandas as pd
 from stock_autoresearch.data import Snapshot
@@ -98,7 +98,10 @@ from stock_autoresearch.candidates import (
 
 frame = pd.read_csv(r'{snapshot_path.as_posix()}', index_col=0, parse_dates=True)
 cols = [c for c in frame.columns if c != 'Close']
-snapshot = Snapshot(frame=frame, snapshot_id='eval_snapshot', feature_names=tuple(cols))
+digest = hashlib.sha256()
+digest.update(frame.to_csv(index=True).encode('utf-8'))
+digest.update(json.dumps(cols, separators=(",", ":")).encode('utf-8'))
+snapshot = Snapshot(frame=frame, snapshot_id='sha256:' + digest.hexdigest(), feature_names=tuple(cols))
 
 factories = {{
     'persistence': lambda seed: PersistenceCandidate(),
@@ -296,6 +299,7 @@ class ExperimentController:
             "candidate_family": candidate_family,
             "hypothesis": hypothesis,
             "horizon": trial_horizon,
+            "snapshot_id": payload.get("snapshot_id") or "unknown",
             "status": sub.status,
             "failure_reason": sub.failure_reason,
             "peak_vram_mb": sub.peak_vram_mb,
