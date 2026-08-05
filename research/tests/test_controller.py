@@ -145,6 +145,49 @@ def test_controller_trial_execution(sample_snapshot_csv: Path, tmp_path: Path) -
     assert record["candidate_family"] == "persistence"
 
 
+def test_ledger_snapshot_id_is_content_hash_of_audited_snapshot(
+    tmp_path: Path,
+) -> None:
+    """Audit regression: every ledger record must carry a real content hash of
+    the exact snapshot bytes evaluated, never the 'unknown' placeholder."""
+    import hashlib
+
+    rows = 900
+    rng = np.random.default_rng(7)
+    dates = pd.date_range("2022-01-01", periods=rows, freq="B")
+    close = 100.0 * np.exp(np.cumsum(rng.normal(0.001, 0.01, size=rows)))
+    frame = pd.DataFrame(
+        {"Close": close, "feat_1": rng.normal(size=rows), "feat_2": rng.normal(size=rows)},
+        index=dates,
+    )
+    snapshot_path = tmp_path / "audited_snapshot.csv"
+    frame.to_csv(snapshot_path)
+
+    # The eval subprocess digests the CSV as re-parsed from disk, so the
+    # reference hash must be computed over the same round-tripped frame.
+    parsed = pd.read_csv(snapshot_path, index_col=0, parse_dates=True)
+    cols = [c for c in parsed.columns if c != "Close"]
+    digest = hashlib.sha256()
+    digest.update(parsed.to_csv(index=True).encode("utf-8"))
+    digest.update(json.dumps(cols, separators=(",", ":")).encode("utf-8"))
+    expected = "sha256:" + digest.hexdigest()
+
+    ledger_path = tmp_path / "ledger.jsonl"
+    controller = ExperimentController(
+        snapshot_path=snapshot_path,
+        ledger_path=ledger_path,
+        run_tag="audit_test",
+    )
+
+    entry = controller.execute_trial("persistence", level=0)
+    assert entry["status"] == "success"
+    assert entry["snapshot_id"] == expected
+    assert entry["snapshot_id"] != "unknown"
+
+    record = json.loads(ledger_path.read_text(encoding="utf-8").strip().splitlines()[0])
+    assert record["snapshot_id"] == expected
+
+
 @pytest.mark.parametrize("requested_horizon", [1, 5, 10, 20])
 def test_level_2_confirmation_honors_requested_horizon(
     tmp_path: Path, requested_horizon: int

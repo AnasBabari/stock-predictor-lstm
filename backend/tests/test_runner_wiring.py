@@ -200,6 +200,13 @@ def test_small_tcn_is_absent_by_default():
     assert set(report["models"]) == _BASELINE_MODELS
 
 
+def test_hgb_excluded_when_include_hgb_false():
+    report = _run(include_hgb=False)
+    assert "hist_gradient_boosting" not in report["models"]
+    assert report["config"]["include_hgb"] is False
+    assert set(report["models"]) == _BASELINE_MODELS - {"hist_gradient_boosting"}
+
+
 def test_small_tcn_joins_model_loop_when_enabled():
     pytest.importorskip("torch")
     report = _run(include_tcn=True)
