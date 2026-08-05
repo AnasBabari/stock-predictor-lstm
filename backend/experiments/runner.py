@@ -57,6 +57,7 @@ class ExperimentConfig:
     include_blends: bool = False
     include_quantiles: bool = False
     include_drift: bool = False
+    include_hgb: bool = True
     include_tcn: bool = False
 
     @property
@@ -274,20 +275,21 @@ def run_baseline_experiment(
             stochastic_candidates: dict[str, np.ndarray] = {}
             failed_models: list[str] = []
 
-            try:
-                boosting = HistogramGradientBoostingForecaster(random_state=seed).fit(
-                    scaled_train, training_targets
-                )
-                predicted_targets = boosting.predict(scaled_validation)
-                stochastic_candidates[boosting.name] = reconstruct_prices(
-                    validation_origins,
-                    predicted_targets,
-                    selected.target_type,
-                )
-            except Exception:
-                if first_seed_run:
-                    raise
-                failed_models.append("hist_gradient_boosting")
+            if selected.include_hgb:
+                try:
+                    boosting = HistogramGradientBoostingForecaster(random_state=seed).fit(
+                        scaled_train, training_targets
+                    )
+                    predicted_targets = boosting.predict(scaled_validation)
+                    stochastic_candidates[boosting.name] = reconstruct_prices(
+                        validation_origins,
+                        predicted_targets,
+                        selected.target_type,
+                    )
+                except Exception:
+                    if first_seed_run:
+                        raise
+                    failed_models.append("hist_gradient_boosting")
 
             if selected.include_quantiles:
                 try:

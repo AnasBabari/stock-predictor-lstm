@@ -206,7 +206,7 @@ def get_forecast(
         "metadata": {
             "engine": {
                 "role": "server_pretrained",
-                "family": "ridge_or_elastic",
+                "family": "elastic_net",
                 "version_id": bundle.version_id,
             },
             "metric_source": "server_purged_walk_forward",
