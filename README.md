@@ -49,6 +49,15 @@ Quick and Balanced metrics are labelled `browser_purged_holdout`. Research metri
 
 The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available during migration. Their response metadata always identifies `server_disabled_fallback`; they are not used for learned browser forecasts. `/models` reports `server_models.status = disabled` and `browser_training.status = available`.
 
+## Server-side forecast serving
+
+The server can also serve pre-trained, signed, versioned forecast bundles alongside the compatibility endpoints (hybrid mode). Serving is registered by default (`server_forecast_serving_enabled=True`) and exposes:
+
+- `GET /api/v1/server-forecasts/availability` — running mode, configured allowlist, and per-ticker freshness (cached 300 s).
+- `GET /api/v1/server-forecasts/{ticker}?forecast_type=price&days=N` — a persisted bundle when fresh and compatible, otherwise `200 OK` with `{available: false, fallback: "browser_training"}` rather than a 5xx (cached 900 s).
+
+Artifacts come only from an explicit background job (`backend/scripts/run_server_training.py`). The job is torch-free: it evaluates the `elastic_net` family on the full 1–30-day horizon range without the histogram gradient booster, and promotes a signed, digest-checked bundle only when pooled `relative_rmse < 0.98` and `relative_mae < 0.98`. Each bundle records reproducibility metadata (git commit, scaler parameters, feature names, per-horizon metrics). Serving stays dormant until an allowlisted ticker actually has a fresh promoted artifact, so free-tier memory and CPU budgets are unaffected; `/models` still reports server models disabled.
+
 ## News and sentiment
 
 Live Yahoo Finance headlines are still fetched for the direction response as context (`sentiment.status`/coverage metadata). They are deliberately not sent in the 28-feature browser matrix, so headline sentiment cannot silently become a learned input. Historical news experiments remain offline-only and must use timestamped articles, leakage-safe alignment, controlled ablations, and the same purged holdout/promotion gates as price features. This separation keeps the browser model reproducible and makes the current news limitation explicit instead of claiming that sentiment improves the forecast.

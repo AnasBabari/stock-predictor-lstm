@@ -56,42 +56,38 @@ The benchmark CLI currently evaluates these five deterministic baselines. Tensor
 
 ## Promotion gate
 
-No model is promoted merely because it wins a single split. The default gate
-requires at least a 5% pooled improvement in both MAE and RMSE over
-persistence, MASE and RMSSE below one, wins in at least four folds, and no
-fold worse than 1.25× persistence RMSE. A rejected report is valuable evidence
-that the baseline should continue serving.
+No model is promoted merely because it wins a single split. The research
+harness keeps a locked, purged, expanding-fold evaluation with
+persistence-relative MAE/RMSE. The final holdout confirmation requires pooled
+relative MAE and RMSE below one, 95% bootstrap-CI upper bounds below 1.0 on
+both metrics, and a majority of the four rolling windows passing the 0.98
+per-window gate. The server promotion job applies the strict subset
+`pooled relative_rmse < 0.98` and `pooled relative_mae < 0.98` for the
+`elastic_net` candidate only.
 
 ## Promoted research survivors
 
-Five configurations survived the full research holdout protocol, with
-persistence-relative MAE/RMSE whose 95% confidence-interval upper bounds all
-sit below 1.0:
+Three configurations survived the final multi-window holdout, with
+persistence-relative RMSE/MAE whose 95% confidence-interval upper bounds sit
+below 1.0:
 
-| model | ticker | horizon | relative MAE | relative RMSE |
+| model | ticker | horizon | windows passing | pooled rel RMSE |
 | --- | --- | ---: | ---: | ---: |
-| `ridge` (pooled) | SPY | 20 | 0.860 | 0.895 |
-| `small_tcn` | SPY | 20 | 0.890 | 0.916 |
-| `ridge` | QQQ | 20 | 0.878 | 0.882 |
-| `elastic_net` | QQQ | 20 | 0.907 | 0.924 |
-| `small_tcn` | QQQ | 20 | 0.889 | 0.895 |
+| `elastic_net` | QQQ | 20 | 3/4 | 0.9237 |
+| `small_tcn` | SPY | 20 | 3/4 | 0.9156 |
+| `small_tcn` | QQQ | 20 | 3/4 | 0.8946 |
 
-Promotion pathway: purged expanding folds → three-condition promotion gates →
-a locked 252-session holdout → 4-window rolling confirmation. Two caveats
-apply. First, recency decay: in the most recent rolling window every
-surviving candidate compresses toward a 1.0 ratio, so the edge is real but
-shrinking; the MSFT edges decayed below the gate and were rejected. Second,
-these are snapshot-specific results measured against persistence, not
-durable performance claims.
+`ridge` is intentionally absent: its earlier sweep promotion was an artifact
+of pre-RobustScaler data and does not reproduce on corrected, hash-verified
+snapshots (post-fix SPY h20 pooled RMSE 1.1531). MSFT was rejected at the
+holdout: all survivors compressed toward a 1.0 ratio in the most recent
+rolling window and MSFT fell below the gate in only 2 of 4 windows.
 
-`ridge` and `elastic_net` already run in the backend benchmark ladder. The
-surviving `small_tcn` architecture is now available there too, behind the
-opt-in `include_tcn` flag on `ExperimentConfig`: when enabled, `small_tcn`
-joins the stochastic model loop (seeded, like `hist_gradient_boosting`) and
-is absent from every default report. The backend implementation requires
-PyTorch, which remains an opt-in dependency; without torch installed,
-constructing the forecaster raises a clear error and the default ladder is
-untouched.
+`ridge` and `elastic_net` run in the backend benchmark ladder. `small_tcn`
+remains available for research ladder runs behind the opt-in `include_tcn`
+flag on `ExperimentConfig` (seeded, stochastic, absent from default reports,
+and requires the opt-in PyTorch dependency) but is **excluded from server
+promotion**, which is deliberately torch-free.
 
 ## Training lifecycle
 
