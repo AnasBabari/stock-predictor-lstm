@@ -23,7 +23,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 import numpy as np
 import yfinance as yf  # type: ignore[import-untyped]
@@ -31,7 +31,7 @@ from cachetools import TTLCache
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 
@@ -49,6 +49,12 @@ from data_pipeline import fetch_data
 from features.market import MarketContextUnavailable
 from news_features import get_live_financial_sentiment as get_financial_sentiment
 from server_models.api import router as server_forecasts_router
+from server_models.response_models import (
+    TIMING_FIELDS,
+    DirectionForecastResponse,
+    PredictionStatusResponse,
+    PriceForecastResponse,
+)
 from services.baselines import base_rate_direction_forecast, persistence_price_forecast
 from services.training_data import build_training_snapshot
 
@@ -221,116 +227,9 @@ class ServiceBusyError(RuntimeError):
     """The bounded prediction executor has no queue capacity."""
 
 
-TIMING_FIELDS = (
-    "queue_wait",
-    "market_data",
-    "feature_preparation",
-    "artifact_load_validation",
-    "training",
-    "inference",
-    "total",
-)
-EXECUTION_MODES = (
-    "response_cache_hit",
-    "artifact_loaded",
-    "baseline_fallback",
-    "trained",
-    "coalesced",
-)
-ARTIFACT_STATES = ("fresh", "missing", "stale", "incompatible")
-ARTIFACT_ACTIONS = ("loaded", "retrained", "not_applicable")
-STATUS_STAGES = (
-    "queued",
-    "downloading_market_data",
-    "preparing_features",
-    "checking_artifact",
-    "training",
-    "generating_forecast",
-    "completed",
-    "failed",
-)
-
-
-class PredictionStatusResponse(BaseModel):
-    status: Literal["queued", "running", "completed", "failed"]
-    stage: Literal[
-        "queued",
-        "downloading_market_data",
-        "preparing_features",
-        "checking_artifact",
-        "training",
-        "generating_forecast",
-        "completed",
-        "failed",
-    ]
-    coalesced: bool
-
-
-NonNegativeSeconds = Annotated[float, Field(ge=0)]
-Probability = Annotated[float, Field(ge=0, le=1)]
-
-
-class PredictionTimings(BaseModel):
-    queue_wait: NonNegativeSeconds | None
-    market_data: NonNegativeSeconds | None
-    feature_preparation: NonNegativeSeconds | None
-    artifact_load_validation: NonNegativeSeconds | None
-    training: NonNegativeSeconds | None
-    inference: NonNegativeSeconds | None
-    total: NonNegativeSeconds
-
-
-class PredictionExecution(BaseModel):
-    mode: Literal[
-        "response_cache_hit",
-        "artifact_loaded",
-        "baseline_fallback",
-        "trained",
-        "coalesced",
-    ]
-    coalesced: bool
-
-
-class ForecastMetadata(BaseModel):
-    """Stable telemetry contract plus permissive legacy runtime diagnostics."""
-
-    model_config = ConfigDict(extra="allow")
-
-    timings_seconds: PredictionTimings
-    execution: PredictionExecution
-    artifact_state_before: Literal["fresh", "missing", "stale", "incompatible"] | None
-    artifact_action: Literal["loaded", "retrained", "not_applicable"]
-
-
-class ForecastResponse(BaseModel):
-    """Stable forecast envelope; metrics remain model-specific legacy data."""
-
-    model_config = ConfigDict(extra="allow")
-
-    ticker: str
-    forecast_days: int
-    future_dates: list[str]
-    metrics: dict[str, Any]
-    metadata: ForecastMetadata
-
-
-class PriceForecastResponse(ForecastResponse):
-    historical_dates: list[str]
-    historical_prices: list[float]
-    predicted_prices: list[float]
-
-
-class AttentionWeight(BaseModel):
-    index: int
-    date: str
-    weight: float
-
-
-class DirectionForecastResponse(ForecastResponse):
-    directions: list[Literal["Up", "Down"]]
-    probabilities: list[Probability]
-    attention_weights: list[AttentionWeight]
-    sentiment: dict[str, Any]
+# Forecast response models and telemetry constants live in
+# `server_models.response_models` so the server-forecast serving layer can
+# return payloads typed by the exact same contracts (see `api.py` imports).
 
 
 class ModelPerformanceResponse(BaseModel):

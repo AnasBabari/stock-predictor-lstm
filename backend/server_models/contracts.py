@@ -9,12 +9,13 @@ schema v4, the 28 ``FEATURES_V4`` columns in exact order, ``TARGET_MODE`` and a
 
 from __future__ import annotations
 
+import math
 import re
 import subprocess
 from datetime import UTC, date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from config import MAX_FORECAST_DAYS, SNAPSHOT_SCHEMA_VERSION, TARGET_MODE, WINDOW_SIZE
 
@@ -240,7 +241,37 @@ class ServerForecastBundle(BaseModel):
 
     @field_validator("predicted_prices", "historical_prices")
     @classmethod
-    def validate_prices_positive(cls, value: list[float]) -> list[float]:
-        if any(price <= 0 for price in value):
-            raise ValueError("prices must all be strictly positive")
+    def validate_prices_finite_and_positive(cls, value: list[float]) -> list[float]:
+        for price in value:
+            if not math.isfinite(price) or price <= 0:
+                raise ValueError("prices must all be finite and strictly positive")
         return value
+
+    @field_validator("predicted_log_returns")
+    @classmethod
+    def validate_returns_finite(cls, value: list[float]) -> list[float]:
+        if any(not math.isfinite(return_) for return_ in value):
+            raise ValueError("predicted_log_returns must all be finite")
+        return value
+
+    @model_validator(mode="after")
+    def validate_temporal_consistency(self) -> ServerForecastBundle:
+        future = self.future_dates
+        if any(future[i] >= future[i + 1] for i in range(FORECAST_LENGTH - 1)):
+            raise ValueError("future_dates must be strictly increasing")
+        if future[0] <= self.origin_date:
+            raise ValueError("the first future date must be after origin_date")
+
+        history = self.historical_dates
+        if any(history[i] >= history[i + 1] for i in range(HISTORY_DISPLAY_WINDOW - 1)):
+            raise ValueError("historical_dates must be strictly increasing")
+        if history[-1] != self.origin_date:
+            raise ValueError("the last historical date must equal origin_date")
+
+        if self.historical_prices[-1] != self.origin_close:
+            raise ValueError("the last historical price must equal origin_close")
+
+        price_count = len(self.historical_prices)
+        if len(history) != price_count:
+            raise ValueError("historical_dates and historical_prices lengths must match")
+        return self

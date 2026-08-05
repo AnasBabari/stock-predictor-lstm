@@ -109,7 +109,9 @@ def object_store():
     from server_models.storage import S3ObjectStore
 
     _url, bucket, endpoint = _require_env()
-    return S3ObjectStore(bucket=bucket, prefix=S3_PREFIX, endpoint_url=endpoint)
+    store = S3ObjectStore(bucket=bucket, prefix=S3_PREFIX, endpoint_url=endpoint)
+    store.ensure_bucket()
+    return store
 
 
 def test_registry_queue_and_promotion_lifecycle(database):

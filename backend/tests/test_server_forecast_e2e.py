@@ -1,11 +1,12 @@
 """In-process E2E for the hybrid server path.
 
 Covers the full lifecycle over real contracts and HTTP: deterministic snapshot
--> walk-forward gates -> train -> Ed25519 signature -> immutable bundle ->
-promote -> serve (verified on the wire) -> replacement promotion -> rollback ->
-tamper-fails-closed. Uses in-memory registry/storage so it runs in CI without
-infrastructure, complementing tests/test_server_models_integration.py which
-repeats the same lifecycle against real Postgres + MinIO.
+-> promote -> Ed25519 signature -> immutable bundle -> serve (verified on the
+wire) -> replacement promotion -> rollback -> tamper-fails-closed. The walk-
+forward evaluation and the forecaster are stubbed (``_passing_run`` /
+``RecordingElasticNet``), so this verifies orchestration and the HTTP contract,
+not the model itself; the real lifecycle is covered by
+``tests/test_server_models_integration.py`` against Postgres + MinIO.
 """
 
 from datetime import date
@@ -85,6 +86,8 @@ def _configure(monkeypatch, *, fetch, public_key_path):
     monkeypatch.setattr(config.settings, "training_mode", "hybrid")
     monkeypatch.setattr(config.settings, "server_forecast_allowlist", ["AAPL"])
     monkeypatch.setattr(config.settings, "server_forecast_public_key_path", public_key_path)
+    monkeypatch.setattr(config.settings, "registry_database_url", "postgresql://e2e-fake")
+    monkeypatch.setattr(config.settings, "s3_bucket", "e2e-fake-bucket")
     server_api._bundle_cache.clear()
     server_api._availability_cache.clear()
 
@@ -184,4 +187,5 @@ def test_e2e_tampered_bundle_fails_closed(monkeypatch, tmp_path):
 
     resp = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert resp.status_code == 503
-    assert "verification" in resp.json()["detail"]
+    assert resp.json()["detail"]["code"] == "signature_verification_failed"
+    assert resp.json()["detail"]["fallback"] == "browser_training"

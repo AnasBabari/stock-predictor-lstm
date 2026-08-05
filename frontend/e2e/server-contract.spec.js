@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test';
-import { deterministicSnapshot, serverForecastPayload } from './fixtures.js';
+import { deterministicSnapshot, installStubBrowserWorker, serverForecastPayload } from './fixtures.js';
 
 // Contract spec for the hybrid path: server-pretrained forecast when the
 // server responds, browser training when it falls back, and the trend->direction
-// API mapping. All server APIs are intercepted, so this runs anywhere.
+// API mapping. All server APIs are intercepted and the browser-training worker
+// is stubbed, so this runs anywhere in seconds without building TF.js models.
 
 function mockApi(page, forecastHandler) {
   const calls = { server: [], trainingData: 0, search: 0 };
@@ -29,6 +30,7 @@ function mockApi(page, forecastHandler) {
 }
 
 async function prepare(page, calls) {
+  await installStubBrowserWorker(page);
   await page.goto('/');
   await page.locator('#trainingProfile').selectOption('quick');
   await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
@@ -36,7 +38,7 @@ async function prepare(page, calls) {
 }
 
 test('server price forecast is used verbatim and browser training is skipped', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(30_000);
   const calls = mockApi(page, (route) => route.fulfill({ json: serverForecastPayload('MSFT', 7) }));
   await prepare(page, calls);
 
@@ -51,7 +53,7 @@ test('server price forecast is used verbatim and browser training is skipped', a
 });
 
 test('server fallback (missing) sends the request to browser training', async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(60_000);
   const calls = mockApi(page, (route) =>
     route.fulfill({ json: { available: false, reason: 'missing', fallback: 'browser_training' } })
   );
@@ -62,9 +64,21 @@ test('server fallback (missing) sends the request to browser training', async ({
   expect(calls.trainingData).toBe(1);
 });
 
-test('server 503 (infrastructure) degrades to browser training', async ({ page }) => {
-  test.setTimeout(180_000);
-  const calls = mockApi(page, (route) => route.fulfill({ status: 503, json: { detail: 'unavailable' } }));
+test('server 503 (infrastructure, hybrid) degrades to browser training', async ({ page }) => {
+  test.setTimeout(60_000);
+  const calls = mockApi(page, (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        detail: {
+          available: false,
+          code: 'registry_unavailable',
+          message: 'Server forecast infrastructure is unavailable.',
+          fallback: 'browser_training',
+        },
+      },
+    })
+  );
   await prepare(page, calls);
 
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
@@ -72,8 +86,33 @@ test('server 503 (infrastructure) degrades to browser training', async ({ page }
   expect(calls.trainingData).toBe(1);
 });
 
+test('server 503 without a browser fallback (server_pretrained) surfaces an error, never trains', async ({ page }) => {
+  test.setTimeout(60_000);
+  const calls = mockApi(page, (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        detail: {
+          available: false,
+          code: 'signature_verification_failed',
+          message: 'Server forecast bundle verification failed.',
+          fallback: null,
+        },
+      },
+    })
+  );
+  await prepare(page, calls);
+
+  await page.getByRole('button', { name: 'Predict', exact: true }).click();
+  await expect(page.getByText(/bundle verification failed|Server forecast/i).first()).toBeVisible({
+    timeout: 15_000,
+  });
+  // Fail closed: the browser must NOT silently take over training.
+  expect(calls.trainingData).toBe(0);
+});
+
 test('UI trend request maps to API direction and lands in the browser trend path', async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(60_000);
   let requestedUrl = null;
   const calls = mockApi(page, (route) => {
     requestedUrl = route.request().url();

@@ -1,5 +1,5 @@
 import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,6 +18,7 @@ from server_models.contracts import (
     ServerForecastBundle,
     ServerModelRecord,
 )
+from server_models.response_models import PriceForecastResponse
 
 CLIENT = TestClient(app)
 
@@ -35,27 +36,44 @@ def make_record(ticker="AAPL", forecast_type="price", snapshot_id="snap-1"):
     return ServerModelRecord(key=key, reproducibility=repro, sha256_digest="0" * 64)
 
 
-def make_bundle(record, *, signer=None):
-    """Return (bundle, digest, payload, record-with-matched-digest)."""
-    bundle = ServerForecastBundle(
-        version_id=record.key.version_id,
-        ticker=record.key.ticker,
-        forecast_type=record.key.forecast_type,
-        generated_at=record.key.trained_at,
-        origin_close=150.0,
-        origin_date="2026-07-31",
+ORIGIN_DATE = date(2026, 7, 31)
+ORIGIN_CLOSE = 150.0
+
+
+def _bundle(ticker="AAPL", version_id="unused", forecast_type="price", generated_at=None):
+    return ServerForecastBundle(
+        version_id=version_id,
+        ticker=ticker,
+        forecast_type=forecast_type,
+        generated_at=generated_at or datetime(2026, 7, 31, 12, 0, 0, tzinfo=UTC),
+        origin_close=ORIGIN_CLOSE,
+        origin_date=ORIGIN_DATE,
         evidence={
             "metric_source": "server_purged_walk_forward",
             "family": "elastic_net",
             "pooled": {"relative_rmse": 0.9},
         },
-        future_dates=[datetime.now(UTC).date() + timedelta(days=i) for i in range(FORECAST_LENGTH)],
+        future_dates=[ORIGIN_DATE + timedelta(days=1 + i) for i in range(FORECAST_LENGTH)],
         predicted_prices=[100.0 * 1.001**i for i in range(FORECAST_LENGTH)],
         predicted_log_returns=[0.001] * FORECAST_LENGTH,
         historical_dates=[
-            datetime.now(UTC).date() - timedelta(days=i) for i in range(HISTORY_DISPLAY_WINDOW)
-        ][::-1],
-        historical_prices=[150.0 * 0.999**i for i in range(HISTORY_DISPLAY_WINDOW)][::-1],
+            ORIGIN_DATE - timedelta(days=HISTORY_DISPLAY_WINDOW - 1 - i)
+            for i in range(HISTORY_DISPLAY_WINDOW)
+        ],
+        historical_prices=[
+            ORIGIN_CLOSE - (HISTORY_DISPLAY_WINDOW - 1 - i) * 0.25
+            for i in range(HISTORY_DISPLAY_WINDOW)
+        ],
+    )
+
+
+def make_bundle(record, *, signer=None):
+    """Return (bundle, digest, payload, record-with-matched-digest)."""
+    bundle = _bundle(
+        ticker=record.key.ticker,
+        version_id=record.key.version_id,
+        forecast_type=record.key.forecast_type,
+        generated_at=record.key.trained_at,
     )
     payload = bundle.model_dump_json().encode("utf-8")
     digest = hashlib.sha256(payload).hexdigest()
@@ -65,7 +83,14 @@ def make_bundle(record, *, signer=None):
     return bundle, digest, payload, record
 
 
-def _enable(monkeypatch, *, enabled=True, mode="hybrid", allowlist=("AAPL",)):
+def _enable(
+    monkeypatch,
+    *,
+    enabled=True,
+    mode="hybrid",
+    allowlist=("AAPL",),
+    configured=True,
+):
     import config
 
     settings = config.settings
@@ -73,10 +98,13 @@ def _enable(monkeypatch, *, enabled=True, mode="hybrid", allowlist=("AAPL",)):
     monkeypatch.setattr(settings, "training_mode", mode)
     monkeypatch.setattr(settings, "server_forecast_allowlist", list(allowlist))
     monkeypatch.setattr(settings, "server_forecast_public_key_path", None)
+    monkeypatch.setattr(
+        settings, "registry_database_url", "postgresql://fake" if configured else None
+    )
+    monkeypatch.setattr(settings, "s3_bucket", "fake-bucket" if configured else None)
 
 
 def _stub_serve_deps(monkeypatch, *, registry=None, storage=None, verifier=None):
-
     monkeypatch.setattr(
         "server_models.api.get_registry",
         (lambda: registry) if registry is not None else (lambda: MagicMock()),
@@ -85,29 +113,36 @@ def _stub_serve_deps(monkeypatch, *, registry=None, storage=None, verifier=None)
         "server_models.api.get_storage",
         (lambda: storage) if storage is not None else (lambda: MagicMock()),
     )
-    monkeypatch.setattr(
-        "server_models.api.get_verifier",
-        (lambda: verifier) if verifier is not None else (lambda: None),
-    )
+    if verifier is not None:
+        monkeypatch.setattr("server_models.api.load_verifier", lambda: (verifier, None))
+    else:
+        monkeypatch.setattr("server_models.api.load_verifier", lambda: (MagicMock(), None))
 
 
 class _BrokenRegistry:
     def get_promoted(self, *args, **kwargs):
         raise RuntimeError("postgres down")
 
+    def close(self):
+        pass
 
-def _happy_path(monkeypatch, record):
-    _bundle, _digest, payload, final_record = make_bundle(record)
+
+def _compat_ok(monkeypatch):
+    monkeypatch.setattr(
+        "server_models.api.check_record_compatibility",
+        lambda r: CompatibilityReport(compatible=True, reason="ok"),
+    )
+
+
+def _happy(monkeypatch, record, signer=None):
+    _bundle, _digest, payload, final_record = make_bundle(record, signer=signer)
     registry = MagicMock()
     registry.get_promoted.return_value = final_record
     storage = MagicMock()
     storage.get_bundle.return_value = payload
     _stub_serve_deps(monkeypatch, registry=registry, storage=storage)
-    monkeypatch.setattr(
-        "server_models.api.check_record_compatibility",
-        lambda r: CompatibilityReport(compatible=True, reason="ok"),
-    )
-    return final_record
+    _compat_ok(monkeypatch)
+    return registry, final_record
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +164,9 @@ def test_openapi_includes_server_paths_unconditionally():
     assert "/api/v1/server-forecasts/{ticker}" in paths
 
 
+# ── availability readiness ───────────────────────────────────────────
+
+
 def test_availability_reports_disabled(monkeypatch):
     _enable(monkeypatch, enabled=False)
     response = CLIENT.get("/api/v1/server-forecasts/availability")
@@ -136,7 +174,30 @@ def test_availability_reports_disabled(monkeypatch):
     data = response.json()
     assert data["enabled"] is False
     assert data["mode"] == "browser_only"
+    assert data["configured"] is False
+    assert data["reason"] == "disabled"
     assert data["tickers"] == []
+
+
+def test_availability_unconfigured_when_infrastructure_missing(monkeypatch):
+    _enable(monkeypatch, configured=False)
+    response = CLIENT.get("/api/v1/server-forecasts/availability")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["enabled"] is True
+    assert data["configured"] is False
+    assert data["reason"] == "unconfigured"
+    assert data["tickers"] == []
+
+
+def test_availability_integrity_failure_when_key_broken(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr("server_models.api.load_verifier", lambda: (None, "integrity_failure"))
+    response = CLIENT.get("/api/v1/server-forecasts/availability")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["configured"] is False
+    assert data["reason"] == "integrity_failure"
 
 
 def test_availability_reports_fresh_when_promoted(monkeypatch):
@@ -149,6 +210,7 @@ def test_availability_reports_fresh_when_promoted(monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data["enabled"] is True
+    assert data["configured"] is True
     assert data["mode"] == "hybrid"
     assert len(data["tickers"]) == 1
     assert data["tickers"][0]["ticker"] == "AAPL"
@@ -156,29 +218,73 @@ def test_availability_reports_fresh_when_promoted(monkeypatch):
     assert data["tickers"][0]["version_id"] == record.key.version_id
 
 
+def test_availability_uses_one_registry_and_closes_it(monkeypatch):
+    record = make_record()
+    registry = MagicMock()
+    registry.get_promoted.return_value = record
+    _stub_serve_deps(monkeypatch, registry=registry)
+
+    CLIENT.get("/api/v1/server-forecasts/availability")
+    assert registry.get_promoted.call_count == 1
+    registry.close.assert_called_once()
+
+
+# ── soft absences ────────────────────────────────────────────────────
+
+
 def test_forecast_disabled_fallback(monkeypatch):
     _enable(monkeypatch, enabled=False)
     response = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert response.status_code == 200
     assert response.json()["reason"] == "disabled"
+    assert response.json()["fallback"] == "browser_training"
 
 
-def test_forecast_not_in_allowlist_fallback(monkeypatch):
+def test_forecast_not_allowlisted_fallback(monkeypatch):
     _enable(monkeypatch, allowlist=("MSFT",))
     response = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert response.status_code == 200
-    assert response.json()["reason"] == "disabled"
+    assert response.json()["reason"] == "not_allowlisted"
+
+
+def test_forecast_unconfigured_fallback_in_hybrid(monkeypatch):
+    _enable(monkeypatch, configured=False)
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 200
+    assert response.json()["reason"] == "unconfigured"
+    assert response.json()["fallback"] == "browser_training"
+
+
+def test_forecast_unconfigured_is_503_in_server_pretrained_mode(monkeypatch):
+    _enable(monkeypatch, configured=False, mode="server_pretrained")
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "unconfigured"
+    assert detail["fallback"] is None
+
+
+def test_forecast_integrity_failure_is_503_in_all_modes(monkeypatch):
+    _enable(monkeypatch)
+    monkeypatch.setattr("server_models.api.load_verifier", lambda: (None, "integrity_failure"))
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "integrity_failure"
+    assert response.json()["detail"]["fallback"] is None
 
 
 def test_forecast_direction_is_unsupported_and_browser_falls_back(monkeypatch):
-    record = make_record(forecast_type="direction")
-    _happy_path(monkeypatch, record)
+    _enable(monkeypatch)
+    _stub_serve_deps(monkeypatch)
     response = CLIENT.get("/api/v1/server-forecasts/AAPL?forecast_type=trend")
     assert response.status_code == 200
     data = response.json()
     assert data["available"] is False
     assert data["reason"] == "unsupported_forecast_type"
     assert "predicted_prices" not in data
+
+
+# ── expected absences: 200 in browser modes, 503 in server_pretrained ─
 
 
 def test_forecast_missing_fallback_in_hybrid(monkeypatch):
@@ -190,6 +296,7 @@ def test_forecast_missing_fallback_in_hybrid(monkeypatch):
     response = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert response.status_code == 200
     assert response.json()["reason"] == "missing"
+    assert response.json()["fallback"] == "browser_training"
 
 
 def test_forecast_stale_fallback_in_hybrid(monkeypatch):
@@ -227,25 +334,55 @@ def test_forecast_missing_is_503_in_server_pretrained_mode(monkeypatch):
 
     response = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "missing"
+    assert response.json()["detail"]["fallback"] is None
 
 
-def test_forecast_registry_unavailable_is_503_in_any_mode(monkeypatch):
+# ── infrastructure failures: always 503 ──────────────────────────────
+
+
+def test_forecast_registry_unavailable_fail_closed(monkeypatch):
+    _enable(monkeypatch, mode="hybrid")
     _stub_serve_deps(monkeypatch, registry=_BrokenRegistry())
 
     response = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "registry_unavailable"
+    assert detail["fallback"] == "browser_training"
 
 
-def _compat_ok(monkeypatch):
-    monkeypatch.setattr(
-        "server_models.api.check_record_compatibility",
-        lambda r: CompatibilityReport(compatible=True, reason="ok"),
-    )
+def test_forecast_registry_unavailable_has_no_fallback_in_server_pretrained(monkeypatch):
+    _enable(monkeypatch, mode="server_pretrained")
+    _stub_serve_deps(monkeypatch, registry=_BrokenRegistry())
+
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "registry_unavailable"
+    assert detail["fallback"] is None
+
+
+def test_forecast_success_closes_registry(monkeypatch):
+    registry = MagicMock()
+    registry.get_promoted.return_value = make_record()
+    storage = MagicMock()
+    storage.get_bundle.return_value = b"{}"
+    _stub_serve_deps(monkeypatch, registry=registry, storage=storage)
+    _compat_ok(monkeypatch)
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 503  # bundle does not parse; infra failure path
+    registry.close.assert_called_once()
+
+
+# ── successful serving ───────────────────────────────────────────────
 
 
 def test_forecast_success_returns_canonical_bundle(monkeypatch):
+    private_key = Ed25519PrivateKey.generate()
+    signer = Ed25519ManifestSigner(private_key)
     record = make_record()
-    _bundle, _digest, payload, final_record = make_bundle(record)
+    _bundle, _digest, payload, final_record = make_bundle(record, signer=signer)
     registry = MagicMock()
     registry.get_promoted.return_value = final_record
     storage = MagicMock()
@@ -265,28 +402,30 @@ def test_forecast_success_returns_canonical_bundle(monkeypatch):
     assert len(data["historical_dates"]) == HISTORY_DISPLAY_WINDOW
     assert data["metadata"]["engine"]["role"] == "server_pretrained"
     assert data["metadata"]["engine"]["version_id"] == final_record.key.version_id
-    assert data["metadata"]["authenticity"] == "sha256_only"
+    assert data["metadata"]["authenticity"] == "ed25519_verified"
     assert data["metadata"]["origin"]["date"] == "2026-07-31"
     assert data["metadata"]["origin"]["close"] == 150.0
     assert data["metrics"]["metric_source"] == "server_purged_walk_forward"
+
+    # The response genuinely validates against the shared forecast contract.
+    validated = PriceForecastResponse.model_validate(data)
+    assert validated.ticker == "AAPL"
+    assert validated.metadata.execution.mode == "artifact_loaded"
+    assert validated.metadata.execution.coalesced is False
+    assert validated.metadata.artifact_state_before == "fresh"
+    assert validated.metadata.artifact_action == "loaded"
+    triage = validated.metadata.timings_seconds
+    assert triage.artifact_load_validation is not None
+    assert triage.total is not None and triage.total >= 0
+    assert triage.queue_wait is None and triage.training is None and triage.inference is None
+    assert response.headers["etag"] == final_record.key.version_id
 
 
 def test_forecast_success_verifies_ed25519_when_key_configured(monkeypatch):
     private_key = Ed25519PrivateKey.generate()
     signer = Ed25519ManifestSigner(private_key)
     record = make_record()
-    _bundle, _digest, payload, final_record = make_bundle(record, signer=signer)
-    registry = MagicMock()
-    registry.get_promoted.return_value = final_record
-    storage = MagicMock()
-    storage.get_bundle.return_value = payload
-    _stub_serve_deps(
-        monkeypatch,
-        registry=registry,
-        storage=storage,
-        verifier=Ed25519ManifestVerifier(private_key.public_key()),
-    )
-    _compat_ok(monkeypatch)
+    registry, final_record = _happy(monkeypatch, record, signer=signer)
 
     response = CLIENT.get("/api/v1/server-forecasts/AAPL?days=7")
     assert response.status_code == 200
@@ -314,7 +453,7 @@ def test_forecast_tampered_bundle_fails_closed(monkeypatch):
 
     response = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert response.status_code == 503
-    assert "verification" in response.json()["detail"]
+    assert response.json()["detail"]["code"] == "signature_verification_failed"
 
 
 def test_forecast_digest_mismatch_fails_closed(monkeypatch):
@@ -329,4 +468,72 @@ def test_forecast_digest_mismatch_fails_closed(monkeypatch):
 
     response = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert response.status_code == 503
-    assert "digest" in response.json()["detail"]
+    assert response.json()["detail"]["code"] == "signature_verification_failed"
+
+
+def test_forecast_signed_bundle_with_foreign_ticker_fails_closed(monkeypatch):
+    """A correctly signed bundle whose embedded identity differs from the
+    promoted registry row must never be served for another ticker."""
+    private_key = Ed25519PrivateKey.generate()
+    signer = Ed25519ManifestSigner(private_key)
+    record = make_record("AAPL")
+    bundle = _bundle(
+        ticker="MSFT",
+        version_id=record.key.version_id,
+        generated_at=record.key.trained_at,
+    )
+    payload = bundle.model_dump_json().encode("utf-8")
+    foreign_record = record.model_copy(
+        update={
+            "sha256_digest": hashlib.sha256(payload).hexdigest(),
+            "signature": signer(payload),
+        }
+    )
+    registry = MagicMock()
+    registry.get_promoted.return_value = foreign_record
+    storage = MagicMock()
+    storage.get_bundle.return_value = payload
+    _stub_serve_deps(
+        monkeypatch,
+        registry=registry,
+        storage=storage,
+        verifier=Ed25519ManifestVerifier(private_key.public_key()),
+    )
+    _compat_ok(monkeypatch)
+
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "identity_mismatch"
+
+
+def test_forecast_signed_bundle_with_mismatched_version_fails_closed(monkeypatch):
+    """The bundle's version_id must equal the promoted record's version_id."""
+    private_key = Ed25519PrivateKey.generate()
+    signer = Ed25519ManifestSigner(private_key)
+    record = make_record("AAPL")
+    bundle = _bundle(
+        ticker="AAPL",
+        version_id=f"{record.key.version_id}-bogus",
+        generated_at=record.key.trained_at,
+    )
+    payload = bundle.model_dump_json().encode("utf-8")
+    registry = MagicMock()
+    registry.get_promoted.return_value = record.model_copy(
+        update={
+            "sha256_digest": hashlib.sha256(payload).hexdigest(),
+            "signature": signer(payload),
+        }
+    )
+    storage = MagicMock()
+    storage.get_bundle.return_value = payload
+    _stub_serve_deps(
+        monkeypatch,
+        registry=registry,
+        storage=storage,
+        verifier=Ed25519ManifestVerifier(private_key.public_key()),
+    )
+    _compat_ok(monkeypatch)
+
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "identity_mismatch"

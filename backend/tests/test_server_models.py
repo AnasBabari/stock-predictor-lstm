@@ -164,8 +164,8 @@ def _bundle(**overrides) -> ServerForecastBundle:
         "future_dates": [date(2026, 1, 5) + timedelta(days=i) for i in range(FORECAST_LENGTH)],
         "predicted_log_returns": [0.001] * FORECAST_LENGTH,
         "predicted_prices": [100.0 + i for i in range(FORECAST_LENGTH)],
-        "historical_dates": [date(2026, 1, 1) - timedelta(days=i) for i in reversed(range(120))],
-        "historical_prices": [90.0 + i for i in range(120)],
+        "historical_dates": [date(2026, 1, 2) - timedelta(days=119 - i) for i in range(120)],
+        "historical_prices": [100.0 - (119 - i) * 0.5 for i in range(120)],
         "evidence": {"relative_mae": 0.02},
         "generated_at": TRAINED_AT,
     }
@@ -183,6 +183,34 @@ def test_bundle_requires_exactly_30_steps():
 def test_bundle_rejects_non_positive_prices():
     with pytest.raises(ValidationError):
         _bundle(predicted_prices=[-1.0] * FORECAST_LENGTH)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_bundle_rejects_non_finite_prices(value):
+    with pytest.raises(ValidationError):
+        _bundle(predicted_prices=[value] * FORECAST_LENGTH)
+    with pytest.raises(ValidationError):
+        _bundle(predicted_log_returns=[value] * FORECAST_LENGTH)
+
+
+def test_bundle_rejects_non_increasing_future_dates():
+    with pytest.raises(ValidationError):
+        _bundle(future_dates=[date(2026, 1, 10)] * FORECAST_LENGTH)
+
+
+def test_bundle_rejects_future_before_origin():
+    with pytest.raises(ValidationError):
+        _bundle(future_dates=[date(2026, 1, 2) + timedelta(days=i) for i in range(FORECAST_LENGTH)])
+
+
+def test_bundle_rejects_historical_dates_not_ending_at_origin():
+    with pytest.raises(ValidationError):
+        _bundle(historical_dates=[date(2026, 1, 1) - timedelta(days=119 - i) for i in range(120)])
+
+
+def test_bundle_rejects_last_historical_price_mismatching_origin_close():
+    with pytest.raises(ValidationError):
+        _bundle(historical_prices=[99.0 - (119 - i) * 0.5 for i in range(120)])
 
 
 # ── signing round-trip + tamper rejection ────────────────────────────
@@ -267,15 +295,6 @@ def test_bundle_put_is_immutable_in_memory():
     assert store.get_bundle("AAPL-v1") == b"{}"
 
 
-def test_bundle_put_is_immutable_in_s3():
-    fake = _FakeS3Client()
-    store = S3ObjectStore(bucket="b", prefix="artifacts", client=fake)
-    store.put_bundle("AAPL-v1", b"{}")
-    with pytest.raises(ObjectStoreError, match="immutable"):
-        store.put_bundle("AAPL-v1", b"tampered")
-    assert store.get_bundle("AAPL-v1") == b"{}"
-
-
 def test_s3_store_bundle_key_layout():
     store = S3ObjectStore(bucket="b", prefix="artifacts", client=object())
     assert store.bundle_key("AAPL-v1") == "artifacts/AAPL-v1/bundle.json"
@@ -286,11 +305,22 @@ def test_s3_store_requires_bucket():
         S3ObjectStore(bucket="", client=object())
 
 
+class _FakeS3NotFound(Exception):
+    response = {"Error": {"Code": "404"}}
+
+
+class _FakeS3PreconditionFailed(Exception):
+    response = {"Error": {"Code": "PreconditionFailed"}}
+
+
 class _FakeS3Client:
     def __init__(self):
         self.objects: dict[tuple[str, str], bytes] = {}
+        self.created_buckets: set[str] = set()
 
-    def put_object(self, Bucket, Key, Body):
+    def put_object(self, Bucket, Key, Body, IfNoneMatch=None):
+        if IfNoneMatch == "*" and (Bucket, Key) in self.objects:
+            raise _FakeS3PreconditionFailed()
         self.objects[(Bucket, Key)] = bytes(Body)
 
     class _Body:
@@ -302,13 +332,22 @@ class _FakeS3Client:
 
     def get_object(self, Bucket, Key):
         if (Bucket, Key) not in self.objects:
-            raise KeyError("missing")
+            raise _FakeS3NotFound()
         return {"Body": self._Body(self.objects[(Bucket, Key)])}
 
     def head_object(self, Bucket, Key):
         if (Bucket, Key) not in self.objects:
-            raise KeyError("missing")
+            raise _FakeS3NotFound()
         return {}
+
+    def create_bucket(self, Bucket):
+        if Bucket in self.created_buckets:
+            raise _FakeS3BucketAlreadyOwned()
+        self.created_buckets.add(Bucket)
+
+
+class _FakeS3BucketAlreadyOwned(Exception):
+    response = {"Error": {"Code": "BucketAlreadyOwnedByYou"}}
 
 
 def test_s3_store_round_trip_with_fake_client():
@@ -319,6 +358,33 @@ def test_s3_store_round_trip_with_fake_client():
     assert store.bundle_exists("AAPL-v1")
     assert store.get_bundle("AAPL-v1") == b'{"x": 1}'
     assert not store.bundle_exists("missing")
+
+
+def test_s3_exists_propagates_non_404_errors():
+    class _ExplodingHead(_FakeS3Client):
+        def head_object(self, Bucket, Key):
+            raise RuntimeError("endpoint down")
+
+    store = S3ObjectStore(bucket="b", client=_ExplodingHead())
+    with pytest.raises(ObjectStoreError):
+        store.exists("whatever")
+
+
+def test_s3_put_bundle_conditional_write_rejects_existing():
+    fake = _FakeS3Client()
+    store = S3ObjectStore(bucket="b", prefix="artifacts", client=fake)
+    store.put_bundle("AAPL-v1", b"{}")
+    with pytest.raises(ObjectStoreError, match="immutable"):
+        store.put_bundle("AAPL-v1", b"tampered")
+    assert store.get_bundle("AAPL-v1") == b"{}"
+
+
+def test_s3_ensure_bucket_is_idempotent():
+    fake = _FakeS3Client()
+    store = S3ObjectStore(bucket="b", prefix="artifacts", client=fake)
+    store.ensure_bucket()
+    store.ensure_bucket()
+    assert "b" in fake.created_buckets
 
 
 # ── registry promote/keep-previous/rollback semantics ────────────────
@@ -447,13 +513,15 @@ class _FakePsycopgCursor:
     def __init__(self, script):
         self._script = list(script)
         self.executed: list[str] = []
+        self.executed_params: list[object] = []
         self.rowcount = 1
 
     def execute(self, sql, params=None):
         self.executed.append(sql)
+        self.executed_params.append(params)
 
     def fetchone(self):
-        return self._script.pop(0)
+        return self._script.pop(0) if self._script else None
 
     def __enter__(self):
         return self
@@ -467,6 +535,7 @@ class _FakePsycopgConn:
         self._cursor = _FakePsycopgCursor(script)
         self.committed = 0
         self.rolled_back = 0
+        self.closed = 0
 
     def cursor(self):
         return self._cursor
@@ -476,6 +545,9 @@ class _FakePsycopgConn:
 
     def rollback(self):
         self.rolled_back += 1
+
+    def close(self):
+        self.closed += 1
 
 
 def _promote_sql_statements() -> list[str]:
@@ -514,6 +586,76 @@ def test_postgres_promote_unknown_version_rolls_back():
     with pytest.raises(ModelRegistryError, match="Unknown"):
         registry.promote("ghost")
     assert conn.rolled_back == 1
+
+
+# ── Postgres rollback: demote-then-promote, single transaction ────────
+
+
+def _rollback_sql_statements() -> list[str]:
+    from server_models.db import PostgresRegistry
+
+    conn = _FakePsycopgConn(script=[("CUR", "PREV")])
+    registry = PostgresRegistry(conn=conn)
+    with pytest.raises(ModelRegistryError):
+        registry.rollback("AAPL")
+    return conn._cursor.executed
+
+
+def _rollback_sql_params() -> list[object]:
+    from server_models.db import PostgresRegistry
+
+    conn = _FakePsycopgConn(script=[("CUR", "PREV")])
+    registry = PostgresRegistry(conn=conn)
+    with pytest.raises(ModelRegistryError):
+        registry.rollback("AAPL")
+    return conn._cursor.executed_params
+
+
+def test_postgres_rollback_locks_pointer_with_for_update():
+    statements = _rollback_sql_statements()
+    assert any("FOR UPDATE" in s and "server_promotions" in s for s in statements)
+
+
+def test_postgres_rollback_demotes_champion_before_promoting_previous():
+    statements = _rollback_sql_statements()
+    demote = next(s for s in statements if "SET status = 'candidate'" in s)
+    promote = next(s for s in statements if "SET status = 'promoted'" in s)
+    assert statements.index(demote) < statements.index(promote)
+
+
+def test_postgres_rollback_clears_previous_version_and_audits():
+    statements = _rollback_sql_statements()
+    pointer = next(s for s in statements if "server_promotions" in s and "SET" in s)
+    assert "previous_version = NULL" in pointer
+    params = _rollback_sql_params()
+    assert any("artifact_rollback" in p for p in params if p is not None)
+
+
+def test_postgres_rollback_rolls_back_transaction_on_unexpected_error():
+    from server_models.db import PostgresRegistry
+
+    class _ExplodingCursor(_FakePsycopgCursor):
+        def execute(self, sql, params=None):
+            if sql.startswith("UPDATE server_artifacts SET status = 'candidate'"):
+                raise RuntimeError("db exploded")
+            return super().execute(sql, params)
+
+    conn = _FakePsycopgConn(script=[("CUR", "PREV")])
+    conn._cursor = _ExplodingCursor(conn._cursor._script)
+    registry = PostgresRegistry(conn=conn)
+    with pytest.raises(RuntimeError, match="db exploded"):
+        registry.rollback("AAPL")
+    assert conn.rolled_back == 1
+    assert conn.committed == 0
+
+
+def test_postgres_registry_close_closes_connection():
+    from server_models.db import PostgresRegistry
+
+    conn = _FakePsycopgConn(script=[])
+    registry = PostgresRegistry(conn=conn)
+    registry.close()
+    assert conn.closed == 1
 
 
 # ── compatibility: fresh/stale/incompatible ──────────────────────────

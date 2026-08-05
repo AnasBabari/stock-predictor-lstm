@@ -2,8 +2,10 @@ import numpy as np
 import pandas as pd
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sklearn.preprocessing import RobustScaler
 
 from artifacts.signing import Ed25519ManifestSigner, Ed25519ManifestVerifier
+from config import FEATURES_V4
 from server_models.contracts import (
     FORECAST_LENGTH,
     HISTORY_DISPLAY_WINDOW,
@@ -33,9 +35,28 @@ class RecordingElasticNet:
         return np.full((features.shape[0], FORECAST_LENGTH), 0.001)
 
 
-def _stub_fetch(monkeypatch) -> None:
-    from config import FEATURES_V4
+class RecordingRobustScaler:
+    """Records every scaler instance while delegating to the real RobustScaler,
+    so tests can recompute the exact expected inference input."""
 
+    instances: list["RecordingRobustScaler"] = []
+
+    def __init__(self) -> None:
+        self._inner = RobustScaler()
+        RecordingRobustScaler.instances.append(self)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def fit(self, features):
+        self._inner.fit(features)
+        return self
+
+    def transform(self, features):
+        return self._inner.transform(features)
+
+
+def _stub_fetch(monkeypatch) -> pd.DataFrame:
     rows = WINDOW_SIZE + HISTORY_DISPLAY_WINDOW + 40
     rng = np.random.default_rng(7)
     df = pd.DataFrame(rng.standard_normal((rows, len(FEATURES_V4))), columns=FEATURES_V4)
@@ -45,6 +66,11 @@ def _stub_fetch(monkeypatch) -> None:
     monkeypatch.setattr(
         "server_models.training.fetch_browser_data", lambda t: (df, close_prices, dates, {})
     )
+    return df
+
+
+def _stub_scaler(monkeypatch) -> None:
+    monkeypatch.setattr("server_models.training.RobustScaler", RecordingRobustScaler)
 
 
 def _mock_run(monkeypatch, elastic_net_rmse: float, elastic_net_mae: float, calls=None) -> None:
@@ -96,7 +122,7 @@ def test_train_server_forecast_promotes_when_both_metrics_pass(monkeypatch):
     record = train_server_forecast("AAPL", registry, storage, signer)
 
     assert record is not None
-    assert record.status == "candidate"
+    assert record.status == "promoted"
     promoted = registry.get_promoted("AAPL")
     assert promoted is not None and promoted.key.version_id == record.key.version_id
     assert storage.bundle_exists(record.key.version_id)
@@ -160,7 +186,8 @@ def test_train_server_forecast_infers_from_the_latest_window(monkeypatch):
     """The inference slice must be the raw latest WINDOW_SIZE rows transformed
     with the fitted scaler — never a stale row of the windowed dataset."""
     registry, storage, signer = _registry_and_storage()
-    _stub_fetch(monkeypatch)
+    df = _stub_fetch(monkeypatch)
+    _stub_scaler(monkeypatch)
     _stub_model(monkeypatch)
     _mock_run(monkeypatch, elastic_net_rmse=0.8, elastic_net_mae=0.8)
 
@@ -168,7 +195,13 @@ def test_train_server_forecast_infers_from_the_latest_window(monkeypatch):
 
     model = RecordingElasticNet.instances[-1]
     assert model.predict_calls, "model.predict must have been called"
-    assert model.predict_calls[0].shape == (1, WINDOW_SIZE, len(model.fit_input[0][0][0]))
+    scaler = RecordingRobustScaler.instances[-1]
+    feature_values = df[FEATURES_V4].to_numpy(dtype=np.float64)
+    feature_count = feature_values.shape[1]
+    expected = scaler.transform(feature_values[-WINDOW_SIZE:].reshape(-1, feature_count)).reshape(
+        1, WINDOW_SIZE, feature_count
+    )
+    np.testing.assert_allclose(model.predict_calls[0], expected, rtol=1e-9, atol=1e-12)
     bundle = ServerForecastBundle.model_validate_json(storage.get_bundle(record.key.version_id))
     assert bundle.origin_close == pytest.approx(float(bundle.historical_prices[-1]))
     assert bundle.origin_date == bundle.historical_dates[-1]

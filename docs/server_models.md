@@ -18,7 +18,7 @@ variables or `backend/.env`:
 | `SERVER_FORECAST_MAX_AGE_HOURS` | `36` | Bundle freshness window. |
 | `SERVER_FORECAST_CACHE_TTL` | `900` | Serving response cache seconds. |
 | `SERVER_FORECAST_PRIVATE_KEY_PATH` | unset | PEM path for the training job's Ed25519 signer; required by the job (exit 2 otherwise). |
-| `SERVER_FORECAST_PUBLIC_KEY_PATH` | unset | PEM path used by serving for Ed25519 verification. Without it, serving accepts bundles by SHA-256 digest only. |
+| `SERVER_FORECAST_PUBLIC_KEY_PATH` | unset | PEM public key used by serving for Ed25519 verification. Required for configured serving: there is no digest-only mode. A missing key is reported as `unconfigured`; a configured-but-broken key is `integrity_failure` (a 503 that allows no fallback). |
 | `REGISTRY_DATABASE_URL` | unset | Postgres URL for the promotion registry. |
 | `S3_ENDPOINT_URL`, `S3_BUCKET`, `S3_KEY_PREFIX` | unset, unset, `artifacts` | Object storage for bundle blobs. |
 | `TRAINING_MODE` | `browser_only` | One of `browser_only`, `hybrid`, `server_pretrained`. Only `server_pretrained` turns expected absences into `503`s. |
@@ -87,8 +87,18 @@ Promotion (`PostgresRegistry.promote`) is a single transaction: it selects the
 promotions row with `FOR UPDATE`, demotes the current champion to `candidate`,
 marks the new row `promoted`, saves the previous `version_id`, and appends an
 audit entry with both versions. Re-promoting the current champion is a no-op.
-All storage writes are immutable: `put_bundle` refuses to overwrite an existing
-key.
+All storage writes are immutable: `put_bundle` uses a conditional
+`IfNoneMatch="*"` write so concurrent trainers can never clobber a bundle, and
+`exists()`/`ensure_bucket()` treat only a genuine `404/NoSuchKey` as "absent".
+The trainer calls `ensure_bucket()` on startup so a missing MinIO bucket in
+dev/CI is created once instead of failing every write.
+
+Rollback (`PostgresRegistry.rollback`) runs in the same single transaction and
+uses the same demote-before-promote ordering to respect the partial unique
+index on promoted rows: it locks the promotions pointer with `FOR UPDATE`,
+demotes the current champion, promotes the saved `previous_version`, clears
+`previous_version = NULL`, appends an `artifact_rollback` audit entry, and
+rolls back the whole transaction on any unexpected error.
 
 ## Serving semantics
 
@@ -99,8 +109,16 @@ key.
 | Fresh, compatible, signed bundle | `200` with the canonical forecast payload, `ETag` = `version_id`, cached 900 s |
 | Serving disabled, ticker not allowlisted, or `forecast_type=direction` (unsupported) | `200 {available: false, reason, fallback: "browser_training"}` |
 | Missing/stale/incompatible bundle, mode `browser_only` or `hybrid` | `200 {available: false, ...}` |
-| Missing/stale/incompatible bundle, mode `server_pretrained` | `503` |
-| Registry unavailable, bundle unreadable, digest mismatch, signature failure, contract violation (any mode) | `503` (fail closed) |
+| Missing/stale/incompatible bundle, mode `server_pretrained` | `503 {detail: {code, message, fallback: null}}` |
+| Missing serving config (no registry/S3), mode `server_pretrained` | `503 {code: "unconfigured", fallback: null}` |
+| Public key configured but missing/unreadable/not Ed25519 (any mode) | `503 {code: "integrity_failure", fallback: null}` |
+| Registry unavailable, bundle unreadable, digest mismatch, signature failure, contract violation, identity mismatch (any mode) | `503` (fail closed; `fallback: "browser_training"` in browser modes, `null` in `server_pretrained`) |
+
+Every `503` body is `{available: false, code, message, fallback}` with a stable
+`code` from a fixed vocabulary and a sanitized `message` — exception details are
+logged server-side, never returned. In the browser training modes `503`s carry
+`fallback: "browser_training"` so the UI may degrade; in `server_pretrained`
+mode they carry `fallback: null` and the frontend must surface the error.
 
 `direction` requests are intentionally not converted to probabilities: the
 contract maps the UI's `trend` type to `forecast_type=direction` and falls back
@@ -111,8 +129,8 @@ output: `available`, `ticker`, `forecast_days`, `future_dates`,
 `predicted_prices`, `historical_dates`, `historical_prices`, `metrics`, and
 `metadata` with `engine.role = "server_pretrained"`, `metric_source =
 server_purged_walk_forward`, `origin.date`/`origin.close`, `authenticity =
-ed25519_verified | sha256_only`, `trained_at`, `browser_training: false`, and
-`evidence`.
+ed25519_verified` (the only value; verification never degrades to a digest-only
+mode), `trained_at`, `browser_training: false`, and `evidence`.
 
 `GET /api/v1/server-forecasts/availability` reports the running mode, the
 allowlist, and per-ticker freshness (fresh/stale/missing), cached 300 s.
@@ -120,11 +138,17 @@ allowlist, and per-ticker freshness (fresh/stale/missing), cached 300 s.
 ## Frontend integration
 
 `frontend/src/ml/serverModelClient.js` fetches bundles and passes them through
-verbatim once validated (exact vector lengths, strictly positive finite
-prices, non-empty history for `price`). The UI's `trend` type maps to
-`forecast_type=direction` via `API_FORECAST_TYPES`. Any absence or validation
-failure falls back to browser training with the reason shown in the UI; a
-cancelled request propagates `AbortError`.
+verbatim once validated: exact vector lengths, strictly positive finite prices,
+non-empty history for `price`, a ticker matching the request, and strictly
+increasing `future_dates`/`historical_dates`. The UI's `trend` type maps to
+`forecast_type=direction` via `API_FORECAST_TYPES`. Fallback is opt-in and
+server-directed: the client returns `null` (browser training) only when the
+server's response says `fallback: "browser_training"` — a 200 absence, or a
+503 in the browser training modes. A 200 invalid payload, a 503 that forbids a
+fallback (`fallback: null`), an unreadable error body, or a payload whose
+identity violates the request throws, so the UI surfaces the failure instead of
+silently training in the browser. A cancelled request propagates `AbortError`;
+network-level failures (no response at all) keep the browser fallback.
 
 ## Testing
 
@@ -137,6 +161,12 @@ cancelled request propagates `AbortError`.
 - Postgres + MinIO integration: `test_server_models_integration.py`, skipped
   unless `SERVER_E2E_DATABASE_URL` and `SERVER_E2E_S3_BUCKET` are set; run in
   CI by `.github/workflows/server-models-e2e.yml`.
-- Frontend: `frontend/src/ml/serverModelClient.test.js`; browser contract
-  `frontend/e2e/server-contract.spec.js` (server forecast used verbatim,
-  fallback on absence/503, `trend -> direction` mapping).
+- Frontend: `frontend/src/ml/serverModelClient.test.js` (valid payload passthrough,
+  identity/chronology rejection, hybrid 503 -> browser fallback, no-fallback 503 ->
+  throw); browser contract `frontend/e2e/server-contract.spec.js` (server forecast
+  used verbatim, fallback on absence/503, `trend -> direction` mapping, and a
+  fail-closed `server_pretrained` 503 that surfaces an error and never trains).
+  The e2e contract spec installs a stubbed Web Worker
+  (`globalThis.__STOCKLSTM_WORKER_FACTORY__`) via `e2e/fixtures.js` so it never
+  builds TF.js models; real browser training is covered by
+  `frontend/e2e/vercel-preview.spec.js`.

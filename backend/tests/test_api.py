@@ -14,6 +14,12 @@ from pydantic import ValidationError
 import api
 from api import WorkCoordinator, app
 from config import FEATURES, FEATURES_V4, MAX_FORECAST_DAYS, WINDOW_SIZE
+from server_models.response_models import (
+    ARTIFACT_ACTIONS,
+    ARTIFACT_STATES,
+    EXECUTION_MODES,
+    TIMING_FIELDS,
+)
 
 client = TestClient(app)
 
@@ -230,9 +236,9 @@ def test_forecast_openapi_declares_shared_telemetry_contract():
         assert metadata["$ref"].endswith("/ForecastMetadata")
 
     timing_schema = schemas["PredictionTimings"]
-    assert set(api.TIMING_FIELDS) == set(timing_schema["properties"])
-    assert set(api.TIMING_FIELDS).issubset(timing_schema["required"])
-    for name in api.TIMING_FIELDS:
+    assert set(TIMING_FIELDS) == set(timing_schema["properties"])
+    assert set(TIMING_FIELDS).issubset(timing_schema["required"])
+    for name in TIMING_FIELDS:
         field_schema = timing_schema["properties"][name]
         if name == "total":
             assert field_schema["type"] == "number"
@@ -244,7 +250,7 @@ def test_forecast_openapi_declares_shared_telemetry_contract():
             assert number_variant["minimum"] == 0
 
     execution = schemas["PredictionExecution"]["properties"]
-    assert set(execution["mode"]["enum"]) == set(api.EXECUTION_MODES)
+    assert set(execution["mode"]["enum"]) == set(EXECUTION_MODES)
     assert execution["coalesced"]["type"] == "boolean"
 
     metadata = schemas["ForecastMetadata"]["properties"]
@@ -253,8 +259,8 @@ def test_forecast_openapi_declares_shared_telemetry_contract():
         for variant in metadata["artifact_state_before"]["anyOf"]
         if "enum" in variant
     )
-    assert set(artifact_states) == set(api.ARTIFACT_STATES)
-    assert set(metadata["artifact_action"]["enum"]) == set(api.ARTIFACT_ACTIONS)
+    assert set(artifact_states) == set(ARTIFACT_STATES)
+    assert set(metadata["artifact_action"]["enum"]) == set(ARTIFACT_ACTIONS)
 
     status_response = paths["/api/v1/prediction-status/{request_id}"]["get"]["responses"]["200"][
         "content"
@@ -373,7 +379,7 @@ def test_response_cache_timing_and_status_are_truthful():
     assert metadata["artifact_state_before"] is None
     assert metadata["timings_seconds"]["total"] is not None
     assert all(
-        metadata["timings_seconds"][name] is None for name in api.TIMING_FIELDS if name != "total"
+        metadata["timings_seconds"][name] is None for name in TIMING_FIELDS if name != "total"
     )
     status = client.get(f"/api/v1/prediction-status/{request_id}")
     assert status.status_code == 200
@@ -518,7 +524,7 @@ def test_status_joiner_binds_to_the_coordinator_job(monkeypatch):
     assert joiner_metadata["timings_seconds"]["total"] is not None
     assert all(
         joiner_metadata["timings_seconds"][name] is None
-        for name in api.TIMING_FIELDS
+        for name in TIMING_FIELDS
         if name != "total"
     )
 

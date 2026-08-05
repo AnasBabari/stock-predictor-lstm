@@ -67,6 +67,9 @@ class ModelRegistry(ABC):
     @abstractmethod
     def fail_job(self, job_id: str, reason: str) -> None: ...
 
+    @abstractmethod
+    def close(self) -> None: ...
+
 
 def _now() -> datetime:
     return datetime.now(UTC)
@@ -220,6 +223,9 @@ class InMemoryRegistry(ModelRegistry):
         pass
 
     def fail_job(self, job_id: str, reason: str) -> None:
+        pass
+
+    def close(self) -> None:
         pass
 
 
@@ -420,38 +426,64 @@ class PostgresRegistry(ModelRegistry):
         self._conn.commit()
 
     def rollback(self, ticker: str, forecast_type: str = "price") -> ServerModelRecord:
-        with self._conn.cursor() as cursor:
-            cursor.execute(
-                "UPDATE server_promotions SET "
-                "current_version = previous_version, previous_version = NULL, updated_at = now() "
-                "WHERE ticker = %s AND forecast_type = %s AND previous_version IS NOT NULL "
-                "RETURNING current_version",
-                (ticker, forecast_type),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                self._conn.rollback()
-                raise ModelRegistryError("No previous artifact is available for rollback.")
-            version_id = row[0]
-            cursor.execute(
-                "UPDATE server_artifacts SET status = 'promoted' WHERE version_id = %s",
-                (version_id,),
-            )
-            cursor.execute(
-                "UPDATE server_artifacts SET status = 'candidate' "
-                "WHERE ticker = %s AND forecast_type = %s AND version_id != %s "
-                "AND status = 'promoted'",
-                (ticker, forecast_type, version_id),
-            )
-            cursor.execute(
-                "INSERT INTO audit_log (event, details) VALUES (%s, %s)",
-                ("artifact_rollback", json.dumps({"version_id": version_id})),
-            )
-        self._conn.commit()
+        try:
+            with self._conn.cursor() as cursor:
+                # 1. Lock the promotion pointer row and read both versions so the
+                #    whole rollback serializes against concurrent promote calls.
+                cursor.execute(
+                    "SELECT current_version, previous_version FROM server_promotions "
+                    "WHERE ticker = %s AND forecast_type = %s FOR UPDATE",
+                    (ticker, forecast_type),
+                )
+                row = cursor.fetchone()
+                if row is None or row[1] is None:
+                    self._conn.rollback()
+                    raise ModelRegistryError("No previous artifact is available for rollback.")
+                current_version, previous_version = row
+
+                # 2. Demote the live champion *first*. The partial unique index on
+                #    (ticker, forecast_type) allows exactly one 'promoted' row, so
+                #    promoting the previous version before demoting the champion
+                #    would violate it. Demote-then-promote never observes two
+                #    promoted rows at the same instant.
+                cursor.execute(
+                    "UPDATE server_artifacts SET status = 'candidate' "
+                    "WHERE version_id = %s AND status = 'promoted'",
+                    (current_version,),
+                )
+                # 3. Promote the previous version, then repoint the pointer.
+                cursor.execute(
+                    "UPDATE server_artifacts SET status = 'promoted' WHERE version_id = %s",
+                    (previous_version,),
+                )
+                cursor.execute(
+                    "UPDATE server_promotions SET current_version = %s, previous_version = NULL, "
+                    "updated_at = now() WHERE ticker = %s AND forecast_type = %s",
+                    (previous_version, ticker, forecast_type),
+                )
+                cursor.execute(
+                    "INSERT INTO audit_log (event, details) VALUES (%s, %s)",
+                    (
+                        "artifact_rollback",
+                        json.dumps(
+                            {
+                                "version_id": previous_version,
+                                "demoted_version": current_version,
+                            }
+                        ),
+                    ),
+                )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
         promoted = self.get_promoted(ticker, forecast_type)
         if promoted is None:
             raise ModelRegistryError("Rollback left the promotion pointer in an invalid state.")
         return promoted
+
+    def close(self) -> None:
+        self._conn.close()
 
     def list_artifacts(self, ticker: str) -> list[ServerModelRecord]:
         with self._conn.cursor() as cursor:

@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
     paths:
       - 'backend/server_models/**'
+      - 'backend/artifacts/signing.py'
       - 'backend/tests/test_server_models*.py'
       - 'backend/tests/test_server_forecast_e2e.py'
       - 'backend/tests/test_server_training.py'
@@ -13,11 +14,13 @@ on:
       - 'backend/config.py'
       - 'backend/scripts/run_server_training.py'
       - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
       - '.github/workflows/server-models-e2e.yml'
   pull_request:
     branches: [main, develop]
     paths:
       - 'backend/server_models/**'
+      - 'backend/artifacts/signing.py'
       - 'backend/tests/test_server_models*.py'
       - 'backend/tests/test_server_forecast_e2e.py'
       - 'backend/tests/test_server_training.py'
@@ -26,6 +29,7 @@ on:
       - 'backend/config.py'
       - 'backend/scripts/run_server_training.py'
       - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
       - '.github/workflows/server-models-e2e.yml'
 
 permissions:
@@ -34,6 +38,7 @@ permissions:
 jobs:
   server-models-e2e:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine

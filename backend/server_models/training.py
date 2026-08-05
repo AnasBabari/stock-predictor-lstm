@@ -175,7 +175,7 @@ def train_server_forecast(ticker: str, registry, storage, signer) -> ServerModel
     #    unused immutable artifact rather than a pointer to a missing bundle.
     storage.put_bundle(key.version_id, bundle_bytes)
     registry.insert_artifact(record)
-    registry.promote(key.version_id)
+    promoted = registry.promote(key.version_id)
 
     logger.info(f"Promoted {best_candidate} for {ticker} (version {key.version_id})")
-    return record
+    return promoted

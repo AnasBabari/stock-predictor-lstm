@@ -22,13 +22,19 @@ def main():
     )
     args = parser.parse_args()
 
-    registry = get_registry()
-    storage = get_storage()
-
+    # Check the signing key before constructing infrastructure clients so a
+    # missing key surfaces as the intended clear exit code instead of failing
+    # while connecting to Postgres/S3 first.
     if not settings.server_forecast_private_key_path:
         logger.error("server_forecast_private_key_path is not configured; cannot sign artifacts.")
         sys.exit(2)
     signer = Ed25519ManifestSigner.from_pem_file(settings.server_forecast_private_key_path)
+
+    registry = get_registry()
+    storage = get_storage()
+    # The trainer owns the bucket: create it on first run (MinIO/dev) and make
+    # the failure loud instead of letting every put_bundle race a missing bucket.
+    storage.ensure_bucket()
 
     if args.ticker:
         # Run explicitly for one ticker

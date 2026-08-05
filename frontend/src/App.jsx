@@ -60,6 +60,16 @@ function predictionErrorMessage(error) {
   ) {
     return 'Could not connect to the backend. Make sure the server is running.';
   }
+  // Server-pretrained failures are surfaced verbatim: the server forbids a
+  // browser fallback, so the user must see the real reason, never a generic
+  // or capacity message, and never a silent switch to browser training.
+  if (
+    message.includes('server forecast') ||
+    message.includes('server prediction') ||
+    message.includes('failed validation')
+  ) {
+    return error.message;
+  }
   if (message.includes('timed out') || message.includes('timeout')) {
     return 'Prediction timed out. The shared work may still finish; try again shortly.';
   }

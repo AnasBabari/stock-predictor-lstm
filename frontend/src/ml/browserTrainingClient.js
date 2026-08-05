@@ -6,6 +6,19 @@ let sequence = 0;
 const pending = new Map();
 const activeForecasts = new Map();
 
+// Test seam: e2e runs inject a stub Worker (globalThis.__STOCKLSTM_WORKER_FACTORY__)
+// so contract tests never build a real TF.js model in the browser. The factory
+// is read lazily so Playwright init scripts always win, no matter how early the
+// app module is evaluated.
+function defaultWorkerFactory() {
+  return new Worker(new URL('./trainingWorker.js', import.meta.url), { type: 'module' });
+}
+
+function resolveWorkerFactory() {
+  const injected = globalThis.__STOCKLSTM_WORKER_FACTORY__;
+  return typeof injected === 'function' ? injected : defaultWorkerFactory;
+}
+
 function resetWorker(message = 'Browser training worker failed.') {
   worker?.terminate();
   worker = undefined;
@@ -22,7 +35,7 @@ function resetWorker(message = 'Browser training worker failed.') {
 
 function getWorker() {
   if (!worker) {
-    worker = new Worker(new URL('./trainingWorker.js', import.meta.url), { type: 'module' });
+    worker = resolveWorkerFactory()();
     worker.onmessage = (event) => {
       const { id, type, result, message, ...progress } = event.data || {};
       const request = pending.get(id);

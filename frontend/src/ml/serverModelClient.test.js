@@ -12,7 +12,7 @@ function canonicalPayload(overrides = {}) {
     metrics: { pooled: { relative_rmse: 0.9 } },
     metadata: {
       engine: { role: 'server_pretrained', family: 'elastic_net', version_id: 'MSFT-PRICE-v1' },
-      authenticity: 'sha256_only',
+      authenticity: 'ed25519_verified',
     },
     ...overrides,
   };
@@ -24,6 +24,10 @@ function jsonResponse(body, ok = true, status = 200) {
     status,
     json: () => Promise.resolve(body),
   };
+}
+
+function rejectsWith(promise, message) {
+  return expect(promise).rejects.toThrow(message);
 }
 
 describe('serverModelClient forecast contract', () => {
@@ -63,34 +67,88 @@ describe('serverModelClient forecast contract', () => {
     expect(await fetchServerPrediction('MSFT', 7, 'trend', new AbortController().signal)).toBeNull();
   });
 
-test('missing chart arrays for a price forecast -> null', async () => {
+  test('missing chart arrays for a price forecast -> rejects', async () => {
     fetchMock.mockResolvedValue(jsonResponse(canonicalPayload({ historical_prices: [] })));
-    expect(
-      await fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal)
-    ).toBeNull();
+    await rejectsWith(
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal),
+      'failed validation'
+    );
   });
 
-  test('missing required field or wrong forecast length -> null', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(canonicalPayload({ ticker: null })));
-    expect(
-      await fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal)
-    ).toBeNull();
+  test('wrong ticker in payload -> rejects (identity breach)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(canonicalPayload({ ticker: 'GOOG' })));
+    await rejectsWith(
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal),
+      'failed validation'
+    );
+  });
+
+  test('wrong forecast length -> rejects', async () => {
     fetchMock.mockResolvedValue(jsonResponse(canonicalPayload({ predicted_prices: [100] })));
-    expect(
-      await fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal)
-    ).toBeNull();
+    await rejectsWith(
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal),
+      'failed validation'
+    );
   });
 
-  test('non-positive or non-finite predicted prices -> null', async () => {
-    const payload = canonicalPayload({ predicted_prices: [200, NaN, 0] });
+  test('non-chronological dates -> rejects', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(canonicalPayload({ future_dates: ['2026-08-03', '2026-08-02', '2026-08-01', '2026-08-04', '2026-08-05', '2026-08-06', '2026-08-07'] }))
+    );
+    await rejectsWith(
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal),
+      'failed validation'
+    );
+  });
+
+  test('non-positive or non-finite predicted prices -> rejects', async () => {
+    const payload = canonicalPayload({ predicted_prices: [200, NaN, 0, 101, 102, 103, 104] });
     fetchMock.mockResolvedValue(jsonResponse(payload));
+    await rejectsWith(
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal),
+      'failed validation'
+    );
+  });
+
+  test('503 with fallback browser_training (hybrid) -> null', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { detail: { available: false, code: 'registry_unavailable', message: 'Infra down', fallback: 'browser_training' } },
+        false,
+        503
+      )
+    );
     expect(await fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal)).toBeNull();
   });
 
-  test('HTTP error or empty shape falls back to browser training (null)', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ detail: 'nope' }, false, 503));
-    expect(await fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal)).toBeNull();
-    fetchMock.mockResolvedValue(jsonResponse({}, false, 500));
+  test('503 with fallback null (server_pretrained) -> throws, never silent fallback', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        { detail: { available: false, code: 'signature_verification_failed', message: 'Verification failed.', fallback: null } },
+        false,
+        503
+      )
+    );
+    await rejectsWith(
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal),
+      'Verification failed'
+    );
+  });
+
+  test('unreadable 503 error body -> throws', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: () => Promise.reject(new Error('not json')),
+    });
+    await rejectsWith(
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal),
+      'could not be read'
+    );
+  });
+
+  test('network failure -> null (no server policy available)', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     expect(await fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal)).toBeNull();
   });
 

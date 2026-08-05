@@ -7,10 +7,21 @@ use explicit credentials configured per role (trainer write-only, API read-only)
 
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
 from typing import Any
 
 BUNDLE_FILENAME = "bundle.json"
+
+
+def _error_code(exc: Exception) -> str:
+    """Best-effort S3/boto error code (``NoSuchKey``, ``PreconditionFailed``...)."""
+    code = getattr(exc, "response", None)
+    if isinstance(code, dict):
+        code = code.get("Error") or {}
+        if isinstance(code, dict):
+            return str(code.get("Code", ""))
+    return exc.__class__.__name__
 
 
 class ObjectStoreError(RuntimeError):
@@ -36,20 +47,24 @@ class InMemoryObjectStore(ObjectStore):
     def __init__(self, *, prefix: str = "artifacts") -> None:
         self._objects: dict[str, bytes] = {}
         self._prefix = prefix.strip("/")
+        self._lock = threading.RLock()
 
     def put(self, key: str, data: bytes) -> None:
         if not key:
             raise ObjectStoreError("Object key must not be empty.")
-        self._objects[key] = bytes(data)
+        with self._lock:
+            self._objects[key] = bytes(data)
 
     def get(self, key: str) -> bytes:
-        try:
-            return self._objects[key]
-        except KeyError:
-            raise ObjectStoreError(f"Object not found: {key}") from None
+        with self._lock:
+            try:
+                return self._objects[key]
+            except KeyError:
+                raise ObjectStoreError(f"Object not found: {key}") from None
 
     def exists(self, key: str) -> bool:
-        return key in self._objects
+        with self._lock:
+            return key in self._objects
 
     def bundle_key(self, version_id: str) -> str:
         if not version_id:
@@ -58,9 +73,10 @@ class InMemoryObjectStore(ObjectStore):
 
     def put_bundle(self, version_id: str, bundle_json_bytes: bytes) -> str:
         key = self.bundle_key(version_id)
-        if self.exists(key):
-            raise ObjectStoreError(f"Bundle is immutable and already exists: {key}")
-        self.put(key, bundle_json_bytes)
+        with self._lock:
+            if key in self._objects:
+                raise ObjectStoreError(f"Bundle is immutable and already exists: {key}")
+            self._objects[key] = bytes(bundle_json_bytes)
         return key
 
     def get_bundle(self, version_id: str) -> bytes:
@@ -108,18 +124,46 @@ class S3ObjectStore(ObjectStore):
         return response["Body"].read()
 
     def exists(self, key: str) -> bool:
+        # Only a genuine 404/NoSuchKey means "absent". Network, authentication,
+        # or bucket errors must propagate so readiness logic never mistakes an
+        # infrastructure failure for a missing artifact.
         try:
             self._client.head_object(Bucket=self._bucket, Key=key)
-        except Exception:
-            return False
+        except Exception as exc:
+            code = _error_code(exc)
+            if code in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise ObjectStoreError(f"Object store check failed for {key}") from exc
         return True
 
     def put_bundle(self, version_id: str, bundle_json_bytes: bytes) -> str:
         key = self.bundle_key(version_id)
-        if self.exists(key):
-            raise ObjectStoreError(f"Bundle is immutable and already exists: {key}")
-        self.put(key, bundle_json_bytes)
+        # Conditional write: the object is created only if no object exists at
+        # the key yet, closing the check-then-write race between concurrent
+        # trainers that a separate exists() call cannot close.
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=bytes(bundle_json_bytes),
+                IfNoneMatch="*",
+            )
+        except Exception as exc:
+            if _error_code(exc) in ("PreconditionFailed", "412"):
+                raise ObjectStoreError(f"Bundle is immutable and already exists: {key}") from exc
+            raise ObjectStoreError(f"Bundle write failed: {key}") from exc
         return key
+
+    def ensure_bucket(self) -> None:
+        """Create the configured bucket when missing (MinIO/CI/localstack)."""
+        try:
+            self._client.create_bucket(Bucket=self._bucket)
+        except Exception as exc:
+            code = _error_code(exc)
+            if code not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
+                raise ObjectStoreError(
+                    f"Bucket {self._bucket} could not be created: {code}"
+                ) from exc
 
     def get_bundle(self, version_id: str) -> bytes:
         return self.get(self.bundle_key(version_id))
