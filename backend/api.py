@@ -48,6 +48,7 @@ from config import (
 from data_pipeline import fetch_data
 from features.market import MarketContextUnavailable
 from news_features import get_live_financial_sentiment as get_financial_sentiment
+from server_models.api import router as server_forecasts_router
 from services.baselines import base_rate_direction_forecast, persistence_price_forecast
 from services.training_data import build_training_snapshot
 
@@ -1242,7 +1243,8 @@ def model_performance(
     }
 
 
-if settings.server_forecast_serving_enabled:
-    from server_models.api import router as server_forecasts_router
-
-    app.include_router(server_forecasts_router)
+# Routes are registered unconditionally so the OpenAPI surface is stable across
+# deployments. Runtime availability is gated inside the router by
+# ``settings.server_forecast_serving_enabled`` (availability endpoint reports
+# ``enabled: false`` and forecast requests fall back to browser training).
+app.include_router(server_forecasts_router)

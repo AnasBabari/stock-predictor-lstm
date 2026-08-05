@@ -330,41 +330,75 @@ class PostgresRegistry(ModelRegistry):
 
     def promote(self, version_id: str) -> ServerModelRecord:
         with self._conn.cursor() as cursor:
+            # 1. Resolve the incoming artifact; unknown or rejected rows are a hard
+            #    error so a typo can never silently demote the live champion.
             cursor.execute(
-                "UPDATE server_artifacts AS incoming SET status = 'promoted' "
-                "FROM (SELECT ticker, forecast_type FROM server_artifacts WHERE version_id = %s) t "
-                "WHERE incoming.version_id = %s AND incoming.status != 'rejected' "
-                "RETURNING incoming.record_json",
-                (version_id, version_id),
+                "SELECT ticker, forecast_type, record_json, status FROM server_artifacts "
+                "WHERE version_id = %s",
+                (version_id,),
             )
             row = cursor.fetchone()
             if row is None:
                 self._conn.rollback()
-                raise ModelRegistryError(f"Unknown or rejected artifact version: {version_id}")
+                raise ModelRegistryError(f"Unknown artifact version: {version_id}")
+            ticker, forecast_type, record_json, status = row
+            if status == "rejected":
+                self._conn.rollback()
+                raise ModelRegistryError(f"Artifact version is rejected: {version_id}")
+
+            # 2. Lock the promotion pointer row (created on first promotion) so two
+            #    concurrent promote calls serialize instead of clobbering each other.
             cursor.execute(
-                "UPDATE server_artifacts SET status = 'candidate' "
-                "WHERE version_id != %s AND status = 'promoted' "
-                "AND (ticker, forecast_type) = (SELECT ticker, forecast_type FROM server_artifacts "
-                "WHERE version_id = %s)",
-                (version_id, version_id),
+                "INSERT INTO server_promotions (ticker, forecast_type) VALUES (%s, %s) "
+                "ON CONFLICT (ticker, forecast_type) DO NOTHING",
+                (ticker, forecast_type),
             )
             cursor.execute(
-                "INSERT INTO server_promotions (ticker, forecast_type, current_version, "
-                "previous_version, updated_at) "
-                "SELECT ticker, forecast_type, %s, current_version, now() "
-                "FROM server_artifacts WHERE version_id = %s "
-                "ON CONFLICT (ticker, forecast_type) DO UPDATE SET "
-                "previous_version = server_promotions.current_version, "
-                "current_version = EXCLUDED.current_version, updated_at = now()",
-                (version_id, version_id),
+                "SELECT current_version FROM server_promotions "
+                "WHERE ticker = %s AND forecast_type = %s FOR UPDATE",
+                (ticker, forecast_type),
+            )
+            previous_version = cursor.fetchone()[0]
+
+            # Re-promoting the live champion is a no-op that preserves the pointer.
+            if status == "promoted" and previous_version == version_id:
+                self._conn.rollback()
+                return ServerModelRecord.model_validate_json(record_json)
+
+            # 3. Demote any existing champion *before* promoting the incoming row so
+            #    the unique partial index on (ticker, forecast_type) can never observe
+            #    two 'promoted' rows at the same instant.
+            cursor.execute(
+                "UPDATE server_artifacts SET status = 'candidate' "
+                "WHERE ticker = %s AND forecast_type = %s AND status = 'promoted' "
+                "AND version_id != %s",
+                (ticker, forecast_type, version_id),
+            )
+            cursor.execute(
+                "UPDATE server_artifacts SET status = 'promoted' WHERE version_id = %s",
+                (version_id,),
+            )
+            cursor.execute(
+                "UPDATE server_promotions SET current_version = %s, previous_version = %s, "
+                "updated_at = now() WHERE ticker = %s AND forecast_type = %s",
+                (version_id, previous_version, ticker, forecast_type),
             )
             cursor.execute(
                 "INSERT INTO audit_log (event, details) VALUES (%s, %s)",
-                ("artifact_promoted", json.dumps({"version_id": version_id})),
+                (
+                    "artifact_promoted",
+                    json.dumps(
+                        {
+                            "version_id": version_id,
+                            "previous_version": previous_version,
+                        }
+                    ),
+                ),
             )
         self._conn.commit()
-        record = ServerModelRecord.model_validate_json(row[0])
-        return record.model_copy(update={"status": "promoted"})
+        return ServerModelRecord.model_validate_json(record_json).model_copy(
+            update={"status": "promoted"}
+        )
 
     def reject(self, version_id: str, reason: str) -> None:
         with self._conn.cursor() as cursor:

@@ -1,10 +1,10 @@
 """Frozen contracts for server-pretrained forecast artifacts (schema v4).
 
 Every server artifact is identified by an immutable ``version_id`` of the form
-``{ticker}-{utc-compact-ts}-{gitsha12}`` and carries reproducibility metadata
-that mirrors the browser snapshot contract: schema v4, the 28 ``FEATURES_V4``
-columns in exact order, ``TARGET_MODE`` and a 60-step window producing 30
-cumulative log-return horizons.
+``{ticker}-{forecast_type}-{utc-compact-ts}-{gitsha12}-{snapshot-hash8}`` and
+carries reproducibility metadata that mirrors the browser snapshot contract:
+schema v4, the 28 ``FEATURES_V4`` columns in exact order, ``TARGET_MODE`` and a
+60-step window producing 30 cumulative log-return horizons.
 """
 
 from __future__ import annotations
@@ -19,9 +19,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from config import MAX_FORECAST_DAYS, SNAPSHOT_SCHEMA_VERSION, TARGET_MODE, WINDOW_SIZE
 
 FORECAST_LENGTH = MAX_FORECAST_DAYS  # frozen output length: 30 horizons
+HISTORY_DISPLAY_WINDOW = 120  # sessions of close history embedded in each bundle
 GIT_SHA_LENGTH = 12
 _VERSION_TS_FORMAT = "%Y%m%dT%H%M%SZ"
-_VERSION_ID_PATTERN = re.compile(r"^[A-Z0-9.-]+-\d{8}T\d{6}Z-(?:[0-9a-f]{12}|unknown)$")
+_VERSION_ID_PATTERN = re.compile(
+    r"^[A-Z0-9.-]+-(price|direction)-\d{8}T\d{6}Z-(?:[0-9a-f]{12}|unknown)-(?:[0-9a-f]{8}|unknown)$"
+)
+
+
+def _snapshot_id_short(snapshot_id: str | None) -> str:
+    """Collapse a snapshot id (e.g. ``sha256:...``) to a stable 8-char suffix."""
+    if not snapshot_id or snapshot_id == "unknown":
+        return "unknown"
+    hex_chars = re.sub(r"[^0-9a-fA-F]", "", snapshot_id)
+    if not hex_chars:
+        return "unknown"
+    return hex_chars[-8:].lower().zfill(8)
 
 
 def git_commit_short(length: int = GIT_SHA_LENGTH) -> str:
@@ -46,15 +59,23 @@ def make_version_id(
     *,
     trained_at: datetime | None = None,
     git_commit: str | None = None,
+    forecast_type: Literal["price", "direction"] = "price",
+    snapshot_id: str | None = None,
 ) -> str:
-    """Build the immutable artifact identity ``{ticker}-{utc-ts}-{gitsha12}``."""
+    """Build the immutable artifact identity.
+
+    Format: ``{ticker}-{forecast_type}-{utc-ts}-{gitsha12}-{snapshot_short8}``.
+    Including the forecast type and snapshot hash keeps distinct jobs (price vs
+    direction, retrains on new data) from ever colliding on the same key.
+    """
 
     moment = trained_at or datetime.now(UTC)
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
     timestamp = moment.astimezone(UTC).strftime(_VERSION_TS_FORMAT)
     commit = (git_commit or git_commit_short())[:GIT_SHA_LENGTH]
-    return f"{ticker}-{timestamp}-{commit}"
+    snapshot_short = _snapshot_id_short(snapshot_id)
+    return f"{ticker}-{forecast_type}-{timestamp}-{commit}-{snapshot_short}"
 
 
 class ServerArtifactKey(BaseModel):
@@ -81,7 +102,9 @@ class ServerArtifactKey(BaseModel):
     @classmethod
     def validate_version_id(cls, value: str) -> str:
         if not value or not _VERSION_ID_PATTERN.fullmatch(value):
-            raise ValueError("version_id must be '{ticker}-{utc-ts}-{gitsha12}'")
+            raise ValueError(
+                "version_id must be '{ticker}-{forecast_type}-{utc-ts}-{gitsha12}-{snapshort8}'"
+            )
         return value
 
     @classmethod
@@ -104,7 +127,13 @@ class ServerArtifactKey(BaseModel):
             profile=profile,
             snapshot_id=snapshot_id,
             trained_at=moment,
-            version_id=make_version_id(ticker, trained_at=moment, git_commit=git_commit),
+            version_id=make_version_id(
+                ticker,
+                trained_at=moment,
+                git_commit=git_commit,
+                forecast_type=forecast_type,
+                snapshot_id=snapshot_id,
+            ),
         )
 
 
@@ -172,7 +201,13 @@ class CompatibilityReport(BaseModel):
 
 
 class ServerForecastBundle(BaseModel):
-    """Signed, precomputed 30-step forecast served read-only by the API."""
+    """Signed, precomputed 30-step forecast served read-only by the API.
+
+    The bundle is fully self-contained: it embeds the trailing close-history
+    (``historical_dates``/``historical_prices``) so serving never needs to reach
+    upstream providers, and every price forecast is derived from the fitted
+    complex scaler + model at training time.
+    """
 
     ticker: str
     forecast_type: Literal["price", "direction"] = "price"
@@ -182,6 +217,8 @@ class ServerForecastBundle(BaseModel):
     future_dates: list[date]
     predicted_log_returns: list[float]
     predicted_prices: list[float]
+    historical_dates: list[date]
+    historical_prices: list[float]
     evidence: dict[str, Any] = Field(default_factory=dict)
     generated_at: datetime
 
@@ -192,9 +229,18 @@ class ServerForecastBundle(BaseModel):
             raise ValueError(f"forecast vectors must contain exactly {FORECAST_LENGTH} entries")
         return value
 
-    @field_validator("predicted_prices")
+    @field_validator("historical_dates", "historical_prices")
+    @classmethod
+    def validate_history_length(cls, value: list[Any]) -> list[Any]:
+        if len(value) != HISTORY_DISPLAY_WINDOW:
+            raise ValueError(
+                f"historical chart vectors must contain exactly {HISTORY_DISPLAY_WINDOW} entries"
+            )
+        return value
+
+    @field_validator("predicted_prices", "historical_prices")
     @classmethod
     def validate_prices_positive(cls, value: list[float]) -> list[float]:
         if any(price <= 0 for price in value):
-            raise ValueError("predicted_prices must all be strictly positive")
+            raise ValueError("prices must all be strictly positive")
         return value

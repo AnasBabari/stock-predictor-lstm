@@ -58,3 +58,29 @@ export function deterministicSnapshot(ticker = 'MSFT') {
     features: Array.from({ length: rows }, () => featureNames.map((name) => FEATURE_BASELINES[name])),
   };
 }
+
+export function serverForecastPayload(ticker = 'MSFT', days = 7) {
+  const lastClose = 100 * Math.exp(0.002 * 479);
+  return {
+    available: true,
+    ticker,
+    forecast_days: days,
+    future_dates: Array.from({ length: days }, (_, index) => `2026-08-${String(index + 1).padStart(2, '0')}`),
+    predicted_prices: Array.from({ length: days }, (_, index) => lastClose * (1 + 0.004 * (index + 1))),
+    historical_dates: Array.from({ length: 120 }, (_, index) => `2026-03-${String((index % 28) + 1).padStart(2, '0')}`),
+    historical_prices: Array.from({ length: 120 }, (_, index) => 100 * Math.exp(0.002 * (359 + index))),
+    metrics: { pooled: { relative_rmse: 0.85, relative_mae: 0.9 } },
+    metadata: {
+      engine: {
+        role: 'server_pretrained',
+        family: 'elastic_net',
+        version_id: `${ticker}-price-20260805T120000Z-0123456789ab-0000abcd`,
+      },
+      metric_source: 'server_purged_walk_forward',
+      browser_training: false,
+      trained_at: '2026-08-05T12:00:00Z',
+      origin: { date: '2026-08-05', close: lastClose },
+      authenticity: 'sha256_only',
+    },
+  };
+}

@@ -36,9 +36,10 @@ from server_models.storage import InMemoryObjectStore, ObjectStoreError, S3Objec
 
 GIT_SHA = "0123456789ab"
 TRAINED_AT = datetime(2026, 1, 2, 22, 0, 0, tzinfo=UTC)
-V1 = "AAPL-20260102T220000Z-0123456789ab"
-V2 = "AAPL-20260103T220000Z-0123456789ab"
-MSFT_V1 = "MSFT-20260102T220000Z-0123456789ab"
+# New identity format: {ticker}-{forecast_type}-{utc-ts}-{gitsha12}-{snapshot8}
+V1 = "AAPL-price-20260102T220000Z-0123456789ab-00000aaa"
+V2 = "AAPL-price-20260103T220000Z-0123456789ab-00000aaa"
+MSFT_V1 = "MSFT-price-20260102T220000Z-0123456789ab-000000af"
 
 
 def _key(ticker: str = "AAPL", version_id: str | None = None) -> ServerArtifactKey:
@@ -78,9 +79,36 @@ def _record(ticker: str = "AAPL", version_id: str | None = None) -> ServerModelR
 # ── contracts: version_id immutability & format ──────────────────────
 
 
-def test_version_id_format_is_ticker_ts_gitsha():
+def test_version_id_format_is_ticker_type_ts_gitsha_snapshot():
     key = _key("AAPL")
-    assert key.version_id == "AAPL-20260102T220000Z-0123456789ab"
+    assert key.version_id == "AAPL-price-20260102T220000Z-0123456789ab-00000aaa"
+
+
+def test_version_id_includes_forecast_type_and_snapshot_hash():
+    """Distinct forecast types or snapshots must never collide on one key."""
+    a = ServerArtifactKey.create(
+        ticker="AAPL",
+        snapshot_id="abcdefabcdefabcdefabcdefabcdefabcd_1",
+        trained_at=TRAINED_AT,
+        git_commit=GIT_SHA,
+    )
+    b = ServerArtifactKey.create(
+        ticker="AAPL",
+        snapshot_id="abcdefabcdefabcdefabcdefabcdefabcd_2",
+        trained_at=TRAINED_AT,
+        git_commit=GIT_SHA,
+    )
+    c = ServerArtifactKey.create(
+        ticker="AAPL",
+        snapshot_id=a.snapshot_id,
+        trained_at=TRAINED_AT,
+        git_commit=GIT_SHA,
+        forecast_type="direction",
+    )
+    assert a.version_id != b.version_id
+    assert a.version_id != c.version_id
+    assert "price" in a.version_id.split("-")
+    assert "direction" in c.version_id.split("-")
 
 
 def test_make_version_id_falls_back_to_unknown_without_git(monkeypatch):
@@ -105,7 +133,7 @@ def test_server_artifact_key_rejects_bad_schema_version():
             ticker="AAPL",
             snapshot_id="s",
             trained_at=TRAINED_AT,
-            version_id="AAPL-20260102T220000Z-0123456789ab",
+            version_id=V1,
             schema_version=3,
         )
 
@@ -130,12 +158,14 @@ def _bundle(**overrides) -> ServerForecastBundle:
     payload = {
         "ticker": "AAPL",
         "forecast_type": "price",
-        "version_id": "AAPL-20260102T220000Z-0123456789ab",
+        "version_id": V1,
         "origin_close": 100.0,
         "origin_date": date(2026, 1, 2),
         "future_dates": [date(2026, 1, 5) + timedelta(days=i) for i in range(FORECAST_LENGTH)],
         "predicted_log_returns": [0.001] * FORECAST_LENGTH,
         "predicted_prices": [100.0 + i for i in range(FORECAST_LENGTH)],
+        "historical_dates": [date(2026, 1, 1) - timedelta(days=i) for i in reversed(range(120))],
+        "historical_prices": [90.0 + i for i in range(120)],
         "evidence": {"relative_mae": 0.02},
         "generated_at": TRAINED_AT,
     }
@@ -227,6 +257,23 @@ def test_in_memory_store_missing_key_raises():
     store = InMemoryObjectStore()
     with pytest.raises(ObjectStoreError):
         store.get("nope")
+
+
+def test_bundle_put_is_immutable_in_memory():
+    store = InMemoryObjectStore()
+    store.put_bundle("AAPL-v1", b"{}")
+    with pytest.raises(ObjectStoreError, match="immutable"):
+        store.put_bundle("AAPL-v1", b"tampered")
+    assert store.get_bundle("AAPL-v1") == b"{}"
+
+
+def test_bundle_put_is_immutable_in_s3():
+    fake = _FakeS3Client()
+    store = S3ObjectStore(bucket="b", prefix="artifacts", client=fake)
+    store.put_bundle("AAPL-v1", b"{}")
+    with pytest.raises(ObjectStoreError, match="immutable"):
+        store.put_bundle("AAPL-v1", b"tampered")
+    assert store.get_bundle("AAPL-v1") == b"{}"
 
 
 def test_s3_store_bundle_key_layout():
@@ -361,6 +408,16 @@ def test_registry_audit_log_records_events():
     assert "custom_event" in events
 
 
+def test_registry_promote_audit_records_previous_version():
+    registry = InMemoryRegistry()
+    registry.insert_artifact(_record("AAPL", V1))
+    registry.insert_artifact(_record("AAPL", V2))
+    registry.promote(V1)
+    registry.promote(V2)
+    promoted_event = [e for e in registry.read_audit_log() if e["event"] == "artifact_promoted"][-1]
+    assert promoted_event["details"]["previous_version"] == V1
+
+
 def test_registry_job_queue_fifo_and_dequeue_empty():
     registry = InMemoryRegistry()
     assert registry.dequeue_job() is None
@@ -381,6 +438,82 @@ def test_schema_sql_contains_required_tables_and_partial_index():
     assert "WHERE status = 'promoted'" in SCHEMA_SQL
     assert "UNIQUE INDEX" in SCHEMA_SQL
     assert "SKIP LOCKED" not in SCHEMA_SQL  # queue semantics live in dequeue SQL
+
+
+# ── Postgres promote: single transaction, demote-before-promote ───────
+
+
+class _FakePsycopgCursor:
+    def __init__(self, script):
+        self._script = list(script)
+        self.executed: list[str] = []
+        self.rowcount = 1
+
+    def execute(self, sql, params=None):
+        self.executed.append(sql)
+
+    def fetchone(self):
+        return self._script.pop(0)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class _FakePsycopgConn:
+    def __init__(self, script):
+        self._cursor = _FakePsycopgCursor(script)
+        self.committed = 0
+        self.rolled_back = 0
+
+    def cursor(self):
+        return self._cursor
+
+    def commit(self):
+        self.committed += 1
+
+    def rollback(self):
+        self.rolled_back += 1
+
+
+def _promote_sql_statements() -> list[str]:
+    from server_models.db import PostgresRegistry
+
+    record_json = _record("AAPL", V1).model_dump_json()
+    conn = _FakePsycopgConn(script=[("AAPL", "price", record_json, "candidate"), (None,)])
+    registry = PostgresRegistry(conn=conn)
+    registry.promote(V1)
+    return conn._cursor.executed
+
+
+def test_postgres_promote_locks_pointer_with_for_update():
+    statements = _promote_sql_statements()
+    assert any("FOR UPDATE" in s and "server_promotions" in s for s in statements)
+
+
+def test_postgres_promote_demotes_before_promoting():
+    statements = _promote_sql_statements()
+    candidate_update = next(s for s in statements if "SET status = 'candidate'" in s)
+    promoted_update = next(s for s in statements if "SET status = 'promoted'" in s)
+    assert statements.index(candidate_update) < statements.index(promoted_update)
+
+
+def test_postgres_promote_saves_previous_version():
+    statements = _promote_sql_statements()
+    pointer_update = next(s for s in statements if "current_version = %s" in s)
+    assert "previous_version = %s" in pointer_update
+
+
+def test_postgres_promote_unknown_version_rolls_back():
+    from server_models.db import PostgresRegistry
+
+    conn = _FakePsycopgConn(script=[None])
+    registry = PostgresRegistry(conn=conn)
+    with pytest.raises(ModelRegistryError, match="Unknown"):
+        registry.promote("ghost")
+    assert conn.rolled_back == 1
 
 
 # ── compatibility: fresh/stale/incompatible ──────────────────────────

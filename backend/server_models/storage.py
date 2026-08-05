@@ -33,8 +33,9 @@ class ObjectStore(ABC):
 class InMemoryObjectStore(ObjectStore):
     """Dict-backed store for unit tests and local dry runs."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, prefix: str = "artifacts") -> None:
         self._objects: dict[str, bytes] = {}
+        self._prefix = prefix.strip("/")
 
     def put(self, key: str, data: bytes) -> None:
         if not key:
@@ -49,6 +50,24 @@ class InMemoryObjectStore(ObjectStore):
 
     def exists(self, key: str) -> bool:
         return key in self._objects
+
+    def bundle_key(self, version_id: str) -> str:
+        if not version_id:
+            raise ObjectStoreError("Artifact version_id must not be empty.")
+        return f"{self._prefix}/{version_id}/{BUNDLE_FILENAME}"
+
+    def put_bundle(self, version_id: str, bundle_json_bytes: bytes) -> str:
+        key = self.bundle_key(version_id)
+        if self.exists(key):
+            raise ObjectStoreError(f"Bundle is immutable and already exists: {key}")
+        self.put(key, bundle_json_bytes)
+        return key
+
+    def get_bundle(self, version_id: str) -> bytes:
+        return self.get(self.bundle_key(version_id))
+
+    def bundle_exists(self, version_id: str) -> bool:
+        return self.exists(self.bundle_key(version_id))
 
 
 class S3ObjectStore(ObjectStore):
@@ -97,6 +116,8 @@ class S3ObjectStore(ObjectStore):
 
     def put_bundle(self, version_id: str, bundle_json_bytes: bytes) -> str:
         key = self.bundle_key(version_id)
+        if self.exists(key):
+            raise ObjectStoreError(f"Bundle is immutable and already exists: {key}")
         self.put(key, bundle_json_bytes)
         return key
 

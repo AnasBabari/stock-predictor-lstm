@@ -71,6 +71,11 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - name: Browser contract tests (hybrid server path)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run e2e
+        working-directory: frontend
 
   policy:
     runs-on: ubuntu-24.04

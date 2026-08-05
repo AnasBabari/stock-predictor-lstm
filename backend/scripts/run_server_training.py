@@ -24,7 +24,11 @@ def main():
 
     registry = get_registry()
     storage = get_storage()
-    signer = Ed25519ManifestSigner(settings.server_forecast_private_key_path)
+
+    if not settings.server_forecast_private_key_path:
+        logger.error("server_forecast_private_key_path is not configured; cannot sign artifacts.")
+        sys.exit(2)
+    signer = Ed25519ManifestSigner.from_pem_file(settings.server_forecast_private_key_path)
 
     if args.ticker:
         # Run explicitly for one ticker

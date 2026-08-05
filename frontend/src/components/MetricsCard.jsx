@@ -117,13 +117,13 @@ export default function MetricsCard({ stockData, forecastType }) {
   const metrics = (isTrend ? trendMetrics : priceMetrics).map(([label, value, title]) => ({
     label, value: value ?? '—', title,
   }));
-  const engineLabel = stockData.metadata?.server_pretrained 
-    ? stockData.metadata.model_name || 'Server-Pretrained Model' 
+  const engineLabel = stockData.metadata?.server_pretrained || engine?.role === 'server_pretrained'
+    ? stockData.metadata.model_name || 'Server-Pretrained Model'
     : engine?.family ? engine.family.replaceAll('_', ' ') : 'Prepared model';
-    
+
   const localStatus = engine?.baseline_fallback
     ? isTrend ? 'Baseline fallback — majority class displayed' : 'Baseline fallback — persistence displayed'
-    : stockData.metadata?.server_pretrained
+    : stockData.metadata?.server_pretrained || engine?.role === 'server_pretrained'
       ? 'Trained offline on server'
       : engine?.role === 'learned_candidate'
         ? 'Learned candidate'

@@ -45,3 +45,25 @@ test('identifies a qualifying learned candidate', () => {
     screen.getByText('bilstm attention direction · Learned candidate'),
   ).toBeInTheDocument();
 });
+
+test('identifies a canonical server-pretrained payload', () => {
+  render(
+    <MetricsCard
+      stockData={{
+        ...baselineResponse,
+        metadata: {
+          engine: {
+            family: 'elastic_net',
+            role: 'server_pretrained',
+            baseline_fallback: false,
+          },
+        },
+      }}
+      forecastType="price"
+    />,
+  );
+
+  expect(
+    screen.getByText('Server-Pretrained Model · Trained offline on server'),
+  ).toBeInTheDocument();
+});

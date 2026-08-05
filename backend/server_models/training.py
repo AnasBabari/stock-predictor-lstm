@@ -4,6 +4,7 @@ import platform
 from datetime import datetime
 
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import RobustScaler
 
 from config import FEATURES_V4, MAX_FORECAST_DAYS, WINDOW_SIZE
@@ -12,6 +13,7 @@ from experiments.baselines import ElasticNetForecaster
 from experiments.runner import ExperimentConfig, run_baseline_experiment
 from experiments.targets import reconstruct_prices
 from server_models.contracts import (
+    HISTORY_DISPLAY_WINDOW,
     ReproducibilityMetadata,
     RobustScalerParams,
     ServerArtifactKey,
@@ -91,17 +93,20 @@ def train_server_forecast(ticker: str, registry, storage, signer) -> ServerModel
 
     model.fit(scaled_features, dataset.targets)
 
-    # 5. Generate prediction bundle for the most recent observation
-    # We use the very last row of dataset.features to predict future horizons
-    last_window = dataset.features[-1:]
-    last_scaled = scaler.transform(last_window.reshape(-1, feature_count)).reshape(
-        last_window.shape
+    # 5. Generate prediction bundle from the *most recent* observation window.
+    # The inference slice is the raw tail of the feature matrix transformed with
+    # the fitted scaler — never a stale row of the walk-forward dataset — so the
+    # origin is exactly the last close price and the first future trading date.
+    if len(feature_values) < WINDOW_SIZE:
+        raise ValueError(f"Snapshot for {ticker} has fewer than {WINDOW_SIZE} rows.")
+    latest_window = feature_values[-WINDOW_SIZE:]
+    latest_scaled = scaler.transform(latest_window.reshape(-1, feature_count)).reshape(
+        1, WINDOW_SIZE, feature_count
     )
 
-    predicted_targets = model.predict(last_scaled)
-    # The last row of dataset corresponds to dataset.origins[-1] (the final close price)
-    origin_close = dataset.origins[-1]
-    origin_date_val = dataset.origin_dates[-1]
+    predicted_targets = model.predict(latest_scaled)
+    origin_close = float(close_values[-1])
+    origin_date_val = pd.Timestamp(dates[-1])
     predicted_prices = reconstruct_prices([origin_close], predicted_targets, "log_return")[0]
 
     predicted_log_returns = predicted_targets[0]
@@ -113,17 +118,32 @@ def train_server_forecast(ticker: str, registry, storage, signer) -> ServerModel
     )
     future_dates = [datetime.strptime(d, "%Y-%m-%d").date() for d in future_date_strs]
 
+    if len(close_values) < HISTORY_DISPLAY_WINDOW:
+        raise ValueError(
+            f"Snapshot for {ticker} has fewer than {HISTORY_DISPLAY_WINDOW} close prices."
+        )
+    historical_prices = close_values[-HISTORY_DISPLAY_WINDOW:].tolist()
+    historical_dates = [pd.Timestamp(d).date() for d in dates[-HISTORY_DISPLAY_WINDOW:]]
+
     snapshot_id = metadata.get("snapshot_id", "unknown")
     key = ServerArtifactKey.create(ticker=ticker, snapshot_id=snapshot_id)
 
     bundle = ServerForecastBundle(
         ticker=ticker,
         version_id=key.version_id,
-        origin_close=float(origin_close),
+        origin_close=origin_close,
         origin_date=origin_date_val.date(),
         future_dates=future_dates,
         predicted_log_returns=predicted_log_returns.tolist(),
         predicted_prices=predicted_prices.tolist(),
+        historical_dates=historical_dates,
+        historical_prices=historical_prices,
+        evidence={
+            "per_horizon": result["models"][best_candidate]["aggregate"]["per_horizon"],
+            "pooled": result["models"][best_candidate]["aggregate"]["pooled"],
+            "metric_source": "server_purged_walk_forward",
+            "family": best_candidate,
+        },
         generated_at=key.trained_at,
     )
 
@@ -140,15 +160,22 @@ def train_server_forecast(ticker: str, registry, storage, signer) -> ServerModel
     bundle_bytes = bundle.model_dump_json().encode("utf-8")
     digest = hashlib.sha256(bundle_bytes).hexdigest()
 
-    signature = signer.sign(bundle_bytes)
+    signature = signer(bundle_bytes)
 
     record = ServerModelRecord(
-        key=key, reproducibility=repro, sha256_digest=digest, signature=signature, status="promoted"
+        key=key,
+        reproducibility=repro,
+        sha256_digest=digest,
+        signature=signature,
+        status="candidate",
     )
 
-    # 7. Atomically save bundle to S3 and record to Postgres
+    # 7. Immutable handoff: bundle first (never overwritten), then registry row,
+    #    then promotion. Any failure after the bundle write leaves a harmless,
+    #    unused immutable artifact rather than a pointer to a missing bundle.
     storage.put_bundle(key.version_id, bundle_bytes)
-    registry.promote_model(record)
+    registry.insert_artifact(record)
+    registry.promote(key.version_id)
 
     logger.info(f"Promoted {best_candidate} for {ticker} (version {key.version_id})")
     return record

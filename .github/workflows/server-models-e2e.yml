@@ -1,0 +1,87 @@
+name: Server models E2E (Postgres + MinIO)
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'backend/server_models/**'
+      - 'backend/tests/test_server_models*.py'
+      - 'backend/tests/test_server_forecast_e2e.py'
+      - 'backend/tests/test_server_training.py'
+      - 'backend/tests/test_server_forecast_api.py'
+      - 'backend/api.py'
+      - 'backend/config.py'
+      - 'backend/scripts/run_server_training.py'
+      - 'backend/pyproject.toml'
+      - '.github/workflows/server-models-e2e.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'backend/server_models/**'
+      - 'backend/tests/test_server_models*.py'
+      - 'backend/tests/test_server_forecast_e2e.py'
+      - 'backend/tests/test_server_training.py'
+      - 'backend/tests/test_server_forecast_api.py'
+      - 'backend/api.py'
+      - 'backend/config.py'
+      - 'backend/scripts/run_server_training.py'
+      - 'backend/pyproject.toml'
+      - '.github/workflows/server-models-e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  server-models-e2e:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: server_models
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      minio:
+        image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+        command: server /data --console-address ":9001"
+        ports:
+          - 9000:9000
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - run: python -m pip install uv==0.11.16
+      - run: uv sync --project backend --frozen --group training
+      - name: Run server-model integration lifecycle against real Postgres and MinIO
+        env:
+          SERVER_E2E_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/server_models
+          SERVER_E2E_S3_BUCKET: server-artifacts
+          SERVER_E2E_S3_PREFIX: artifacts
+          SERVER_E2E_S3_ENDPOINT: http://localhost:9000
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          uv run --project backend pytest \
+            backend/tests/test_server_models_integration.py \
+            backend/tests/test_server_forecast_e2e.py \
+            backend/tests/test_server_training.py \
+            backend/tests/test_server_forecast_api.py \
+            backend/tests/test_server_models.py \
+            -q
