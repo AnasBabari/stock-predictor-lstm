@@ -145,10 +145,14 @@ increasing `future_dates`/`historical_dates`. The UI's `trend` type maps to
 server-directed: the client returns `null` (browser training) only when the
 server's response says `fallback: "browser_training"` — a 200 absence, or a
 503 in the browser training modes. A 200 invalid payload, a 503 that forbids a
-fallback (`fallback: null`), an unreadable error body, or a payload whose
-identity violates the request throws, so the UI surfaces the failure instead of
-silently training in the browser. A cancelled request propagates `AbortError`;
-network-level failures (no response at all) keep the browser fallback.
+fallback (`fallback: null`), or an unreadable error body throws, so the UI
+surfaces the failure instead of silently training in the browser. A cancelled
+request propagates `AbortError`. Network-level failures (no response at all)
+keep the browser fallback in `hybrid`/`browser_only` deployments; deployments
+that require server-pretrained forecasts pass the deployment mode
+(`VITE_TRAINING_MODE`/`window.STOCKLSTM_TRAINING_MODE` set to
+`server_pretrained`) so the same failure throws instead of silently switching
+to browser training.
 
 ## Testing
 

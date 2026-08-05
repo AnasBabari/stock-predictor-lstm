@@ -20,6 +20,14 @@ from typing import Any
 from server_models.contracts import ServerModelRecord
 
 
+def _validate_record_payload(payload: Any) -> ServerModelRecord:
+    """Parse a registry row payload whether psycopg returned the JSONB column as
+    a Python object (dict) or a JSON string/bytes."""
+    if isinstance(payload, (str, bytes, bytearray)):
+        return ServerModelRecord.model_validate_json(payload)
+    return ServerModelRecord.model_validate(payload)
+
+
 class ModelRegistryError(RuntimeError):
     """A registry transition or lookup failed."""
 
@@ -320,7 +328,7 @@ class PostgresRegistry(ModelRegistry):
         self._conn.commit()
 
     def _record_from_row(self, row: Any) -> ServerModelRecord:
-        record = ServerModelRecord.model_validate_json(row[0])
+        record = _validate_record_payload(row[0])
         return record.model_copy(update={"status": row[1]})
 
     def get_promoted(self, ticker: str, forecast_type: str = "price") -> ServerModelRecord | None:
@@ -369,7 +377,7 @@ class PostgresRegistry(ModelRegistry):
             # Re-promoting the live champion is a no-op that preserves the pointer.
             if status == "promoted" and previous_version == version_id:
                 self._conn.rollback()
-                return ServerModelRecord.model_validate_json(record_json)
+                return _validate_record_payload(record_json)
 
             # 3. Demote any existing champion *before* promoting the incoming row so
             #    the unique partial index on (ticker, forecast_type) can never observe
@@ -402,9 +410,7 @@ class PostgresRegistry(ModelRegistry):
                 ),
             )
         self._conn.commit()
-        return ServerModelRecord.model_validate_json(record_json).model_copy(
-            update={"status": "promoted"}
-        )
+        return _validate_record_payload(record_json).model_copy(update={"status": "promoted"})
 
     def reject(self, version_id: str, reason: str) -> None:
         with self._conn.cursor() as cursor:

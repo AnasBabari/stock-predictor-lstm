@@ -578,6 +578,21 @@ def test_postgres_promote_saves_previous_version():
     assert "previous_version = %s" in pointer_update
 
 
+def test_postgres_jsonb_payload_as_dict_parses():
+    # psycopg returns JSONB columns as Python dicts, not JSON strings; promote
+    # must accept both through the shared record-payload helper.
+    from server_models.db import PostgresRegistry
+
+    record = _record("AAPL", V1)
+    record_dict = record.model_dump(mode="json")
+    conn = _FakePsycopgConn(script=[("AAPL", "price", record_dict, "candidate"), (None,)])
+    registry = PostgresRegistry(conn=conn)
+    promoted = registry.promote(V1)
+    assert promoted.key.version_id == V1
+    assert promoted.status == "promoted"
+    assert promoted.reproducibility == record.reproducibility
+
+
 def test_postgres_promote_unknown_version_rolls_back():
     from server_models.db import PostgresRegistry
 

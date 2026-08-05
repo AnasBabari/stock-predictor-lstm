@@ -64,15 +64,23 @@ function detailEnvelope(data) {
  * The server response is already the canonical forecasting shape shared with
  * the browser path, so it is passed through unchanged (no field remapping).
  *
- * Returns null only when the server explicitly directs a browser fallback (a
- * 200 ``fallback: "browser_training"``, or a 503 that carries it in the
- * browser training modes) or for a shape failure (invalid structural payload
- * or network rejection). When the server forbids a fallback — a 503 in
- * ``server_pretrained`` mode, integrity failures, an unreadable error body, or
- * an identity mismatch — this throws so the UI surfaces the failure instead of
- * silently training in the browser.
+ * Returns null only when a browser fallback is sanctioned: the server
+ * explicitly says `fallback: "browser_training"` (200 absence, or a 503 in
+ * the browser training modes), or — in a `hybrid`/`browser_only` deployment —
+ * a network-level failure with no server response at all. In a
+ * `server_pretrained` deployment (mode option) the same network failure
+ * throws, so the UI fails visibly instead of silently training in the
+ * browser. A 503 that forbids a fallback (`fallback: null`), an unreadable
+ * error body, a 200 invalid payload, or an identity/chronology violation
+ * throws in every mode.
+ *
+ * @param {string} symbol
+ * @param {string|number} days
+ * @param {string} type UI forecast type ('price' | 'trend')
+ * @param {AbortSignal} [signal]
+ * @param {{ mode?: 'browser_only'|'hybrid'|'server_pretrained' }} [options]
  */
-export async function fetchServerPrediction(symbol, days, type, signal) {
+export async function fetchServerPrediction(symbol, days, type, signal, { mode = 'hybrid' } = {}) {
   const apiType = API_FORECAST_TYPES[type];
   if (!apiType) return null;
 
@@ -88,7 +96,15 @@ export async function fetchServerPrediction(symbol, days, type, signal) {
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
     console.error(`Failed to fetch server prediction for ${requestTicker}:`, error);
-    return null; // Network-level failure; no server policy is available.
+    // Network-level failure: no server policy is available. Only a deployment
+    // that requires server-pretrained forecasts may fail visibly; hybrid and
+    // browser_only deployments keep the browser fallback.
+    if (mode === 'server_pretrained') {
+      throw new Error(
+        `Server forecast is unreachable for ${requestTicker}; no browser fallback is allowed in this deployment.`
+      );
+    }
+    return null;
   }
 
   let data;

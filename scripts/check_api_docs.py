@@ -8,13 +8,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from api import (  # noqa: E402 - backend added to sys.path above
+from api import app  # noqa: E402 - backend added to sys.path above
+from server_models.response_models import (  # noqa: E402
     ARTIFACT_ACTIONS,
     ARTIFACT_STATES,
     EXECUTION_MODES,
     STATUS_STAGES,
     TIMING_FIELDS,
-    app,
 )
 
 DOCUMENTED_PATHS = {

@@ -284,6 +284,46 @@ def test_forecast_direction_is_unsupported_and_browser_falls_back(monkeypatch):
     assert "predicted_prices" not in data
 
 
+def test_forecast_direction_is_unsupported_before_readiness(monkeypatch):
+    # Direction is checked before readiness, so even a fully unconfigured
+    # server_pretrained deployment answer 200 unsupported, never a 503.
+    _enable(monkeypatch, configured=False, mode="server_pretrained")
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL?forecast_type=trend")
+    assert response.status_code == 200
+    assert response.json()["reason"] == "unsupported_forecast_type"
+    assert response.json()["fallback"] == "browser_training"
+
+
+def test_forecast_registry_construction_failure_is_503(monkeypatch):
+    _enable(monkeypatch, mode="hybrid")
+    _stub_serve_deps(monkeypatch)
+
+    def boom():
+        raise RuntimeError("postgres down")
+
+    monkeypatch.setattr("server_models.api.get_registry", boom)
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "registry_unavailable"
+    assert detail["fallback"] == "browser_training"
+
+
+def test_forecast_registry_construction_failure_is_503_server_pretrained(monkeypatch):
+    _enable(monkeypatch, mode="server_pretrained")
+    _stub_serve_deps(monkeypatch)
+
+    def boom():
+        raise RuntimeError("postgres down")
+
+    monkeypatch.setattr("server_models.api.get_registry", boom)
+    response = CLIENT.get("/api/v1/server-forecasts/AAPL")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "registry_unavailable"
+    assert detail["fallback"] is None
+
+
 # ── expected absences: 200 in browser modes, 503 in server_pretrained ─
 
 

@@ -71,9 +71,12 @@ def _make_bundle(version_id: str):
         predicted_log_returns=[0.001] * FORECAST_LENGTH,
         predicted_prices=[100.0 + i for i in range(FORECAST_LENGTH)],
         historical_dates=[
-            date(2026, 7, 30) - timedelta(days=i) for i in reversed(range(HISTORY_DISPLAY_WINDOW))
+            date(2026, 7, 31) - timedelta(days=HISTORY_DISPLAY_WINDOW - 1 - i)
+            for i in range(HISTORY_DISPLAY_WINDOW)
         ],
-        historical_prices=[99.0 + i for i in range(HISTORY_DISPLAY_WINDOW)],
+        historical_prices=[
+            150.0 - (HISTORY_DISPLAY_WINDOW - 1 - i) * 0.25 for i in range(HISTORY_DISPLAY_WINDOW)
+        ],
         evidence={"metric_source": "server_purged_walk_forward", "family": "elastic_net"},
         generated_at=datetime(2026, 7, 31, 12, 0, 0),
     )

@@ -147,9 +147,19 @@ describe('serverModelClient forecast contract', () => {
     );
   });
 
-  test('network failure -> null (no server policy available)', async () => {
+  test('network failure -> null in hybrid mode (no server policy available)', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     expect(await fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal)).toBeNull();
+  });
+
+  test('network failure in server_pretrained mode -> throws, never silent fallback', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    await rejectsWith(
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal, {
+        mode: 'server_pretrained',
+      }),
+      'no browser fallback is allowed'
+    );
   });
 
   test('AbortError propagates', async () => {

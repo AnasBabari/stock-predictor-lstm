@@ -256,14 +256,12 @@ def get_availability(response: Response) -> AvailabilityResponse:
 
     # One registry instance for the whole allowlist, closed once. Per-ticker
     # connections leak and can exhaust the Postgres pool under repeated probes.
-    registry = get_registry()
+    registry = None
     try:
+        registry = get_registry()
         tickers = []
         for ticker in settings.server_forecast_allowlist:
-            try:
-                promoted = registry.get_promoted(ticker)
-            except Exception as exc:
-                _raise_infrastructure_error("registry_unavailable", exc)
+            promoted = registry.get_promoted(ticker)
             if promoted is None:
                 tickers.append(TickerAvailability(ticker=ticker, status="missing"))
                 continue
@@ -282,8 +280,11 @@ def get_availability(response: Response) -> AvailabilityResponse:
                     expires_at=None,
                 )
             )
+    except Exception as exc:
+        _raise_infrastructure_error("registry_unavailable", exc)
     finally:
-        registry.close()
+        if registry is not None:
+            registry.close()
 
     result = AvailabilityResponse(
         enabled=True,
@@ -309,24 +310,27 @@ def get_forecast(
 ):
     ticker = ticker.upper()
 
+    # Only price forecasts are produced today. Direction/trend requests get an
+    # unconditional 200 browser fallback — intentionally checked before any
+    # Postgres/S3/key readiness so a direction request can never degrade into a
+    # 503 (unconfigured/integrity_failure). There is no price->probability
+    # conversion.
+    if forecast_type not in SUPPORTED_FORECAST_TYPES:
+        return _fallback_response(response, "unsupported_forecast_type")
+
     readiness = server_forecast_readiness(ticker)
     if not readiness.configured:
         return _absence_response(response, readiness.reason or "disabled")
 
-    # Only price forecasts are produced today. Direction/trend requests
-    # deliberately get a 200 fallback so the frontend renders its browser
-    # trend path; there is deliberately no price->probability conversion.
-    if forecast_type not in SUPPORTED_FORECAST_TYPES:
-        return _fallback_response(response, "unsupported_forecast_type")
-
-    registry = get_registry()
+    registry = None
     try:
-        try:
-            promoted = registry.get_promoted(ticker, forecast_type="price")
-        except Exception as exc:
-            _raise_infrastructure_error("registry_unavailable", exc)
+        registry = get_registry()
+        promoted = registry.get_promoted(ticker, forecast_type="price")
+    except Exception as exc:
+        _raise_infrastructure_error("registry_unavailable", exc)
     finally:
-        registry.close()
+        if registry is not None:
+            registry.close()
 
     if promoted is None:
         return _absence_response(response, "missing")

@@ -19,6 +19,14 @@ import { defaultTrainingProfile, expectedDurationLabel } from './ml/trainingProf
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
+// Mirrors the backend TRAINING_MODE at deploy time so the server-pretrained
+// client knows that a server outage is a hard failure, never a silent switch
+// to browser training.
+const DEPLOYMENT_TRAINING_MODE = (
+  window.STOCKLSTM_TRAINING_MODE ||
+  import.meta.env.VITE_TRAINING_MODE ||
+  'hybrid'
+).toLowerCase();
 const THEME_KEY = 'stocklstm-theme:v1';
 const WL_KEY = 'stocklstm-watchlist:v1';
 const HIST_KEY = 'stocklstm-history:v1';
@@ -306,7 +314,9 @@ export default function App() {
     async (symbol, days, type, signal, onProgress) => {
       // Try fetching a high-quality server-pretrained model first
       onProgress?.({ stage: 'checking_server', message: 'Checking for server-pretrained models...' });
-      const serverPrediction = await fetchServerPrediction(symbol, days, type, signal);
+      const serverPrediction = await fetchServerPrediction(symbol, days, type, signal, {
+        mode: DEPLOYMENT_TRAINING_MODE,
+      });
       if (serverPrediction) {
         onProgress?.({ stage: 'server_model_loaded', message: 'Loaded server-pretrained model.' });
         return serverPrediction;
