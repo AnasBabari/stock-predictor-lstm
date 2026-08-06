@@ -50,10 +50,12 @@ CLIENT = TestClient(app)
 
 
 def _make_record(ticker="AAPL", *, forecast_type="price", snapshot="sha256:e2e01"):
+    from config import FEATURES_V4
+
     key = ServerArtifactKey.create(ticker=ticker, snapshot_id=snapshot, forecast_type=forecast_type)
     scaler = RobustScalerParams(medians=[0.0] * 28, iqrs=[1.0] * 28)
     repro = ReproducibilityMetadata(
-        feature_names=["f1"] * 28,
+        feature_names=FEATURES_V4,
         scaler=scaler,
         python_version="3.12",
         git_commit="unknown",

@@ -135,15 +135,26 @@ describe('serverModelClient forecast contract', () => {
     );
   });
 
-  test('unreadable 503 error body -> throws', async () => {
+  test('unreadable 503 error body -> null in hybrid mode (no policy delivered)', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: () => Promise.reject(new Error('not json')),
+    });
+    expect(await fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal)).toBeNull();
+  });
+
+  test('unreadable 503 error body in server_pretrained mode -> throws', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 503,
       json: () => Promise.reject(new Error('not json')),
     });
     await rejectsWith(
-      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal),
-      'could not be read'
+      fetchServerPrediction('MSFT', 7, 'price', new AbortController().signal, {
+        mode: 'server_pretrained',
+      }),
+      'no browser fallback is allowed'
     );
   });
 

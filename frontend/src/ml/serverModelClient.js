@@ -58,6 +58,22 @@ function detailEnvelope(data) {
   return data && typeof data.detail === 'object' ? data.detail : data;
 }
 
+function policyLessFailure(requestTicker, status, mode) {
+  // No server policy was delivered (unreadable error body, or a parseable
+  // body that carries no explicit fallback decision). The deployment mode
+  // decides: hybrid/browser_only keep the browser fallback, server_pretrained
+  // fails visibly.
+  if (mode === 'server_pretrained') {
+    throw new Error(
+      `Server forecast is unavailable for ${requestTicker} (${status}); no browser fallback is allowed in this deployment.`
+    );
+  }
+  console.warn(
+    `Server forecast for ${requestTicker} (${status}) did not state a fallback policy; using browser training.`
+  );
+  return null;
+}
+
 /**
  * Fetches a server-pretrained forecast bundle.
  *
@@ -67,12 +83,12 @@ function detailEnvelope(data) {
  * Returns null only when a browser fallback is sanctioned: the server
  * explicitly says `fallback: "browser_training"` (200 absence, or a 503 in
  * the browser training modes), or — in a `hybrid`/`browser_only` deployment —
- * a network-level failure with no server response at all. In a
- * `server_pretrained` deployment (mode option) the same network failure
- * throws, so the UI fails visibly instead of silently training in the
- * browser. A 503 that forbids a fallback (`fallback: null`), an unreadable
- * error body, a 200 invalid payload, or an identity/chronology violation
- * throws in every mode.
+ * a failure that delivers no server policy at all (network failure, unreadable
+ * error body). In a `server_pretrained` deployment (mode option) the same
+ * policy-less failures throw, so the UI fails visibly instead of silently
+ * training in the browser. A 503 that explicitly forbids a fallback
+ * (`fallback: null`), a 200 invalid payload, or an identity/chronology
+ * violation throws in every mode.
  *
  * @param {string} symbol
  * @param {string|number} days
@@ -110,14 +126,11 @@ export async function fetchServerPrediction(symbol, days, type, signal, { mode =
   let data;
   try {
     data = await response.json();
-  } catch {
-    if (!response.ok) {
-      throw new Error(
-        `Server prediction failed for ${requestTicker} (${response.status}) — response could not be read.`
-      );
-    }
-    console.error(`Invalid server prediction payload for ${requestTicker}.`);
-    return null;
+  } catch (error) {
+    console.error(`Server prediction for ${requestTicker} (${response.status}) returned an unreadable body.`, error);
+    // No policy could be read from the response. The deployment mode decides:
+    // hybrid/browser_only fall back, server_pretrained fails visibly.
+    return policyLessFailure(requestTicker, response.status, mode);
   }
 
   // 200 browser fallback (missing/stale/incompatible/unconfigured in hybrid).
@@ -128,19 +141,25 @@ export async function fetchServerPrediction(symbol, days, type, signal, { mode =
     return null;
   }
 
-  // A non-200 that is not an explicit browser fallback throws (fail closed).
   if (!response.ok) {
+    // Non-200 bodies are wrapped in `{"detail": {...}}` by the FastAPI app;
+    // unwrap to recover the server's explicit fallback decision.
     const envelope = detailEnvelope(data);
     if (isBrowserFallback(envelope)) {
       console.log(
-        `Server prediction unavailable for ${requestTicker}: ${envelope.message || envelope.code}. Falling back to browser training.`
+        `Server prediction unavailable for ${requestTicker}: ${envelope.reason}. Falling back to browser training.`
       );
       return null;
     }
-    const message =
-      (envelope && typeof envelope.message === 'string' && envelope.message) ||
-      `Server prediction is unavailable for ${requestTicker} (${response.status}).`;
-    throw new Error(message);
+    // An explicit `fallback: null` forbids browser training in every mode.
+    if (envelope && envelope.available === false && envelope.fallback === null) {
+      throw new Error(
+        (envelope && typeof envelope.message === 'string' && envelope.message) ||
+          `Server prediction is unavailable for ${requestTicker} (${response.status}).`
+      );
+    }
+    // No explicit policy: the deployment mode decides.
+    return policyLessFailure(requestTicker, response.status, mode);
   }
 
   const daysInt = parseInt(days, 10);
