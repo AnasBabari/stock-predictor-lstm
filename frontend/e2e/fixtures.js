@@ -39,11 +39,83 @@ const FEATURE_BASELINES = {
   Day_Cos: 1.0,
 };
 
+// Per-feature wave shape. Only the Return_1D column oscillates: scaling
+// normalizes it to a modest range while every other column stays constant, so
+// the network's 60-row input windows remain essentially constant and it
+// collapses onto the constant upward drift (which deterministically beats the
+// flat persistence baseline). Rows are still distinct row-to-row because
+// Return_1D alternates across zero (both up and down "days").
+const FEATURE_WAVES = {
+  Log_Open_Rel: { amp: 0, period: 13 },
+  Log_High_Rel: { amp: 0, period: 9 },
+  Log_Low_Rel: { amp: 0, period: 11 },
+  Return_1D: { amp: 0.004, period: 7 },
+  Volume_Log1p_Change: { amp: 0, period: 19 },
+  Close_SMA_20: { amp: 0, period: 13 },
+  Close_EMA_20: { amp: 0, period: 11 },
+  RSI_14_Centered: { amp: 0, period: 17 },
+  MACD_Close: { amp: 0, period: 23 },
+  MACD_Signal_Close: { amp: 0, period: 21 },
+  BB_Upper_Rel: { amp: 0, period: 15 },
+  BB_Lower_Rel: { amp: 0, period: 15 },
+  ATR_14_Rel: { amp: 0, period: 13 },
+  OBV_Change_Z: { amp: 0, period: 7 },
+  Return_5D: { amp: 0, period: 9 },
+  Return_20D: { amp: 0, period: 17 },
+  Realized_Vol_5D: { amp: 0, period: 11 },
+  Realized_Vol_20D: { amp: 0, period: 13 },
+  SPY_Return_1D: { amp: 0, period: 19 },
+  QQQ_Return_1D: { amp: 0, period: 21 },
+  VIX_Return_1D: { amp: 0, period: 7 },
+  TNX_Return_1D: { amp: 0, period: 9 },
+  Return_Rel_SPY_1D: { amp: 0, period: 11 },
+  Beta_SPY_20D: { amp: 0, period: 17 },
+  Month_Sin: { amp: 0, period: 30 },
+  Month_Cos: { amp: 0, period: 30 },
+  Day_Sin: { amp: 0, period: 1 },
+  Day_Cos: { amp: 0, period: 1 },
+};
+
+const ROWS = 480;
+// Price history follows a smooth deterministic upward drift (constant daily
+// log-return). A model trained on a constant-drift series beats the flat
+// persistence baseline at every horizon, so the price path is guaranteed to be
+// promoted in the browser. Both up and down "days" are exercised at the
+// feature level: the constructed Return_1D feature column oscillates across
+// zero, which is the level that feeds the direction/trend models.
+// The drift is kept large relative to the model's day-one residual so the
+// one-day horizon also clears the strict relative < 1 promotion gate.
+const DAILY_LOG_DRIFT = 0.008;
+
+/**
+ * Returns `count` consecutive business days (Mon-Fri) strictly after
+ * `startIso`. The generator walks the UTC calendar deterministically.
+ */
+export function businessDatesAfter(startIso, count) {
+  const dates = [];
+  const cursor = new Date(`${startIso}T00:00:00Z`);
+  while (dates.length < count) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const weekday = cursor.getUTCDay();
+    if (weekday === 0 || weekday === 6) continue;
+    dates.push(cursor.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
 export function deterministicSnapshot(ticker = 'MSFT') {
-  const rows = 480;
   const featureNames = Object.keys(FEATURE_BASELINES);
-  const historicalPrices = Array.from({ length: rows }, (_, index) =>
-    100 * Math.exp(0.002 * index)
+  const dates = businessDatesAfter('2024-01-01', ROWS);
+  const futureDates = businessDatesAfter(dates[dates.length - 1], 30);
+  const historicalPrices = Array.from(
+    { length: ROWS },
+    (_, index) => 100 * Math.exp(DAILY_LOG_DRIFT * index)
+  );
+  const features = Array.from({ length: ROWS }, (_, t) =>
+    featureNames.map((name, column) => {
+      const wave = FEATURE_WAVES[name];
+      return FEATURE_BASELINES[name] + wave.amp * Math.sin(t / wave.period + column * 0.9 + 0.5);
+    })
   );
   return {
     ticker,
@@ -52,10 +124,10 @@ export function deterministicSnapshot(ticker = 'MSFT') {
     feature_names: featureNames,
     window_size: 60,
     output_width: 30,
-    dates: Array.from({ length: rows }, (_, index) => `2026-01-${String((index % 28) + 1).padStart(2, '0')}`),
-    future_dates: Array.from({ length: 30 }, (_, index) => `2026-08-${String(index + 1).padStart(2, '0')}`),
+    dates,
+    future_dates: futureDates,
     historical_prices: historicalPrices,
-    features: Array.from({ length: rows }, () => featureNames.map((name) => FEATURE_BASELINES[name])),
+    features,
   };
 }
 
@@ -100,7 +172,7 @@ export function serverForecastPayload(ticker = 'MSFT', days = 7, origin = '2026-
  * contract tests never build a real TF.js model (slow, non-deterministic).
  * The stub answers every `forecast` message with a canned canonical result
  * after a microtask, so the app's browser path renders exactly as if training
- * had run. Real-training coverage lives in vercel-preview.spec.js.
+ * had run. Real-training coverage lives in browser-real-training.spec.js.
  */
 export function installStubBrowserWorker(page) {
   return page.addInitScript(() => {

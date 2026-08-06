@@ -1,0 +1,55 @@
+name: Frontend Real-Training E2E
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * *'
+    - cron: '17 4 * * 1'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'frontend/e2e/**'
+      - 'frontend/src/ml/**'
+      - 'frontend/src/components/**'
+      - 'frontend/src/App.jsx'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'frontend/playwright.config.js'
+      - '.github/workflows/frontend-real-training-e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-real-training-e2e
+  cancel-in-progress: true
+
+jobs:
+  real-training-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.22.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - name: Run real browser training E2E (single worker)
+        run: npx playwright test e2e/browser-real-training.spec.js --workers=1
+        working-directory: frontend
+      - uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4.4.0
+        if: always()
+        with:
+          name: real-training-playwright-artifacts
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 14
