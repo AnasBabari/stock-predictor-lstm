@@ -39,17 +39,17 @@ const FEATURE_BASELINES = {
   Day_Cos: 1.0,
 };
 
-// Per-feature wave shape. Only the Return_1D column oscillates: scaling
-// normalizes it to a modest range while every other column stays constant, so
-// the network's 60-row input windows remain essentially constant and it
-// collapses onto the constant upward drift (which deterministically beats the
-// flat persistence baseline). Rows are still distinct row-to-row because
-// Return_1D alternates across zero (both up and down "days").
+// Per-feature wave shape for the constant baseline columns. Return_1D is
+// deliberately excluded: it must equal the price history's own 1-day log
+// return (see deterministicSnapshot below), so the feature set stays
+// internally consistent with the price path the model is fitness-tuned
+// against. VIX_Return_1D carries a harmless oscillation so columns retain
+// non-zero variance (the scaler) and rows remain distinct row-to-row.
 const FEATURE_WAVES = {
   Log_Open_Rel: { amp: 0, period: 13 },
   Log_High_Rel: { amp: 0, period: 9 },
   Log_Low_Rel: { amp: 0, period: 11 },
-  Return_1D: { amp: 0.004, period: 7 },
+  Return_1D: { amp: 0, period: 7 },
   Volume_Log1p_Change: { amp: 0, period: 19 },
   Close_SMA_20: { amp: 0, period: 13 },
   Close_EMA_20: { amp: 0, period: 11 },
@@ -66,7 +66,7 @@ const FEATURE_WAVES = {
   Realized_Vol_20D: { amp: 0, period: 13 },
   SPY_Return_1D: { amp: 0, period: 19 },
   QQQ_Return_1D: { amp: 0, period: 21 },
-  VIX_Return_1D: { amp: 0, period: 7 },
+  VIX_Return_1D: { amp: 0.004, period: 11 },
   TNX_Return_1D: { amp: 0, period: 9 },
   Return_Rel_SPY_1D: { amp: 0, period: 11 },
   Beta_SPY_20D: { amp: 0, period: 17 },
@@ -77,15 +77,34 @@ const FEATURE_WAVES = {
 };
 
 const ROWS = 480;
-// Price history follows a smooth deterministic upward drift (constant daily
-// log-return). A model trained on a constant-drift series beats the flat
-// persistence baseline at every horizon, so the price path is guaranteed to be
-// promoted in the browser. Both up and down "days" are exercised at the
-// feature level: the constructed Return_1D feature column oscillates across
-// zero, which is the level that feeds the direction/trend models.
-// The drift is kept large relative to the model's day-one residual so the
-// one-day horizon also clears the strict relative < 1 promotion gate.
+// Price history follows a deterministic upward drift (positive daily
+// log-return) plus a small jitter. The model observes past realised returns
+// but has no feature that directly reveals the future jitter used in its
+// prediction targets, so it converges to the drift mean and clears the flat
+// persistence baseline at every horizon with a wide deterministic margin. With
+// the fixed fixture and seeded initialization, repeated runs keep the day-1
+// relative metric around 0.3, leaving substantial promotion headroom. Every
+// daily log return stays positive, so the direction/trend target is 100% Up
+// and the trend gate deterministically falls back to the majority class. The
+// Return_1D feature column is derived from this exact price path (not an
+// arbitrary wave), keeping the fixture internally consistent, while the jitter
+// widens the 99.5th percentile of observed horizon returns far above the
+// learned forecast so the volatility sanity gate has headroom.
 const DAILY_LOG_DRIFT = 0.008;
+const JITTER_AMPLITUDE = 0.003;
+
+// Deterministic for the supported JavaScript runtime and test environment
+// (``Math.sin`` hash). It carries no trainable structure the model could pick
+// up through the otherwise constant feature columns: past realised jitter is
+// visible to the network, but future (target) jitter is not.
+function deterministicJitter(index) {
+  const x = Math.sin(index * 12.9898 + 78.2331) * 43758.5453;
+  return (x - Math.floor(x)) * 2 - 1;
+}
+
+function dailyReturnAt(index) {
+  return DAILY_LOG_DRIFT + deterministicJitter(index) * JITTER_AMPLITUDE;
+}
 
 /**
  * Returns `count` consecutive business days (Mon-Fri) strictly after
@@ -107,12 +126,20 @@ export function deterministicSnapshot(ticker = 'MSFT') {
   const featureNames = Object.keys(FEATURE_BASELINES);
   const dates = businessDatesAfter('2024-01-01', ROWS);
   const futureDates = businessDatesAfter(dates[dates.length - 1], 30);
-  const historicalPrices = Array.from(
-    { length: ROWS },
-    (_, index) => 100 * Math.exp(DAILY_LOG_DRIFT * index)
-  );
+  const historicalPrices = [100];
+  for (let index = 1; index < ROWS; index += 1) {
+    historicalPrices.push(
+      historicalPrices[index - 1] * Math.exp(dailyReturnAt(index - 1))
+    );
+  }
   const features = Array.from({ length: ROWS }, (_, t) =>
     featureNames.map((name, column) => {
+      if (name === 'Return_1D') {
+        // Exactly the price path's own 1-day log return, so the feature column
+        // is internally consistent with the prices the model is asked to
+        // predict. Row 0 has no prior day (hence 0).
+        return t === 0 ? 0 : dailyReturnAt(t - 1);
+      }
       const wave = FEATURE_WAVES[name];
       return FEATURE_BASELINES[name] + wave.amp * Math.sin(t / wave.period + column * 0.9 + 0.5);
     })
@@ -120,7 +147,7 @@ export function deterministicSnapshot(ticker = 'MSFT') {
   return {
     ticker,
     schema_version: 4,
-    snapshot_id: `${ticker}-quick-fixture-v5`,
+    snapshot_id: `${ticker}-quick-fixture-v6`,
     feature_names: featureNames,
     window_size: 60,
     output_width: 30,

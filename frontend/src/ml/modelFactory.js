@@ -20,10 +20,15 @@ export function buildBrowserModel(forecastType, featureCount, profile, outputWid
     recurrentInitializer: tf.initializers.orthogonal({ seed: 46 }),
   }));
   if (profile.id !== 'quick') model.add(tf.layers.dropout({ rate: profile.dropout, seed: 47 }));
-  model.add(tf.layers.dense({ units: profile.denseUnits, activation: 'relu' }));
+  model.add(tf.layers.dense({
+    units: profile.denseUnits,
+    activation: 'relu',
+    kernelInitializer: tf.initializers.glorotUniform({ seed: 48 }),
+  }));
   model.add(tf.layers.dense({
     units: Math.max(1, Math.round(Number(outputWidth) || 30)),
     activation: isDirection ? 'sigmoid' : undefined,
+    kernelInitializer: tf.initializers.glorotUniform({ seed: 49 }),
   }));
   model.compile({
     optimizer: tf.train.adam(0.001),

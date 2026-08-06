@@ -27,6 +27,7 @@ function isFiniteArray(values) {
 
 test('deterministic snapshot preserves the canonical feature contract', () => {
   const snapshot = deterministicSnapshot('MSFT');
+  expect(snapshot.snapshot_id).toBe('MSFT-quick-fixture-v6');
   expect(snapshot.schema_version).toBe(4);
   expect(snapshot.window_size).toBe(60);
   expect(snapshot.output_width).toBe(30);
@@ -58,13 +59,24 @@ test('snapshot dates are strictly increasing unique business days ahead of futur
   }
 });
 
-test('snapshot Return_1D feature column contains both up and down days', () => {
+test('snapshot Return_1D feature column equals the price history 1-day returns', () => {
   const snapshot = deterministicSnapshot('MSFT');
   const returnColumn = snapshot.features.map((row) => row[FEATURE_NAMES_V4.indexOf('Return_1D')]);
   expect(returnColumn).toHaveLength(ROWS);
+  expect(returnColumn[0]).toBe(0);
+  const priceReturns = dailyLogReturns(snapshot.historical_prices);
+  for (let t = 1; t < ROWS; t += 1) {
+    expect(returnColumn[t]).toBeCloseTo(priceReturns[t - 1], 12);
+  }
   expect(returnColumn.every((value) => Number.isFinite(value))).toBe(true);
-  expect(returnColumn.some((value) => value > 0)).toBe(true);
-  expect(returnColumn.some((value) => value < 0)).toBe(true);
+});
+
+test('snapshot carries a non-constant feature column spanning both signs', () => {
+  const snapshot = deterministicSnapshot('MSFT');
+  const vixColumn = snapshot.features.map((row) => row[FEATURE_NAMES_V4.indexOf('VIX_Return_1D')]);
+  expect(new Set(vixColumn).size).toBeGreaterThan(1);
+  expect(vixColumn.some((value) => value > 0)).toBe(true);
+  expect(vixColumn.some((value) => value < 0)).toBe(true);
 });
 
 test('snapshot price history is a deterministic upward drift', () => {
