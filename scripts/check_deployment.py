@@ -123,11 +123,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
 
         models, _ = get_json(base_url, "/models", timeout=args.timeout)
+        server_models = models.get("server_models", {})
+        observed_training_mode = server_models.get("training_mode") or args.training_mode
         add(
             results,
-            "server_models_disabled",
-            models.get("server_models", {}).get("status") == "disabled",
-            "/models did not disable server-side model storage",
+            "server_models_condition",
+            (args.training_mode == "browser_only") == (server_models.get("status") == "disabled"),
+            "server_models status contradicts the deployment training mode",
+        )
+        add(
+            results,
+            "server_models_mode_label",
+            observed_training_mode == args.training_mode,
+            "/models did not report the expected deployment training mode",
         )
         browser = models.get("browser_training", {})
         add(
@@ -189,26 +197,28 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         price_engine = price.get("metadata", {}).get("engine", {})
         price_mode = price.get("metadata", {}).get("execution", {}).get("mode")
-        add(
-            results,
-            "price_baseline_label",
-            bool(price_engine.get("baseline_fallback"))
-            and price_engine.get("role") == "server_disabled_fallback"
-            and price_mode == "baseline_fallback",
-            "price forecast was not explicitly labelled baseline fallback",
-        )
+        if args.training_mode != "server_pretrained":
+            add(
+                results,
+                "price_baseline_label",
+                bool(price_engine.get("baseline_fallback"))
+                and price_engine.get("role") == "server_disabled_fallback"
+                and price_mode == "baseline_fallback",
+                "price forecast was not explicitly labelled baseline fallback",
+            )
 
         direction, _ = get_json(
             base_url, f"/api/v1/predict/direction?ticker={ticker}&days=1", timeout=args.timeout
         )
         direction_engine = direction.get("metadata", {}).get("engine", {})
-        add(
-            results,
-            "direction_baseline_label",
-            bool(direction_engine.get("baseline_fallback"))
-            and direction_engine.get("role") == "server_disabled_fallback",
-            "direction forecast was not explicitly labelled baseline fallback",
-        )
+        if args.training_mode != "server_pretrained":
+            add(
+                results,
+                "direction_baseline_label",
+                bool(direction_engine.get("baseline_fallback"))
+                and direction_engine.get("role") == "server_disabled_fallback",
+                "direction forecast was not explicitly labelled baseline fallback",
+            )
     except (HTTPError, URLError, TimeoutError, ValueError, RuntimeError) as exc:
         add(results, "request", False, safe_error(exc))
     passed = all(item.passed for item in results)
@@ -231,6 +241,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--restart-window", type=float, default=0)
     parser.add_argument("--cors-origin")
+    parser.add_argument(
+        "--training-mode",
+        default="browser_only",
+        choices=("browser_only", "hybrid", "server_pretrained"),
+        help="Expected deployment training mode; /models must agree.",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     result = run(args)

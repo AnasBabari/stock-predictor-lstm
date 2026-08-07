@@ -73,6 +73,29 @@ def test_health_and_readiness():
     assert body["dependencies"]["model_storage"]["writable"] is None
 
 
+def test_ready_reports_server_forecast_infrastructure_by_mode(monkeypatch):
+    api._record_upstream("available")
+    monkeypatch.setattr(api.settings, "training_mode", "server_pretrained")
+    monkeypatch.setattr(api.settings, "server_forecast_serving_enabled", True)
+    monkeypatch.setattr(api.settings, "registry_database_url", None)
+    monkeypatch.setattr(api.settings, "s3_bucket", None)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["dependencies"]["server_forecasts"] == {
+        "configured": False,
+        "status": "unconfigured",
+        "required": True,
+    }
+    assert body["dependencies"]["model_storage"]["required"] is True
+
+    monkeypatch.setattr(api.settings, "training_mode", "browser_only")
+    healthy = client.get("/ready")
+    assert healthy.status_code == 200
+    assert healthy.json()["dependencies"]["server_forecasts"]["required"] is False
+
+
 def test_root_discloses_service_routes():
     response = client.get("/")
     assert response.status_code == 200
@@ -654,7 +677,13 @@ def test_models_advertises_browser_training_and_disabled_server_models():
     body = client.get("/models").json()
     assert body["server_models"] == {
         "status": "disabled",
-        "reason": "Models are trained and cached per user in the browser.",
+        "reason": "Server forecast serving is disabled.",
+        "training_mode": "browser_only",
+    }
+    assert body["model_storage"] == {
+        "location": "browser",
+        "required": False,
+        "detail": "Models are trained and cached per user in the browser.",
     }
     assert body["browser_training"]["status"] == "available"
     assert body["browser_training"]["storage"] == "indexeddb"

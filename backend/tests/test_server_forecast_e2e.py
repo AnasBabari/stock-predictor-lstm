@@ -59,15 +59,28 @@ def _fixture(snapshot_suffix: str):
 
 
 def _passing_run(*args, **kwargs):
+    pooled = {
+        "relative_rmse": 0.85,
+        "relative_mae": 0.9,
+        "mae": 0.005,
+        "rmse": 0.006,
+        "sample_count": 200 * MAX_FORECAST_DAYS,
+    }
+    per_horizon = {
+        str(h): {
+            "relative_rmse": 0.9,
+            "relative_mae": 0.9,
+            "sample_count": 200,
+        }
+        for h in range(1, MAX_FORECAST_DAYS + 1)
+    }
     return {
         "models": {
             "elastic_net": {
-                "promotion": {"promoted": True},
+                "promotion": {"promoted": True, "reasons": []},
                 "aggregate": {
-                    "pooled": {"relative_rmse": 0.85, "relative_mae": 0.9},
-                    "per_horizon": {
-                        str(h): {"relative_rmse": 0.9} for h in range(1, MAX_FORECAST_DAYS + 1)
-                    },
+                    "pooled": pooled,
+                    "per_horizon": per_horizon,
                 },
             }
         }

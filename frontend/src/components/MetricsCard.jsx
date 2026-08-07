@@ -16,6 +16,7 @@ function HorizonTable({ metrics }) {
   const perHorizon = metrics.per_horizon;
   if (!Array.isArray(perHorizon) || !perHorizon.length) return null;
   const selected = Number(metrics.horizon) || null;
+  const unitLabel = !metrics.metric_units || metrics.metric_units !== 'price' ? 'Return' : 'Price';
   return (
     <div className="metrics-horizons">
       <div className="metric-divider"></div>
@@ -28,8 +29,8 @@ function HorizonTable({ metrics }) {
         <thead>
           <tr>
             <th>Horizon</th>
-            <th>MAE</th>
-            <th>RMSE</th>
+            <th>{unitLabel} MAE</th>
+            <th>{unitLabel} RMSE</th>
             <th>vs persist.</th>
             <th>Direction</th>
             <th>Rows</th>
@@ -93,17 +94,17 @@ export default function MetricsCard({ stockData, forecastType }) {
       : m.metric_source === 'walk_forward_out_of_fold'
         ? 'Walk-forward out-of-fold evaluation'
         : 'Baseline definition';
+  const unitLabel = !m.metric_units || m.metric_units !== 'price' ? 'Return' : 'Price';
 
   const priceMetrics = [
-    ['RMSE', m.rmse?.toFixed(4), 'Root Mean Squared Error — lower is better'],
-    ['MAE', m.mae?.toFixed(4), 'Mean Absolute Error — lower is better'],
+    [`${unitLabel} RMSE`, m.rmse?.toFixed(4), `${unitLabel} root mean squared error on cumulative log returns — lower is better`],
+    [`${unitLabel} MAE`, m.mae?.toFixed(4), `${unitLabel} mean absolute error on cumulative log returns — lower is better`],
     ['RMSE vs persistence', m.relative_rmse == null ? null : `${m.relative_rmse.toFixed(3)}×`, 'Below 1 beats a no-change forecast'],
     ['MAE vs persistence', m.relative_mae == null ? null : `${m.relative_mae.toFixed(3)}×`, 'Below 1 beats a no-change forecast'],
     ['Directional accuracy', m.directional_accuracy == null ? null : `${(m.directional_accuracy * 100).toFixed(1)}%`, 'Share of horizons where predicted return sign matched the realized return'],
     ['Dollar RMSE', m.dollar_rmse == null ? null : `$${m.dollar_rmse.toFixed(2)}`, 'Root Mean Squared Error on reconstructed prices — lower is better'],
     ['Dollar MAE', m.dollar_mae == null ? null : `$${m.dollar_mae.toFixed(2)}`, 'Mean Absolute Error on reconstructed prices — lower is better'],
-    ['R²', m.r2?.toFixed(4), 'R Squared'],
-    ['MAPE', m.mape == null ? null : `${m.mape.toFixed(2)}%`, 'Mean Absolute Percentage Error'],
+    [`${unitLabel} R²`, m.r2?.toFixed(4), `R² on cumulative log returns — higher is better`],
   ];
   const trendMetrics = [
     ['Accuracy', m.accuracy == null ? null : `${(m.accuracy * 100).toFixed(1)}%`, 'Fraction of correct direction labels'],

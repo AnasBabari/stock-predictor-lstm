@@ -83,8 +83,12 @@ if CI.exists():
     elif "browser-real-training.spec.js" in contract_e2e:
         errors.append("frontend-contract-e2e must never run the real-training spec.")
 
-    if "backend" not in compose_smoke or "policy" not in compose_smoke or \
-            "frontend-unit-build" not in compose_smoke or "frontend-contract-e2e" not in compose_smoke:
+    if (
+        "backend" not in compose_smoke
+        or "policy" not in compose_smoke
+        or "frontend-unit-build" not in compose_smoke
+        or "frontend-contract-e2e" not in compose_smoke
+    ):
         errors.append(
             "compose-smoke must depend on backend, policy, frontend-unit-build, and frontend-contract-e2e."
         )
@@ -121,6 +125,16 @@ if dev_names != requirement_names(ROOT / "backend" / "requirements-dev.txt"):
     errors.append("requirements-dev.txt names have drifted from the dev dependency group.")
 if (ROOT / "backend" / "uv.lock").stat().st_size < 1000:
     errors.append("backend/uv.lock is missing or incomplete.")
+
+render_text = (ROOT / "render.yaml").read_text(encoding="utf-8")
+if (
+    "--frozen" not in render_text
+    or "uv sync" not in render_text
+    or "pip install -r requirements.txt" in render_text
+):
+    errors.append("render.yaml must install runtime dependencies from the frozen backend/uv.lock.")
+if "uv==" not in render_text:
+    errors.append("render.yaml must pin the uv version used for the lockfile install.")
 
 if errors:
     print("\n".join(f"ERROR: {error}" for error in errors), file=sys.stderr)

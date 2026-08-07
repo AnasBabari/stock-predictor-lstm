@@ -173,4 +173,4 @@ to browser training.
   The e2e contract spec installs a stubbed Web Worker
   (`globalThis.__STOCKLSTM_WORKER_FACTORY__`) via `e2e/fixtures.js` so it never
   builds TF.js models; real browser training is covered by
-  `frontend/e2e/vercel-preview.spec.js`.
+  `frontend/e2e/browser-real-training.spec.js`.

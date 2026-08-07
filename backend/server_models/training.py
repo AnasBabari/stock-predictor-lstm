@@ -21,6 +21,7 @@ from server_models.contracts import (
     ServerModelRecord,
     git_commit_short,
 )
+from server_models.promotion import assess_server_promotion
 
 logger = logging.getLogger(__name__)
 
@@ -45,23 +46,21 @@ def train_server_forecast(ticker: str, registry, storage, signer) -> ServerModel
         feature_values, close_values, feature_names=list(FEATURES_V4), config=config, dates=dates
     )
 
-    # 3. Assess promotion
+    # 3. Assess promotion with the harmonized gate set (report-level first so
+    # hopeless candidates never pay for a full model fit).
     best_candidate = None
-    best_rmse = float("inf")
-
     for candidate_name in ("elastic_net",):
         report = result["models"][candidate_name]
-        rmse = report["aggregate"]["pooled"]["relative_rmse"]
-        mae = report["aggregate"]["pooled"]["relative_mae"]
-        if rmse < 0.98 and mae < 0.98 and rmse < best_rmse:
-            best_rmse = rmse
+        passed, reasons = assess_server_promotion(report, selected_horizon=MAX_FORECAST_DAYS)
+        if passed:
             best_candidate = candidate_name
+            break
 
     if not best_candidate:
         logger.warning(f"No candidate passed promotion gates for {ticker}.")
         return None
 
-    logger.info(f"Candidate {best_candidate} passed with RMSE {best_rmse:.4f}")
+    logger.info(f"Candidate {best_candidate} passed with report gates for {ticker}.")
 
     # 4. Train best candidate on the entire dataset
     # We must construct the windowed dataset just like walk-forward runner does
@@ -108,6 +107,19 @@ def train_server_forecast(ticker: str, registry, storage, signer) -> ServerModel
     origin_close = float(close_values[-1])
     origin_date_val = pd.Timestamp(dates[-1])
     predicted_prices = reconstruct_prices([origin_close], predicted_targets, "log_return")[0]
+
+    # Re-run the full gate set now that a real forecast exists, including the
+    # volatility plausibility range learned from observed horizon returns.
+    predicted_cumulative_return = float(predicted_targets[0, MAX_FORECAST_DAYS - 1])
+    passed, reasons = assess_server_promotion(
+        result["models"][best_candidate],
+        selected_horizon=MAX_FORECAST_DAYS,
+        close_values=close_values,
+        predicted_cumulative_return=predicted_cumulative_return,
+    )
+    if not passed:
+        logger.warning(f"Final promotion gates failed for {ticker}: {'; '.join(reasons)}")
+        return None
 
     predicted_log_returns = predicted_targets[0]
 

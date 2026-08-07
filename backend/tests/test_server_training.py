@@ -5,7 +5,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sklearn.preprocessing import RobustScaler
 
 from artifacts.signing import Ed25519ManifestSigner, Ed25519ManifestVerifier
-from config import FEATURES_V4
+from config import FEATURES_V4, MAX_FORECAST_DAYS
 from server_models.contracts import (
     FORECAST_LENGTH,
     HISTORY_DISPLAY_WINDOW,
@@ -74,26 +74,55 @@ def _stub_scaler(monkeypatch) -> None:
 
 
 def _mock_run(monkeypatch, elastic_net_rmse: float, elastic_net_mae: float, calls=None) -> None:
+    def _pooled(rmse: float, mae: float) -> dict:
+        return {
+            "relative_rmse": rmse,
+            "relative_mae": mae,
+            "mae": 0.01,
+            "rmse": 0.01,
+            "sample_count": 200 * FORECAST_LENGTH,
+        }
+
+    def _horizon_metrics(h: int) -> dict:
+        return {
+            "mae": 0.01,
+            "rmse": 0.01,
+            "relative_mae": elastic_net_mae,
+            "relative_rmse": elastic_net_rmse,
+            "sample_count": 200,
+        }
+
     def fake_run(*args, **kwargs):
         if calls is not None:
             calls.append(kwargs)
         return {
             "models": {
                 "elastic_net": {
-                    "promotion": {"promoted": elastic_net_rmse < 1.0 and elastic_net_mae < 1.0},
+                    "promotion": {
+                        "promoted": elastic_net_rmse < 1.0 and elastic_net_mae < 1.0,
+                        "reasons": []
+                        if (elastic_net_rmse < 1.0 and elastic_net_mae < 1.0)
+                        else ["pooled relative metrics"],
+                    },
                     "aggregate": {
-                        "pooled": {
-                            "relative_rmse": elastic_net_rmse,
-                            "relative_mae": elastic_net_mae,
+                        "pooled": _pooled(elastic_net_rmse, elastic_net_mae),
+                        "per_horizon": {
+                            str(h): _horizon_metrics(h) for h in range(1, MAX_FORECAST_DAYS + 1)
                         },
-                        "per_horizon": {},
                     },
                 },
                 "ridge": {
-                    "promotion": {"promoted": False},
+                    "promotion": {"promoted": False, "reasons": ["pooled relative failed"]},
                     "aggregate": {
-                        "pooled": {"relative_rmse": 1.2, "relative_mae": 1.2},
-                        "per_horizon": {},
+                        "pooled": _pooled(1.2, 1.2),
+                        "per_horizon": {
+                            str(h): {
+                                "relative_rmse": 1.2,
+                                "relative_mae": 1.2,
+                                "sample_count": 200,
+                            }
+                            for h in range(1, MAX_FORECAST_DAYS + 1)
+                        },
                     },
                 },
             }
@@ -211,6 +240,28 @@ def test_train_server_forecast_infers_from_the_latest_window(monkeypatch):
         bundle.future_dates[i] < bundle.future_dates[i + 1]
         for i in range(len(bundle.future_dates) - 1)
     )
+
+
+def test_train_server_forecast_rejects_implausible_volatility(monkeypatch):
+    class LoudElasticNet:
+        """Predicts far larger returns than the observed volatility range."""
+
+        def fit(self, features, targets):
+            return self
+
+        def predict(self, features) -> np.ndarray:
+            return np.full((features.shape[0], FORECAST_LENGTH), 0.9)
+
+    registry, storage, signer = _registry_and_storage()
+    _stub_fetch(monkeypatch)
+    _mock_run(monkeypatch, elastic_net_rmse=0.8, elastic_net_mae=0.8)
+    monkeypatch.setattr("server_models.training.ElasticNetForecaster", LoudElasticNet)
+
+    record = train_server_forecast("AAPL", registry, storage, signer)
+
+    assert record is None
+    assert registry.get_promoted("AAPL") is None
+    assert len(storage._objects) == 0
 
 
 def test_train_server_forecast_bundle_is_signed_and_self_contained(monkeypatch):

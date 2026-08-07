@@ -1,10 +1,13 @@
 import { expect, test } from '@playwright/test';
 import { deterministicSnapshot, installStubBrowserWorker, serverForecastPayload } from './fixtures.js';
 
-// Contract spec for the hybrid path: server-pretrained forecast when the
-// server responds, browser training when it falls back, and the trend->direction
-// API mapping. All server APIs are intercepted and the browser-training worker
-// is stubbed, so this runs anywhere in seconds without building TF.js models.
+// Contract spec for the hybrid/server-pretrained paths: server-pretrained
+// forecast when the server responds, browser training when it falls back, and
+// the trend->direction API mapping. The frontend defaults to browser_only
+// (never probing the server), so each test explicitly injects the training
+// mode it exercises. All server APIs are intercepted and the browser-training
+// worker is stubbed, so this runs anywhere in seconds without building TF.js
+// models.
 
 function mockApi(page, forecastHandler) {
   const calls = { server: [], trainingData: 0, search: 0 };
@@ -29,8 +32,11 @@ function mockApi(page, forecastHandler) {
   return calls;
 }
 
-async function prepare(page, calls) {
+async function prepare(page, calls, mode) {
   await installStubBrowserWorker(page);
+  await page.addInitScript((value) => {
+    window.STOCKLSTM_TRAINING_MODE = value;
+  }, mode);
   await page.goto('/');
   await page.locator('#trainingProfile').selectOption('quick');
   await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
@@ -40,7 +46,7 @@ async function prepare(page, calls) {
 test('server price forecast is used verbatim and browser training is skipped', async ({ page }) => {
   test.setTimeout(30_000);
   const calls = mockApi(page, (route) => route.fulfill({ json: serverForecastPayload('MSFT', 7) }));
-  await prepare(page, calls);
+  await prepare(page, calls, 'hybrid');
 
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
   await expect(page.getByText('Price Forecast Metrics')).toBeVisible({ timeout: 60_000 });
@@ -57,7 +63,7 @@ test('server fallback (missing) sends the request to browser training', async ({
   const calls = mockApi(page, (route) =>
     route.fulfill({ json: { available: false, reason: 'missing', fallback: 'browser_training' } })
   );
-  await prepare(page, calls);
+  await prepare(page, calls, 'hybrid');
 
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
   await expect(page.getByText('Price Forecast Metrics')).toBeVisible({ timeout: 150_000 });
@@ -79,7 +85,7 @@ test('server 503 (infrastructure, hybrid) degrades to browser training', async (
       },
     })
   );
-  await prepare(page, calls);
+  await prepare(page, calls, 'hybrid');
 
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
   await expect(page.getByText('Price Forecast Metrics')).toBeVisible({ timeout: 150_000 });
@@ -101,7 +107,7 @@ test('server 503 without a browser fallback (server_pretrained) surfaces an erro
       },
     })
   );
-  await prepare(page, calls);
+  await prepare(page, calls, 'server_pretrained');
 
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
   await expect(page.getByText(/bundle verification failed|Server forecast/i).first()).toBeVisible({
@@ -120,7 +126,7 @@ test('UI trend request maps to API direction and lands in the browser trend path
       json: { available: false, reason: 'unsupported_forecast_type', fallback: 'browser_training' },
     });
   });
-  await prepare(page, calls);
+  await prepare(page, calls, 'hybrid');
 
   const trendButton = page.getByRole('button', { name: 'Trend Forecast' });
   await trendButton.click();

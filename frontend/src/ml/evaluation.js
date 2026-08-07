@@ -33,6 +33,8 @@ export function classificationMetrics(actual, predicted, metricSource) {
   const labels = flatten(actual).map((value) => Number(value) > 0.5 ? 1 : 0);
   const probabilities = flatten(predicted).map((value) => Math.min(1, Math.max(0, Number(value))));
   const predictedLabels = probabilities.map((value) => value >= 0.5 ? 1 : 0);
+  const isMatrix = Array.isArray(actual) && Array.isArray(actual[0]);
+  const evaluationOrigins = isMatrix ? actual.length : 1;
   let tp = 0; let tn = 0; let fp = 0; let fn = 0;
   labels.forEach((value, index) => {
     if (value === 1 && predictedLabels[index] === 1) tp += 1;
@@ -60,6 +62,8 @@ export function classificationMetrics(actual, predicted, metricSource) {
       ? probabilities.reduce((sum, value, index) => sum + (value - labels[index]) ** 2, 0) / labels.length
       : 0,
     naive_baseline: labels.length ? Math.max(positives, labels.length - positives) / labels.length : 0,
+    evaluation_origins: evaluationOrigins,
+    evaluation_labels: labels.length,
     evaluation_rows: labels.length,
   };
 }

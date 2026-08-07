@@ -215,11 +215,15 @@ export function evaluateDirectionPromotion({ metrics, evaluation, thresholds = P
   const balancedAccuracy = Number(metrics.balanced_accuracy);
   const brier = Number(metrics.brier_score);
   const naiveRate = Number(metrics.naive_baseline);
-  const rowCount = Number(metrics.evaluation_rows ?? 0);
+  // Evidence is measured in forecast origins, not flattened horizon labels:
+  // require at least minimumEvaluationRows origins so a single origin with many
+  // horizons can never satisfy the minimum evidence gate by itself.
+  const rowCount = Number(metrics.evaluation_origins ?? metrics.evaluation_rows ?? 0);
   checks.balancedAccuracy = balancedAccuracy;
   checks.brierScore = brier;
   checks.naiveBaseline = naiveRate;
   checks.evaluationRows = rowCount;
+  checks.evaluationLabels = Number(metrics.evaluation_labels ?? metrics.evaluation_rows ?? 0);
 
   const metricsFinite = finite(balancedAccuracy) && finite(brier) && finite(naiveRate);
   checks.finiteMetrics = metricsFinite;

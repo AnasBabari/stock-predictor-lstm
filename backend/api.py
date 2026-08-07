@@ -798,7 +798,9 @@ def health():
 
 @app.get("/ready")
 def ready():
-    """Readiness checks the market-data dependency; no model disk is required."""
+    """Readiness checks the market-data dependency and, in server-pretrained
+    deployments, the server-forecast infrastructure. No browser model disk is
+    required for browser training."""
     with _upstream_lock:
         upstream = dict(_upstream_state)
     checked_at = upstream["checked_at_epoch"] or 0
@@ -809,38 +811,91 @@ def ready():
     if upstream["circuit"] == "open" and not circuit_blocked:
         upstream["circuit"] = "half_open"
     is_ready = not circuit_blocked
+    dependencies = {
+        "market_data": upstream,
+        "model_storage": {
+            "required": False,
+            "writable": None,
+            "detail": "Browser-trained models are trained and cached in each user's browser.",
+        },
+    }
+
+    # Mode-aware server-forecast readiness: in server_pretrained deployments the
+    # serving stack is a hard dependency (no silent browser fallback); in hybrid
+    # deployments it is reported but not required.
+    if settings.server_forecast_serving_enabled:
+        from server_models.api import server_forecast_readiness
+
+        readiness = server_forecast_readiness()
+        server_ready = readiness.configured
+        dependencies["server_forecasts"] = {
+            "configured": readiness.configured,
+            "status": "ready" if readiness.configured else readiness.reason,
+            "required": settings.training_mode == "server_pretrained",
+        }
+        if settings.training_mode == "server_pretrained":
+            dependencies["model_storage"] = {
+                "required": True,
+                "writable": readiness.configured,
+                "detail": "Server artifacts are stored in the registry and object store.",
+            }
+            is_ready = is_ready and server_ready
     content = {
         "status": "ready" if is_ready else "degraded",
         "version": APP_VERSION,
         "deployment": _deployment_identity(),
-        "dependencies": {
-            "market_data": upstream,
-            "model_storage": {
-                "required": False,
-                "writable": None,
-                "detail": "Models are trained and cached in each user's browser.",
-            },
-        },
+        "dependencies": dependencies,
     }
     return JSONResponse(status_code=200 if is_ready else 503, content=content)
 
 
 @app.get("/models")
 def list_models():
-    """Describe browser-trained model availability; no server artifacts are exposed."""
+    """Describe browser-trained model availability and, when enabled, the
+    server-forecast serving stack. The server_models block reflects the real
+    deployment mode instead of always claiming server artifacts are disabled."""
+    from server_models.api import MESSAGES, server_forecast_readiness
+
+    server_models = {
+        "status": "disabled",
+        "reason": "Server forecast serving is disabled.",
+        "training_mode": settings.training_mode,
+    }
+    if settings.server_forecast_serving_enabled:
+        readiness = server_forecast_readiness()
+        if readiness.configured:
+            status = "configured"
+            reason = "Server-pretrained forecast serving is configured."
+        else:
+            status = readiness.reason or "unconfigured"
+            reason = MESSAGES.get(status, "Server forecast serving is not fully configured.")
+        server_models = {
+            "status": status,
+            "reason": reason,
+            "training_mode": settings.training_mode,
+        }
     return {
         "version": APP_VERSION,
         "manifest": {},
-        "server_models": {
-            "status": "disabled",
-            "reason": "Models are trained and cached per user in the browser.",
-        },
+        "server_models": server_models,
         "browser_training": {
             "status": "available",
             "model_family": "compact_tfjs_lstm",
             "storage": "indexeddb",
             "cache_scope": "per_user_per_ticker",
             "supported_forecast_types": ["price", "direction"],
+        },
+        "model_storage": {
+            "location": "registry" if settings.server_forecast_serving_enabled else "browser",
+            "required": (
+                settings.server_forecast_serving_enabled
+                and settings.training_mode == "server_pretrained"
+            ),
+            "detail": (
+                "Server artifacts are stored in the registry and object store."
+                if settings.server_forecast_serving_enabled
+                else "Models are trained and cached per user in the browser."
+            ),
         },
         "availability": {
             "price": {

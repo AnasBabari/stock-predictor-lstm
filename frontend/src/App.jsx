@@ -21,11 +21,12 @@ const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || ''
 const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
 // Mirrors the backend TRAINING_MODE at deploy time so the server-pretrained
 // client knows that a server outage is a hard failure, never a silent switch
-// to browser training.
+// to browser training. The default matches the backend default (browser_only):
+// a pure browser deployment never probes the server-forecast endpoint.
 const DEPLOYMENT_TRAINING_MODE = (
   window.STOCKLSTM_TRAINING_MODE ||
   import.meta.env.VITE_TRAINING_MODE ||
-  'hybrid'
+  'browser_only'
 ).toLowerCase();
 const THEME_KEY = 'stocklstm-theme:v1';
 const WL_KEY = 'stocklstm-watchlist:v1';
@@ -312,11 +313,17 @@ export default function App() {
   }, []);
   const fetchPredictionData = useCallback(
     async (symbol, days, type, signal, onProgress) => {
-      // Try fetching a high-quality server-pretrained model first
-      onProgress?.({ stage: 'checking_server', message: 'Checking for server-pretrained models...' });
-      const serverPrediction = await fetchServerPrediction(symbol, days, type, signal, {
-        mode: DEPLOYMENT_TRAINING_MODE,
-      });
+      // Probe the server-pretrained endpoint only when the deployment actually
+      // needs it. In browser_only deployments the server-forecast endpoint is
+      // never called, so an unrelated backend 503 can never block browser
+      // training.
+      let serverPrediction = null;
+      if (DEPLOYMENT_TRAINING_MODE !== 'browser_only') {
+        onProgress?.({ stage: 'checking_server', message: 'Checking for server-pretrained models...' });
+        serverPrediction = await fetchServerPrediction(symbol, days, type, signal, {
+          mode: DEPLOYMENT_TRAINING_MODE,
+        });
+      }
       if (serverPrediction) {
         onProgress?.({ stage: 'server_model_loaded', message: 'Loaded server-pretrained model.' });
         return serverPrediction;
@@ -598,7 +605,6 @@ export default function App() {
         price_model_version: priceData.metadata?.model_version,
         direction_model: trendData.metadata?.architecture,
         direction_model_version: trendData.metadata?.model_version,
-        backend_api_version: priceData.metadata?.model_version,
         price_metric_source: priceData.metrics?.metric_source,
         direction_metric_source: trendData.metrics?.metric_source,
       };

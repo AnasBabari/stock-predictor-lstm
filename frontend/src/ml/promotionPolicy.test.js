@@ -50,6 +50,8 @@ function directionMetrics(balancedAccuracy, brier, naive, rows = 600) {
     brier_score: brier,
     naive_baseline: naive,
     evaluation_rows: rows,
+    evaluation_origins: rows,
+    evaluation_labels: rows * 30,
   };
 }
 
@@ -289,6 +291,44 @@ test('rejects a direction model with too few evaluated observations', () => {
   });
   expect(result.promoted).toBe(false);
   expect(result.reasons).toContain('The direction model has too few evaluated observations.');
+});
+
+test('asks for evaluated origins, not flattened labels, in the direction row gate', () => {
+  // Flattened labels balloon past 60 while the true origin count is tiny.
+  const manyLabels = evaluatePromotion({
+    forecastType: 'direction',
+    metrics: {
+      metric_source: 'browser_walk_forward_out_of_fold',
+      accuracy: 0.62,
+      balanced_accuracy: 0.62,
+      brier_score: 0.2,
+      naive_baseline: 0.55,
+      evaluation_origins: 4,
+      evaluation_rows: 4 * 30,
+      evaluation_labels: 4 * 30,
+    },
+    evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
+    horizon: 7,
+  });
+  expect(manyLabels.promoted).toBe(false);
+  expect(manyLabels.reasons).toContain('The direction model has too few evaluated observations.');
+
+  const enough = evaluatePromotion({
+    forecastType: 'direction',
+    metrics: {
+      metric_source: 'browser_walk_forward_out_of_fold',
+      accuracy: 0.62,
+      balanced_accuracy: 0.62,
+      brier_score: 0.2,
+      naive_baseline: 0.55,
+      evaluation_origins: 300,
+      evaluation_rows: 300,
+      evaluation_labels: 300 * 30,
+    },
+    evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
+    horizon: 7,
+  });
+  expect(enough.promoted).toBe(true);
 });
 
 test('rejects a direction model with non-finite metrics', () => {

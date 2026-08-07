@@ -178,7 +178,31 @@ export function serverForecastPayload(ticker = 'MSFT', days = 7, origin = '2026-
     historical_prices: Array.from({ length: historyLength }, (_, index) =>
       lastClose * (1 - 0.0025 * (historyLength - 1 - index))
     ),
-    metrics: { pooled: { relative_rmse: 0.85, relative_mae: 0.9 } },
+    metrics: {
+      metric_source: 'server_purged_walk_forward',
+      metric_scope: 'forecast_origin_horizon_pairs',
+      family: 'elastic_net',
+      target_mode: 'cumulative_log_return_v1',
+      horizon: days,
+      mae: 0.004,
+      mse: 0.00003,
+      rmse: 0.0055,
+      mape: 0.005,
+      r2: 0.97,
+      relative_mae: 0.45,
+      relative_rmse: 0.4,
+      directional_accuracy: 0.6,
+      per_horizon: Array.from({ length: days }, (_, index) => ({
+        horizon: index + 1,
+        rows: 160,
+        mae: 0.004,
+        rmse: 0.0055,
+        relative_mae: 0.45,
+        relative_rmse: 0.4,
+        directional_accuracy: 0.6,
+      })),
+      evaluation_rows: 160,
+    },
     metadata: {
       engine: {
         role: 'server_pretrained',

@@ -42,6 +42,7 @@ from config import settings
 from server_models.compatibility import check_record_compatibility, is_fresh
 from server_models.contracts import ServerForecastBundle
 from server_models.db import PostgresRegistry
+from server_models.metrics import build_served_metrics
 from server_models.response_models import (
     ForecastMetadata,
     PredictionExecution,
@@ -398,7 +399,7 @@ def get_forecast(
         predicted_prices=bundle.predicted_prices[:days],
         historical_dates=[d.isoformat() for d in bundle.historical_dates],
         historical_prices=bundle.historical_prices,
-        metrics=bundle.evidence,
+        metrics=build_served_metrics(bundle.evidence, horizon=days),
         metadata=ForecastMetadata(
             timings_seconds=PredictionTimings(
                 queue_wait=None,
