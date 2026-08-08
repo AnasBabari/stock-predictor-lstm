@@ -13,6 +13,7 @@ import {
   prepareDirectionData,
   preparePriceData,
   resolveHorizon,
+  sequencePartition,
   validateSnapshot,
 } from './preprocessing';
 import {
@@ -164,10 +165,10 @@ async function benchmarkBackend() {
   return Math.round(duration);
 }
 
-function prepare(snapshot, forecastType, scalerEnd, horizon) {
+function prepare(snapshot, forecastType, fitSequenceEndExclusive, horizon) {
   return forecastType === 'direction'
-    ? prepareDirectionData(snapshot, scalerEnd, horizon)
-    : preparePriceData(snapshot, scalerEnd, horizon);
+    ? prepareDirectionData(snapshot, fitSequenceEndExclusive, horizon)
+    : preparePriceData(snapshot, fitSequenceEndExclusive, horizon);
 }
 
 async function predictRows(model, inputs) {
@@ -182,11 +183,11 @@ async function predictRows(model, inputs) {
   }
 }
 
-async function fitSelectionModel({ id, model, inputs, targets, fittingEnd, validationStart, validationEnd = inputs.length, profile, startedAt, stage, fold }) {
+async function fitSelectionModel({ id, model, inputs, targets, fitSequenceEndExclusive, validationStart, validationEnd = inputs.length, profile, startedAt, stage, fold }) {
   const xs = tf.tensor3d(inputs);
   const ys = tf.tensor2d(targets);
-  const trainXs = xs.slice([0, 0, 0], [fittingEnd, -1, -1]);
-  const trainYs = ys.slice([0, 0], [fittingEnd, -1]);
+  const trainXs = xs.slice([0, 0, 0], [fitSequenceEndExclusive, -1, -1]);
+  const trainYs = ys.slice([0, 0], [fitSequenceEndExclusive, -1]);
   const validationXs = xs.slice([validationStart, 0, 0], [validationEnd - validationStart, -1, -1]);
   const validationYs = ys.slice([validationStart, 0], [validationEnd - validationStart, -1]);
   let bestLoss = Infinity;
@@ -348,9 +349,8 @@ function aggregateFoldMetrics(records, forecastType, horizon) {
 }
 
 async function trainHoldout(id, snapshot, forecastType, profile, startedAt, horizon) {
-  const sampleCount = snapshot.features.length - WINDOW_SIZE - horizon + 1;
-  const split = Math.floor(sampleCount * TRAIN_SPLIT);
-  let selection = prepare(snapshot, forecastType, WINDOW_SIZE + split, horizon);
+  const { sampleCount } = sequencePartition(snapshot, forecastType, horizon);
+  let selection = prepare(snapshot, forecastType, undefined, horizon);
   const selectionModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
   let metrics;
   let dollarMetrics;
@@ -358,14 +358,14 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
   try {
     const innerValidationSize = Math.max(1, Math.floor(selection.trainCount * 0.1));
     const innerValidationStart = selection.trainCount - innerValidationSize;
-    const fittingEnd = innerValidationStart - (horizon - 1);
-    if (fittingEnd < 1) throw new Error('Not enough training data for a purged validation split.');
+    const fitSequenceEndExclusive = innerValidationStart - (horizon - 1);
+    if (fitSequenceEndExclusive < 1) throw new Error('Not enough training data for a purged validation split.');
     const fit = await fitSelectionModel({
       id,
       model: selectionModel,
       inputs: selection.inputs,
       targets: selection.targets,
-      fittingEnd,
+      fitSequenceEndExclusive,
       validationStart: innerValidationStart,
       validationEnd: selection.trainCount,
       profile,
@@ -389,7 +389,7 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
 
   checkCancelled(id);
   selection = null;
-  const finalPrepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER, horizon);
+  const finalPrepared = prepare(snapshot, forecastType, sampleCount, horizon);
   const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
   try {
     await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, epochs: selectedEpochs, profile, startedAt });
@@ -422,7 +422,8 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
   };
 }
 
-async function trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey, horizon) {  const sampleCount = snapshot.features.length - WINDOW_SIZE - horizon + 1;
+async function trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey, horizon) {
+  const { sampleCount } = sequencePartition(snapshot, forecastType, horizon);
   const splits = generateResearchSplits(sampleCount, {
     folds: profile.folds,
     validationHorizon: profile.validationHorizon,
@@ -444,11 +445,11 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
 
   for (const split of splits.slice(records.length)) {
     checkCancelled(id);
-    const foldPrepared = prepare(snapshot, forecastType, WINDOW_SIZE + split.validationStart, horizon);
+    const foldPrepared = prepare(snapshot, forecastType, split.trainEnd, horizon);
     const innerValidationSize = Math.max(1, Math.floor(split.trainEnd * 0.1));
     const innerValidationStart = split.trainEnd - innerValidationSize;
-    const fittingEnd = innerValidationStart - (horizon - 1);
-    if (fittingEnd < 1) throw new Error('Research fold purge leaves no fitting samples.');
+    const fitSequenceEndExclusive = innerValidationStart - (horizon - 1);
+    if (fitSequenceEndExclusive < 1) throw new Error('Research fold purge leaves no fitting samples.');
     const foldModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
     try {
       const fit = await fitSelectionModel({
@@ -456,7 +457,7 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         model: foldModel,
         inputs: foldPrepared.inputs.slice(0, split.trainEnd),
         targets: foldPrepared.targets.slice(0, split.trainEnd),
-        fittingEnd,
+        fitSequenceEndExclusive,
         validationStart: innerValidationStart,
         validationEnd: split.trainEnd,
         profile,
@@ -507,7 +508,7 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
   const metrics = aggregated.metrics;
   const dollarMetrics = aggregated.dollarMetrics;
   const selectedEpochs = Math.max(1, median(records.map((record) => record.best_epoch)));
-  const finalPrepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER, horizon);
+  const finalPrepared = prepare(snapshot, forecastType, sampleCount, horizon);
   const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
   try {
     await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, epochs: selectedEpochs, profile, startedAt });
@@ -607,7 +608,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       if (!validCachedModel(model, cachedMetadata, snapshot, profile, backend, horizon)) {
         throw new Error('Cached browser model is incompatible.');
       }
-      prepared = prepare(snapshot, forecastType, Number.MAX_SAFE_INTEGER, horizon);
+      prepared = prepare(snapshot, forecastType, sequencePartition(snapshot, forecastType, horizon).sampleCount, horizon);
       metrics = cachedMetadata.metrics;
       evaluation = cachedMetadata.evaluation;
       selectedEpochs = cachedMetadata.selected_epochs;

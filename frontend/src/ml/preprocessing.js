@@ -117,20 +117,58 @@ export function scaleRows(rows, scaler) {
   return rows.map((row) => row.map((value, column) => (Number(value) - scaler.median[column]) / scaler.iqr[column]));
 }
 
+// A zero-based sequence j consumes raw rows [j, j + WINDOW_SIZE).
+// A fitting sequence interval [fitSequenceStart, fitSequenceEndExclusive)
+// therefore reaches raw rows from fitSequenceStart through
+// (fitSequenceEndExclusive - 1) + WINDOW_SIZE, exclusive.
+export function fittingScalerBounds(fitSequenceStart, fitSequenceEndExclusive, windowSize = WINDOW_SIZE) {
+  const fitSequenceCount = fitSequenceEndExclusive - fitSequenceStart;
+  if (fitSequenceCount <= 0) {
+    return {
+      fitSequenceStart,
+      fitSequenceEndExclusive,
+      fitSequenceCount: 0,
+      scalerRawStart: fitSequenceStart,
+      scalerRawEndExclusive: fitSequenceStart,
+      hasFittingSequences: false,
+    };
+  }
+  return {
+    fitSequenceStart,
+    fitSequenceEndExclusive,
+    fitSequenceCount,
+    scalerRawStart: fitSequenceStart,
+    scalerRawEndExclusive: (fitSequenceEndExclusive - 1) + windowSize,
+    hasFittingSequences: true,
+  };
+}
+
 export function inverseRobust(value, scaler, column) {
   return Number(value) * scaler.iqr[column] + scaler.median[column];
 }
 
-export function preparePriceData(snapshot, scalerEnd, horizon = OUTPUT_WIDTH) {
-  const rows = snapshot.features.map((row) => row.map(Number));
-  const closes = snapshot.historical_prices.map(Number);
+// Sequence-partition arithmetic, shared by price and direction preprocessing.
+// Direction consumes the shifted raw-feature matrix (features.slice(1)), so its
+// sequence count is one shorter than the price coordinate system.
+export function sequencePartition(snapshot, forecastType, horizon = OUTPUT_WIDTH) {
   const h = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(horizon) || OUTPUT_WIDTH)));
-  const sampleCount = rows.length - WINDOW_SIZE - h + 1;
+  const rowCount = forecastType === 'direction' ? snapshot.features.length - 1 : snapshot.features.length;
+  const sampleCount = rowCount - WINDOW_SIZE - h + 1;
   if (sampleCount <= 0) throw new Error('Not enough rows for browser training.');
   const split = Math.floor(sampleCount * TRAIN_SPLIT);
   const trainCount = split - h + 1;
   if (trainCount < 1 || split >= sampleCount) throw new Error('Training split is too small.');
-  const scaler = fitRobustScaler(rows, scalerEnd ?? split + WINDOW_SIZE);
+  return { sampleCount, split, trainCount, horizon: h };
+}
+
+export function preparePriceData(snapshot, fitSequenceEndExclusive, horizon = OUTPUT_WIDTH) {
+  const partition = sequencePartition(snapshot, 'price', horizon);
+  const { sampleCount, split, trainCount, horizon: h } = partition;
+  const rows = snapshot.features.map((row) => row.map(Number));
+  const closes = snapshot.historical_prices.map(Number);
+  const bounds = fittingScalerBounds(0, fitSequenceEndExclusive ?? trainCount);
+  if (!bounds.hasFittingSequences) throw new Error('No fitting sequences are available for scaler bounds.');
+  const scaler = fitRobustScaler(rows, bounds.scalerRawEndExclusive);
   const scaled = scaleRows(rows, scaler);
   const inputs = [];
   const targets = [];
@@ -140,20 +178,18 @@ export function preparePriceData(snapshot, scalerEnd, horizon = OUTPUT_WIDTH) {
     targets.push(closes.slice(index, index + h).map((close, step) => Math.log(close / closes[index - 1])));
     origins.push(closes[index - 1]);
   }
-  return { inputs, targets, origins, scaler, split, trainCount, scaled, horizon: h, closes };
+  return { inputs, targets, origins, scaler, split, trainCount, scaled, horizon: h, closes, ...bounds };
 }
 
-export function prepareDirectionData(snapshot, scalerEnd, horizon = OUTPUT_WIDTH) {
-  const h = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(horizon) || OUTPUT_WIDTH)));
+export function prepareDirectionData(snapshot, fitSequenceEndExclusive, horizon = OUTPUT_WIDTH) {
+  const partition = sequencePartition(snapshot, 'direction', horizon);
+  const { sampleCount, split, trainCount, horizon: h } = partition;
   const rawRows = snapshot.features.slice(1).map((row) => row.map(Number));
   const prices = snapshot.historical_prices.map(Number);
   const returns = prices.slice(1).map((price, index) => Math.log(price / prices[index]));
-  const sampleCount = rawRows.length - WINDOW_SIZE - h + 1;
-  if (sampleCount <= 0) throw new Error('Not enough rows for browser training.');
-  const split = Math.floor(sampleCount * TRAIN_SPLIT);
-  const trainCount = split - h + 1;
-  if (trainCount < 1 || split >= sampleCount) throw new Error('Training split is too small.');
-  const scaler = fitRobustScaler(rawRows, scalerEnd ?? split + WINDOW_SIZE);
+  const bounds = fittingScalerBounds(0, fitSequenceEndExclusive ?? trainCount);
+  if (!bounds.hasFittingSequences) throw new Error('No fitting sequences are available for scaler bounds.');
+  const scaler = fitRobustScaler(rawRows, bounds.scalerRawEndExclusive);
   const scaled = scaleRows(rawRows, scaler);
   const inputs = [];
   const targets = [];
@@ -161,7 +197,7 @@ export function prepareDirectionData(snapshot, scalerEnd, horizon = OUTPUT_WIDTH
     inputs.push(scaled.slice(index - WINDOW_SIZE, index));
     targets.push(returns.slice(index, index + h).map((value) => (value > 0 ? 1 : 0)));
   }
-  return { inputs, targets, scaler, split, trainCount, scaled, horizon: h };
+  return { inputs, targets, scaler, split, trainCount, scaled, horizon: h, ...bounds };
 }
 
 export function featureSignature(featureNames) {
