@@ -50,4 +50,7 @@ test('trains a real direction model and falls back to the majority baseline', as
   // the learned direction model cannot beat the majority-class baseline on the
   // untouched holdout: the gate must visibly fall back to the baseline.
   await expect(page.getByText(/majority class displayed/i)).toBeVisible({ timeout: 30_000 });
+  // Direction evidence is also reported per forecast day.
+  await expect(page.getByText('Direction by forecast day')).toBeVisible();
+  await expect(page.locator('.horizon-metrics-table')).toContainText('Day');
 });

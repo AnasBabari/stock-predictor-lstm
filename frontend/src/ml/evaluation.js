@@ -95,6 +95,32 @@ export function directionalAccuracy(actualReturns, predictedReturns) {
   return agreement / pairs.length;
 }
 
+// Direction evidence split by forecast day: each matrix column is one horizon
+// step ahead, reported with the same pooled/pre-evaluation majority label.
+export function horizonClassificationMetrics(actualRows, predictedRows, metricSource, majorityLabel) {
+  const steps = Math.max(1, actualRows?.[0]?.length || 1);
+  const perHorizon = Array.from({ length: steps }, (_, step) => {
+    const actual = actualRows.map((row) => [row[step]]);
+    const predicted = predictedRows.map((row) => [row[step]]);
+    const metrics = classificationMetrics(actual, predicted, metricSource, majorityLabel);
+    return {
+      horizon: step + 1,
+      rows: actual.length,
+      accuracy: metrics.accuracy,
+      balanced_accuracy: metrics.balanced_accuracy,
+      precision: metrics.precision,
+      recall: metrics.recall,
+      f1: metrics.f1,
+      brier_score: metrics.brier_score,
+      naive_baseline: metrics.naive_baseline,
+    };
+  });
+  return {
+    pooled: classificationMetrics(actualRows, predictedRows, metricSource, majorityLabel),
+    per_horizon: perHorizon,
+  };
+}
+
 export function horizonRegressionMetrics(actualRows, predictedRows, persistenceRows, horizon, metricSource) {
   const pooled = regressionMetrics(
     flatten(actualRows), flatten(predictedRows), flatten(persistenceRows), metricSource,

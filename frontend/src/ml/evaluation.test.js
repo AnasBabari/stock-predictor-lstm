@@ -2,6 +2,7 @@ import {
   classificationMetrics,
   directionalAccuracy,
   generateResearchSplits,
+  horizonClassificationMetrics,
   horizonRegressionMetrics,
   regressionMetrics,
 } from './evaluation';
@@ -62,4 +63,28 @@ test('keeps direction probabilities bounded and reports the majority baseline', 
   expect(metrics.accuracy).toBe(0.75);
   expect(metrics.naive_baseline).toBe(0.75);
   expect(metrics.brier_score).toBeGreaterThanOrEqual(0);
+});
+
+test('reports direction evidence separately for each forecast day', () => {
+  const actual = [[1, 0, 1], [0, 1, 1]];
+  const predicted = [[0.9, 0.1, 0.8], [0.2, 0.9, 0.4]];
+  const evidence = horizonClassificationMetrics(actual, predicted, 'browser_walk_forward_out_of_fold');
+  expect(evidence.per_horizon).toHaveLength(3);
+  expect(evidence.per_horizon[0].horizon).toBe(1);
+  expect(evidence.per_horizon[0].rows).toBe(2);
+  expect(evidence.per_horizon[0].accuracy).toBe(1);
+  expect(evidence.per_horizon[1].accuracy).toBe(1);
+  expect(evidence.per_horizon[2].accuracy).toBe(0.5);
+  expect(evidence.per_horizon[2].naive_baseline).toBe(1);
+  expect(evidence.pooled.accuracy).toBeCloseTo(5 / 6);
+  expect(evidence.pooled.evaluation_rows).toBe(6);
+});
+
+test('per-horizon direction evidence honors the pre-evaluation majority label', () => {
+  const actual = [[1, 0, 1], [0, 1, 1]];
+  const predicted = [[0.9, 0.1, 0.8], [0.2, 0.9, 0.4]];
+  const evidence = horizonClassificationMetrics(actual, predicted, 'browser_purged_holdout', 0);
+  expect(evidence.per_horizon[0].naive_baseline).toBe(0.5);
+  expect(evidence.per_horizon[1].naive_baseline).toBe(0.5);
+  expect(evidence.per_horizon[2].naive_baseline).toBe(0);
 });

@@ -57,6 +57,45 @@ function HorizonTable({ metrics }) {
   );
 }
 
+function DirectionHorizonTable({ metrics }) {
+  const perHorizon = metrics.direction_per_horizon;
+  if (!Array.isArray(perHorizon) || !perHorizon.length) return null;
+  return (
+    <div className="metrics-horizons">
+      <div className="metric-divider"></div>
+      <MetricItem
+        iconTitle="Direction evidence is reported per forecast day and pooled. The baseline is the pre-evaluation majority class."
+        label="Direction by forecast day"
+        value="Per-day accuracy"
+      />
+      <table className="horizon-metrics-table">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Accuracy</th>
+            <th>Balanced</th>
+            <th>Brier</th>
+            <th>Baseline</th>
+            <th>Rows</th>
+          </tr>
+        </thead>
+        <tbody>
+          {perHorizon.map((entry) => (
+            <tr key={entry.horizon}>
+              <td>{entry.horizon}d</td>
+              <td className="mono">{entry.accuracy == null ? '—' : `${(entry.accuracy * 100).toFixed(0)}%`}</td>
+              <td className="mono">{entry.balanced_accuracy == null ? '—' : `${(entry.balanced_accuracy * 100).toFixed(0)}%`}</td>
+              <td className="mono">{entry.brier_score?.toFixed(4)}</td>
+              <td className="mono">{entry.naive_baseline == null ? '—' : `${(entry.naive_baseline * 100).toFixed(0)}%`}</td>
+              <td className="mono">{entry.rows}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function PromotionNotice({ stockData, forecastType }) {
   const engine = stockData.metadata?.engine;
   const promotion = stockData.metadata?.promotion;
@@ -152,6 +191,7 @@ export default function MetricsCard({ stockData, forecastType }) {
         </React.Fragment>
       ))}
       {!isTrend && <HorizonTable metrics={m} />}
+      {isTrend && <DirectionHorizonTable metrics={m} />}
       <PromotionNotice stockData={stockData} forecastType={forecastType} />
       {underperforms && (
         <div className="metrics-warning" role="status">

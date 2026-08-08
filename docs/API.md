@@ -88,7 +88,7 @@ The Vercel frontend fetches `/api/v1/training-data`, then sends the snapshot and
 
 A learned response uses `metadata.engine.role = browser_learned` and execution mode `browser_trained` or `browser_artifact_loaded`. Metadata discloses the profile, backend, TensorFlow.js and architecture versions, selected/completed epochs, evaluation completeness, storage status, snapshot, and training duration. Keys cover all compatibility inputs, and final models are limited to six entries, 200 MiB, and seven days. Research fold summaries may resume for 24 hours; no partial run has a completed metric source.
 
-Quick/Balanced price and direction evidence is labelled `browser_purged_holdout`. A complete Research run is labelled `browser_walk_forward_out_of_fold`. Price metrics are MAE, MSE, RMSE, MAPE, R², and relative MAE/RMSE against persistence. Direction metrics are accuracy, precision, recall, F1, balanced accuracy, Brier score, and majority-class accuracy. Price results do not expose an accuracy percentage.
+Quick/Balanced price and direction evidence is labelled `browser_purged_holdout`. A complete Research run is labelled `browser_walk_forward_out_of_fold`. Price metrics are MAE, MSE, RMSE, MAPE, R², and relative MAE/RMSE against persistence. Direction metrics are accuracy, precision, recall, F1, balanced accuracy, Brier score, and majority-class accuracy, each also broken out per forecast day under `direction_per_horizon`. Price results do not expose an accuracy percentage.
 
 Unsupported workers or failed browser training use an explicit `baseline_fallback` response. A flat persistence result must never be presented as an LSTM result.
 

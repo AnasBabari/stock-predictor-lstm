@@ -20,6 +20,7 @@ import {
   classificationMetrics,
   directionMajority,
   generateResearchSplits,
+  horizonClassificationMetrics,
   horizonRegressionMetrics,
   median,
   regressionMetrics,
@@ -294,10 +295,12 @@ async function evaluateRange(model, prepared, forecastType, start, end, metricSo
   const predictedRows = await predictRows(model, prepared.inputs.slice(start, end));
   if (forecastType === 'direction') {
     const actual = prepared.targets.slice(start, end);
+    const evidence = horizonClassificationMetrics(actual, predictedRows, metricSource, majorityLabel);
     return {
       actual,
       predicted: predictedRows,
-      metrics: classificationMetrics(actual, predictedRows, metricSource, majorityLabel),
+      metrics: evidence.pooled,
+      direction_per_horizon: evidence.per_horizon,
     };
   }
   const actualRows = prepared.targets.slice(start, end);
@@ -322,14 +325,18 @@ async function evaluateRange(model, prepared, forecastType, start, end, metricSo
 
 function aggregateFoldMetrics(records, forecastType, horizon, majorityLabel) {
   if (forecastType === 'direction') {
+    const actuals = records.flatMap((record) => record.actual);
+    const predicteds = records.flatMap((record) => record.predicted);
+    const evidence = horizonClassificationMetrics(
+      actuals,
+      predicteds,
+      'browser_walk_forward_out_of_fold',
+      majorityLabel,
+    );
     return {
-      metrics: classificationMetrics(
-        records.flatMap((record) => record.actual),
-        records.flatMap((record) => record.predicted),
-        'browser_walk_forward_out_of_fold',
-        majorityLabel,
-      ),
+      metrics: evidence.pooled,
       dollarMetrics: null,
+      direction_per_horizon: evidence.per_horizon,
     };
   }
   const returnMetrics = horizonRegressionMetrics(
@@ -386,6 +393,9 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
       horizon,
       profile.metricSource,
     );
+    if (evaluated.direction_per_horizon?.length) {
+      metrics.direction_per_horizon = evaluated.direction_per_horizon;
+    }
     dollarMetrics = evaluated.dollarMetrics;
   } finally {
     selectionModel.dispose();
@@ -521,6 +531,9 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
   );
   const metrics = aggregated.metrics;
   const dollarMetrics = aggregated.dollarMetrics;
+  if (aggregated.direction_per_horizon?.length) {
+    metrics.direction_per_horizon = aggregated.direction_per_horizon;
+  }
   const selectedEpochs = Math.max(1, median(records.map((record) => record.best_epoch)));
   const finalPrepared = prepare(snapshot, forecastType, sampleCount, horizon);
   const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
