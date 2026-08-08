@@ -63,7 +63,7 @@ def future_trading_dates(
         horizon *= 2
     if len(future) != days:
         raise ValueError(f"Could not generate {days} dates for calendar {identifier}.")
-    if any(a >= b for a, b in zip(future, future[1:])):
+    if any(a >= b for a, b in zip(future, future[1:], strict=False)):
         raise ValueError(f"Calendar {identifier} produced non-chronological session dates.")
     future_dates = [d.strftime("%Y-%m-%d") for d in future]
     return future_dates, identifier

@@ -7,11 +7,22 @@ import sys
 import tomllib
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = list((ROOT / ".github" / "workflows").glob("*.yml"))
 workflow_text = "\n".join(path.read_text(encoding="utf-8") for path in WORKFLOWS)
 
 errors: list[str] = []
+for workflow in WORKFLOWS:
+    try:
+        document = yaml.safe_load(workflow.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        errors.append(f"{workflow.relative_to(ROOT)} is invalid YAML: {exc}")
+        continue
+    if not isinstance(document, dict) or not isinstance(document.get("jobs"), dict):
+        errors.append(f"{workflow.relative_to(ROOT)} must define a jobs mapping.")
+
 if "@latest" in workflow_text:
     errors.append("GitHub workflows may not execute mutable @latest tools.")
 
@@ -35,6 +46,7 @@ for required in (
     "uv lock --project backend --check",
     "uv sync --project backend --frozen",
     "npm ci",
+    "pyyaml==6.0.3",
     "scripts/check_api_docs.py",
     "scripts/check_text_hygiene.py",
 ):

@@ -155,5 +155,5 @@ def _require_strictly_increasing_dates(dates: list[str], label: str) -> None:
             parsed.append(pd.Timestamp(str(value)))
         except (ValueError, TypeError):
             raise ValueError(f"{label} contain invalid dates.") from None
-    if any(prev >= date for prev, date in zip(parsed, parsed[1:])):
+    if any(prev >= date for prev, date in zip(parsed, parsed[1:], strict=False)):
         raise ValueError(f"{label} are not in strict chronological order.")
