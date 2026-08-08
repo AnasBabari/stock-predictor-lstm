@@ -23,6 +23,7 @@ function makeSnapshot(rowCount = 200, closeValues) {
     featureNames.map((_, column) => column === 0 ? 0.001 * row : row + column + 1),
   );
   const closes = closeValues || Array.from({ length: rowCount }, (_, row) => 100 + row);
+  const isoDay = (row) => new Date(Date.UTC(2025, 0, 1 + row)).toISOString().slice(0, 10);
   return {
     ticker: 'TEST',
     schema_version: FEATURE_SCHEMA_VERSION,
@@ -30,13 +31,45 @@ function makeSnapshot(rowCount = 200, closeValues) {
     feature_names: featureNames,
     window_size: WINDOW_SIZE,
     output_width: OUTPUT_WIDTH,
-    dates: Array.from({ length: rowCount }, (_, row) => `2025-01-${String(row + 1).padStart(2, '0')}`),
+    dates: Array.from({ length: rowCount }, (_, row) => isoDay(row)),
     features,
     historical_prices: closes,
-    future_dates: Array.from({ length: OUTPUT_WIDTH }, (_, row) => `2026-01-${String(row + 1).padStart(2, '0')}`),
+    future_dates: Array.from({ length: OUTPUT_WIDTH }, (_, row) =>
+      new Date(Date.UTC(2026, 0, 1 + row)).toISOString().slice(0, 10),
+    ),
     data_snapshot: {},
   };
 }
+
+test('rejects non-chronological dates and future dates', () => {
+  const snapshot = makeSnapshot();
+  const scrambled = { ...snapshot, dates: snapshot.dates.slice().reverse() };
+  expect(() => validateSnapshot(scrambled)).toThrow(/chronological/i);
+
+  const duplicated = {
+    ...snapshot,
+    dates: snapshot.dates.map((date, index) => (index === 150 ? snapshot.dates[149] : date)),
+    features: snapshot.features.map((row, index) => (index === 150 ? snapshot.features[149] : row)),
+  };
+  expect(() => validateSnapshot(duplicated)).toThrow(/chronological/);
+
+  const scrambledFuture = {
+    ...snapshot,
+    future_dates: [...snapshot.future_dates].reverse(),
+  };
+  expect(() => validateSnapshot(scrambledFuture)).toThrow(/chronological/);
+
+  const futureBeforeHistory = {
+    ...snapshot,
+    future_dates: Array.from({ length: OUTPUT_WIDTH }, (_, row) =>
+      new Date(Date.UTC(2024, 11, 1 + row)).toISOString().slice(0, 10),
+    ),
+  };
+  expect(() => validateSnapshot(futureBeforeHistory)).toThrow(/do not follow/);
+
+  const invalidDate = { ...snapshot, dates: ['not-a-date', ...snapshot.dates.slice(1)] };
+  expect(() => validateSnapshot(invalidDate)).toThrow(/chronological|invalid/);
+});
 
 test('validates the schema-v4 browser snapshot contract', () => {
   const snapshot = makeSnapshot();

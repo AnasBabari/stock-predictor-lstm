@@ -42,6 +42,20 @@ function finite(value) {
   return Number.isFinite(Number(value));
 }
 
+function isoTimestamp(value) {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function isStrictlyIncreasing(dates) {
+  for (let index = 1; index < dates.length; index += 1) {
+    const prev = isoTimestamp(dates[index - 1]);
+    const next = isoTimestamp(dates[index]);
+    if (prev == null || next == null || prev >= next) return false;
+  }
+  return true;
+}
+
 export function validateSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') throw new Error('Training data is unavailable.');
   if (typeof snapshot.ticker !== 'string' || !snapshot.ticker.trim()) {
@@ -68,6 +82,9 @@ export function validateSnapshot(snapshot) {
   if (!snapshot.dates.every((date) => typeof date === 'string' && date.length > 0)) {
     throw new Error('Training feature dates are invalid.');
   }
+  if (!isStrictlyIncreasing(snapshot.dates)) {
+    throw new Error('Training feature dates are not in strict chronological order.');
+  }
   if (snapshot.features.length < WINDOW_SIZE + OUTPUT_WIDTH + 1) {
     throw new Error('Not enough historical data for browser training.');
   }
@@ -83,6 +100,14 @@ export function validateSnapshot(snapshot) {
   if (!Array.isArray(snapshot.future_dates) || snapshot.future_dates.length < OUTPUT_WIDTH ||
       !snapshot.future_dates.every((date) => typeof date === 'string' && date.length > 0)) {
     throw new Error('Training future dates are invalid.');
+  }
+  if (!isStrictlyIncreasing(snapshot.future_dates)) {
+    throw new Error('Training future dates are not in strict chronological order.');
+  }
+  const lastTradingDay = isoTimestamp(snapshot.dates[snapshot.dates.length - 1]);
+  const firstForecastDay = isoTimestamp(snapshot.future_dates[0]);
+  if (lastTradingDay == null || firstForecastDay == null || firstForecastDay <= lastTradingDay) {
+    throw new Error('Training future dates do not follow the last trading day.');
   }
 }
 

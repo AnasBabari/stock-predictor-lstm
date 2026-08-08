@@ -3,12 +3,13 @@ import { FEATURE_NAMES, FEATURE_SCHEMA_VERSION } from './preprocessing';
 function snapshot() {
   const rows = 100;
   const features = Array.from({ length: rows }, (_, row) => FEATURE_NAMES.map((_, column) => row + column + 1));
+  const isoDay = (year, index) => new Date(Date.UTC(year, 0, 1 + index)).toISOString().slice(0, 10);
   return {
     ticker: 'TEST', schema_version: FEATURE_SCHEMA_VERSION, snapshot_id: 'snapshot-client', feature_names: FEATURE_NAMES,
     window_size: 60, output_width: 30,
-    dates: Array.from({ length: rows }, (_, index) => `day-${index}`),
+    dates: Array.from({ length: rows }, (_, index) => isoDay(2025, index)),
     features, historical_prices: features.map((row) => row[0]),
-    future_dates: Array.from({ length: 30 }, (_, index) => `future-${index}`),
+    future_dates: Array.from({ length: 30 }, (_, index) => isoDay(2026, index)),
   };
 }
 
