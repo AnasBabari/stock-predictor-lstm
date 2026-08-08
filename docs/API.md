@@ -18,7 +18,7 @@ All errors use `{"detail":"..."}`. `400` means invalid or insufficient instrumen
 
 Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`). Rate limit: 10/minute/client. The server fetches and validates the bounded feature snapshot; it accepts no client-supplied feature matrix and writes no files.
 
-The response preserves the 28-feature order (Stationary Schema v4), includes a deterministic `snapshot_id`, 60-session `window_size`, 30-step `output_width`, historical prices, and backend-generated future trading dates.
+The response preserves the 28-feature order (Stationary Schema v4), includes a deterministic `snapshot_id`, 60-session `window_size`, 30-step `output_width`, historical prices, and backend-generated future trading dates. Both `dates` and `future_dates` are strictly increasing unique ISO dates, and every future date falls after the last historical trading day; the backend validates this before serialization and the frontend re-validates it on receipt.
 
 ```json
 {
@@ -86,7 +86,7 @@ The same parameters and rate limit return a recent-up-session base-rate forecast
 
 The Vercel frontend fetches `/api/v1/training-data`, then sends the snapshot and the selected `quick`, `balanced`, or `research` profile to a TensorFlow.js Web Worker. Quick uses a 32/16-unit LSTM and at most 12 epochs; Balanced uses 64/32 units and at most 25 epochs; Research runs the Balanced architecture across five expanding, purged 60-session validation folds before fitting the final model. The worker tries WebGPU, WebGL, then CPU, reports fold/epoch/timing progress, supports cancellation, and disposes temporary tensors.
 
-A learned response uses `metadata.engine.role = browser_learned` and execution mode `browser_trained` or `browser_artifact_loaded`. Metadata discloses the profile, backend, TensorFlow.js and architecture versions, selected/completed epochs, evaluation completeness, storage status, snapshot, and training duration. Keys cover all compatibility inputs, and final models are limited to six entries, 200 MiB, and seven days. Research fold summaries may resume for 24 hours; no partial run has a completed metric source.
+A learned response uses `metadata.engine.role = browser_learned` and execution mode `browser_trained` or `browser_artifact_loaded`. Metadata discloses the profile, backend, TensorFlow.js and architecture versions, selected/completed epochs, evaluation completeness, storage status, snapshot, and training duration. Keys cover all compatibility inputs, and final models are limited to eight entries, 200 MiB, and seven days. Research fold summaries may resume for 24 hours; no partial run has a completed metric source.
 
 Metrics always describe the selection evidence, never the artifact that is served: Quick/Balanced report the untouched post-purge holdout of the selection model; Research reports pooled untouched out-of-fold predictions. The stored model is a final refit over the full sequence range with the selected epoch count, used only for local inference, and the metadata scaler belongs to that final refit.
 
