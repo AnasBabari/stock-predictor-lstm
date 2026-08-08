@@ -2,6 +2,17 @@ export function flatten(values) {
   return values.flatMap((row) => (Array.isArray(row) ? row : [row])).map(Number);
 }
 
+// The direction baseline (majority class) must be derived from labels strictly
+// before the evaluation window. This helper returns { label, rate } where
+// label is the majority class (0/1) and rate the positive-class prevalence,
+// both over the supplied (pre-evaluation) label rows.
+export function directionMajority(targetRows) {
+  const labels = flatten(targetRows).map((value) => (Number(value) > 0.5 ? 1 : 0));
+  const positives = labels.filter((value) => value === 1).length;
+  const rate = labels.length ? positives / labels.length : 0.5;
+  return { label: rate >= 0.5 ? 1 : 0, rate };
+}
+
 export function regressionMetrics(actual, predicted, persistence, metricSource) {
   const errors = actual.map((value, index) => value - predicted[index]);
   const squared = errors.map((value) => value ** 2);
@@ -29,7 +40,7 @@ export function regressionMetrics(actual, predicted, persistence, metricSource) 
   };
 }
 
-export function classificationMetrics(actual, predicted, metricSource) {
+export function classificationMetrics(actual, predicted, metricSource, majorityLabel) {
   const labels = flatten(actual).map((value) => Number(value) > 0.5 ? 1 : 0);
   const probabilities = flatten(predicted).map((value) => Math.min(1, Math.max(0, Number(value))));
   const predictedLabels = probabilities.map((value) => value >= 0.5 ? 1 : 0);
@@ -47,6 +58,11 @@ export function classificationMetrics(actual, predicted, metricSource) {
   const recall = tp + fn ? tp / (tp + fn) : 0;
   const downRecall = tn + fp ? tn / (tn + fp) : 0;
   const positives = labels.filter((value) => value === 1).length;
+  const naiveBaseline = labels.length
+    ? majorityLabel == null
+      ? Math.max(positives, labels.length - positives) / labels.length
+      : labels.filter((value) => value === majorityLabel).length / labels.length
+    : 0;
   return {
     metric_source: metricSource,
     metric_scope: metricSource === 'browser_walk_forward_out_of_fold'
@@ -61,7 +77,7 @@ export function classificationMetrics(actual, predicted, metricSource) {
     brier_score: labels.length
       ? probabilities.reduce((sum, value, index) => sum + (value - labels[index]) ** 2, 0) / labels.length
       : 0,
-    naive_baseline: labels.length ? Math.max(positives, labels.length - positives) / labels.length : 0,
+    naive_baseline: naiveBaseline,
     evaluation_origins: evaluationOrigins,
     evaluation_labels: labels.length,
     evaluation_rows: labels.length,

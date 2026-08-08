@@ -18,7 +18,7 @@ import {
 } from './preprocessing';
 import {
   classificationMetrics,
-  flatten,
+  directionMajority,
   generateResearchSplits,
   horizonRegressionMetrics,
   median,
@@ -290,14 +290,14 @@ function combineMetrics(returnMetrics, dollarMetrics, horizon, metricSource) {
   };
 }
 
-async function evaluateRange(model, prepared, forecastType, start, end, metricSource, horizon) {
+async function evaluateRange(model, prepared, forecastType, start, end, metricSource, horizon, majorityLabel) {
   const predictedRows = await predictRows(model, prepared.inputs.slice(start, end));
   if (forecastType === 'direction') {
     const actual = prepared.targets.slice(start, end);
     return {
       actual,
       predicted: predictedRows,
-      metrics: classificationMetrics(actual, predictedRows, metricSource),
+      metrics: classificationMetrics(actual, predictedRows, metricSource, majorityLabel),
     };
   }
   const actualRows = prepared.targets.slice(start, end);
@@ -320,13 +320,14 @@ async function evaluateRange(model, prepared, forecastType, start, end, metricSo
   };
 }
 
-function aggregateFoldMetrics(records, forecastType, horizon) {
+function aggregateFoldMetrics(records, forecastType, horizon, majorityLabel) {
   if (forecastType === 'direction') {
     return {
       metrics: classificationMetrics(
         records.flatMap((record) => record.actual),
         records.flatMap((record) => record.predicted),
         'browser_walk_forward_out_of_fold',
+        majorityLabel,
       ),
       dollarMetrics: null,
     };
@@ -373,8 +374,11 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
       stage: 'training',
     });
     selectedEpochs = fit.bestEpoch;
+    // The majority baseline must not peek into the evaluation window: it is
+    // derived from labels strictly prior to the holdout split.
+    const majority = directionMajority(selection.targets.slice(0, selection.split));
     const evaluated = await evaluateRange(
-      selectionModel, selection, forecastType, selection.split, selection.inputs.length, profile.metricSource, horizon,
+      selectionModel, selection, forecastType, selection.split, selection.inputs.length, profile.metricSource, horizon, majority.label,
     );
     metrics = evaluated.metrics ?? combineMetrics(
       evaluated.returnMetrics,
@@ -446,6 +450,9 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
   for (const split of splits.slice(records.length)) {
     checkCancelled(id);
     const foldPrepared = prepare(snapshot, forecastType, split.trainEnd, horizon);
+    // Every validation fold defines its own untouched evaluation window; the
+    // majority class is taken from labels strictly before that window.
+    const foldMajority = directionMajority(foldPrepared.targets.slice(0, split.validationStart));
     const innerValidationSize = Math.max(1, Math.floor(split.trainEnd * 0.1));
     const innerValidationStart = split.trainEnd - innerValidationSize;
     const fitSequenceEndExclusive = innerValidationStart - (horizon - 1);
@@ -473,11 +480,13 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         split.validationEnd,
         profile.metricSource,
         horizon,
+        foldMajority.label,
       );
       records.push({
         fold: split.fold,
         best_epoch: fit.bestEpoch,
         metrics: evaluated.metrics,
+        majority: foldMajority,
         actual: evaluated.actual,
         predicted: evaluated.predicted,
         ...(evaluated.persistence ? { persistence: evaluated.persistence } : {}),
@@ -504,7 +513,12 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
     await tf.nextFrame();
   }
 
-  const aggregated = aggregateFoldMetrics(records, forecastType, horizon);
+  const aggregated = aggregateFoldMetrics(
+    records,
+    forecastType,
+    horizon,
+    records[records.length - 1]?.majority?.label,
+  );
   const metrics = aggregated.metrics;
   const dollarMetrics = aggregated.dollarMetrics;
   const selectedEpochs = Math.max(1, median(records.map((record) => record.best_epoch)));
@@ -723,17 +737,22 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
         evaluation,
         horizon,
       });
-      const flatTargets = flatten(prepared.targets);
-      const totalTargetCount = flatTargets.length;
-      const majorityRate = totalTargetCount > 0
-        ? clamp(flatTargets.reduce((sum, value) => sum + Number(value), 0) / totalTargetCount)
-        : 0.5;
+      // The fallback baseline must use pre-evaluation prevalence only: the
+      // majority class and its positive-class rate are derived from labels
+      // strictly before the evaluation window (the holdout split, or the
+      // final research fold's validation start, which spans the union of
+      // every fold's pre-evaluation labels).
+      const sampleCount = sequencePartition(snapshot, forecastType, horizon).sampleCount;
+      const preEvaluationEnd = profile.id === 'research'
+        ? sampleCount - profile.validationHorizon
+        : Math.floor(sampleCount * TRAIN_SPLIT);
+      const majority = directionMajority(prepared.targets.slice(0, preEvaluationEnd));
       const baselineFallback = !promotion.promoted;
       const directions = baselineFallback
-        ? rawProbabilities.map(() => (majorityRate >= 0.5 ? 'Up' : 'Down'))
+        ? rawProbabilities.map(() => (majority.label === 1 ? 'Up' : 'Down'))
         : rawProbabilities.map((value) => (value >= 0.5 ? 'Up' : 'Down'));
       const fallbackProbabilities = baselineFallback
-        ? rawProbabilities.map(() => majorityRate)
+        ? rawProbabilities.map(() => majority.rate)
         : rawProbabilities;
       return {
         ...common,
