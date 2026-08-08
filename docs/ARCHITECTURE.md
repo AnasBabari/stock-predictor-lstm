@@ -33,11 +33,15 @@ The worker offers three immutable profiles. Quick uses a 32/16-unit LSTM for a s
 - WebGPU, WebGL, then CPU selection, with runtime and capability metadata recorded.
 - Cooperative cancellation, tensor disposal, and final-model refitting using the selected epoch count.
 
+### Evaluation and artifact provenance
+
+Reported metrics always describe a model that never saw its evaluation window: Quick/Balanced metrics come from the selection model evaluated on the untouched post-purge holdout (a scaler fitted only to fitting observations backs both the training data and the metric display), and Research metrics come from untouched out-of-fold predictions of per-fold models. The persisted, served artifact is the *final refit*: the same profile trains once more on the full available sequence range with the selected epoch count, purely for local inference. Its stored scaler is the final-refit scaler, which legitimately spans the full sequence range, so scaler state alone must never be compared to selection-time boundaries. No metric is ever claimed from predictions of the final refit.
+
 Research requires at least 300 fitting sequences before its first validation fold. Each fold has its own scaler and purged early-stopping tail; untouched out-of-fold predictions are pooled before metrics are calculated. Completed fold summaries are checkpointed for 24 hours, but partial work is never labelled as a completed benchmark.
 
 Cache keys include architecture/model versions, schema, ordered-feature signature, ticker, forecast type, profile, backend, snapshot, window, and horizon. Final models and companion evidence use IndexedDB, expire after seven days, and are bounded to six models and 200 MiB. Higher-quality successful profiles evict lower-quality variants for the same ticker/type. Storage failures retain only the current session model.
 
-Quick/Balanced evidence uses `browser_purged_holdout`; Research uses `browser_walk_forward_out_of_fold`. Price results show errors and persistence-relative ratios, not “accuracy.” Direction results disclose accuracy and the majority-class baseline. TensorFlow.js GPU kernels may differ numerically by browser, so reproducibility is defined by the recorded snapshot, seed, profile, splits, TensorFlow.js version, and backend rather than bit-identical weights.
+Quick/Balanced evidence uses `browser_purged_holdout`; Research uses `browser_walk_forward_out_of_fold`. Price results show errors and persistence-relative ratios, not “accuracy.” Direction results disclose accuracy and the majority-class baseline, derived from pre-evaluation labels only, and report the same evidence per forecast day. TensorFlow.js GPU kernels may differ numerically by browser, so reproducibility is defined by the recorded snapshot, seed, profile, splits, TensorFlow.js version, and backend rather than bit-identical weights.
 
 ## Data and news boundary
 
