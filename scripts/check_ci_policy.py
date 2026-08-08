@@ -79,6 +79,7 @@ if CI.exists():
     ci_jobs = job_blocks(CI.read_text(encoding="utf-8"))
     unit_build = ci_jobs.get("frontend-unit-build", "")
     contract_e2e = ci_jobs.get("frontend-contract-e2e", "")
+    policy = ci_jobs.get("policy", "")
     compose_smoke = ci_jobs.get("compose-smoke", "")
 
     if not unit_build:
@@ -94,6 +95,11 @@ if CI.exists():
         errors.append("frontend-contract-e2e job must run the server-contract spec.")
     elif "browser-real-training.spec.js" in contract_e2e:
         errors.append("frontend-contract-e2e must never run the real-training spec.")
+
+    if "scripts/check_methodology_gate.py" not in policy:
+        errors.append("policy job must run the methodology gate.")
+    elif "fetch-depth: 0" not in policy:
+        errors.append("policy job must fetch full history for the methodology gate.")
 
     if (
         "backend" not in compose_smoke
