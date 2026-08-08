@@ -28,6 +28,7 @@ import {
 import { buildPersistenceForecast, evaluatePromotion } from './promotionPolicy';
 import { resolveTrainingProfile } from './trainingProfiles';
 import { buildBrowserModel } from './modelFactory';
+import { isVersionedKey } from './storageKeys';
 
 const DB_NAME = 'stocklstm-browser-models';
 const DB_VERSION = 1;
@@ -86,7 +87,14 @@ async function deleteEntry(entry) {
 async function pruneCache() {
   const entries = await listMetadata().catch(() => []);
   const now = Date.now();
-  for (const entry of entries.filter((item) =>
+  // Reclaim entries whose key belongs to an older model/architecture/target
+  // version namespace; version bumps change the key rather than invalidating
+  // in place, so stale-version rows would otherwise linger until the TTL.
+  for (const entry of entries.filter((item) => !isVersionedKey(item?.key))) {
+    await deleteEntry(entry);
+  }
+
+  for (const entry of (await listMetadata().catch(() => [])).filter((item) =>
     item.kind === 'checkpoint'
       ? now - item.updated_at > CHECKPOINT_TTL_MS
       : now - item.created_at > MODEL_TTL_MS)) {
