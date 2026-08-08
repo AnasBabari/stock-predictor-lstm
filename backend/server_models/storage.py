@@ -40,6 +40,12 @@ class ObjectStore(ABC):
     @abstractmethod
     def exists(self, key: str) -> bool: ...
 
+    @abstractmethod
+    def delete(self, key: str) -> None: ...
+
+    @abstractmethod
+    def delete_bundle(self, version_id: str) -> None: ...
+
 
 class InMemoryObjectStore(ObjectStore):
     """Dict-backed store for unit tests and local dry runs."""
@@ -66,6 +72,12 @@ class InMemoryObjectStore(ObjectStore):
         with self._lock:
             return key in self._objects
 
+    def delete(self, key: str) -> None:
+        if not key:
+            raise ObjectStoreError("Object key must not be empty.")
+        with self._lock:
+            self._objects.pop(key, None)
+
     def bundle_key(self, version_id: str) -> str:
         if not version_id:
             raise ObjectStoreError("Artifact version_id must not be empty.")
@@ -84,6 +96,9 @@ class InMemoryObjectStore(ObjectStore):
 
     def bundle_exists(self, version_id: str) -> bool:
         return self.exists(self.bundle_key(version_id))
+
+    def delete_bundle(self, version_id: str) -> None:
+        self.delete(self.bundle_key(version_id))
 
 
 class S3ObjectStore(ObjectStore):
@@ -136,6 +151,16 @@ class S3ObjectStore(ObjectStore):
             raise ObjectStoreError(f"Object store check failed for {key}") from exc
         return True
 
+    def delete(self, key: str) -> None:
+        if not key:
+            raise ObjectStoreError("Object key must not be empty.")
+        try:
+            # S3 DeleteObject is idempotent: a missing key is already in the
+            # desired state and must not make a retrying retention sweep fail.
+            self._client.delete_object(Bucket=self._bucket, Key=key)
+        except Exception as exc:
+            raise ObjectStoreError(f"Bundle delete failed: {key}") from exc
+
     def put_bundle(self, version_id: str, bundle_json_bytes: bytes) -> str:
         key = self.bundle_key(version_id)
         # Conditional write: the object is created only if no object exists at
@@ -170,3 +195,6 @@ class S3ObjectStore(ObjectStore):
 
     def bundle_exists(self, version_id: str) -> bool:
         return self.exists(self.bundle_key(version_id))
+
+    def delete_bundle(self, version_id: str) -> None:
+        self.delete(self.bundle_key(version_id))

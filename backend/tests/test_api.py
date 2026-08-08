@@ -87,6 +87,7 @@ def test_ready_reports_server_forecast_infrastructure_by_mode(monkeypatch):
         "configured": False,
         "status": "unconfigured",
         "required": True,
+        "bundle_retention_days": 30,
     }
     assert body["dependencies"]["model_storage"]["required"] is True
 

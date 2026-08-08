@@ -340,6 +340,10 @@ class _FakeS3Client:
             raise _FakeS3NotFound()
         return {}
 
+    def delete_object(self, Bucket, Key):
+        self.objects.pop((Bucket, Key), None)
+        return {}
+
     def create_bucket(self, Bucket):
         if Bucket in self.created_buckets:
             raise _FakeS3BucketAlreadyOwned()
@@ -358,6 +362,21 @@ def test_s3_store_round_trip_with_fake_client():
     assert store.bundle_exists("AAPL-v1")
     assert store.get_bundle("AAPL-v1") == b'{"x": 1}'
     assert not store.bundle_exists("missing")
+
+
+def test_bundle_delete_is_idempotent_for_memory_and_s3():
+    memory = InMemoryObjectStore()
+    memory.put_bundle("AAPL-v1", b"{}")
+    memory.delete_bundle("AAPL-v1")
+    memory.delete_bundle("AAPL-v1")
+    assert not memory.bundle_exists("AAPL-v1")
+
+    fake = _FakeS3Client()
+    s3 = S3ObjectStore(bucket="b", prefix="artifacts", client=fake)
+    s3.put_bundle("AAPL-v1", b"{}")
+    s3.delete_bundle("AAPL-v1")
+    s3.delete_bundle("AAPL-v1")
+    assert not s3.bundle_exists("AAPL-v1")
 
 
 def test_s3_exists_propagates_non_404_errors():
@@ -523,6 +542,9 @@ class _FakePsycopgCursor:
     def fetchone(self):
         return self._script.pop(0) if self._script else None
 
+    def fetchall(self):
+        return self._script.pop(0) if self._script else []
+
     def __enter__(self):
         return self
 
@@ -554,7 +576,7 @@ def _promote_sql_statements() -> list[str]:
     from server_models.db import PostgresRegistry
 
     record_json = _record("AAPL", V1).model_dump_json()
-    conn = _FakePsycopgConn(script=[("AAPL", "price", record_json, "candidate"), (None,)])
+    conn = _FakePsycopgConn(script=[("AAPL", "price"), (None,), (record_json, "candidate", None)])
     registry = PostgresRegistry(conn=conn)
     registry.promote(V1)
     return conn._cursor.executed
@@ -585,12 +607,32 @@ def test_postgres_jsonb_payload_as_dict_parses():
 
     record = _record("AAPL", V1)
     record_dict = record.model_dump(mode="json")
-    conn = _FakePsycopgConn(script=[("AAPL", "price", record_dict, "candidate"), (None,)])
+    conn = _FakePsycopgConn(script=[("AAPL", "price"), (None,), (record_dict, "candidate", None)])
     registry = PostgresRegistry(conn=conn)
     promoted = registry.promote(V1)
     assert promoted.key.version_id == V1
     assert promoted.status == "promoted"
     assert promoted.reproducibility == record.reproducibility
+
+
+def test_postgres_promote_rejects_pruned_bundle():
+    from server_models.db import PostgresRegistry
+
+    record_json = _record("AAPL", V1).model_dump_json()
+    conn = _FakePsycopgConn(
+        script=[
+            ("AAPL", "price"),
+            (None,),
+            (record_json, "candidate", datetime(2026, 2, 1, tzinfo=UTC)),
+        ]
+    )
+    registry = PostgresRegistry(conn=conn)
+
+    with pytest.raises(ModelRegistryError, match="pruned"):
+        registry.promote(V1)
+
+    assert conn.rolled_back == 1
+    assert not any("SET status = 'promoted'" in sql for sql in conn._cursor.executed)
 
 
 def test_postgres_promote_unknown_version_rolls_back():
@@ -721,6 +763,7 @@ def test_new_settings_default_to_off():
     assert settings.server_training_enabled is False
     assert settings.server_forecast_allowlist == []
     assert settings.server_forecast_max_age_hours == 36
+    assert settings.server_bundle_retention_days == 30
     assert settings.server_forecast_cache_ttl == 900
     assert settings.registry_database_url is None
     assert settings.s3_bucket is None

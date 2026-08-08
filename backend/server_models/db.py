@@ -14,6 +14,7 @@ import json
 import threading
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -56,6 +57,11 @@ class ModelRegistry(ABC):
     def list_artifacts(self, ticker: str) -> list[ServerModelRecord]: ...
 
     @abstractmethod
+    def prune_bundle_objects(
+        self, before: datetime, delete_bundle: Callable[[str], None]
+    ) -> list[str]: ...
+
+    @abstractmethod
     def append_audit(self, event: str, details: dict[str, Any] | None = None) -> None: ...
 
     @abstractmethod
@@ -91,6 +97,8 @@ class InMemoryRegistry(ModelRegistry):
         self._artifacts: dict[str, ServerModelRecord] = {}
         self._rejection_reasons: dict[str, str] = {}
         self._promotions: dict[tuple[str, str], dict[str, str | None]] = {}
+        self._created_at: dict[str, datetime] = {}
+        self._pruned: set[str] = set()
         self._audit_log: list[dict[str, Any]] = []
         self._jobs: list[dict[str, Any]] = []
 
@@ -100,6 +108,7 @@ class InMemoryRegistry(ModelRegistry):
             if version_id in self._artifacts:
                 raise ModelRegistryError(f"Artifact version already exists: {version_id}")
             self._artifacts[version_id] = record.model_copy(deep=True)
+            self._created_at[version_id] = _now()
             self._audit("artifact_inserted", {"version_id": version_id})
 
     def _get(self, version_id: str) -> ServerModelRecord:
@@ -122,6 +131,8 @@ class InMemoryRegistry(ModelRegistry):
             record = self._get(version_id)
             if record.status == "rejected":
                 raise ModelRegistryError(f"Artifact version is rejected: {version_id}")
+            if version_id in self._pruned:
+                raise ModelRegistryError(f"Artifact bundle was pruned: {version_id}")
             if record.status == "promoted":
                 return record.model_copy(deep=True)
             pair = (record.key.ticker, record.key.forecast_type)
@@ -184,6 +195,35 @@ class InMemoryRegistry(ModelRegistry):
                 if record.key.ticker == ticker
             ]
         return sorted(records, key=lambda record: record.key.trained_at, reverse=True)
+
+    def prune_bundle_objects(
+        self, before: datetime, delete_bundle: Callable[[str], None]
+    ) -> list[str]:
+        """Delete expired non-pointer bundles while holding the promotion snapshot."""
+        with self._lock:
+            protected = {
+                version_id
+                for pointer in self._promotions.values()
+                for version_id in (pointer.get("current"), pointer.get("previous"))
+                if version_id is not None
+            }
+            candidates = sorted(
+                version_id
+                for version_id, created_at in self._created_at.items()
+                if created_at < before
+                and version_id not in protected
+                and version_id not in self._pruned
+                and self._artifacts[version_id].status != "promoted"
+            )
+            for version_id in candidates:
+                delete_bundle(version_id)
+                self._pruned.add(version_id)
+            if candidates:
+                self._audit(
+                    "artifact_bundles_pruned",
+                    {"version_ids": candidates, "count": len(candidates)},
+                )
+            return candidates
 
     def append_audit(self, event: str, details: dict[str, Any] | None = None) -> None:
         with self._lock:
@@ -249,8 +289,11 @@ CREATE TABLE IF NOT EXISTS server_artifacts (
     record_json JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'candidate',
     rejection_reason TEXT,
+    bundle_pruned_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE server_artifacts
+    ADD COLUMN IF NOT EXISTS bundle_pruned_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_server_artifacts_promoted
     ON server_artifacts (ticker, forecast_type) WHERE status = 'promoted';
 CREATE TABLE IF NOT EXISTS server_promotions (
@@ -344,21 +387,18 @@ class PostgresRegistry(ModelRegistry):
 
     def promote(self, version_id: str) -> ServerModelRecord:
         with self._conn.cursor() as cursor:
-            # 1. Resolve the incoming artifact; unknown or rejected rows are a hard
-            #    error so a typo can never silently demote the live champion.
+            # 1. Resolve the pointer identity without locking the artifact yet.
+            #    Retention and promotion both lock pointer rows before artifact
+            #    rows, preventing a deadlock or a prune-while-promoting race.
             cursor.execute(
-                "SELECT ticker, forecast_type, record_json, status FROM server_artifacts "
-                "WHERE version_id = %s",
+                "SELECT ticker, forecast_type FROM server_artifacts WHERE version_id = %s",
                 (version_id,),
             )
             row = cursor.fetchone()
             if row is None:
                 self._conn.rollback()
                 raise ModelRegistryError(f"Unknown artifact version: {version_id}")
-            ticker, forecast_type, record_json, status = row
-            if status == "rejected":
-                self._conn.rollback()
-                raise ModelRegistryError(f"Artifact version is rejected: {version_id}")
+            ticker, forecast_type = row
 
             # 2. Lock the promotion pointer row (created on first promotion) so two
             #    concurrent promote calls serialize instead of clobbering each other.
@@ -374,12 +414,28 @@ class PostgresRegistry(ModelRegistry):
             )
             previous_version = cursor.fetchone()[0]
 
+            # 3. Read and lock the artifact only after the pointer. A retention
+            #    sweep that selected this row must finish first; a completed sweep
+            #    leaves bundle_pruned_at set and promotion fails closed.
+            cursor.execute(
+                "SELECT record_json, status, bundle_pruned_at FROM server_artifacts "
+                "WHERE version_id = %s FOR UPDATE",
+                (version_id,),
+            )
+            record_json, status, bundle_pruned_at = cursor.fetchone()
+            if status == "rejected":
+                self._conn.rollback()
+                raise ModelRegistryError(f"Artifact version is rejected: {version_id}")
+            if bundle_pruned_at is not None:
+                self._conn.rollback()
+                raise ModelRegistryError(f"Artifact bundle was pruned: {version_id}")
+
             # Re-promoting the live champion is a no-op that preserves the pointer.
             if status == "promoted" and previous_version == version_id:
                 self._conn.rollback()
                 return _validate_record_payload(record_json)
 
-            # 3. Demote any existing champion *before* promoting the incoming row so
+            # 4. Demote any existing champion *before* promoting the incoming row so
             #    the unique partial index on (ticker, forecast_type) can never observe
             #    two 'promoted' rows at the same instant.
             cursor.execute(
@@ -500,6 +556,52 @@ class PostgresRegistry(ModelRegistry):
             )
             rows = cursor.fetchall()
         return [self._record_from_row(row) for row in rows]
+
+    def prune_bundle_objects(
+        self, before: datetime, delete_bundle: Callable[[str], None]
+    ) -> list[str]:
+        """Prune expired blobs under the same pointer-first lock order as promotion."""
+        try:
+            with self._conn.cursor() as cursor:
+                # Lock the complete pointer snapshot in a deterministic order.
+                # Current and previous versions remain protected for serving and
+                # rollback throughout the object-store deletes.
+                cursor.execute(
+                    "SELECT ticker, forecast_type FROM server_promotions "
+                    "ORDER BY ticker, forecast_type FOR UPDATE"
+                )
+                cursor.execute(
+                    "SELECT a.version_id FROM server_artifacts a "
+                    "WHERE a.created_at < %s AND a.bundle_pruned_at IS NULL "
+                    "AND a.status != 'promoted' "
+                    "AND NOT EXISTS ("
+                    "SELECT 1 FROM server_promotions p "
+                    "WHERE a.version_id = p.current_version "
+                    "OR a.version_id = p.previous_version"
+                    ") ORDER BY a.created_at, a.version_id FOR UPDATE OF a",
+                    (before,),
+                )
+                version_ids = [str(row[0]) for row in cursor.fetchall()]
+                for version_id in version_ids:
+                    delete_bundle(version_id)
+                    cursor.execute(
+                        "UPDATE server_artifacts SET bundle_pruned_at = now() "
+                        "WHERE version_id = %s AND bundle_pruned_at IS NULL",
+                        (version_id,),
+                    )
+                if version_ids:
+                    cursor.execute(
+                        "INSERT INTO audit_log (event, details) VALUES (%s, %s)",
+                        (
+                            "artifact_bundles_pruned",
+                            json.dumps({"version_ids": version_ids, "count": len(version_ids)}),
+                        ),
+                    )
+            self._conn.commit()
+            return version_ids
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def append_audit(self, event: str, details: dict[str, Any] | None = None) -> None:
         with self._conn.cursor() as cursor:

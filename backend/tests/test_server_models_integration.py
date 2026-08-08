@@ -11,7 +11,7 @@ fail-closed tamper check.
 
 import hashlib
 import os
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -171,6 +171,42 @@ def test_object_store_round_trip_and_immutability(object_store):
         object_store.put_bundle(version_id, b"tampered")
     assert object_store.get_bundle(version_id) == b'{"v": 1}'
     assert key.startswith(S3_PREFIX)
+
+
+def test_retention_prunes_real_minio_objects_without_losing_registry_history(
+    database, object_store
+):
+    from server_models.db import ModelRegistryError
+    from server_models.retention import sweep_expired_bundles
+
+    records = [_make_record("AAPL", snapshot=f"sha256:{index:064x}") for index in (11, 12, 13)]
+    previous, current, expired_candidate = records
+    for record in records:
+        object_store.put_bundle(record.key.version_id, b"{}")
+        database.insert_artifact(record)
+    database.promote(previous.key.version_id)
+    database.promote(current.key.version_id)
+    with database._conn.cursor() as cursor:
+        cursor.execute(
+            "UPDATE server_artifacts SET created_at = %s",
+            (datetime.now(UTC) - timedelta(days=31),),
+        )
+    database._conn.commit()
+
+    pruned = sweep_expired_bundles(
+        database,
+        object_store,
+        retention_days=30,
+        now=datetime.now(UTC),
+    )
+
+    assert pruned == [expired_candidate.key.version_id]
+    assert object_store.bundle_exists(previous.key.version_id)
+    assert object_store.bundle_exists(current.key.version_id)
+    assert not object_store.bundle_exists(expired_candidate.key.version_id)
+    assert len(database.list_artifacts("AAPL")) == 3
+    with pytest.raises(ModelRegistryError, match="pruned"):
+        database.promote(expired_candidate.key.version_id)
 
 
 def test_full_http_path_with_real_postgres_minio_and_keys(
