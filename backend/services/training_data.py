@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from calendars import future_trading_dates
 from config import (
@@ -136,3 +137,23 @@ def validate_training_snapshot(snapshot: dict[str, Any]) -> None:
         math.isfinite(float(value)) and float(value) > 0 for value in prices
     ):
         raise ValueError("Training snapshot contains invalid close prices.")
+
+    _require_strictly_increasing_dates(snapshot.get("dates") or [], "Training snapshot")
+    _require_strictly_increasing_dates(
+        snapshot.get("future_dates") or [], "Training snapshot future"
+    )
+    future_dates = snapshot.get("future_dates") or []
+    if future_dates and pd.Timestamp(future_dates[0]) <= pd.Timestamp(snapshot["dates"][-1]):
+        raise ValueError("Training snapshot future dates do not follow the last trading date.")
+
+
+def _require_strictly_increasing_dates(dates: list[str], label: str) -> None:
+    """Reject unordered, duplicated, or unparseable dates."""
+    parsed = []
+    for value in dates:
+        try:
+            parsed.append(pd.Timestamp(str(value)))
+        except (ValueError, TypeError):
+            raise ValueError(f"{label} contain invalid dates.") from None
+    if any(prev >= date for prev, date in zip(parsed, parsed[1:])):
+        raise ValueError(f"{label} are not in strict chronological order.")

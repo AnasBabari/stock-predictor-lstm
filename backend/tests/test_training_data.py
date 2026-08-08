@@ -33,7 +33,10 @@ def test_training_snapshot_preserves_schema_and_has_stable_fingerprint():
         patch("services.training_data.fetch_browser_data", return_value=payload),
         patch(
             "services.training_data.future_trading_dates",
-            return_value=(["2025-07-15"] * 30, "XNYS"),
+            return_value=(
+                pd.date_range("2025-08-01", periods=30, freq="B").strftime("%Y-%m-%d").tolist(),
+                "XNYS",
+            ),
         ),
     ):
         first = build_training_snapshot("MSFT")
@@ -95,6 +98,36 @@ def test_training_snapshot_bounds_rows_and_horizon():
         pytest.raises(ValueError, match="horizon"),
     ):
         build_training_snapshot("MSFT", days=31)
+
+
+def test_training_snapshot_rejects_non_chronological_dates():
+    frame, closes, dates, metadata = _market_snapshot()
+    with (
+        patch(
+            "services.training_data.fetch_browser_data",
+            return_value=(frame, closes, dates, metadata),
+        ),
+        patch(
+            "services.training_data.future_trading_dates",
+            return_value=(
+                pd.date_range("2025-08-01", periods=30, freq="B").strftime("%Y-%m-%d").tolist(),
+                "XNYS",
+            ),
+        ),
+    ):
+        result = build_training_snapshot("MSFT")
+
+    original_dates = result["dates"]
+    swapped = original_dates.copy()
+    swapped[-1], swapped[0] = swapped[0], swapped[-1]
+    with pytest.raises(ValueError, match="chronological"):
+        validate_training_snapshot({**result, "dates": swapped})
+
+    with pytest.raises(ValueError, match="chronological"):
+        validate_training_snapshot({**result, "future_dates": [result["future_dates"][-1]] * 30})
+
+    with pytest.raises(ValueError, match="do not follow"):
+        validate_training_snapshot({**result, "future_dates": result["dates"][:30]})
 
 
 def test_training_snapshot_annotates_quality_findings():

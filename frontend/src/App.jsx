@@ -16,6 +16,7 @@ import { exportCompleteAnalysis } from './utils/exportService';
 import { browserTrainingSupported, clearBrowserModelCache, trainBrowserForecast } from './ml/browserTrainingClient';
 import { fetchServerPrediction } from './ml/serverModelClient';
 import { defaultTrainingProfile, expectedDurationLabel } from './ml/trainingProfiles';
+import { createSnapshotClient } from './ml/snapshotClient';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
@@ -232,6 +233,10 @@ export default function App() {
   const requestIdRef = useRef(0);
   const forecastCacheRef = useRef(new Map());
   const chartRef = useRef(null);
+  const snapshotClientRef = useRef(null);
+  if (!snapshotClientRef.current) {
+    snapshotClientRef.current = createSnapshotClient({ baseUrl: API_BASE });
+  }
 
   const abortActiveRequest = useCallback(() => {
     requestIdRef.current += 1;
@@ -333,15 +338,9 @@ export default function App() {
         return fetchServerBaseline(symbol, days, type, signal, new Error('Browser training is disabled by the deployment flag.'));
       }
       
-      const trainingEndpoint = `${API_BASE}/api/v1/training-data?ticker=${encodeURIComponent(symbol)}`;
       let snapshot;
       try {
-        const dataResponse = await fetch(trainingEndpoint, { signal });
-        if (!dataResponse.ok) {
-          const errorData = await dataResponse.json().catch(() => ({}));
-          throw new Error(errorData.detail || `Training data failed (${dataResponse.status})`);
-        }
-        snapshot = await dataResponse.json();
+        snapshot = await snapshotClientRef.current.fetchTrainingSnapshot(symbol, signal);
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
         return fetchServerBaseline(symbol, days, type, signal, error);
@@ -632,6 +631,7 @@ export default function App() {
     try {
       await clearBrowserModelCache();
       forecastCacheRef.current.clear();
+      snapshotClientRef.current?.clear();
       setPredictionData(null);
       addToast('success', 'Locally trained browser models cleared');
     } catch (error) {

@@ -18,6 +18,8 @@ SUFFIX_CALENDARS = {
 
 def resolve_calendar(ticker: str) -> tuple[str, str]:
     """Return (calendar implementation, public identifier)."""
+    if not isinstance(ticker, str) or not ticker.strip():
+        raise ValueError("Ticker must be a non-empty string.")
     upper = ticker.upper()
     if upper.endswith(("-USD", "-GBP", "-EUR", "-USDT")):
         return "24/7", "CRYPTO_24_7"
@@ -48,9 +50,20 @@ def future_trading_dates(
         calendar = mcal.get_calendar("NYSE")
         identifier = "NYSE_FALLBACK"
 
-    end = current + timedelta(days=max(days * 4 + 14, 45))
-    schedule = calendar.schedule(start_date=current + timedelta(days=1), end_date=end)
-    future = [d.strftime("%Y-%m-%d") for d in schedule.index if d > current][:days]
+    # Widen the search horizon if a holiday-heavy period yields too few sessions.
+    future: list[pd.Timestamp] = []
+    horizon = max(days * 4 + 14, 45)
+    for _ in range(3):
+        schedule = calendar.schedule(
+            start_date=current + timedelta(days=1), end_date=current + timedelta(days=horizon)
+        )
+        future = [d for d in schedule.index if d > current][:days]
+        if len(future) == days:
+            break
+        horizon *= 2
     if len(future) != days:
         raise ValueError(f"Could not generate {days} dates for calendar {identifier}.")
-    return future, identifier
+    if any(a >= b for a, b in zip(future, future[1:])):
+        raise ValueError(f"Calendar {identifier} produced non-chronological session dates.")
+    future_dates = [d.strftime("%Y-%m-%d") for d in future]
+    return future_dates, identifier

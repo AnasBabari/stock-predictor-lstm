@@ -297,6 +297,8 @@ class PredictionStatusRegistry:
     def __init__(self, max_entries: int = 512, ttl_seconds: int = 600):
         self.max_entries = max_entries
         self.ttl_seconds = ttl_seconds
+        # Reclaim slots orphaned by a request that never reaches finish_view.
+        self.watchdog_multiplier = 60
         self._lock = threading.Lock()
         self._views: dict[str, dict] = {}
 
@@ -326,7 +328,11 @@ class PredictionStatusRegistry:
                 "coalesced": coalesced,
                 "terminal": terminal,
                 "lifecycle": "completed" if terminal else "active",
-                "expires_at": time.monotonic() + self.ttl_seconds if terminal else float("inf"),
+                # Non-terminal views normally get a fresh deadline via
+                # ``finish_view``; the long watchdog only reclaims slots
+                # orphaned when a request dies before finishing.
+                "expires_at": time.monotonic()
+                + self.ttl_seconds * (self.watchdog_multiplier if not terminal else 1),
             }
             return True
 

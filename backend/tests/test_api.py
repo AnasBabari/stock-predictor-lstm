@@ -464,6 +464,27 @@ def test_status_registry_capacity_prefers_terminal_eviction_and_remains_bounded(
     assert list(active_only._views) == [first_active]
 
 
+def test_active_registry_views_have_a_finite_watchdog_deadline():
+    registry = api.PredictionStatusRegistry(max_entries=4, ttl_seconds=60)
+    active_id = str(uuid.uuid4())
+    assert registry.attach(active_id, api.PredictionJob("active"), coalesced=False)
+    view = registry._views[active_id]
+    assert view["expires_at"] < float("inf")
+    assert view["expires_at"] == view["expires_at"] <= time.monotonic() + 60 * 61
+
+
+def test_orphaned_active_view_is_reclaimed_after_the_watchdog(monkeypatch):
+    registry = api.PredictionStatusRegistry(max_entries=1, ttl_seconds=1)
+    orphan_id = str(uuid.uuid4())
+    assert registry.attach(orphan_id, api.PredictionJob("orphan"), coalesced=False)
+    registry._views[orphan_id]["expires_at"] = time.monotonic() - 1
+
+    assert registry.get(orphan_id) is None
+    replacement_id = str(uuid.uuid4())
+    assert registry.attach(replacement_id, api.PredictionJob("replacement"), coalesced=False)
+    assert list(registry._views) == [replacement_id]
+
+
 def test_cancelled_prediction_expires_its_status_view(monkeypatch):
     coordinator = WorkCoordinator(workers=1, queue_size=0)
     monkeypatch.setattr(api, "_work_coordinator", coordinator)

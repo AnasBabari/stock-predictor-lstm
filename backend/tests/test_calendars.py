@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from calendars import future_trading_dates, resolve_calendar
 
@@ -24,3 +25,53 @@ def test_crypto_calendar_is_always_open():
     dates, calendar_id = future_trading_dates("BTC-USD", pd.Timestamp("2025-12-26"), 3)
     assert calendar_id == "CRYPTO_24_7"
     assert dates == ["2025-12-27", "2025-12-28", "2025-12-29"]
+
+
+def test_resolve_calendar_rejects_empty_ticker():
+    with pytest.raises(ValueError, match="non-empty"):
+        resolve_calendar("")
+    with pytest.raises(ValueError, match="non-empty"):
+        resolve_calendar("   ")
+
+
+def test_future_trading_dates_widens_horizon_for_sparse_calendars(monkeypatch):
+    class GrowingCalendar:
+        def __init__(self):
+            self.calls = 0
+
+        def schedule(self, start_date, end_date):
+            self.calls += 1
+            if self.calls == 1:
+                return pd.DataFrame(index=pd.DatetimeIndex([start_date]))
+            return pd.DataFrame(index=pd.bdate_range(start_date, end_date))
+
+    growing = GrowingCalendar()
+    monkeypatch.setattr("calendars.mcal.get_calendar", lambda name: growing)
+
+    dates, _ = future_trading_dates("VOD.L", pd.Timestamp("2026-01-05"), 5)
+    assert growing.calls > 1
+    assert len(dates) == 5
+    assert all(str(d) == d for d in dates)
+    assert all(d > "2026-01-05" for d in dates)
+
+
+def test_future_trading_dates_rejects_non_chronological_schedule(monkeypatch):
+    class TiedCalendar:
+        def schedule(self, start_date, end_date):
+            return pd.DataFrame(index=pd.DatetimeIndex([start_date, start_date]))
+
+    monkeypatch.setattr("calendars.mcal.get_calendar", lambda name: TiedCalendar())
+
+    with pytest.raises(ValueError, match="non-chronological"):
+        future_trading_dates("VOD.L", pd.Timestamp("2026-01-05"), 2)
+
+
+def test_future_trading_dates_rejects_empty_schedule(monkeypatch):
+    class EmptyCalendar:
+        def schedule(self, start_date, end_date):
+            return pd.DataFrame(index=pd.DatetimeIndex([]))
+
+    monkeypatch.setattr("calendars.mcal.get_calendar", lambda name: EmptyCalendar())
+
+    with pytest.raises(ValueError, match="Could not generate"):
+        future_trading_dates("VOD.L", pd.Timestamp("2026-01-05"), 2)
