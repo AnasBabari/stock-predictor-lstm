@@ -1,5 +1,5 @@
 export const MODEL_VERSION = 'tfjs-return-lstm-v4';
-export const ARCHITECTURE_VERSION = 'local-return-lstm-v2';
+export const ARCHITECTURE_VERSION = 'local-return-lstm-v3';
 export const TARGET_MODE = 'cumulative_log_return_v1';
 export const WINDOW_SIZE = 60;
 export const OUTPUT_WIDTH = 30;

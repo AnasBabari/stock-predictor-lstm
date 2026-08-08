@@ -1,4 +1,5 @@
 import {
+  ARCHITECTURE_VERSION,
   FEATURE_NAMES,
   FEATURE_SCHEMA_VERSION,
   MODEL_VERSION,
@@ -194,6 +195,7 @@ test('snaps requested days to supported horizon-specific models', () => {
 test('includes horizon and target mode in the cache identity', () => {
   const snapshot = makeSnapshot();
   expect(modelKey(snapshot, 'price', 'research', 'webgpu', 3)).toContain(MODEL_VERSION);
+  expect(modelKey(snapshot, 'price', 'research', 'webgpu', 3)).toContain(ARCHITECTURE_VERSION);
   expect(modelKey(snapshot, 'price', 'research', 'webgpu', 3)).toContain(TARGET_MODE);
   expect(modelKey(snapshot, 'price', 'research', 'webgpu', 3)).toMatch(/\/4\/TEST\/price\/research\/webgpu\/[0-9a-f]{8}\/snapshot-test\/60\/3$/);
   expect(modelKey(snapshot, 'price', 'research', 'webgpu', 7)).not.toBe(modelKey(snapshot, 'price', 'research', 'webgpu', 3));
