@@ -10,13 +10,14 @@ served artifact is the final refit, and cached evidence is superseded whenever
 the method changes.
 
 recorded_sha: 72711bc
+freeze_record_commit: 38a40712cd5f94f1f593786ba926ba4d1563d6fa
 
 ## Full check battery
 
 Recorded evidence is valid only when every step below passes at `recorded_sha`
-on a clean worktree:
+(the tree the battery was re-run on) on a clean worktree:
 
-1. `npx vitest run` (frontend unit suite) — currently 100 tests across 13
+1. `npx vitest run` (frontend unit suite) — currently 112 tests across 15
    files for frontend/src/ml units.
 2. `npm run build` (frontend production build).
 3. Contract e2e: `npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js` — server contract and fixture contracts without real TensorFlow.js training.
@@ -25,5 +26,6 @@ on a clean worktree:
 
 Guidance: `python scripts/check_methodology_gate.py` in CI fails when any
 guard-path file changed since `recorded_sha` or when the battery listing
-drifts; rerun the battery at the new HEAD, update `recorded_sha`, and commit
-the record together with the methodology change.
+drifts; rerun the battery at the new HEAD, update `recorded_sha` to that
+battery-verified tree, and commit the record (`freeze_record_commit`) together
+with the methodology change.
