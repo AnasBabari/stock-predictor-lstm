@@ -838,6 +838,7 @@ def ready():
             "configured": readiness.configured,
             "status": "ready" if readiness.configured else readiness.reason,
             "required": settings.training_mode == "server_pretrained",
+            "bundle_retention_days": settings.server_bundle_retention_days,
         }
         if settings.training_mode == "server_pretrained":
             dependencies["model_storage"] = {
@@ -879,6 +880,7 @@ def list_models():
             "status": status,
             "reason": reason,
             "training_mode": settings.training_mode,
+            "bundle_retention_days": settings.server_bundle_retention_days,
         }
     return {
         "version": APP_VERSION,

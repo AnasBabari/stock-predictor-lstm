@@ -6,6 +6,7 @@ import time
 from artifacts.signing import Ed25519ManifestSigner
 from config import settings
 from server_models.api import get_registry, get_storage
+from server_models.retention import sweep_expired_bundles
 from server_models.training import train_server_forecast
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -19,6 +20,9 @@ def main():
     )
     parser.add_argument(
         "--ticker", type=str, help="Train a specific ticker immediately (bypassing queue)"
+    )
+    parser.add_argument(
+        "--gc-only", action="store_true", help="Prune expired bundle objects and exit"
     )
     args = parser.parse_args()
 
@@ -35,6 +39,18 @@ def main():
     # The trainer owns the bucket: create it on first run (MinIO/dev) and make
     # the failure loud instead of letting every put_bundle race a missing bucket.
     storage.ensure_bucket()
+    pruned = sweep_expired_bundles(
+        registry,
+        storage,
+        retention_days=settings.server_bundle_retention_days,
+    )
+    logger.info(
+        "Server bundle retention removed %d expired object(s) (window=%d days).",
+        len(pruned),
+        settings.server_bundle_retention_days,
+    )
+    if args.gc_only:
+        sys.exit(0)
 
     if args.ticker:
         # Run explicitly for one ticker

@@ -17,6 +17,7 @@ variables or `backend/.env`:
 | `SERVER_FORECAST_ALLOWLIST` | empty | Comma-separated tickers that may be served (upper-cased). |
 | `SERVER_FORECAST_MAX_AGE_HOURS` | `36` | Bundle freshness window. |
 | `SERVER_FORECAST_CACHE_TTL` | `900` | Serving response cache seconds. |
+| `SERVER_BUNDLE_RETENTION_DAYS` | `30` | Minimum age before a non-current, non-rollback bundle object may be pruned. Registry and audit rows are retained. |
 | `SERVER_FORECAST_PRIVATE_KEY_PATH` | unset | PEM path for the training job's Ed25519 signer; required by the job (exit 2 otherwise). |
 | `SERVER_FORECAST_PUBLIC_KEY_PATH` | unset | PEM public key used by serving for Ed25519 verification. Required for configured serving: there is no digest-only mode. A missing key is reported as `unconfigured`; a configured-but-broken key is `integrity_failure` (a 503 that allows no fallback). |
 | `REGISTRY_DATABASE_URL` | unset | Postgres URL for the promotion registry. |
@@ -100,6 +101,25 @@ demotes the current champion, promotes the saved `previous_version`, clears
 `previous_version = NULL`, appends an `artifact_rollback` audit entry, and
 rolls back the whole transaction on any unexpected error.
 
+## Bundle retention
+
+Each training-job startup runs an idempotent retention sweep before training or
+queue processing. `--gc-only` runs the sweep and exits, which is suitable for a
+scheduled maintenance job. The sweep uses `server_artifacts.created_at` and the
+configured `SERVER_BUNDLE_RETENTION_DAYS` window; it deletes only expired object
+blobs and preserves every registry and audit row.
+
+Candidate selection shares the registry's pointer-first lock order with
+promotion and rollback. Both `current_version` and `previous_version` are
+protected for the duration of the S3 deletes, so the live champion and rollback
+target cannot be reclaimed. Deleted rows receive `bundle_pruned_at`; attempting
+to promote one fails closed. S3 deletion is idempotent, allowing a sweep to
+recover safely if object deletion succeeds but the database transaction later
+rolls back. `/ready` and `/models` report the configured retention window when
+server serving is enabled. The training/maintenance identity therefore needs
+`DeleteObject` permission for the configured bundle prefix; the serving
+identity remains read-only.
+
 ## Serving semantics
 
 `GET /api/v1/server-forecasts/{ticker}?forecast_type=price|direction&days=N`
@@ -157,7 +177,9 @@ to browser training.
 ## Testing
 
 - Unit/contract: `backend/tests/test_server_models.py` (version IDs, storage
-  immutability, promotion SQL order), `test_server_training.py` (training
+  immutability, promotion SQL order), `test_server_retention.py` (expiry,
+  pointer protection, tombstones, and retention lock order),
+  `test_server_training.py` (training
   pipeline with a real Ed25519 signer), `test_server_forecast_api.py`
   (mode-aware 200/503 matrix, tamper and digest failures fail closed).
 - In-process E2E: `test_server_forecast_e2e.py` (train -> promote -> serve ->

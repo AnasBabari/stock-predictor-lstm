@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     server_forecast_allowlist: list[str] = Field(default_factory=list)
     server_forecast_max_age_hours: int = Field(default=36, ge=1, le=24 * 30)
     server_forecast_cache_ttl: int = Field(default=900, ge=0, le=86400)
+    server_bundle_retention_days: int = Field(default=30, ge=1, le=3650)
     server_forecast_private_key_path: str | None = None
     server_forecast_public_key_path: str | None = None
     registry_database_url: str | None = None

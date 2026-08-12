@@ -55,6 +55,17 @@ The Python TensorFlow trainer, artifact registry, walk-forward evaluator, candid
 
 Offline validation supports expanding and rolling folds with training-only scalers, purged early-stopping tails, per-horizon and pooled origin/horizon metrics, persistence-relative errors, and direction baselines. Promotion is an explicit operator action; no offline artifact is deployed automatically to Render.
 
+### Server bundle storage lifecycle
+
+Opt-in server-pretrained bundles remain immutable, but their object blobs have a
+bounded lifecycle. A training-job startup (or `run_server_training.py --gc-only`)
+removes non-pointer objects older than the conservative 30-day default while
+retaining registry and audit rows. The registry locks the current/previous
+promotion snapshot before deletion, protects rollback targets, records
+`bundle_pruned_at`, and rejects future promotion of a pruned row. Readiness and
+`/models` disclose the configured retention window; they do not claim that a
+sweep succeeded unless the separate training/maintenance job actually ran.
+
 ## Caching and concurrency
 
 The backend response cache stores only bounded market-data-derived baseline responses. Its identity includes ticker, horizon, and forecast type, and cache hits do not load or validate model artifacts. The browser independently fetches a current snapshot before loading a cached model, so a changed snapshot forces retraining.
