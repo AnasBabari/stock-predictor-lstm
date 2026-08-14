@@ -295,15 +295,26 @@ export function useForecast({ addToast, onNewTickerSearched }) {
 
   const handlePredict = useCallback(
     async (overrideTicker, overrideDays, overrideType) => {
-      const activeTicker = (overrideTicker ?? ticker).toUpperCase().trim();
-      const activeDays = overrideDays ?? forecastDays;
-      const activeType = overrideType ?? forecastType;
+      const activeTicker = (typeof overrideTicker === 'string' && overrideTicker.trim() ? overrideTicker : ticker).toUpperCase().trim();
+      let activeDays = forecastDays;
+      let activeType = forecastType;
+
+      if (typeof overrideDays === 'number') {
+        activeDays = overrideDays;
+      } else if (typeof overrideDays === 'string' && (overrideDays === 'price' || overrideDays === 'trend')) {
+        activeType = overrideDays;
+      }
+
+      if (typeof overrideType === 'string') {
+        activeType = overrideType;
+      }
 
       if (!activeTicker) {
         setErrorMsg('Please enter a stock ticker symbol.');
         addToast('error', 'Please enter a stock ticker symbol.');
         return;
       }
+
 
       abortActiveRequest();
       const currentRequestId = requestIdRef.current;

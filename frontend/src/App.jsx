@@ -110,8 +110,8 @@ export default function App() {
           trainingProfile={trainingProfile}
           setTrainingProfile={setTrainingProfile}
           onForecastTypeChange={setForecastType}
-          onPredict={() => handlePredict(ticker, forecastDays, forecastType)}
-          isLoading={isLoading}
+          onPredict={handlePredict}
+          isLoading={isBusy}
           apiBase={apiBase}
         />
 
@@ -123,7 +123,6 @@ export default function App() {
             onCancel={handleCancelRequest}
           />
         )}
-
 
         {errorMsg && (
           <div className="error-banner" role="alert">
@@ -142,7 +141,7 @@ export default function App() {
               stockInfo={stockInfo}
             />
 
-            <div className="chart-section" ref={chartRef}>
+            <div className="chart-section">
               <div className="chart-header">
                 <h2>
                   {predictionData.ticker}{' '}
@@ -187,21 +186,21 @@ export default function App() {
               </div>
 
               <StockChart
+                ref={chartRef}
                 stockData={predictionData}
                 forecastType={forecastType}
                 daysView={daysView}
+                setDaysView={setDaysView}
                 theme={theme}
               />
 
               <ForecastChartActions
                 chartRef={chartRef}
-                predictionData={predictionData}
+                stockData={predictionData}
                 forecastType={forecastType}
-                stockInfo={stockInfo}
-                isExportLoading={isExportLoading}
+                onAddWatchlist={handleAddWatchlist}
+                onToast={addToast}
                 onExportCompleteAnalysis={handleExportCompleteAnalysis}
-                onAddWatchlist={() => handleAddWatchlist(predictionData)}
-                addToast={addToast}
               />
             </div>
 
@@ -212,21 +211,21 @@ export default function App() {
           </>
         )}
 
-
         <div className="dashboard-grid">
           <Watchlist
-            watchlist={watchlist}
+            items={watchlist}
             onSelectTicker={handleSelectTicker}
-            onRemoveTicker={handleRemoveWatchlist}
-            onClearWatchlist={handleClearWatchlist}
+            onRemoveItem={handleRemoveWatchlist}
+            onClearAll={handleClearWatchlist}
           />
           <PredictionHistory
-            history={history}
+            items={history}
             onSelectTicker={handleSelectTicker}
-            onClearHistory={handleClearHistory}
+            onClearAll={handleClearHistory}
           />
         </div>
       </main>
+
 
       <footer className="footer">
         <p>
