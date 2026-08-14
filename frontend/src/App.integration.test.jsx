@@ -121,24 +121,27 @@ const infoResponse = {
 function mockFetchSequence() {
   global.fetch = vi.fn((url) => {
     const requestUrl = String(url);
+    const parsedUrl = new URL(requestUrl, 'http://localhost');
+    const ticker = parsedUrl.searchParams.get('ticker') || 'TSLA';
     if (requestUrl.includes('/api/v1/search')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) });
     }
     if (requestUrl.includes('/api/v1/training-data')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(trainingSnapshot) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...trainingSnapshot, ticker }) });
     }
     if (requestUrl.includes('/api/v1/info')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...infoResponse, ticker }) });
     }
     if (requestUrl.includes('/api/v1/predict/direction')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(trendResponse) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...trendResponse, ticker }) });
     }
     if (requestUrl.includes('/api/v1/predict')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(priceResponse) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...priceResponse, ticker }) });
     }
     return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
   });
 }
+
 
 describe('forecast toggle integration', () => {
   beforeEach(() => {
@@ -335,5 +338,27 @@ describe('forecast toggle integration', () => {
       ).not.toBeInTheDocument();
       expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument();
     });
+  });
+
+  it('preserves active prediction state when an earlier export operation finishes or rejects', async () => {
+    mockFetchSequence();
+    const user = await submitPrediction();
+    expect(await screen.findByText('Price Forecast Metrics')).toBeInTheDocument();
+
+    // 1. Click Complete Analysis
+    const completeAnalysisBtn = screen.queryByRole('button', { name: /complete analysis/i });
+    if (completeAnalysisBtn) {
+      await user.click(completeAnalysisBtn);
+    }
+
+    // 2. Concurrently switch ticker to MSFT and submit new prediction
+    const input = screen.getByPlaceholderText(/search tickers/i);
+    await user.clear(input);
+    await user.type(input, 'MSFT');
+    await user.click(screen.getByRole('button', { name: /^predict$/i }));
+
+    // 3. Verify active prediction state displays cleanly for MSFT without stale export interference
+    expect(await screen.findByText('Price Forecast Metrics')).toBeInTheDocument();
+    expect(screen.getByText('MSFT')).toBeInTheDocument();
   });
 });

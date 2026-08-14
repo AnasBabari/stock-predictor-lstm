@@ -165,8 +165,9 @@ export default function SearchCard({
             aria-expanded={dropdownOpen}
             aria-controls="searchDropdown"
             aria-activedescendant={
-              highlightedIndex >= 0 ? `dropdown-item-${highlightedIndex}` : ''
+              highlightedIndex >= 0 ? `dropdown-item-${highlightedIndex}` : undefined
             }
+
           />
 
           {dropdownOpen && suggestions.length > 0 && (

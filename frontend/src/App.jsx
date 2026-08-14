@@ -205,6 +205,7 @@ export default function App() {
     const stored = localStorage.getItem(PROFILE_KEY);
     return ['quick', 'balanced', 'research'].includes(stored) ? stored : defaultTrainingProfile();
   });
+  const [isExportLoading, setIsExportLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState('');
   const [trainingProgress, setTrainingProgress] = useState(null);
@@ -231,6 +232,8 @@ export default function App() {
 
   const abortControllerRef = useRef(null);
   const requestIdRef = useRef(0);
+  const exportAbortControllerRef = useRef(null);
+  const exportRequestIdRef = useRef(0);
   const forecastCacheRef = useRef(new Map());
   const chartRef = useRef(null);
   const snapshotClientRef = useRef(null);
@@ -244,7 +247,11 @@ export default function App() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-
+    exportRequestIdRef.current += 1;
+    if (exportAbortControllerRef.current) {
+      exportAbortControllerRef.current.abort();
+      exportAbortControllerRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -527,6 +534,7 @@ export default function App() {
       setStockInfo(null);
       setErrorMsg('');
       setIsLoading(false);
+      setIsExportLoading(false);
       setLoadingStage('');
     },
     [abortActiveRequest]
@@ -539,6 +547,7 @@ export default function App() {
     setStockInfo(null);
     setErrorMsg('');
     setIsLoading(false);
+    setIsExportLoading(false);
     setLoadingStage('');
     setTrainingProgress(null);
   }, [abortActiveRequest]);
@@ -556,23 +565,6 @@ export default function App() {
     const cachedPrice = forecastCacheRef.current.get(priceKey);
     const cachedTrend = forecastCacheRef.current.get(trendKey);
 
-    const ensureForecast = async (type) => {
-      const key = forecastIdentity(tickerSymbol, forecastDays, type, trainingProfile);
-      if (forecastCacheRef.current.has(key)) {
-        return forecastCacheRef.current.get(key);
-      }
-
-      const signal = abortControllerRef.current?.signal;
-      const onProgress = (progress) => {
-        setLoadingStage(progress.message || stageLabels[progress.stage] || 'Training your local model…');
-        setTrainingProgress(progress);
-      };
-      const data = await fetchPredictionData(tickerSymbol, forecastDays, type, signal, onProgress);
-      const validated = assertForecastIdentity(data, tickerSymbol, forecastDays, type);
-      forecastCacheRef.current.set(key, validated);
-      return validated;
-    };
-
     if (trainingProfile === 'research') {
       const accepted = window.confirm(
         `Complete Analysis may run two five-fold local benchmarks and take longer than ${expectedDurationLabel('research')}. Continue?`
@@ -580,10 +572,34 @@ export default function App() {
       if (!accepted) return;
     }
 
-    abortActiveRequest();
-    abortControllerRef.current = new AbortController();
+    const exportRequestId = ++exportRequestIdRef.current;
+    if (exportAbortControllerRef.current) {
+      exportAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    exportAbortControllerRef.current = controller;
+
+    const ensureForecast = async (type) => {
+      const key = forecastIdentity(tickerSymbol, forecastDays, type, trainingProfile);
+      if (forecastCacheRef.current.has(key)) {
+        return forecastCacheRef.current.get(key);
+      }
+
+      const signal = controller.signal;
+      const onProgress = (progress) => {
+        if (exportRequestIdRef.current === exportRequestId) {
+          setLoadingStage(progress.message || stageLabels[progress.stage] || 'Training your local model…');
+          setTrainingProgress(progress);
+        }
+      };
+      const data = await fetchPredictionData(tickerSymbol, forecastDays, type, signal, onProgress);
+      const validated = assertForecastIdentity(data, tickerSymbol, forecastDays, type);
+      forecastCacheRef.current.set(key, validated);
+      return validated;
+    };
+
     try {
-      setIsLoading(true);
+      setIsExportLoading(true);
       setLoadingStage('');
       setTrainingProgress(null);
       const priceData = cachedPrice || await ensureForecast(FORECAST_TYPES.PRICE);
@@ -613,19 +629,25 @@ export default function App() {
         directionData: trendData,
         metadata,
       });
-      addToast('success', 'Complete analysis exported as ZIP');
+      if (exportRequestIdRef.current === exportRequestId) {
+        addToast('success', 'Complete analysis exported as ZIP');
+      }
     } catch (err) {
       if (err?.name === 'AbortError') return;
-      const msg = err.message || 'Failed to export complete analysis.';
-      setErrorMsg(msg);
-      addToast('error', msg);
+      if (exportRequestIdRef.current === exportRequestId) {
+        const msg = err.message || 'Failed to export complete analysis.';
+        setErrorMsg(msg);
+        addToast('error', msg);
+      }
     } finally {
-      setIsLoading(false);
-      setLoadingStage('');
-      setTrainingProgress(null);
-      abortControllerRef.current = null;
+      if (exportRequestIdRef.current === exportRequestId) {
+        setIsExportLoading(false);
+        setLoadingStage('');
+        setTrainingProgress(null);
+        exportAbortControllerRef.current = null;
+      }
     }
-  }, [abortActiveRequest, addToast, fetchPredictionData, forecastDays, ticker, trainingProfile]);
+  }, [addToast, fetchPredictionData, forecastDays, ticker, trainingProfile]);
 
   const handleClearBrowserModels = useCallback(async () => {
     try {
@@ -638,6 +660,7 @@ export default function App() {
       addToast('error', error?.message || 'Could not clear browser models');
     }
   }, [addToast]);
+
   const handleAddWatchlist = useCallback(
     (data) => {
       if (!data || forecastType !== FORECAST_TYPES.PRICE || !data.historical_prices?.length) {
@@ -661,6 +684,7 @@ export default function App() {
     },
     [watchlist, stockInfo, addToast, forecastType]
   );
+
 
   const handleRemoveWatchlist = useCallback(
     (index) => {
@@ -692,6 +716,8 @@ export default function App() {
     [handlePredict]
   );
 
+  const isBusy = isLoading || isExportLoading;
+
   return (
     <>
       <SplashScreen />
@@ -718,19 +744,20 @@ export default function App() {
           setTrainingProfile={handleTrainingProfileChange}
           onForecastTypeChange={handleForecastTypeChange}
           onPredict={handlePredict}
-          isLoading={isLoading}
+          isLoading={isBusy}
           apiBase={API_BASE}
         />
 
         {errorMsg && <div className="error">{errorMsg}</div>}
 
         <LoadingIndicator
-          isLoading={isLoading}
+          isLoading={isBusy}
           stage={loadingStage}
           progress={trainingProgress}
           profile={trainingProfile}
           onCancel={abortActiveRequest}
         />
+
 
         <StockInfoGrid info={stockInfo} />
 
