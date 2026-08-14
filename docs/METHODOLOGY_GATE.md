@@ -9,8 +9,8 @@ pre-evaluation labels. Direction evidence is reported per forecast day. The
 served artifact is the final refit, and cached evidence is superseded whenever
 the method changes.
 
-recorded_sha: a11bdc9
-freeze_record_commit: a11bdc97801be9a933f382a5c4df0689b6574f98
+recorded_sha: 1f29bb9
+freeze_record_commit: 1f29bb9bddc5dfa2d360baf50fa56d9894e95906
 
 
 ## Full check battery
