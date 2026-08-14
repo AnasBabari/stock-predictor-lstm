@@ -11,7 +11,7 @@ services:
     # Install from the same frozen uv.lock used by CI and the Docker image, so a
     # Render deployment reproduces the exact runtime dependency set that was
     # lockfile-gated and never drifts on bare requirements.txt ranges.
-    startCommand: "backend/.venv/bin/python -m uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend"
+    startCommand: "backend/.venv/bin/python -m uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend --forwarded-allow-ips='127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'"
     buildFilter:
       paths:
         - backend/**

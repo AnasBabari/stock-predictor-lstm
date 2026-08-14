@@ -1,10 +1,10 @@
-# Fetches and preprocesses multi-feature stock data
-#
-# Features included: OHLCV, Technical Indicators, Market Returns, Cyclical Calendar
-# Phase 3: Decoupled sequence generation for walk-forward validation support.
-# Schema v4: stationary price-relative features for browser-trained models.
+from __future__ import annotations
 
 import hashlib
+import threading
+import time
+from collections import OrderedDict
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -25,37 +25,197 @@ from features.pipeline import build_browser_features, build_features
 ROBUST_SCALER_QUANTILE_RANGE = (25.0, 75.0)
 
 
+class MarketTransportError(RuntimeError):
+    """Raised when upstream market data provider experiences network, 5xx, or 429 errors."""
+
+
+class MarketDataUnavailable(ValueError):
+    """Raised when specific market data/ticker is unavailable or invalid."""
+
+
+class MarketCircuitBreaker:
+    """
+    Two-tier circuit breaker:
+    1. Provider-wide transport breaker: trips on >= 3 consecutive network/5xx/429 failures.
+       Cooldown: 30s. Single-probe half-open state.
+    2. Per-ticker negative cache: LRU (max 64, TTL 60s) for missing/invalid ticker responses.
+    """
+
+    def __init__(
+        self,
+        failure_threshold: int = 3,
+        cooldown_seconds: float = 30.0,
+        negative_cache_ttl: float = 60.0,
+        max_negative_cache: int = 64,
+    ):
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.negative_cache_ttl = negative_cache_ttl
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.negative_cache_ttl = negative_cache_ttl
+        self.max_negative_cache = max_negative_cache
+        self._lock = threading.Lock()
+        self._state = "closed"
+        self._consecutive_failures = 0
+        self._opened_at = 0.0
+        self._last_error: str | None = None
+        self._last_checked_epoch: float | None = None
+        self._half_open_in_flight = False
+        self._negative_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
+
+    def check_can_execute(self, ticker: str) -> None:
+        with self._lock:
+            now = time.time()
+            # Check negative cache for ticker
+            if ticker in self._negative_cache:
+                cached_time, cached_reason = self._negative_cache[ticker]
+                if now - cached_time < self.negative_cache_ttl:
+                    raise MarketDataUnavailable(
+                        f"Ticker {ticker} is temporarily cached as unavailable: {cached_reason}"
+                    )
+                del self._negative_cache[ticker]
+
+            # Check provider circuit
+            if self._state == "open":
+                if now - self._opened_at >= self.cooldown_seconds:
+                    self._state = "half_open"
+                    self._half_open_in_flight = True
+                else:
+                    raise MarketTransportError(
+                        "Upstream market data circuit is open due to recent failures."
+                    )
+            elif self._state == "half_open":
+                if self._half_open_in_flight:
+                    raise MarketTransportError(
+                        "Upstream market data circuit probe is currently in flight."
+                    )
+                self._half_open_in_flight = True
+
+    def record_success(self, ticker: str) -> None:
+        with self._lock:
+            now = time.time()
+            self._consecutive_failures = 0
+            self._state = "closed"
+            self._opened_at = 0.0
+            self._last_error = None
+            self._last_checked_epoch = now
+            self._half_open_in_flight = False
+            self._negative_cache.pop(ticker, None)
+
+    def record_failure(self, ticker: str, exception: Exception) -> None:
+        with self._lock:
+            now = time.time()
+            self._half_open_in_flight = False
+            self._last_error = str(exception)
+            self._last_checked_epoch = now
+            err_msg = str(exception).lower()
+            is_transport = (
+                isinstance(
+                    exception, (MarketTransportError, TimeoutError, ConnectionError, OSError)
+                )
+                or (
+                    hasattr(exception, "status_code")
+                    and exception.status_code in (429, 500, 502, 503, 504)
+                )
+                or "rate limit" in err_msg
+                or "timeout" in err_msg
+                or "connection" in err_msg
+                or "unavailable" in err_msg
+            )
+
+            if is_transport:
+                self._consecutive_failures += 1
+                if (
+                    self._consecutive_failures >= self.failure_threshold
+                    or self._state == "half_open"
+                ):
+                    self._state = "open"
+                    self._opened_at = now
+            elif isinstance(exception, (ValueError, MarketDataUnavailable)):
+                if len(self._negative_cache) >= self.max_negative_cache:
+                    self._negative_cache.popitem(last=False)
+                self._negative_cache[ticker] = (now, str(exception))
+
+    def is_ready(self) -> tuple[bool, dict[str, Any]]:
+        """Evaluate readiness of the upstream market data dependency."""
+        with self._lock:
+            now = time.time()
+            if self._state == "open" and now - self._opened_at >= self.cooldown_seconds:
+                self._state = "half_open"
+
+            is_ready = self._state != "open"
+            status_dict = {
+                "status": "available" if is_ready else "unavailable",
+                "circuit": self._state,
+                "consecutive_failures": self._consecutive_failures,
+                "last_error": self._last_error,
+                "checked_at_epoch": self._last_checked_epoch,
+                "cooldown_remaining_seconds": (
+                    max(0.0, round(self.cooldown_seconds - (now - self._opened_at), 2))
+                    if self._state == "open"
+                    else 0.0
+                ),
+                "negative_cache_size": len(self._negative_cache),
+            }
+            return is_ready, status_dict
+
+    def get_status(self) -> dict[str, Any]:
+        return self.is_ready()[1]
+
+
+# Module-level shared breaker instance
+market_circuit_breaker = MarketCircuitBreaker()
+
+
+def _download_ohlcv(ticker: str) -> pd.DataFrame:
+    market_circuit_breaker.check_can_execute(ticker)
+    try:
+        data = yf.download(
+            ticker,
+            period=f"{HISTORICAL_YEARS}y",
+            progress=False,
+            auto_adjust=True,
+            timeout=30,
+        )
+        if not isinstance(data, pd.DataFrame) or data.empty:
+            raise MarketDataUnavailable(f"No market data is available for {ticker}.")
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.get_level_values(0)
+
+        required_ohlcv = {"Open", "High", "Low", "Close", "Volume"}
+        if not required_ohlcv.issubset(data.columns):
+            raise MarketDataUnavailable(
+                f"Market data for {ticker} is missing required OHLCV columns."
+            )
+        data = (
+            data.loc[~data.index.duplicated(keep="last")].sort_index().dropna(subset=required_ohlcv)
+        )
+        if not np.isfinite(data[list(required_ohlcv)].to_numpy(dtype=float)).all():
+            raise MarketDataUnavailable(
+                f"Market data for {ticker} contains non-finite OHLCV values."
+            )
+        if (data[["Open", "High", "Low", "Close"]] <= 0).any().any() or (data["Volume"] < 0).any():
+            raise MarketDataUnavailable(f"Market data for {ticker} contains invalid OHLCV values.")
+        min_rows = WINDOW_SIZE + MAX_FORECAST_DAYS + 30
+        if len(data) < min_rows:
+            raise MarketDataUnavailable(
+                f"Not enough historical data for {ticker}. Need at least {min_rows} trading days."
+            )
+
+        market_circuit_breaker.record_success(ticker)
+        return data
+    except Exception as err:
+        market_circuit_breaker.record_failure(ticker, err)
+        raise
+
+
 def fetch_data(ticker: str):
     """
     Download historical OHLCV prices, build enriched features, and validate schema.
     Returns (feature_df, closing_prices, dates, feature_metadata).
     """
-    data = yf.download(
-        ticker,
-        period=f"{HISTORICAL_YEARS}y",
-        progress=False,
-        auto_adjust=True,
-        timeout=30,
-    )
-
-    if not isinstance(data, pd.DataFrame) or data.empty:
-        raise ValueError(f"No market data is available for {ticker}.")
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
-
-    required_ohlcv = {"Open", "High", "Low", "Close", "Volume"}
-    if not required_ohlcv.issubset(data.columns):
-        raise ValueError(f"Market data for {ticker} is missing required OHLCV columns.")
-    data = data.loc[~data.index.duplicated(keep="last")].sort_index().dropna(subset=required_ohlcv)
-    if not np.isfinite(data[list(required_ohlcv)].to_numpy(dtype=float)).all():
-        raise ValueError(f"Market data for {ticker} contains non-finite OHLCV values.")
-    if (data[["Open", "High", "Low", "Close"]] <= 0).any().any() or (data["Volume"] < 0).any():
-        raise ValueError(f"Market data for {ticker} contains invalid OHLCV values.")
-    min_rows = WINDOW_SIZE + MAX_FORECAST_DAYS + 30  # account for 20-day rolling window NaNs
-    if len(data) < min_rows:
-        raise ValueError(
-            f"Not enough historical data for {ticker}. Need at least {min_rows} trading days."
-        )
+    data = _download_ohlcv(ticker)
 
     # Build features & metadata
     feature_df, feature_metadata = build_features(data, FEATURES)
@@ -77,32 +237,7 @@ def fetch_browser_data(ticker: str):
     feature_metadata) where the feature matrix contains only v4 features and
     closing prices are aligned row-for-row to it.
     """
-    data = yf.download(
-        ticker,
-        period=f"{HISTORICAL_YEARS}y",
-        progress=False,
-        auto_adjust=True,
-        timeout=30,
-    )
-
-    if not isinstance(data, pd.DataFrame) or data.empty:
-        raise ValueError(f"No market data is available for {ticker}.")
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
-
-    required_ohlcv = {"Open", "High", "Low", "Close", "Volume"}
-    if not required_ohlcv.issubset(data.columns):
-        raise ValueError(f"Market data for {ticker} is missing required OHLCV columns.")
-    data = data.loc[~data.index.duplicated(keep="last")].sort_index().dropna(subset=required_ohlcv)
-    if not np.isfinite(data[list(required_ohlcv)].to_numpy(dtype=float)).all():
-        raise ValueError(f"Market data for {ticker} contains non-finite OHLCV values.")
-    if (data[["Open", "High", "Low", "Close"]] <= 0).any().any() or (data["Volume"] < 0).any():
-        raise ValueError(f"Market data for {ticker} contains invalid OHLCV values.")
-    min_rows = WINDOW_SIZE + MAX_FORECAST_DAYS + 30  # 20-day rolling windows plus horizon buffer
-    if len(data) < min_rows:
-        raise ValueError(
-            f"Not enough historical data for {ticker}. Need at least {min_rows} trading days."
-        )
+    data = _download_ohlcv(ticker)
 
     feature_df, feature_metadata = build_browser_features(data, FEATURES_V4)
     closing_prices = data.loc[feature_df.index, "Close"].to_numpy(dtype=float)

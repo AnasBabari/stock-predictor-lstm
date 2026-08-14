@@ -8,7 +8,6 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
 
 from evaluation.blending import fit_constrained_blend, fit_shrinkage_alpha
 from evaluation.conformal import calibrate_intervals, interval_diagnostics, prediction_intervals
@@ -34,6 +33,7 @@ from experiments.baselines import (
 )
 from experiments.contracts import FoldPlan, build_experiment_dataset
 from experiments.targets import TargetType, reconstruct_prices, transform_price_targets
+from features.pipeline import make_feature_scaler
 
 # Deterministic models produce identical predictions for every seed, so they
 # are evaluated once and shared across the seed loop.
@@ -69,7 +69,7 @@ def _scale_windows(
     train_features: np.ndarray, validation_features: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
     feature_count = train_features.shape[2]
-    scaler = MinMaxScaler()
+    scaler = make_feature_scaler()
     scaler.fit(train_features.reshape(-1, feature_count))
     scaled_train = scaler.transform(train_features.reshape(-1, feature_count)).reshape(
         train_features.shape
@@ -350,7 +350,7 @@ def run_baseline_experiment(
                     inner_raw_train = raw_train[inner_training]
                     inner_raw_validation = raw_train[inner_validation]
                     feature_count = inner_raw_train.shape[2]
-                    scaler = MinMaxScaler().fit(inner_raw_train.reshape(-1, feature_count))
+                    scaler = make_feature_scaler().fit(inner_raw_train.reshape(-1, feature_count))
                     inner_scaled_train = scaler.transform(
                         inner_raw_train.reshape(-1, feature_count)
                     ).reshape(inner_raw_train.shape)

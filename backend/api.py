@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Literal
 
@@ -45,7 +46,12 @@ from config import (
     WINDOW_SIZE,
     settings,
 )
-from data_pipeline import fetch_data
+from data_pipeline import (
+    MarketDataUnavailable,
+    MarketTransportError,
+    fetch_data,
+    market_circuit_breaker,
+)
 from features.market import MarketContextUnavailable
 from news_features import get_live_financial_sentiment as get_financial_sentiment
 from server_models.api import router as server_forecasts_router
@@ -149,6 +155,24 @@ def _deployment_identity() -> dict[str, Any]:
 _trusted_proxy_ips = frozenset(settings.trusted_proxy_ips)
 
 
+def _is_trusted_ip(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        addr = ipaddress.ip_address(value.strip())
+        trusted_set = set(_trusted_proxy_ips) | set(settings.trusted_proxy_ips)
+        for trusted in trusted_set:
+            trusted_str = str(trusted)
+            if "/" in trusted_str:
+                if addr in ipaddress.ip_network(trusted_str, strict=False):
+                    return True
+            elif str(addr) == trusted_str:
+                return True
+        return False
+    except ValueError:
+        return False
+
+
 def _normalise_ip(value: str) -> str | None:
     try:
         return str(ipaddress.ip_address(value.strip()))
@@ -160,7 +184,7 @@ def rate_limit_identity(request: Request) -> str:
     """Trust forwarding data only when the direct peer is explicitly configured."""
     peer = request.client.host if request.client is not None else "unknown"
     normalised_peer = _normalise_ip(peer)
-    if normalised_peer is None or normalised_peer not in _trusted_proxy_ips:
+    if normalised_peer is None or not _is_trusted_ip(normalised_peer):
         return normalised_peer or peer
 
     forwarded = request.headers.get("x-forwarded-for")
@@ -170,7 +194,7 @@ def rate_limit_identity(request: Request) -> str:
     if any(hop is None for hop in hops):
         return normalised_peer
     for hop in reversed(hops):
-        if hop is not None and hop not in _trusted_proxy_ips:
+        if hop is not None and not _is_trusted_ip(hop):
             return hop
     return normalised_peer
 
@@ -430,14 +454,6 @@ class WorkCoordinator:
 
 
 _work_coordinator = WorkCoordinator(settings.prediction_workers, settings.prediction_queue_size)
-_upstream_lock = threading.Lock()
-_upstream_state = {
-    "status": "unknown",
-    "circuit": "unknown",
-    "last_error": None,
-    "checked_at_epoch": None,
-    "consecutive_failures": 0,
-}
 
 VALID_MODEL_TYPES = {
     "lstm",
@@ -448,22 +464,34 @@ VALID_MODEL_TYPES = {
 }
 
 
+def _resolve_runtime_commit() -> str:
+    commit = (
+        settings.deployment_commit
+        or os.getenv("GIT_COMMIT")
+        or os.getenv("RENDER_GIT_COMMIT")
+        or os.getenv("VERCEL_GIT_COMMIT_SHA")
+        or os.getenv("GITHUB_SHA")
+    )
+    if commit and re.fullmatch(r"[0-9a-fA-F]{7,40}", commit):
+        return commit[:7].lower()
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip()[:7]
+    except Exception:
+        return "unknown"
+
+
+_RUNTIME_COMMIT = _resolve_runtime_commit()
+
+
 # ── Helpers ──────────────────────────────────────────────────────────
 def get_runtime_metadata(ticker: str, model_type: str = "lstm") -> dict:
     """Return runtime metadata for a browser-trained or baseline forecast."""
-    git_commit = os.environ.get("GIT_COMMIT")
-    if not git_commit:
-        try:
-            git_commit = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
-            ).strip()[:7]
-        except Exception:
-            git_commit = "unknown"
-
     return {
         "model_version": APP_VERSION,
         "schema_version": SCHEMA_VERSION,
-        "git_commit": git_commit,
+        "git_commit": _RUNTIME_COMMIT,
         "python_version": sys.version.split()[0],
         "window_size": WINDOW_SIZE,
         "feature_count": len(FEATURES),
@@ -495,41 +523,22 @@ def validate_model_type(model_type: str) -> str:
 
 
 def _record_upstream(status: str, error: str | None = None) -> None:
-    with _upstream_lock:
-        failures = (
-            min(int(_upstream_state["consecutive_failures"] or 0) + 1, 1000)
-            if status == "unavailable"
-            else 0
-        )
-        _upstream_state.update(
-            {
-                "status": status,
-                "circuit": "open" if status == "unavailable" else "closed",
-                "last_error": error,
-                "checked_at_epoch": int(time.time()),
-                "consecutive_failures": failures,
-            }
+    """Reset or update upstream circuit breaker state for tests/diagnostics."""
+    if status == "available":
+        market_circuit_breaker.record_success("__global__")
+    elif status == "unavailable":
+        market_circuit_breaker.record_failure(
+            "__global__", MarketTransportError(error or "Unavailable")
         )
 
 
 def _fetch_snapshot(ticker: str):
-    with _upstream_lock:
-        checked_at = int(_upstream_state["checked_at_epoch"] or 0)
-        cooldown_remaining = settings.upstream_circuit_cooldown_seconds - (time.time() - checked_at)
-        if _upstream_state["circuit"] == "open" and cooldown_remaining > 0:
-            raise MarketContextUnavailable("Market data circuit is temporarily open; retry later.")
-        if _upstream_state["circuit"] == "open":
-            _upstream_state["circuit"] = "half_open"
-        elif _upstream_state["circuit"] == "half_open":
-            raise MarketContextUnavailable("Market data circuit recovery probe is in progress.")
     try:
         snapshot = fetch_data(ticker)
-        _record_upstream("available")
         feature_df, prices, dates, metadata = snapshot
         return feature_df.copy(deep=True), prices.copy(), dates.copy(), dict(metadata)
-    except Exception as err:
-        _record_upstream("unavailable", type(err).__name__)
-        raise
+    except MarketTransportError as err:
+        raise MarketContextUnavailable(str(err)) from err
 
 
 def _validated_future_dates(ticker: str, last_date, days: int) -> tuple[list[str], str]:
@@ -807,16 +816,8 @@ def ready():
     """Readiness checks the market-data dependency and, in server-pretrained
     deployments, the server-forecast infrastructure. No browser model disk is
     required for browser training."""
-    with _upstream_lock:
-        upstream = dict(_upstream_state)
-    checked_at = upstream["checked_at_epoch"] or 0
-    circuit_blocked = (
-        upstream["circuit"] == "open"
-        and time.time() - checked_at < settings.upstream_circuit_cooldown_seconds
-    )
-    if upstream["circuit"] == "open" and not circuit_blocked:
-        upstream["circuit"] = "half_open"
-    is_ready = not circuit_blocked
+    market_ready, upstream = market_circuit_breaker.is_ready()
+    is_ready = market_ready
     dependencies = {
         "market_data": upstream,
         "model_storage": {
@@ -920,21 +921,78 @@ def list_models():
     }
 
 
+# ── Training Snapshot Cache & Concurrency (Process-Local) ────────────
+# Note: This semaphore, in-flight coalescing map, and LRU cache are process-local
+# to each backend worker. Edge/API rate limiting (10/minute) provides outer bounding.
+_training_semaphore = asyncio.Semaphore(2)
+_snapshot_lock = asyncio.Lock()
+_in_flight_tasks: dict[str, asyncio.Task] = {}
+_snapshot_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+_SNAPSHOT_CACHE_TTL = 60.0
+_SNAPSHOT_CACHE_MAX = 6
+
+
+async def _execute_snapshot_build(ticker: str) -> dict:
+    async with _training_semaphore:
+        return await asyncio.to_thread(build_training_snapshot, ticker)
+
+
 @app.get("/api/v1/training-data")
 @limiter.limit("10/minute")
 async def training_data(request: Request, ticker: str = "AAPL"):
     """Return a bounded feature snapshot for browser-side training."""
     ticker = validate_ticker(ticker)
+
+    # 1. Check short-lived cache (hits bypass semaphore and update LRU order)
+    async with _snapshot_lock:
+        now = time.time()
+        if ticker in _snapshot_cache:
+            cached_time, cached_payload = _snapshot_cache[ticker]
+            if now - cached_time < _SNAPSHOT_CACHE_TTL:
+                _snapshot_cache.move_to_end(ticker)
+                return copy.deepcopy(cached_payload)
+            del _snapshot_cache[ticker]
+
+        # 2. Coalesce in-flight builds for the same ticker
+        task = _in_flight_tasks.get(ticker)
+        if task is None or task.done():
+            task = asyncio.create_task(_execute_snapshot_build(ticker))
+            _in_flight_tasks[ticker] = task
+
+            def _cleanup(t: asyncio.Task, tkr: str = ticker) -> None:
+                async def _remove_task():
+                    async with _snapshot_lock:
+                        if _in_flight_tasks.get(tkr) is t:
+                            _in_flight_tasks.pop(tkr, None)
+
+                asyncio.create_task(_remove_task())
+
+            task.add_done_callback(_cleanup)
+
     try:
-        return await asyncio.to_thread(build_training_snapshot, ticker)
+        # Shield task so client cancellation doesn't kill shared in-flight build
+        result = await asyncio.shield(task)
+        completion_time = time.time()
+        async with _snapshot_lock:
+            if len(_snapshot_cache) >= _SNAPSHOT_CACHE_MAX:
+                _snapshot_cache.popitem(last=False)
+            _snapshot_cache[ticker] = (completion_time, copy.deepcopy(result))
+            _snapshot_cache.move_to_end(ticker)
+        return result
     except MarketContextUnavailable as err:
         raise HTTPException(status_code=503, detail=str(err)) from err
-    except ValueError as err:
-        safe_messages = ("Not enough historical data", "Not enough feature rows")
+    except (ValueError, MarketDataUnavailable) as err:
+        safe_messages = (
+            "Not enough historical data",
+            "Not enough feature rows",
+            "No market data is available",
+        )
         detail = (
             str(err) if str(err).startswith(safe_messages) else "Invalid input data for training."
         )
         raise HTTPException(status_code=400, detail=detail) from err
+    except MarketTransportError as err:
+        raise HTTPException(status_code=503, detail=str(err)) from err
     except Exception as err:
         logger.exception("Training-data snapshot failed for %s", ticker)
         raise HTTPException(
@@ -1098,7 +1156,7 @@ async def predict_direction_endpoint(
 
 @app.get("/api/v1/prediction-status/{request_id}", response_model=PredictionStatusResponse)
 @limiter.limit("60/minute")
-def prediction_status(request: Request, request_id: str):
+async def prediction_status(request: Request, request_id: str):
     """Return short-lived, in-process progress for a client request ID."""
     try:
         parsed_id = _parse_request_id(request_id)

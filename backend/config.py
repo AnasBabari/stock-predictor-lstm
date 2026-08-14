@@ -1,7 +1,7 @@
 """Application configuration with environment variable support (4.2)."""
 
 import tomllib
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Literal
 
@@ -114,12 +114,23 @@ class Settings(BaseSettings):
     @field_validator("trusted_proxy_ips")
     @classmethod
     def validate_trusted_proxy_ips(cls, values: list[str]) -> list[str]:
-        """Accept exact proxy addresses only; broad networks and wildcards are unsafe."""
+        """Accept exact IP addresses or non-wildcard CIDR networks."""
         normalised: list[str] = []
         for value in values:
-            if "/" in value or value.strip() == "*":
-                raise ValueError("trusted_proxy_ips entries must be exact IP addresses")
-            normalised.append(str(ip_address(value.strip())))
+            val = value.strip()
+            if not val or val == "*":
+                raise ValueError("Wildcard '*' proxy trust is not permitted.")
+            try:
+                if "/" in val:
+                    net = ip_network(val, strict=False)
+                    if net.prefixlen == 0:
+                        raise ValueError("Wildcard /0 CIDR is not permitted.")
+                    normalised.append(str(net))
+                else:
+                    addr = ip_address(val)
+                    normalised.append(str(addr))
+            except ValueError as err:
+                raise ValueError(f"Invalid IP address or CIDR: {val}") from err
         return list(dict.fromkeys(normalised))
 
     model_config = {

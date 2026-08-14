@@ -215,3 +215,54 @@ def test_get_raw_feature_arrays(synthetic_feature_df):
     # log_returns has length n-1 (first row dropped)
     assert len(log_returns) == len(close_values) - 1
     assert len(dates) == len(synthetic_feature_df)
+
+
+def test_market_circuit_breaker_lifecycle():
+    from data_pipeline import MarketCircuitBreaker, MarketDataUnavailable, MarketTransportError
+
+    breaker = MarketCircuitBreaker(
+        failure_threshold=3, cooldown_seconds=0.1, negative_cache_ttl=0.2
+    )
+    is_ready, details = breaker.is_ready()
+    assert is_ready is True
+    assert details["circuit"] == "closed"
+    assert details["consecutive_failures"] == 0
+
+    # 1. Deterministic validation error should cache negative ticker but not trip circuit
+    breaker.record_failure("BAD_TICKER", MarketDataUnavailable("No data for BAD_TICKER"))
+    is_ready, details = breaker.is_ready()
+    assert is_ready is True
+    assert details["circuit"] == "closed"
+    assert details["consecutive_failures"] == 0
+    assert details["negative_cache_size"] == 1
+
+    # 2. Consecutive transport errors trip circuit to open
+    breaker.record_failure("AAPL", MarketTransportError("Connection timed out"))
+    assert breaker.is_ready()[0] is True
+    assert breaker.is_ready()[1]["consecutive_failures"] == 1
+
+    breaker.record_failure("AAPL", MarketTransportError("503 Service Unavailable"))
+    assert breaker.is_ready()[0] is True
+    assert breaker.is_ready()[1]["consecutive_failures"] == 2
+
+    breaker.record_failure("AAPL", MarketTransportError("429 Too Many Requests"))
+    is_ready, details = breaker.is_ready()
+    assert is_ready is False
+    assert details["circuit"] == "open"
+    assert details["status"] == "unavailable"
+    assert details["consecutive_failures"] == 3
+
+    # 3. Cooldown allows probe (half_open)
+    import time
+
+    time.sleep(0.12)
+    is_ready, details = breaker.is_ready()
+    assert is_ready is True
+    assert details["circuit"] == "half_open"
+
+    # 4. Successful probe resets to closed
+    breaker.record_success("AAPL")
+    is_ready, details = breaker.is_ready()
+    assert is_ready is True
+    assert details["circuit"] == "closed"
+    assert details["consecutive_failures"] == 0

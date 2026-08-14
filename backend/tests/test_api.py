@@ -97,7 +97,33 @@ def test_ready_reports_server_forecast_infrastructure_by_mode(monkeypatch):
     assert healthy.json()["dependencies"]["server_forecasts"]["required"] is False
 
 
+def test_ready_reflects_market_circuit_breaker_open_and_recovery():
+    api._record_upstream("available")
+    assert client.get("/ready").status_code == 200
+    assert client.get("/health").status_code == 200
+
+    # Trip breaker by recording failures
+    for _ in range(3):
+        api._record_upstream("unavailable", "Simulated connection refused")
+
+    assert client.get("/health").status_code == 200  # Liveness remains 200
+    unready = client.get("/ready")
+    assert unready.status_code == 503
+    body = unready.json()
+    assert body["status"] == "degraded"
+    assert body["dependencies"]["market_data"]["status"] == "unavailable"
+    assert body["dependencies"]["market_data"]["circuit"] == "open"
+
+    # Recover
+    api._record_upstream("available")
+    recovered = client.get("/ready")
+    assert recovered.status_code == 200
+    assert recovered.json()["status"] == "ready"
+    assert recovered.json()["dependencies"]["market_data"]["status"] == "available"
+
+
 def test_root_discloses_service_routes():
+
     response = client.get("/")
     assert response.status_code == 200
     body = response.json()
@@ -151,9 +177,10 @@ def _request(peer: str, forwarded: str | None = None):
 
 
 def test_rate_limit_identity_uses_only_explicitly_trusted_proxy(monkeypatch):
-    monkeypatch.setattr(api, "_trusted_proxy_ips", frozenset({"172.30.30.10"}))
+    monkeypatch.setattr(api, "_trusted_proxy_ips", frozenset({"172.30.30.10", "10.0.0.0/24"}))
     assert api.rate_limit_identity(_request("198.51.100.7", "203.0.113.9")) == "198.51.100.7"
     assert api.rate_limit_identity(_request("172.30.30.10", "203.0.113.9")) == "203.0.113.9"
+    assert api.rate_limit_identity(_request("10.0.0.50", "203.0.113.9")) == "203.0.113.9"
     assert (
         api.rate_limit_identity(_request("172.30.30.10", "spoofed, 203.0.113.9")) == "172.30.30.10"
     )
@@ -731,3 +758,50 @@ def test_training_data_route_returns_validated_snapshot(monkeypatch):
     assert response.status_code == 200
     assert response.json()["feature_names"] == list(FEATURES_V4)
     assert client.get("/api/v1/training-data?ticker=../MSFT").status_code == 400
+
+
+def test_training_data_coalesces_and_caches_with_lru_eviction(monkeypatch):
+    build_count = 0
+
+    def mock_build(ticker):
+        nonlocal build_count
+        build_count += 1
+        return {
+            "ticker": ticker,
+            "schema_version": 4,
+            "snapshot_id": f"snap-{ticker}",
+            "feature_names": list(FEATURES_V4),
+            "window_size": WINDOW_SIZE,
+            "output_width": MAX_FORECAST_DAYS,
+            "dates": ["2026-07-30"],
+            "features": [[1.0] * len(FEATURES_V4)],
+            "historical_prices": [100.0],
+            "future_dates": ["2026-07-31"],
+        }
+
+    monkeypatch.setattr(api, "build_training_snapshot", mock_build)
+    api._snapshot_cache.clear()
+
+    # 1. First call builds
+    r1 = client.get("/api/v1/training-data?ticker=AAPL")
+    assert r1.status_code == 200
+    assert build_count == 1
+
+    # 2. Second call hits cache (no new build)
+    r2 = client.get("/api/v1/training-data?ticker=AAPL")
+    assert r2.status_code == 200
+    assert build_count == 1
+
+    # 3. Cache returns independent copies
+    body1 = r1.json()
+    body1["historical_prices"].append(999.0)
+    body2 = client.get("/api/v1/training-data?ticker=AAPL").json()
+    assert body2["historical_prices"] == [100.0]
+
+    # 4. Fill cache beyond max (6) to trigger LRU eviction
+    for tkr in ["MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"]:
+        client.get(f"/api/v1/training-data?ticker={tkr}")
+
+    # AAPL was oldest and should have been evicted
+    client.get("/api/v1/training-data?ticker=AAPL")
+    assert build_count == 8  # AAPL rebuilt

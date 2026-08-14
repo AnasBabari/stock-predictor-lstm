@@ -4,11 +4,17 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import RobustScaler  # type: ignore[import-untyped]
 
 from features.calendar import add_calendar_features
 from features.market import add_market_context
 from features.stationary import add_stationary_features
 from features.technical import add_technical_indicators
+
+
+def make_feature_scaler() -> RobustScaler:
+    """Authoritative scaler contract for server-side feature preprocessing."""
+    return RobustScaler(quantile_range=(25.0, 75.0))
 
 
 def validate_features(df: pd.DataFrame, expected_features: list[str]) -> None:
