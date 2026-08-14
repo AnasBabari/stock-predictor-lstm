@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
+from filelock import FileLock
+
 
 def append_record(path: Path, record: Mapping[str, Any]) -> dict[str, Any]:
     """Append a structured JSONL experiment record and return the formatted entry."""
@@ -32,6 +34,7 @@ def append_record(path: Path, record: Mapping[str, Any]) -> dict[str, Any]:
         "relative_rmse": record.get("median_relative_rmse", record.get("relative_rmse")),
         "worst_fold_rmse_ratio": record.get("worst_fold_relative_rmse", record.get("worst_fold_rmse_ratio")),
         "peak_vram_mb": record.get("peak_vram_mb", 0),
+        "peak_rss_mb": record.get("peak_rss_mb", 0),
         "training_seconds": record.get("training_seconds", 0.0),
         "parameter_count": record.get("parameter_count", 0),
         "complexity_delta": record.get("complexity_delta", 0),
@@ -41,10 +44,12 @@ def append_record(path: Path, record: Mapping[str, Any]) -> dict[str, Any]:
         "recorded_at": timestamp,
     }
 
-    with path.open("a", encoding="utf-8") as handle:
+    lock = FileLock(f"{path}.lock", timeout=15)
+    with lock, path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(full_record, sort_keys=True) + "\n")
 
     return full_record
+
 
 
 def export_tsv_summary(jsonl_path: Path, tsv_path: Path) -> None:
@@ -72,6 +77,7 @@ def export_tsv_summary(jsonl_path: Path, tsv_path: Path) -> None:
         "relative_rmse",
         "worst_fold_rmse_ratio",
         "peak_vram_mb",
+        "peak_rss_mb",
         "training_seconds",
         "recorded_at",
     ]
@@ -111,8 +117,8 @@ def generate_markdown_report(jsonl_path: Path, report_path: Path) -> None:
         f"- **Discarded**: {len(discarded)}",
         f"- **Failed / Invalid**: {len(failed)}",
         "",
-        "| ID | Family | Status | Decision | Rel MAE | Rel RMSE | Peak VRAM | Time (s) |",
-        "|---|---|---|---|---|---|---|---|",
+        "| ID | Family | Status | Decision | Rel MAE | Rel RMSE | Peak VRAM | Peak RSS | Time (s) |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
 
     for r in records:
@@ -123,8 +129,10 @@ def generate_markdown_report(jsonl_path: Path, report_path: Path) -> None:
         rel_mae = f"{r.get('relative_mae'):.4f}" if isinstance(r.get("relative_mae"), (int, float)) else "-"
         rel_rmse = f"{r.get('relative_rmse'):.4f}" if isinstance(r.get("relative_rmse"), (int, float)) else "-"
         vram = f"{r.get('peak_vram_mb')} MB" if r.get("peak_vram_mb") else "-"
+        rss = f"{r.get('peak_rss_mb')} MB" if r.get("peak_rss_mb") else "-"
         t_sec = f"{r.get('training_seconds'):.1f}s" if isinstance(r.get("training_seconds"), (int, float)) else "-"
-        lines.append(f"| `{exp_id}` | `{family}` | {status} | **{decision}** | {rel_mae} | {rel_rmse} | {vram} | {t_sec} |")
+        lines.append(f"| `{exp_id}` | `{family}` | {status} | **{decision}** | {rel_mae} | {rel_rmse} | {vram} | {rss} | {t_sec} |")
+
 
     lines.append("")
     report_path.write_text("\n".join(lines), encoding="utf-8")

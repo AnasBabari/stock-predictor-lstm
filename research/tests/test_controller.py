@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import subprocess
 from pathlib import Path
 from unittest import mock
 
@@ -299,3 +300,60 @@ def test_level_2_confirmation_end_to_end_uses_requested_horizon(tmp_path: Path) 
     # The 5-fold expanding folds shrink as the horizon grows, so a horizon-5
     # run cannot reproduce the horizon-20 fold count or metrics.
     assert results[5]["folds"] != results[20]["folds"] or results[5] != results[20]
+
+
+def test_kill_process_tree_terminates_subprocess() -> None:
+    import subprocess
+    import sys
+
+    from stock_autoresearch.controller import kill_process_tree
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(10)"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.poll() is None
+    kill_process_tree(proc.pid)
+    try:
+        proc.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    assert proc.poll() is not None
+
+
+def test_harness_integrity_detects_file_modification(tmp_path: Path) -> None:
+    from stock_autoresearch.controller import check_harness_integrity, get_protected_fingerprints
+
+    # Create dummy protected structure
+    config_file = tmp_path / "research" / "stock_autoresearch" / "config.py"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text("ORIGINAL = True\n", encoding="utf-8")
+
+    initial_fingerprints = get_protected_fingerprints(tmp_path)
+    assert check_harness_integrity(tmp_path, initial_fingerprints) is True
+
+    # Mutate protected file
+    config_file.write_text("ORIGINAL = False\n", encoding="utf-8")
+    assert check_harness_integrity(tmp_path, initial_fingerprints) is False
+
+
+def test_run_isolated_candidate_eval_rss_budget_exceeded(sample_snapshot_csv: Path) -> None:
+    from stock_autoresearch.controller import run_isolated_candidate_eval
+    from stock_autoresearch.resources import ResourceSample
+
+    tiny_budget = RuntimeBudget(rss_kill_mb=100, vram_kill_mb=5500)
+    fake_sample = ResourceSample(rss_mb=250, peak_vram_mb=0, warning=True, exceeded=True)
+
+    with mock.patch(
+        "stock_autoresearch.controller.sample_process_tree_memory", return_value=fake_sample
+    ), mock.patch(
+        "subprocess.Popen.communicate", side_effect=[subprocess.TimeoutExpired(cmd="test", timeout=0.1), ("", "")]
+    ):
+        result = run_isolated_candidate_eval(
+            sample_snapshot_csv,
+            "persistence",
+            budget=tiny_budget,
+        )
+    assert result.status == "oom"
+    assert "RSS memory limit" in result.failure_reason or "memory limit" in result.failure_reason

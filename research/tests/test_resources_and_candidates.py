@@ -11,14 +11,32 @@ from stock_autoresearch.candidates import (
     elastic_net_family_factories,
     elastic_net_family_name,
 )
-from stock_autoresearch.resources import sample_cuda_memory
+from stock_autoresearch.config import RuntimeBudget
+from stock_autoresearch.resources import sample_cuda_memory, sample_process_tree_memory
 
 
 def test_resource_sample_is_safe_without_cuda() -> None:
-    budget = type("Budget", (), {"vram_warning_mb": 5200, "vram_kill_mb": 5500})()
+    budget = RuntimeBudget(vram_warning_mb=5200, vram_kill_mb=5500)
     sample = sample_cuda_memory(budget)
     assert sample.peak_vram_mb >= 0
     assert not sample.exceeded
+
+
+def test_sample_process_tree_memory_rss_thresholds() -> None:
+    # Low RSS threshold triggers warning and exceedance
+    low_budget = RuntimeBudget(rss_warning_mb=1, rss_kill_mb=2)
+    sample = sample_process_tree_memory(None, low_budget)
+    assert sample.rss_mb > 0
+    assert sample.warning is True
+    assert sample.exceeded is True
+
+    # High RSS threshold is safe
+    high_budget = RuntimeBudget(rss_warning_mb=50000, rss_kill_mb=60000)
+    safe_sample = sample_process_tree_memory(None, high_budget)
+    assert safe_sample.rss_mb > 0
+    assert safe_sample.warning is False
+    assert safe_sample.exceeded is False
+
 
 
 def test_elastic_net_candidate_matches_ridge_contract() -> None:

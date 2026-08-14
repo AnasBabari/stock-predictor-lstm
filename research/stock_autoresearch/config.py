@@ -17,10 +17,13 @@ class RuntimeBudget:
     name: str = "rtx2060-6gb"
     vram_warning_mb: int = 5_200
     vram_kill_mb: int = 5_500
+    rss_warning_mb: int = 2_048
+    rss_kill_mb: int = 4_096
     screen_seconds: int = 120
     confirm_seconds: int = 1_200
     smoke_seconds: int = 30
     max_parameters: int = 20_000_000
+
 
 
 @dataclass(frozen=True)

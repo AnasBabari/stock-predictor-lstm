@@ -6,6 +6,8 @@ immutable file protection, git worktree/branch management, and append-only exper
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import subprocess
 import sys
@@ -14,9 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 from .config import EVALUATION_POLICY, RUNTIME_BUDGET, EvaluationPolicy, RuntimeBudget
 from .ledger import append_record, export_tsv_summary, generate_markdown_report
-from .resources import sample_cuda_memory
+from .resources import sample_process_tree_memory
 
 PROHIBITED_FILES = (
     "research/stock_autoresearch/config.py",
@@ -39,12 +46,55 @@ class SubprocessResult:
     stderr: str
     duration_seconds: float
     peak_vram_mb: int
+    peak_rss_mb: int = 0
     payload: dict[str, Any] | None = None
     failure_reason: str = ""
 
 
-def check_harness_integrity(repo_root: Path) -> bool:
+def kill_process_tree(pid: int | None) -> None:
+    """Recursively terminate all descendant processes and the root process."""
+    if pid is None or psutil is None:
+        return
+    with contextlib.suppress(Exception):
+        parent = psutil.Process(pid)
+        children = parent.children(recursive=True)
+        for child in children:
+            with contextlib.suppress(Exception):
+                child.kill()
+        with contextlib.suppress(Exception):
+            parent.kill()
+        with contextlib.suppress(Exception):
+            psutil.wait_procs(children + [parent], timeout=1.0)
+
+
+def _hash_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def get_protected_fingerprints(repo_root: Path) -> dict[str, str]:
+    fingerprints = {}
+    for prohibited in PROHIBITED_FILES:
+        target = repo_root / prohibited
+        if target.is_file():
+            fingerprints[prohibited] = _hash_file(target)
+        elif target.is_dir():
+            for p in target.rglob("*"):
+                if p.is_file():
+                    rel = p.relative_to(repo_root).as_posix()
+                    fingerprints[rel] = _hash_file(p)
+    return fingerprints
+
+
+def check_harness_integrity(repo_root: Path, baseline_fingerprints: dict[str, str] | None = None) -> bool:
     """Verify candidate edits have NOT modified protected harness or production files."""
+    if baseline_fingerprints is not None:
+        current_fingerprints = get_protected_fingerprints(repo_root)
+        return current_fingerprints == baseline_fingerprints
+
     try:
         cmd = ["git", "diff", "--name-only", "HEAD"]
         proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=True)
@@ -54,7 +104,7 @@ def check_harness_integrity(repo_root: Path) -> bool:
                 if changed == prohibited or changed.startswith(prohibited.rstrip("/") + "/"):
                     return False
     except Exception:
-        return True  # Fallback if git is not in environment
+        return True
     return True
 
 
@@ -68,19 +118,7 @@ def run_isolated_candidate_eval(
     repo_root: Path | None = None,
 ) -> SubprocessResult:
     """Run candidate evaluation in an isolated subprocess with strict memory/time bounds."""
-    if repo_root and not check_harness_integrity(repo_root):
-        return SubprocessResult(
-            status="violates_harness_lock",
-            stdout="",
-            stderr="Immutable harness or production file was modified by candidate.",
-            duration_seconds=0.0,
-            peak_vram_mb=0,
-            failure_reason="Candidate touched prohibited harness files.",
-        )
-
-    # Resolve the research package root from this module's location so the
-    # subprocess can import stock_autoresearch regardless of snapshot path
-    # depth or inherited PYTHONPATH.
+    initial_fingerprints = get_protected_fingerprints(repo_root) if repo_root else None
     research_root = Path(__file__).resolve().parent.parent.as_posix()
 
     eval_script = f"""
@@ -126,6 +164,11 @@ print("JSON_RESULT_END")
 
     start_time = time.time()
     peak_vram = 0
+    peak_rss = 0
+    raw_status = "crash"
+    failure_reason = ""
+    stdout, stderr = "", ""
+
     proc = subprocess.Popen(
         [sys.executable, "-c", eval_script],
         stdout=subprocess.PIPE,
@@ -133,59 +176,98 @@ print("JSON_RESULT_END")
         text=True,
     )
 
-    stdout, stderr = "", ""
     try:
-        while proc.poll() is None:
-            elapsed = time.time() - start_time
-            if elapsed > timeout_seconds:
-                proc.kill()
-                proc.wait()
-                return SubprocessResult(
-                    status="timeout",
-                    stdout=stdout,
-                    stderr=stderr,
-                    duration_seconds=elapsed,
-                    peak_vram_mb=peak_vram,
-                    failure_reason=f"Exceeded time limit of {timeout_seconds}s",
-                )
+        while True:
+            try:
+                stdout, stderr = proc.communicate(timeout=0.1)
+                if proc.returncode == 0:
+                    raw_status = "success"
+                else:
+                    raw_status = "crash"
+                    failure_reason = f"Subprocess exited with code {proc.returncode}"
+                break
+            except subprocess.TimeoutExpired:
+                elapsed = time.time() - start_time
+                sample = sample_process_tree_memory(proc.pid, budget)
+                peak_vram = max(peak_vram, sample.peak_vram_mb)
+                peak_rss = max(peak_rss, sample.rss_mb)
 
-            # Sample GPU memory
-            sample = sample_cuda_memory(budget)
-            peak_vram = max(peak_vram, sample.peak_vram_mb)
-            if sample.exceeded:
-                proc.kill()
-                proc.wait()
-                return SubprocessResult(
-                    status="oom",
-                    stdout=stdout,
-                    stderr=stderr,
-                    duration_seconds=time.time() - start_time,
-                    peak_vram_mb=peak_vram,
-                    failure_reason=f"Exceeded VRAM kill threshold ({budget.vram_kill_mb} MB)",
-                )
-            time.sleep(0.1)
+                if elapsed > timeout_seconds:
+                    raw_status = "timeout"
+                    failure_reason = f"Exceeded time limit of {timeout_seconds}s"
+                    kill_process_tree(proc.pid)
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    break
 
-        stdout, stderr = proc.communicate()
+                if sample.exceeded:
+                    raw_status = "oom"
+                    reasons = []
+                    if sample.rss_mb >= budget.rss_kill_mb > 0:
+                        reasons.append(f"RSS memory limit ({budget.rss_kill_mb} MB)")
+                    if sample.peak_vram_mb >= budget.vram_kill_mb > 0:
+                        reasons.append(f"VRAM kill threshold ({budget.vram_kill_mb} MB)")
+                    failure_reason = f"Exceeded {' and '.join(reasons) or 'memory limit'}"
+                    kill_process_tree(proc.pid)
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    break
     except Exception as exc:
-        proc.kill()
-        return SubprocessResult(
-            status="crash",
-            stdout="",
-            stderr=str(exc),
-            duration_seconds=time.time() - start_time,
-            peak_vram_mb=peak_vram,
-            failure_reason=str(exc),
-        )
+        raw_status = "crash"
+        failure_reason = str(exc)
+        kill_process_tree(proc.pid)
+        with contextlib.suppress(Exception):
+            proc.kill()
+    finally:
+        kill_process_tree(proc.pid)
+        with contextlib.suppress(Exception):
+            proc.kill()
 
     duration = time.time() - start_time
-    if proc.returncode != 0:
+
+    # Critical security gate: verify harness integrity regardless of exit mode
+    if repo_root and not check_harness_integrity(repo_root, initial_fingerprints):
         return SubprocessResult(
-            status="crash",
-            stdout=stdout,
-            stderr=stderr,
+            status="violates_harness_lock",
+            stdout=stdout or "",
+            stderr="Immutable harness or production file was modified during subprocess execution.",
             duration_seconds=duration,
             peak_vram_mb=peak_vram,
-            failure_reason=f"Subprocess exited with code {proc.returncode}",
+            peak_rss_mb=peak_rss,
+            failure_reason="Subprocess modified prohibited harness files.",
+        )
+
+    if raw_status == "timeout":
+        return SubprocessResult(
+            status="timeout",
+            stdout=stdout or "",
+            stderr=stderr or "",
+            duration_seconds=duration,
+            peak_vram_mb=peak_vram,
+            peak_rss_mb=peak_rss,
+            failure_reason=failure_reason,
+        )
+
+    if raw_status == "oom":
+        return SubprocessResult(
+            status="oom",
+            stdout=stdout or "",
+            stderr=stderr or "",
+            duration_seconds=duration,
+            peak_vram_mb=peak_vram,
+            peak_rss_mb=peak_rss,
+            failure_reason=failure_reason,
+        )
+
+    if raw_status == "crash":
+        return SubprocessResult(
+            status="crash",
+            stdout=stdout or "",
+            stderr=stderr or "",
+            duration_seconds=duration,
+            peak_vram_mb=peak_vram,
+            peak_rss_mb=peak_rss,
+            failure_reason=failure_reason,
         )
 
     # Parse payload
@@ -204,6 +286,7 @@ print("JSON_RESULT_END")
             stderr=stderr,
             duration_seconds=duration,
             peak_vram_mb=peak_vram,
+            peak_rss_mb=peak_rss,
             failure_reason="Failed to parse result payload from candidate subprocess.",
         )
 
@@ -213,6 +296,7 @@ print("JSON_RESULT_END")
         stderr=stderr,
         duration_seconds=duration,
         peak_vram_mb=peak_vram,
+        peak_rss_mb=peak_rss,
         payload=payload,
     )
 
