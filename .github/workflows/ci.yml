@@ -124,7 +124,8 @@ jobs:
       - run: uv sync --project backend --frozen
       - name: Install CPU PyTorch for the torch-gated challenger tests
         run: |
-          uv pip install --project backend --torch-backend=cpu torch
+          uv pip install --project backend --python backend/.venv/bin/python --torch-backend=cpu torch
+          uv run --project backend python -c "import torch; print(f'PyTorch {torch.__version__}')"
       - name: Run research harness tests
         env:
           PYTHONPATH: research

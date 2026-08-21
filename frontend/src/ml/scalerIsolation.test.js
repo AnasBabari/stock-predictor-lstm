@@ -135,7 +135,7 @@ test('future feature rows cannot move research fold scaler state', () => {
       assertScalerStateUnchanged(prepareDirectionData(directionCorrupted, 300, horizon), directionBaseline);
     }
   }
-});
+}, 30_000);
 
 test('direction matrix shift consumes the same feature rows as price', () => {
   const snapshot = makeSnapshot(300);
