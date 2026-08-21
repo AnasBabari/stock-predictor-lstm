@@ -26,7 +26,7 @@ import {
   median,
   regressionMetrics,
 } from './evaluation';
-import { buildPersistenceForecast, evaluatePromotion } from './promotionPolicy';
+import { buildPersistenceForecast, describePromotionState, evaluatePromotion } from './promotionPolicy';
 import { resolveTrainingProfile } from './trainingProfiles';
 import { buildBrowserModel } from './modelFactory';
 import { isVersionedKey } from './storageKeys';
@@ -776,18 +776,24 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
         ? sampleCount - profile.validationHorizon
         : Math.floor(sampleCount * TRAIN_SPLIT);
       const majority = directionMajority(prepared.targets.slice(0, preEvaluationEnd));
+      const forecastStatus = describePromotionState(promotion);
       const baselineFallback = !promotion.promoted;
-      const directions = baselineFallback
-        ? rawProbabilities.map(() => (majority.label === 1 ? 'Up' : 'Down'))
-        : rawProbabilities.map((value) => (value >= 0.5 ? 'Up' : 'Down'));
-      const fallbackProbabilities = baselineFallback
-        ? rawProbabilities.map(() => majority.rate)
-        : rawProbabilities;
+      const modelDirections = rawProbabilities.map((value) => (value >= 0.5 ? 'Up' : 'Down'));
+      const baselineDirections = rawProbabilities.map(() => (majority.label === 1 ? 'Up' : 'Down'));
+      const baselineProbabilities = rawProbabilities.map(() => majority.rate);
       return {
         ...common,
-        directions,
-        probabilities: fallbackProbabilities,
+        // Decision path (what the UI presents as the forecast).
+        directions: baselineFallback ? baselineDirections : modelDirections,
+        probabilities: baselineFallback ? baselineProbabilities : rawProbabilities,
+        // Raw paths, always preserved so a safety fallback can never be
+        // mistaken for a learned output.
+        model_directions: modelDirections,
+        model_probabilities: rawProbabilities,
+        persistence_directions: baselineDirections,
+        persistence_probabilities: baselineProbabilities,
         baselineFallback,
+        forecast_status: forecastStatus,
         promotion,
       };
     }
@@ -802,14 +808,18 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       closingPrices: snapshot.historical_prices,
     });
     const baselineFallback = !promotion.promoted;
-    const predictedPrices = baselineFallback
-      ? buildPersistenceForecast(snapshot.historical_prices, requestedDays)
-      : learnedPrices;
+    const persistenceForecast = buildPersistenceForecast(
+      snapshot.historical_prices, requestedDays
+    );
+    const predictedPrices = baselineFallback ? persistenceForecast : learnedPrices;
     return {
       ...common,
+      // Decision path; learned path and baseline are always separate fields.
       predictedPrices,
       learnedPrices,
+      persistence_forecast: persistenceForecast,
       baselineFallback,
+      forecast_status: describePromotionState(promotion),
       promotion,
     };
   } finally {

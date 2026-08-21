@@ -1,4 +1,5 @@
 import React, { useMemo, useCallback, lazy, Suspense, forwardRef } from 'react';
+import { buildPriceSeries } from '../utils/chartSeries';
 
 const LazyLineChart = lazy(() => import('./LazyLineChart'));
 
@@ -26,75 +27,7 @@ const StockChart = forwardRef(function StockChart(
     if (forecastType !== 'price') {
       return null;
     }
-
-    if (!stockData || !stockData.historical_prices || !stockData.predicted_prices) {
-      return null;
-    }
-
-    const total = stockData.historical_prices.length;
-    const sliceIdx = Math.max(0, total - daysView);
-    const sliceDates = stockData.historical_dates.slice(sliceIdx);
-    const slicePrices = stockData.historical_prices.slice(sliceIdx);
-
-    const allDates = [...sliceDates, ...stockData.future_dates];
-
-    const historicalPadded = [
-      ...slicePrices,
-      ...Array(stockData.future_dates.length).fill(null),
-    ];
-    const predictedPadded = [
-      ...Array(slicePrices.length - 1).fill(null),
-      slicePrices[slicePrices.length - 1],
-      ...stockData.predicted_prices,
-    ];
-
-    const histColor = isDark ? '#58a6ff' : '#3b82f6';
-    const predColor = isDark ? '#00f5a0' : '#10b981';
-
-    return {
-      labels: allDates,
-      datasets: [
-        {
-          label: 'Historical Price',
-          data: historicalPadded,
-          borderColor: histColor,
-          backgroundColor: (context) => {
-            const ctx = context.chart.ctx;
-            const grad = ctx.createLinearGradient(0, 0, 0, 400);
-            grad.addColorStop(0, isDark ? 'rgba(88,166,255,0.12)' : 'rgba(59,130,246,0.08)');
-            grad.addColorStop(1, 'transparent');
-            return grad;
-          },
-          borderWidth: 2,
-          pointRadius: 0,
-          pointHoverRadius: 5,
-          pointHoverBackgroundColor: histColor,
-          tension: 0.35,
-          fill: true,
-          spanGaps: false,
-        },
-        {
-          label: 'Predicted Price',
-          data: predictedPadded,
-          borderColor: predColor,
-          backgroundColor: (context) => {
-            const ctx = context.chart.ctx;
-            const grad = ctx.createLinearGradient(0, 0, 0, 400);
-            grad.addColorStop(0, isDark ? 'rgba(0,245,160,0.12)' : 'rgba(16,185,129,0.08)');
-            grad.addColorStop(1, 'transparent');
-            return grad;
-          },
-          borderWidth: 2.5,
-          pointRadius: 4,
-          pointBackgroundColor: predColor,
-          pointHoverRadius: 6,
-          borderDash: [6, 3],
-          tension: 0.35,
-          fill: true,
-          spanGaps: false,
-        },
-      ],
-    };
+    return buildPriceSeries(stockData, daysView, isDark);
   }, [stockData, daysView, isDark]);
 
   const chartOptions = useMemo(() => {
@@ -161,6 +94,11 @@ const StockChart = forwardRef(function StockChart(
       <div className="chart-header">
         <h2 id="chartTitle">{stockData.ticker} — Historical vs Predicted</h2>
       </div>
+      {chartData.annotation && (
+        <p className="chart-status-note" role="note">
+          {chartData.annotation}
+        </p>
+      )}
       <div className="timeframe-filters">
         {TIMEFRAMES.map((t) => (
           <button

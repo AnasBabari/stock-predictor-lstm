@@ -105,19 +105,33 @@ function PromotionNotice({ stockData, forecastType }) {
   const baselineReason = engine?.baseline_fallback || promotion?.promoted === false;
   if (!baselineReason) return null;
   const reasons = Array.isArray(promotion?.reasons) ? promotion.reasons : [];
+  const statusLabel = stockData.forecast_status?.label;
   return (
     <div className="metrics-warning" role="status">
-      {volatilityRejected
-        ? 'The learned forecast exceeded its historically observed volatility range. Showing the persistence baseline.'
-        : isTrend
-          ? 'This learned direction model was not promoted and did not beat the majority-class baseline on untouched out-of-sample evaluation. Showing the majority-class baseline. The learned result remains visible for research only.'
-          : 'This learned model was not promoted and did not beat the persistence benchmark on untouched out-of-sample evaluation. Showing the persistence baseline. The learned result remains visible for research only.'}
+      {statusLabel
+        ? `${statusLabel}${isTrend ? '' : ' The dashed grey line on the chart shows the raw learned path.'}`
+        : volatilityRejected
+          ? 'The learned forecast exceeded its historically observed volatility range. Showing the persistence baseline.'
+          : isTrend
+            ? 'This learned direction model was not promoted and did not beat the majority-class baseline on untouched out-of-sample evaluation. Showing the majority-class baseline. The learned result remains visible for research only.'
+            : 'This learned model was not promoted and did not beat the persistence benchmark on untouched out-of-sample evaluation. Showing the persistence baseline. The learned result remains visible for research only.'}
       {reasons.length > 0 && (
         <ul className="promotion-reasons">
           {reasons.map((reason) => <li key={reason}>{reason}</li>)}
         </ul>
       )}
     </div>
+  );
+}
+
+function PromotedNotice({ stockData }) {
+  const promoted = stockData.forecast_status?.state === 'promoted' &&
+    stockData.metadata?.engine?.role === 'browser_learned';
+  if (!promoted) return null;
+  return (
+    <p className="metrics-promoted" role="status">
+      Promoted: this local model beat persistence on its untouched holdout, so the forecast shown is the model output.
+    </p>
   );
 }
 
@@ -192,6 +206,7 @@ export default function MetricsCard({ stockData, forecastType }) {
       ))}
       {!isTrend && <HorizonTable metrics={m} />}
       {isTrend && <DirectionHorizonTable metrics={m} />}
+      <PromotedNotice stockData={stockData} />
       <PromotionNotice stockData={stockData} forecastType={forecastType} />
       {underperforms && (
         <div className="metrics-warning" role="status">

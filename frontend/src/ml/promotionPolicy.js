@@ -203,6 +203,39 @@ export function buildPersistenceForecast(closingPrices, days) {
   return Array.from({ length: Math.max(1, Math.round(Number(days) || 1)) }, () => latest);
 }
 
+// User-facing status contract (overhaul slice 1). The decision path is what
+// the UI presents as "the forecast"; the model path is always preserved
+// separately so a safety fallback can never masquerade as an LSTM output.
+// alpha is the blend weight toward the learned path: 1 = promoted as-is,
+// 0 = pure baseline. Blending between 0 and 1 arrives in the per-horizon
+// champion slice; until then the policy remains all-or-nothing.
+export function describePromotionState(promotion) {
+  if (!promotion || promotion.applicable === false) {
+    return {
+      state: 'promoted',
+      decision: 'model',
+      alpha: 1,
+      label: 'Global-model style forecast (no promotion gate applies).',
+    };
+  }
+  if (promotion.promoted) {
+    return {
+      state: 'promoted',
+      decision: 'model',
+      alpha: 1,
+      label: 'Promoted: beat persistence on the untouched holdout.',
+    };
+  }
+  return {
+    state: 'experimental_no_demonstrated_edge',
+    decision: 'persistence',
+    alpha: 0,
+    label:
+      'Experimental model did not beat persistence on the untouched holdout; ' +
+      'the forecast shown is the no-change baseline and the raw learned path is drawn for comparison.',
+  };
+}
+
 export function evaluateDirectionPromotion({ metrics, evaluation, thresholds = PROMOTION_THRESHOLDS }) {
   const checks = { applicable: true };
   const reasons = [];
