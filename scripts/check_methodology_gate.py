@@ -14,7 +14,6 @@ Usage:
 
 from __future__ import annotations
 
-import fnmatch
 import re
 import subprocess
 import sys
@@ -76,7 +75,9 @@ def main() -> int:
         else:
             recorded = match.group(1)
             if recorded == "????":
-                errors.append("recorded_sha is still the placeholder; run the battery and update the record.")
+                errors.append(
+                    "recorded_sha is still the placeholder; run the battery and update the record."
+                )
             else:
                 try:
                     recorded_full = git("rev-parse", f"{recorded}^{{commit}}")
@@ -98,13 +99,23 @@ def main() -> int:
                         )
                         errors.append("Rerun the full battery and update docs/METHODOLOGY_GATE.md:")
                         errors.append("  npx vitest run && npm run build (frontend)")
-                        errors.append("  npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js")
-                        errors.append("  npx playwright test e2e/browser-real-training.spec.js --workers=1")
-                        errors.append("  npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1")
-                        errors.append("Then bump recorded_sha to the new HEAD and commit the record.")
+                        errors.append(
+                            "  npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js"
+                        )
+                        errors.append(
+                            "  npx playwright test e2e/browser-real-training.spec.js --workers=1"
+                        )
+                        errors.append(
+                            "  npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1"
+                        )
+                        errors.append(
+                            "Then bump recorded_sha to the new HEAD and commit the record."
+                        )
         for required in REQUIRED_BATTERY:
             if required not in text:
-                errors.append(f"{GATE.relative_to(ROOT)} battery listing must mention {required!r}.")
+                errors.append(
+                    f"{GATE.relative_to(ROOT)} battery listing must mention {required!r}."
+                )
     if errors:
         print("\n".join(f"ERROR: {error}" for error in errors), file=sys.stderr)
         return 1

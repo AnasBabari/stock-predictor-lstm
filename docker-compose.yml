@@ -21,10 +21,13 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5500:80"
+      # Loopback-only like the backend; publish broadly only if you need
+      # LAN access to the local stack.
+      - "127.0.0.1:5500:80"
     depends_on:
       backend:
         condition: service_healthy
+    restart: unless-stopped
     networks:
       stock_internal:
         ipv4_address: 172.30.30.10

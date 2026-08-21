@@ -60,9 +60,6 @@ class MarketCircuitBreaker:
         self.failure_threshold = failure_threshold
         self.cooldown_seconds = cooldown_seconds
         self.negative_cache_ttl = negative_cache_ttl
-        self.failure_threshold = failure_threshold
-        self.cooldown_seconds = cooldown_seconds
-        self.negative_cache_ttl = negative_cache_ttl
         self.max_negative_cache = max_negative_cache
         self._lock = threading.Lock()
         self._state = "closed"

@@ -42,7 +42,6 @@ def main() -> int:
     env.setdefault("SERVER_MODELS_ENABLED", "false")
     started = time.monotonic()
     peak = 0
-    restarts = 0
     process = subprocess.Popen(
         command,
         cwd=ROOT / "backend",
@@ -77,8 +76,6 @@ def main() -> int:
         failures.append(BAD_EXIT_HINTS.get(exit_code, f"exit_{exit_code}"))
     if peak_mib is not None and peak_mib > args.max_rss_mib:
         failures.append("peak_rss_over_budget")
-    if restarts:
-        failures.append("unexpected_restart")
     if elapsed >= args.timeout and exit_code is None:
         failures.append("timeout")
     result = {
