@@ -49,6 +49,7 @@ class SubprocessResult:
     peak_rss_mb: int = 0
     payload: dict[str, Any] | None = None
     failure_reason: str = ""
+    vram_source: str = "unsampled"  # 'self_reported' | 'unsampled'
 
 
 def kill_process_tree(pid: int | None) -> None:
@@ -159,8 +160,17 @@ if not factory:
     sys.exit(2)
 
 result = evaluate_candidate(snapshot, factory, horizon={horizon}, policy=EVALUATION_POLICY)
+summary = result.summary(EVALUATION_POLICY)
+# Self-reported peak VRAM: only this subprocess owns a CUDA context, so the
+# supervisor cannot observe child allocations. Report our own peak here.
+try:
+    import torch
+    if torch.cuda.is_available():
+        summary['peak_vram_mb'] = int(torch.cuda.max_memory_allocated() / (1024 * 1024))
+except Exception:
+    pass
 print("JSON_RESULT_START")
-print(json.dumps(result.summary(EVALUATION_POLICY)))
+print(json.dumps(summary))
 print("JSON_RESULT_END")
 """
 
@@ -292,6 +302,31 @@ print("JSON_RESULT_END")
             failure_reason="Failed to parse result payload from candidate subprocess.",
         )
 
+    # Adopt the subprocess's self-reported peak VRAM. The supervisor cannot
+    # observe child-process CUDA allocations, so this payload value is the
+    # only trustworthy measurement; enforce the kill threshold post-hoc.
+    vram_source = "unsampled"
+    reported = payload.get("peak_vram_mb")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool) and reported >= 0:
+        reported_vram = int(reported)
+        peak_vram = max(peak_vram, reported_vram)
+        vram_source = "self_reported"
+        if budget.vram_kill_mb > 0 and reported_vram >= budget.vram_kill_mb:
+            return SubprocessResult(
+                status="oom",
+                stdout=stdout,
+                stderr=stderr,
+                duration_seconds=duration,
+                peak_vram_mb=peak_vram,
+                peak_rss_mb=peak_rss,
+                payload=payload,
+                failure_reason=(
+                    f"Exceeded VRAM kill threshold ({budget.vram_kill_mb} MB) "
+                    "per subprocess self-report"
+                ),
+                vram_source=vram_source,
+            )
+
     return SubprocessResult(
         status="success",
         stdout=stdout,
@@ -300,6 +335,7 @@ print("JSON_RESULT_END")
         peak_vram_mb=peak_vram,
         peak_rss_mb=peak_rss,
         payload=payload,
+        vram_source=vram_source,
     )
 
 
@@ -389,6 +425,7 @@ class ExperimentController:
             "status": sub.status,
             "failure_reason": sub.failure_reason,
             "peak_vram_mb": sub.peak_vram_mb,
+            "vram_source": sub.vram_source,
             "training_seconds": sub.duration_seconds,
             "median_relative_mae": payload.get("median_relative_mae"),
             "median_relative_rmse": payload.get("median_relative_rmse"),

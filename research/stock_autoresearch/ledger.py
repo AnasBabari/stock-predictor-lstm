@@ -34,6 +34,7 @@ def append_record(path: Path, record: Mapping[str, Any]) -> dict[str, Any]:
         "relative_rmse": record.get("median_relative_rmse", record.get("relative_rmse")),
         "worst_fold_rmse_ratio": record.get("worst_fold_relative_rmse", record.get("worst_fold_rmse_ratio")),
         "peak_vram_mb": record.get("peak_vram_mb", 0),
+        "vram_source": record.get("vram_source", "unsampled"),
         "peak_rss_mb": record.get("peak_rss_mb", 0),
         "training_seconds": record.get("training_seconds", 0.0),
         "parameter_count": record.get("parameter_count", 0),

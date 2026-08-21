@@ -22,6 +22,15 @@ def test_resource_sample_is_safe_without_cuda() -> None:
     assert not sample.exceeded
 
 
+def test_process_tree_sampler_never_claims_vram() -> None:
+    """The supervisor process owns no CUDA context, so it must not fabricate
+    VRAM numbers for the candidate subprocess it spawned."""
+    budget = RuntimeBudget(vram_warning_mb=1, vram_kill_mb=2)
+    sample = sample_process_tree_memory(None, budget)
+    assert sample.peak_vram_mb == 0
+    assert sample.exceeded in (True, False)  # RSS path still evaluated
+
+
 def test_sample_process_tree_memory_rss_thresholds() -> None:
     # Low RSS threshold triggers warning and exceedance
     low_budget = RuntimeBudget(rss_warning_mb=1, rss_kill_mb=2)

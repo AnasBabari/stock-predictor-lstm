@@ -361,3 +361,76 @@ def test_run_isolated_candidate_eval_rss_budget_exceeded(sample_snapshot_csv: Pa
         )
     assert result.status == "oom"
     assert "RSS memory limit" in result.failure_reason or "memory limit" in result.failure_reason
+
+
+def _payload_stdout(payload: dict) -> str:
+    return "JSON_RESULT_START\n" + json.dumps(payload) + "\nJSON_RESULT_END\n"
+
+
+def _run_eval_with_payload(sample_snapshot_csv: Path, payload: dict, budget: RuntimeBudget):
+    from stock_autoresearch.controller import run_isolated_candidate_eval
+
+    fake_proc = mock.MagicMock()
+    fake_proc.communicate.return_value = (_payload_stdout(payload), "")
+    fake_proc.returncode = 0
+    fake_proc.pid = 999999
+    with mock.patch("stock_autoresearch.controller.subprocess.Popen", return_value=fake_proc):
+        return run_isolated_candidate_eval(
+            sample_snapshot_csv,
+            "persistence",
+            budget=budget,
+        )
+
+
+def test_self_reported_vram_above_kill_threshold_is_enforced(
+    sample_snapshot_csv: Path,
+) -> None:
+    budget = RuntimeBudget(vram_kill_mb=5500)
+    result = _run_eval_with_payload(
+        sample_snapshot_csv,
+        {"median_relative_mae": 0.9, "median_relative_rmse": 0.9, "peak_vram_mb": 6000},
+        budget,
+    )
+    assert result.status == "oom"
+    assert "VRAM kill threshold" in result.failure_reason
+    assert result.vram_source == "self_reported"
+    assert result.peak_vram_mb == 6000
+    # Payload preserved for forensics.
+    assert result.payload["peak_vram_mb"] == 6000
+
+
+def test_self_reported_vram_below_threshold_is_accepted(sample_snapshot_csv: Path) -> None:
+    budget = RuntimeBudget(vram_kill_mb=5500)
+    result = _run_eval_with_payload(
+        sample_snapshot_csv,
+        {"median_relative_mae": 0.9, "peak_vram_mb": 4200},
+        budget,
+    )
+    assert result.status == "success"
+    assert result.vram_source == "self_reported"
+    assert result.peak_vram_mb == 4200
+
+
+def test_missing_vram_payload_stays_unsampled(sample_snapshot_csv: Path) -> None:
+    budget = RuntimeBudget(vram_kill_mb=5500)
+    result = _run_eval_with_payload(
+        sample_snapshot_csv,
+        {"median_relative_mae": 0.9},
+        budget,
+    )
+    assert result.status == "success"
+    assert result.vram_source == "unsampled"
+    assert result.peak_vram_mb == 0
+
+
+@pytest.mark.parametrize("bad", [-5, "6000", True, None])
+def test_invalid_vram_reports_are_ignored(sample_snapshot_csv: Path, bad) -> None:
+    budget = RuntimeBudget(vram_kill_mb=5500)
+    result = _run_eval_with_payload(
+        sample_snapshot_csv,
+        {"median_relative_mae": 0.9, "peak_vram_mb": bad},
+        budget,
+    )
+    assert result.status == "success"
+    assert result.vram_source == "unsampled"
+    assert result.peak_vram_mb == 0
