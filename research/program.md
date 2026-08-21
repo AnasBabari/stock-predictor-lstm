@@ -21,3 +21,13 @@ Rules:
 Persistence and Ridge are mandatory references. A neural candidate must beat
 the relevant baseline on both relative MAE and relative RMSE before receiving
 confirmation budget.
+
+9. Multiplicity policy (screen-then-single-holdout-v1): fold-level gates are
+   exploratory screening across many configurations; each surviving
+   (family, ticker, horizon) claim requires exactly ONE locked multi-window
+   holdout on a frozen snapshot. Re-running the holdout after observing
+   results invalidates prior certification for that claim. Production-facing
+   claims require re-certification on new untouched data. Records created
+   before provenance tracking (schema v1, commit/snapshot "unknown") are
+   labelled LEGACY_UNAUDITED in generated reports and must not be presented
+   as certified evidence.

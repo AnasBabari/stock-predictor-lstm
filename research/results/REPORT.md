@@ -4,244 +4,251 @@
 - **Kept (Promotable)**: 19
 - **Discarded**: 219
 - **Failed / Invalid**: 2
+- **Kept records without auditable provenance**: 19
+- **Ledger schema**: v2
+- **Multiplicity policy**: screen-then-single-holdout-v1: fold gates are exploratory screening; exactly one locked multi-window holdout per (family, ticker, horizon); no post-hoc re-runs; re-certify on new untouched data before production claims
 
-| ID | Family | Status | Decision | Rel MAE | Rel RMSE | Peak VRAM | Time (s) |
-|---|---|---|---|---|---|---|---|
-| `exp_17857752` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857752` | `ridge` | success | **discard** | 0.9779 | 0.9975 | - | 0.0s |
-| `exp_17857752` | `elastic_net` | success | **discard** | 0.9907 | 1.0141 | - | 0.0s |
-| `exp_17857752` | `compact_mlp` | success | **discard** | 1.9533 | 1.8565 | - | 0.0s |
-| `exp_17857752` | `dlinear` | success | **discard** | 1.0748 | 1.1121 | - | 0.0s |
-| `exp_17857752` | `small_tcn` | success | **discard** | 0.9826 | 1.0025 | - | 0.0s |
-| `exp_17857754` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857754` | `ridge` | success | **discard** | 1.0009 | 0.9964 | - | 0.0s |
-| `exp_17857754` | `elastic_net` | success | **discard** | 0.9990 | 0.9956 | - | 0.0s |
-| `exp_17857754` | `compact_mlp` | success | **discard** | 2.2481 | 2.2822 | - | 0.0s |
-| `exp_17857754` | `dlinear` | success | **discard** | 1.7385 | 1.6725 | - | 0.0s |
-| `exp_17857754` | `small_tcn` | success | **discard** | 0.9997 | 1.0008 | - | 0.0s |
-| `exp_17857755` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857755` | `ridge` | success | **discard** | 0.9935 | 1.0152 | - | 0.0s |
-| `exp_17857755` | `elastic_net` | success | **discard** | 0.9911 | 1.0028 | - | 0.0s |
-| `exp_17857755` | `compact_mlp` | success | **discard** | 1.9820 | 1.8916 | - | 0.0s |
-| `exp_17857755` | `dlinear` | success | **discard** | 1.6128 | 1.5365 | - | 0.0s |
-| `exp_17857755` | `small_tcn` | success | **discard** | 0.9969 | 1.0100 | - | 0.0s |
-| `exp_17857755` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857755` | `ridge` | success | **discard** | 1.0083 | 1.0017 | - | 0.0s |
-| `exp_17857755` | `elastic_net` | success | **discard** | 0.9907 | 1.0141 | - | 0.0s |
-| `exp_17857755` | `compact_mlp` | success | **discard** | 1.6389 | 1.5213 | - | 0.0s |
-| `exp_17857755` | `dlinear` | success | **discard** | 1.5850 | 1.7623 | - | 0.0s |
-| `exp_17857755` | `small_tcn` | success | **discard** | 1.0006 | 1.0008 | - | 0.0s |
-| `exp_17857755` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857755` | `ridge` | success | **discard** | 0.9857 | 1.0101 | - | 0.0s |
-| `exp_17857755` | `elastic_net` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857755` | `compact_mlp` | success | **discard** | 1.5069 | 1.5769 | - | 0.0s |
-| `exp_17857755` | `dlinear` | success | **discard** | 1.6036 | 1.6111 | - | 0.0s |
-| `exp_17857755` | `small_tcn` | success | **discard** | 0.9741 | 1.0097 | - | 0.0s |
-| `exp_17857755` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857755` | `ridge` | success | **discard** | 0.9524 | 1.0100 | - | 0.0s |
-| `exp_17857755` | `elastic_net` | success | **discard** | 0.9420 | 1.0921 | - | 0.0s |
-| `exp_17857755` | `compact_mlp` | success | **discard** | 1.2569 | 1.4246 | - | 0.0s |
-| `exp_17857755` | `dlinear` | success | **discard** | 1.4748 | 1.4952 | - | 0.0s |
-| `exp_17857755` | `small_tcn` | success | **discard** | 0.9423 | 1.0547 | - | 0.0s |
-| `exp_17857755` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 2.2s |
-| `exp_17857755` | `ridge` | success | **discard** | 0.9524 | 1.0100 | - | 2.2s |
-| `exp_17857755` | `elastic_net` | success | **discard** | 0.9420 | 1.0921 | - | 2.1s |
-| `exp_17857755` | `compact_mlp` | success | **discard** | 1.2569 | 1.4246 | - | 4.0s |
-| `exp_17857755` | `dlinear` | success | **discard** | 1.4748 | 1.4952 | - | 2.4s |
-| `exp_17857755` | `small_tcn` | success | **discard** | 0.9673 | 1.1053 | - | 2.2s |
-| `exp_17857755` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 2.2s |
-| `exp_17857755` | `ridge` | success | **discard** | 0.9524 | 1.0100 | - | 2.2s |
-| `exp_17857755` | `elastic_net` | success | **discard** | 0.9420 | 1.0921 | - | 2.2s |
-| `exp_17857755` | `compact_mlp` | success | **discard** | 1.2569 | 1.4246 | - | 3.9s |
-| `exp_17857755` | `dlinear` | success | **discard** | 1.4748 | 1.4952 | - | 2.4s |
-| `exp_17857755` | `small_tcn` | success | **discard** | 0.9673 | 1.1053 | - | 2.2s |
-| `exp_17857755` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 2.1s |
-| `exp_17857755` | `ridge` | success | **discard** | 0.9524 | 1.0100 | - | 2.1s |
-| `exp_17857756` | `elastic_net` | success | **discard** | 0.9420 | 1.0921 | - | 2.3s |
-| `exp_17857756` | `compact_mlp` | success | **discard** | 1.2569 | 1.4246 | - | 3.7s |
-| `exp_17857756` | `dlinear` | success | **discard** | 1.4748 | 1.4952 | - | 2.4s |
-| `exp_17857756` | `small_tcn` | success | **discard** | 0.9673 | 1.1053 | - | 2.2s |
-| `exp_17857756` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 2.2s |
-| `exp_17857756` | `ridge` | success | **discard** | 0.9524 | 1.0100 | - | 2.1s |
-| `exp_17857756` | `elastic_net` | success | **discard** | 0.9420 | 1.0921 | - | 2.1s |
-| `exp_17857756` | `compact_mlp` | success | **discard** | 1.2569 | 1.4246 | - | 3.7s |
-| `exp_17857756` | `dlinear` | success | **discard** | 1.4748 | 1.4952 | - | 2.3s |
-| `exp_17857756` | `small_tcn` | success | **discard** | 0.9673 | 1.1053 | - | 2.2s |
-| `exp_17857756` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 2.1s |
-| `exp_17857756` | `ridge` | success | **discard** | 0.9524 | 1.0100 | - | 2.2s |
-| `exp_17857756` | `elastic_net` | success | **discard** | 0.9420 | 1.0921 | - | 2.2s |
-| `exp_17857756` | `compact_mlp` | success | **discard** | 1.2569 | 1.4246 | - | 3.7s |
-| `exp_17857756` | `dlinear` | success | **discard** | 1.4748 | 1.4952 | - | 2.4s |
-| `exp_17857756` | `small_tcn` | success | **discard** | 0.9673 | 1.1053 | - | 2.2s |
-| `exp_17857767` | `elastic_net` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857767` | `elastic_net_a001_l15` | success | **discard** | 0.9544 | 1.0003 | - | 0.0s |
-| `exp_17857767` | `elastic_net_a001_l85` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857767` | `elastic_net_a01_l15` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857767` | `elastic_net_a01_l50` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857767` | `elastic_net_a01_l85` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857767` | `elastic_net_a03_l50` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857767` | `elastic_net_a30_l50` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857767` | `elastic_net_a100_l50` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857769` | `elastic_net` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857769` | `elastic_net_a001_l1` | success | **discard** | 0.9987 | 1.0142 | - | 0.0s |
-| `exp_17857769` | `elastic_net_a001_l5` | success | **discard** | 0.9736 | 1.0039 | - | 0.0s |
-| `exp_17857769` | `elastic_net_a001_l15` | success | **discard** | 0.9544 | 1.0003 | - | 0.0s |
-| `exp_17857769` | `elastic_net_a01_l1` | success | **discard** | 0.9467 | 1.0003 | - | 0.0s |
-| `exp_17857769` | `elastic_net_a03_l1` | success | **discard** | 0.9259 | 0.9960 | - | 0.0s |
-| `exp_17857769` | `elastic_net_a10_l1` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857769` | `elastic_net_a30_l1` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857769` | `elastic_net_a100_l1` | success | **discard** | 0.9151 | 0.9909 | - | 0.0s |
-| `exp_17857933` | `ridge` | crash | **discard** | - | - | - | 0.8s |
-| `exp_17857933` | `ridge` | crash | **discard** | - | - | - | 0.7s |
-| `exp_17857934` | `ridge` | success | **discard** | 1.0083 | 1.0017 | - | 2.7s |
-| `exp_17857934` | `ridge` | success | **discard** | 0.9857 | 1.0101 | - | 2.5s |
-| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857939` | `ridge` | success | **discard** | 1.0014 | 0.9891 | - | 0.0s |
-| `exp_17857939` | `elastic_net` | success | **discard** | 0.9918 | 0.9979 | - | 0.0s |
-| `exp_17857939` | `compact_mlp` | success | **discard** | 3.4439 | 3.2448 | - | 0.0s |
-| `exp_17857939` | `dlinear` | success | **discard** | 1.9218 | 1.8571 | - | 0.0s |
-| `exp_17857939` | `small_tcn` | success | **discard** | 1.0006 | 0.9910 | - | 0.0s |
-| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857939` | `ridge` | success | **discard** | 0.9935 | 1.0088 | - | 0.0s |
-| `exp_17857939` | `elastic_net` | success | **discard** | 0.9860 | 0.9922 | - | 0.0s |
-| `exp_17857939` | `compact_mlp` | success | **discard** | 2.5197 | 2.3939 | - | 0.0s |
-| `exp_17857939` | `dlinear` | success | **discard** | 1.7523 | 1.7857 | - | 0.0s |
-| `exp_17857939` | `small_tcn` | success | **discard** | 1.0054 | 1.0101 | - | 0.0s |
-| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857939` | `ridge` | success | **discard** | 0.9835 | 1.0176 | - | 0.0s |
-| `exp_17857939` | `elastic_net` | success | **discard** | 0.9763 | 0.9803 | - | 0.0s |
-| `exp_17857939` | `compact_mlp` | success | **discard** | 1.8595 | 2.0290 | - | 0.0s |
-| `exp_17857939` | `dlinear` | success | **discard** | 1.6192 | 1.8710 | - | 0.0s |
-| `exp_17857939` | `small_tcn` | success | **discard** | 0.9925 | 1.0012 | - | 0.0s |
-| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857939` | `ridge` | success | **discard** | 0.9791 | 1.0228 | - | 0.0s |
-| `exp_17857939` | `elastic_net` | success | **keep** | 0.9381 | 0.9495 | - | 0.0s |
-| `exp_17857939` | `compact_mlp` | success | **discard** | 2.0810 | 2.0333 | - | 0.0s |
-| `exp_17857939` | `dlinear` | success | **discard** | 2.0086 | 2.1221 | - | 0.0s |
-| `exp_17857939` | `small_tcn` | success | **discard** | 0.9650 | 1.0056 | - | 0.0s |
-| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857939` | `ridge` | success | **keep** | 0.8567 | 0.8618 | - | 0.0s |
-| `exp_17857939` | `elastic_net` | success | **keep** | 0.8131 | 0.8614 | - | 0.0s |
-| `exp_17857939` | `compact_mlp` | success | **discard** | 1.4674 | 1.6810 | - | 0.0s |
-| `exp_17857939` | `dlinear` | success | **discard** | 1.7272 | 2.0428 | - | 0.0s |
-| `exp_17857939` | `small_tcn` | success | **keep** | 0.8425 | 0.8577 | - | 0.0s |
-| `exp_17857939` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857939` | `ridge` | success | **discard** | 0.9824 | 0.9898 | - | 0.0s |
-| `exp_17857939` | `elastic_net` | success | **discard** | 0.9887 | 0.9987 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 2.7592 | 2.7791 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.8910 | 1.9095 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9901 | 0.9990 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **discard** | 0.9911 | 1.0060 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **discard** | 0.9618 | 0.9960 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 2.0316 | 2.0855 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.5072 | 1.5974 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9870 | 0.9976 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **discard** | 1.0064 | 1.0101 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **discard** | 0.9761 | 0.9903 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 1.6707 | 1.7659 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.7491 | 1.8277 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9857 | 0.9952 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **discard** | 0.9517 | 1.0153 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **discard** | 0.9334 | 0.9887 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 1.4218 | 1.4998 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.6169 | 1.7771 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9474 | 1.0035 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **keep** | 0.8095 | 0.8474 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **keep** | 0.7874 | 0.8572 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 1.1831 | 1.2875 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.7241 | 1.8321 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **keep** | 0.8569 | 0.8732 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **discard** | 0.9870 | 0.9940 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **discard** | 0.9977 | 0.9971 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 2.7662 | 2.7476 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 2.1472 | 1.8908 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9921 | 0.9983 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **discard** | 0.9812 | 0.9944 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **discard** | 0.9847 | 0.9732 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 2.2268 | 1.9400 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.8935 | 1.8106 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9955 | 1.0027 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **discard** | 0.9876 | 0.9819 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **discard** | 0.9846 | 0.9774 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 1.8731 | 1.7797 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.7594 | 1.6791 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9790 | 0.9815 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **discard** | 0.9484 | 0.9959 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **discard** | 0.9456 | 0.9837 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 1.4680 | 1.5815 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.6292 | 1.7546 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9467 | 1.0024 | - | 0.0s |
-| `exp_17857940` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 0.0s |
-| `exp_17857940` | `ridge` | success | **keep** | 0.8578 | 0.8358 | - | 0.0s |
-| `exp_17857940` | `elastic_net` | success | **keep** | 0.9226 | 0.8848 | - | 0.0s |
-| `exp_17857940` | `compact_mlp` | success | **discard** | 1.2923 | 1.3394 | - | 0.0s |
-| `exp_17857940` | `dlinear` | success | **discard** | 1.7052 | 1.7654 | - | 0.0s |
-| `exp_17857940` | `small_tcn` | success | **discard** | 0.9301 | 0.8896 | - | 0.0s |
-| `exp_17858645` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 2.1s |
-| `exp_17858646` | `ridge` | success | **discard** | 1.1167 | 1.1002 | - | 2.3s |
-| `exp_17858646` | `elastic_net` | success | **discard** | 0.9763 | 0.9803 | - | 2.1s |
-| `exp_17858646` | `compact_mlp` | success | **discard** | 10.5900 | 11.1928 | - | 3.6s |
-| `exp_17858646` | `dlinear` | success | **discard** | 5.0069 | 4.7011 | - | 3.9s |
-| `exp_17858646` | `small_tcn` | success | **discard** | 0.9884 | 1.0012 | - | 2.1s |
-| `exp_17858650` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 2.1s |
-| `exp_17858650` | `ridge` | success | **discard** | 1.0305 | 0.9928 | - | 2.2s |
-| `exp_17858650` | `elastic_net` | success | **discard** | 0.9761 | 0.9903 | - | 2.2s |
-| `exp_17858650` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 2.1s |
-| `exp_17858650` | `ridge` | success | **discard** | 0.9946 | 0.9751 | - | 2.3s |
-| `exp_17858650` | `compact_mlp` | success | **discard** | 7.3989 | 8.2908 | - | 3.9s |
-| `exp_17858650` | `elastic_net` | success | **discard** | 0.9846 | 0.9774 | - | 2.3s |
-| `exp_17858650` | `dlinear` | success | **discard** | 3.5259 | 3.4490 | - | 4.6s |
-| `exp_17858650` | `compact_mlp` | success | **discard** | 6.8291 | 7.0200 | - | 4.6s |
-| `exp_17858650` | `small_tcn` | success | **discard** | 0.9857 | 0.9952 | - | 3.0s |
-| `exp_17858650` | `dlinear` | success | **discard** | 3.7383 | 3.6335 | - | 4.5s |
-| `exp_17858650` | `small_tcn` | success | **discard** | 0.9921 | 1.0002 | - | 2.2s |
-| `exp_17858761` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 4.0s |
-| `exp_17858761` | `ridge` | success | **discard** | 1.1537 | 1.1531 | - | 6.8s |
-| `exp_17858761` | `elastic_net` | success | **keep** | 0.8131 | 0.8614 | - | 5.4s |
-| `exp_17858761` | `small_tcn` | success | **keep** | 0.8424 | 0.8577 | - | 3.8s |
-| `exp_17858762` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 3.3s |
-| `exp_17858762` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 3.4s |
-| `exp_17858762` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 3.5s |
-| `exp_17858762` | `ridge` | success | **discard** | 1.0854 | 1.1852 | - | 3.5s |
-| `exp_17858762` | `ridge` | success | **discard** | 0.7777 | 0.8989 | - | 3.5s |
-| `exp_17858762` | `ridge` | success | **discard** | 0.9994 | 1.0141 | - | 3.6s |
-| `exp_17858762` | `elastic_net` | success | **keep** | 0.9381 | 0.9495 | - | 3.7s |
-| `exp_17858762` | `elastic_net` | success | **keep** | 0.7874 | 0.8572 | - | 3.6s |
-| `exp_17858762` | `elastic_net` | success | **keep** | 0.9226 | 0.8848 | - | 3.6s |
-| `exp_17858762` | `small_tcn` | success | **discard** | 0.9672 | 1.0056 | - | 3.5s |
-| `exp_17858762` | `small_tcn` | success | **keep** | 0.8569 | 0.9137 | - | 3.4s |
-| `exp_17858762` | `small_tcn` | success | **keep** | 0.9301 | 0.8896 | - | 3.3s |
-| `exp_17858762` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 3.1s |
-| `exp_17858762` | `persistence` | success | **discard** | 1.0000 | 1.0000 | - | 3.2s |
-| `exp_17858762` | `ridge` | success | **discard** | 0.9659 | 0.9989 | - | 3.1s |
-| `exp_17858762` | `ridge` | success | **discard** | 1.0301 | 1.0005 | - | 3.2s |
-| `exp_17858762` | `elastic_net` | success | **discard** | 0.9334 | 0.9887 | - | 3.3s |
-| `exp_17858762` | `elastic_net` | success | **discard** | 0.9456 | 0.9837 | - | 3.4s |
-| `exp_17858762` | `small_tcn` | success | **discard** | 0.9474 | 1.0019 | - | 3.3s |
-| `exp_17858762` | `small_tcn` | success | **discard** | 0.9467 | 0.9972 | - | 3.3s |
-| `exp_17858763` | `elastic_net` | success | **discard** | 0.8852 | 0.9151 | - | 0.0s |
-| `exp_17858763` | `elastic_net` | success | **keep** | 0.9066 | 0.9237 | - | 0.0s |
-| `exp_17858763` | `elastic_net` | success | **discard** | 0.9432 | 0.9666 | - | 0.0s |
-| `exp_17858763` | `small_tcn` | success | **keep** | 0.8904 | 0.9156 | - | 0.0s |
-| `exp_17858763` | `small_tcn` | success | **keep** | 0.8894 | 0.8946 | - | 0.0s |
-| `exp_17858763` | `small_tcn` | success | **discard** | 0.9658 | 1.0265 | - | 0.0s |
-| `exp_17858763` | `elastic_net` | success | **discard** | 0.9508 | 0.9625 | - | 0.0s |
-| `exp_17858806` | `elastic_net_a001_l1` | success | **discard** | 1.1077 | 1.0878 | - | 3.7s |
-| `exp_17858806` | `elastic_net_a001_l5` | success | **discard** | 1.0476 | 1.0542 | - | 3.1s |
-| `exp_17858806` | `elastic_net_a001_l5` | success | **discard** | 1.0088 | 0.9863 | - | 3.1s |
-| `exp_17858806` | `elastic_net_a001_l15` | success | **discard** | 0.9838 | 0.9816 | - | 3.2s |
-| `exp_17858806` | `elastic_net_a01_l1` | success | **discard** | 0.9941 | 0.9975 | - | 3.1s |
-| `exp_17858806` | `elastic_net_a03_l1` | success | **discard** | 1.0024 | 1.0104 | - | 3.0s |
-| `exp_17858806` | `elastic_net_a10_l1` | success | **discard** | 0.9763 | 0.9803 | - | 3.1s |
-| `exp_17858806` | `elastic_net_a30_l1` | success | **discard** | 0.9763 | 0.9803 | - | 3.0s |
-| `exp_17858806` | `elastic_net_a30_l1` | success | **discard** | 0.9761 | 0.9903 | - | 3.0s |
-| `exp_17858806` | `elastic_net_a100_l1` | success | **discard** | 0.9763 | 0.9803 | - | 2.9s |
-| `exp_17858806` | `elastic_net_a100_l1` | success | **discard** | 0.9761 | 0.9903 | - | 2.9s |
+> Records marked LEGACY_UNAUDITED predate provenance tracking; their
+> keep/discard decisions cannot be reconstructed from committed
+> evidence and must not be presented as certified.
+
+| ID | Family | Status | Decision | Certification | Rel MAE | Rel RMSE | Peak VRAM | Peak RSS | Time (s) | Reason |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `exp_17857752` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857752` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9779 | 0.9975 | - | - | 0.0s |  |
+| `exp_17857752` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9907 | 1.0141 | - | - | 0.0s |  |
+| `exp_17857752` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.9533 | 1.8565 | - | - | 0.0s |  |
+| `exp_17857752` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.0748 | 1.1121 | - | - | 0.0s |  |
+| `exp_17857752` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9826 | 1.0025 | - | - | 0.0s |  |
+| `exp_17857754` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857754` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.0009 | 0.9964 | - | - | 0.0s |  |
+| `exp_17857754` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9990 | 0.9956 | - | - | 0.0s |  |
+| `exp_17857754` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 2.2481 | 2.2822 | - | - | 0.0s |  |
+| `exp_17857754` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.7385 | 1.6725 | - | - | 0.0s |  |
+| `exp_17857754` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9997 | 1.0008 | - | - | 0.0s |  |
+| `exp_17857755` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857755` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9935 | 1.0152 | - | - | 0.0s |  |
+| `exp_17857755` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9911 | 1.0028 | - | - | 0.0s |  |
+| `exp_17857755` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.9820 | 1.8916 | - | - | 0.0s |  |
+| `exp_17857755` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.6128 | 1.5365 | - | - | 0.0s |  |
+| `exp_17857755` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9969 | 1.0100 | - | - | 0.0s |  |
+| `exp_17857755` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857755` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.0083 | 1.0017 | - | - | 0.0s |  |
+| `exp_17857755` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9907 | 1.0141 | - | - | 0.0s |  |
+| `exp_17857755` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.6389 | 1.5213 | - | - | 0.0s |  |
+| `exp_17857755` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.5850 | 1.7623 | - | - | 0.0s |  |
+| `exp_17857755` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 1.0006 | 1.0008 | - | - | 0.0s |  |
+| `exp_17857755` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857755` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9857 | 1.0101 | - | - | 0.0s |  |
+| `exp_17857755` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857755` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.5069 | 1.5769 | - | - | 0.0s |  |
+| `exp_17857755` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.6036 | 1.6111 | - | - | 0.0s |  |
+| `exp_17857755` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9741 | 1.0097 | - | - | 0.0s |  |
+| `exp_17857755` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857755` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9524 | 1.0100 | - | - | 0.0s |  |
+| `exp_17857755` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9420 | 1.0921 | - | - | 0.0s |  |
+| `exp_17857755` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.2569 | 1.4246 | - | - | 0.0s |  |
+| `exp_17857755` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.4748 | 1.4952 | - | - | 0.0s |  |
+| `exp_17857755` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9423 | 1.0547 | - | - | 0.0s |  |
+| `exp_17857755` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 2.2s |  |
+| `exp_17857755` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9524 | 1.0100 | - | - | 2.2s |  |
+| `exp_17857755` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9420 | 1.0921 | - | - | 2.1s |  |
+| `exp_17857755` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.2569 | 1.4246 | - | - | 4.0s |  |
+| `exp_17857755` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.4748 | 1.4952 | - | - | 2.4s |  |
+| `exp_17857755` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9673 | 1.1053 | - | - | 2.2s |  |
+| `exp_17857755` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 2.2s |  |
+| `exp_17857755` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9524 | 1.0100 | - | - | 2.2s |  |
+| `exp_17857755` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9420 | 1.0921 | - | - | 2.2s |  |
+| `exp_17857755` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.2569 | 1.4246 | - | - | 3.9s |  |
+| `exp_17857755` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.4748 | 1.4952 | - | - | 2.4s |  |
+| `exp_17857755` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9673 | 1.1053 | - | - | 2.2s |  |
+| `exp_17857755` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 2.1s |  |
+| `exp_17857755` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9524 | 1.0100 | - | - | 2.1s |  |
+| `exp_17857756` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9420 | 1.0921 | - | - | 2.3s |  |
+| `exp_17857756` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.2569 | 1.4246 | - | - | 3.7s |  |
+| `exp_17857756` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.4748 | 1.4952 | - | - | 2.4s |  |
+| `exp_17857756` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9673 | 1.1053 | - | - | 2.2s |  |
+| `exp_17857756` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 2.2s |  |
+| `exp_17857756` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9524 | 1.0100 | - | - | 2.1s |  |
+| `exp_17857756` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9420 | 1.0921 | - | - | 2.1s |  |
+| `exp_17857756` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.2569 | 1.4246 | - | - | 3.7s |  |
+| `exp_17857756` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.4748 | 1.4952 | - | - | 2.3s |  |
+| `exp_17857756` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9673 | 1.1053 | - | - | 2.2s |  |
+| `exp_17857756` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 2.1s |  |
+| `exp_17857756` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9524 | 1.0100 | - | - | 2.2s |  |
+| `exp_17857756` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9420 | 1.0921 | - | - | 2.2s |  |
+| `exp_17857756` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.2569 | 1.4246 | - | - | 3.7s |  |
+| `exp_17857756` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.4748 | 1.4952 | - | - | 2.4s |  |
+| `exp_17857756` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9673 | 1.1053 | - | - | 2.2s |  |
+| `exp_17857767` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857767` | `elastic_net_a001_l15` | success | **discard** | LEGACY_UNAUDITED | 0.9544 | 1.0003 | - | - | 0.0s |  |
+| `exp_17857767` | `elastic_net_a001_l85` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857767` | `elastic_net_a01_l15` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857767` | `elastic_net_a01_l50` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857767` | `elastic_net_a01_l85` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857767` | `elastic_net_a03_l50` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857767` | `elastic_net_a30_l50` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857767` | `elastic_net_a100_l50` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net_a001_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9987 | 1.0142 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net_a001_l5` | success | **discard** | LEGACY_UNAUDITED | 0.9736 | 1.0039 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net_a001_l15` | success | **discard** | LEGACY_UNAUDITED | 0.9544 | 1.0003 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net_a01_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9467 | 1.0003 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net_a03_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9259 | 0.9960 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net_a10_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net_a30_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857769` | `elastic_net_a100_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9151 | 0.9909 | - | - | 0.0s |  |
+| `exp_17857933` | `ridge` | crash | **discard** | LEGACY_UNAUDITED | - | - | - | - | 0.8s | Subprocess exited with code 1 |
+| `exp_17857933` | `ridge` | crash | **discard** | LEGACY_UNAUDITED | - | - | - | - | 0.7s | Subprocess exited with code 1 |
+| `exp_17857934` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.0083 | 1.0017 | - | - | 2.7s |  |
+| `exp_17857934` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9857 | 1.0101 | - | - | 2.5s |  |
+| `exp_17857939` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857939` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.0014 | 0.9891 | - | - | 0.0s |  |
+| `exp_17857939` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9918 | 0.9979 | - | - | 0.0s |  |
+| `exp_17857939` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 3.4439 | 3.2448 | - | - | 0.0s |  |
+| `exp_17857939` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.9218 | 1.8571 | - | - | 0.0s |  |
+| `exp_17857939` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 1.0006 | 0.9910 | - | - | 0.0s |  |
+| `exp_17857939` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857939` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9935 | 1.0088 | - | - | 0.0s |  |
+| `exp_17857939` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9860 | 0.9922 | - | - | 0.0s |  |
+| `exp_17857939` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 2.5197 | 2.3939 | - | - | 0.0s |  |
+| `exp_17857939` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.7523 | 1.7857 | - | - | 0.0s |  |
+| `exp_17857939` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 1.0054 | 1.0101 | - | - | 0.0s |  |
+| `exp_17857939` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857939` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9835 | 1.0176 | - | - | 0.0s |  |
+| `exp_17857939` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9763 | 0.9803 | - | - | 0.0s |  |
+| `exp_17857939` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.8595 | 2.0290 | - | - | 0.0s |  |
+| `exp_17857939` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.6192 | 1.8710 | - | - | 0.0s |  |
+| `exp_17857939` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9925 | 1.0012 | - | - | 0.0s |  |
+| `exp_17857939` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857939` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9791 | 1.0228 | - | - | 0.0s |  |
+| `exp_17857939` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.9381 | 0.9495 | - | - | 0.0s |  |
+| `exp_17857939` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 2.0810 | 2.0333 | - | - | 0.0s |  |
+| `exp_17857939` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 2.0086 | 2.1221 | - | - | 0.0s |  |
+| `exp_17857939` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9650 | 1.0056 | - | - | 0.0s |  |
+| `exp_17857939` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857939` | `ridge` | success | **keep** | LEGACY_UNAUDITED | 0.8567 | 0.8618 | - | - | 0.0s |  |
+| `exp_17857939` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.8131 | 0.8614 | - | - | 0.0s |  |
+| `exp_17857939` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.4674 | 1.6810 | - | - | 0.0s |  |
+| `exp_17857939` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.7272 | 2.0428 | - | - | 0.0s |  |
+| `exp_17857939` | `small_tcn` | success | **keep** | LEGACY_UNAUDITED | 0.8425 | 0.8577 | - | - | 0.0s |  |
+| `exp_17857939` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857939` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9824 | 0.9898 | - | - | 0.0s |  |
+| `exp_17857939` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9887 | 0.9987 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 2.7592 | 2.7791 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.8910 | 1.9095 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9901 | 0.9990 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9911 | 1.0060 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9618 | 0.9960 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 2.0316 | 2.0855 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.5072 | 1.5974 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9870 | 0.9976 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.0064 | 1.0101 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9761 | 0.9903 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.6707 | 1.7659 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.7491 | 1.8277 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9857 | 0.9952 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9517 | 1.0153 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9334 | 0.9887 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.4218 | 1.4998 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.6169 | 1.7771 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9474 | 1.0035 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **keep** | LEGACY_UNAUDITED | 0.8095 | 0.8474 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.7874 | 0.8572 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.1831 | 1.2875 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.7241 | 1.8321 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **keep** | LEGACY_UNAUDITED | 0.8569 | 0.8732 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9870 | 0.9940 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9977 | 0.9971 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 2.7662 | 2.7476 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 2.1472 | 1.8908 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9921 | 0.9983 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9812 | 0.9944 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9847 | 0.9732 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 2.2268 | 1.9400 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.8935 | 1.8106 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9955 | 1.0027 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9876 | 0.9819 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9846 | 0.9774 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.8731 | 1.7797 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.7594 | 1.6791 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9790 | 0.9815 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9484 | 0.9959 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9456 | 0.9837 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.4680 | 1.5815 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.6292 | 1.7546 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9467 | 1.0024 | - | - | 0.0s |  |
+| `exp_17857940` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 0.0s |  |
+| `exp_17857940` | `ridge` | success | **keep** | LEGACY_UNAUDITED | 0.8578 | 0.8358 | - | - | 0.0s |  |
+| `exp_17857940` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.9226 | 0.8848 | - | - | 0.0s |  |
+| `exp_17857940` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 1.2923 | 1.3394 | - | - | 0.0s |  |
+| `exp_17857940` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 1.7052 | 1.7654 | - | - | 0.0s |  |
+| `exp_17857940` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9301 | 0.8896 | - | - | 0.0s |  |
+| `exp_17858645` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 2.1s |  |
+| `exp_17858646` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.1167 | 1.1002 | - | - | 2.3s |  |
+| `exp_17858646` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9763 | 0.9803 | - | - | 2.1s |  |
+| `exp_17858646` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 10.5900 | 11.1928 | - | - | 3.6s |  |
+| `exp_17858646` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 5.0069 | 4.7011 | - | - | 3.9s |  |
+| `exp_17858646` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9884 | 1.0012 | - | - | 2.1s |  |
+| `exp_17858650` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 2.1s |  |
+| `exp_17858650` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.0305 | 0.9928 | - | - | 2.2s |  |
+| `exp_17858650` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9761 | 0.9903 | - | - | 2.2s |  |
+| `exp_17858650` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 2.1s |  |
+| `exp_17858650` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9946 | 0.9751 | - | - | 2.3s |  |
+| `exp_17858650` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 7.3989 | 8.2908 | - | - | 3.9s |  |
+| `exp_17858650` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9846 | 0.9774 | - | - | 2.3s |  |
+| `exp_17858650` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 3.5259 | 3.4490 | - | - | 4.6s |  |
+| `exp_17858650` | `compact_mlp` | success | **discard** | LEGACY_UNAUDITED | 6.8291 | 7.0200 | - | - | 4.6s |  |
+| `exp_17858650` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9857 | 0.9952 | - | - | 3.0s |  |
+| `exp_17858650` | `dlinear` | success | **discard** | LEGACY_UNAUDITED | 3.7383 | 3.6335 | - | - | 4.5s |  |
+| `exp_17858650` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9921 | 1.0002 | - | - | 2.2s |  |
+| `exp_17858761` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 4.0s |  |
+| `exp_17858761` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.1537 | 1.1531 | - | - | 6.8s |  |
+| `exp_17858761` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.8131 | 0.8614 | - | - | 5.4s |  |
+| `exp_17858761` | `small_tcn` | success | **keep** | LEGACY_UNAUDITED | 0.8424 | 0.8577 | - | - | 3.8s |  |
+| `exp_17858762` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 3.3s |  |
+| `exp_17858762` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 3.4s |  |
+| `exp_17858762` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 3.5s |  |
+| `exp_17858762` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.0854 | 1.1852 | - | - | 3.5s |  |
+| `exp_17858762` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.7777 | 0.8989 | - | - | 3.5s |  |
+| `exp_17858762` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9994 | 1.0141 | - | - | 3.6s |  |
+| `exp_17858762` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.9381 | 0.9495 | - | - | 3.7s |  |
+| `exp_17858762` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.7874 | 0.8572 | - | - | 3.6s |  |
+| `exp_17858762` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.9226 | 0.8848 | - | - | 3.6s |  |
+| `exp_17858762` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9672 | 1.0056 | - | - | 3.5s |  |
+| `exp_17858762` | `small_tcn` | success | **keep** | LEGACY_UNAUDITED | 0.8569 | 0.9137 | - | - | 3.4s |  |
+| `exp_17858762` | `small_tcn` | success | **keep** | LEGACY_UNAUDITED | 0.9301 | 0.8896 | - | - | 3.3s |  |
+| `exp_17858762` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 3.1s |  |
+| `exp_17858762` | `persistence` | success | **discard** | LEGACY_UNAUDITED | 1.0000 | 1.0000 | - | - | 3.2s |  |
+| `exp_17858762` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 0.9659 | 0.9989 | - | - | 3.1s |  |
+| `exp_17858762` | `ridge` | success | **discard** | LEGACY_UNAUDITED | 1.0301 | 1.0005 | - | - | 3.2s |  |
+| `exp_17858762` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9334 | 0.9887 | - | - | 3.3s |  |
+| `exp_17858762` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9456 | 0.9837 | - | - | 3.4s |  |
+| `exp_17858762` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9474 | 1.0019 | - | - | 3.3s |  |
+| `exp_17858762` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9467 | 0.9972 | - | - | 3.3s |  |
+| `exp_17858763` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.8852 | 0.9151 | - | - | 0.0s |  |
+| `exp_17858763` | `elastic_net` | success | **keep** | LEGACY_UNAUDITED | 0.9066 | 0.9237 | - | - | 0.0s |  |
+| `exp_17858763` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9432 | 0.9666 | - | - | 0.0s |  |
+| `exp_17858763` | `small_tcn` | success | **keep** | LEGACY_UNAUDITED | 0.8904 | 0.9156 | - | - | 0.0s |  |
+| `exp_17858763` | `small_tcn` | success | **keep** | LEGACY_UNAUDITED | 0.8894 | 0.8946 | - | - | 0.0s |  |
+| `exp_17858763` | `small_tcn` | success | **discard** | LEGACY_UNAUDITED | 0.9658 | 1.0265 | - | - | 0.0s |  |
+| `exp_17858763` | `elastic_net` | success | **discard** | LEGACY_UNAUDITED | 0.9508 | 0.9625 | - | - | 0.0s |  |
+| `exp_17858806` | `elastic_net_a001_l1` | success | **discard** | LEGACY_UNAUDITED | 1.1077 | 1.0878 | - | - | 3.7s |  |
+| `exp_17858806` | `elastic_net_a001_l5` | success | **discard** | LEGACY_UNAUDITED | 1.0476 | 1.0542 | - | - | 3.1s |  |
+| `exp_17858806` | `elastic_net_a001_l5` | success | **discard** | LEGACY_UNAUDITED | 1.0088 | 0.9863 | - | - | 3.1s |  |
+| `exp_17858806` | `elastic_net_a001_l15` | success | **discard** | LEGACY_UNAUDITED | 0.9838 | 0.9816 | - | - | 3.2s |  |
+| `exp_17858806` | `elastic_net_a01_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9941 | 0.9975 | - | - | 3.1s |  |
+| `exp_17858806` | `elastic_net_a03_l1` | success | **discard** | LEGACY_UNAUDITED | 1.0024 | 1.0104 | - | - | 3.0s |  |
+| `exp_17858806` | `elastic_net_a10_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9763 | 0.9803 | - | - | 3.1s |  |
+| `exp_17858806` | `elastic_net_a30_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9763 | 0.9803 | - | - | 3.0s |  |
+| `exp_17858806` | `elastic_net_a30_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9761 | 0.9903 | - | - | 3.0s |  |
+| `exp_17858806` | `elastic_net_a100_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9763 | 0.9803 | - | - | 2.9s |  |
+| `exp_17858806` | `elastic_net_a100_l1` | success | **discard** | LEGACY_UNAUDITED | 0.9761 | 0.9903 | - | - | 2.9s |  |

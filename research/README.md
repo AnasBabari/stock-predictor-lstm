@@ -25,3 +25,17 @@ python scripts/run_holdout.py snapshot_QQQ.csv --family elastic_net --horizon 20
 A survivor requires pooled relative MAE/RMSE below one, 95% bootstrap-CI upper bounds below 1.0, and a majority of windows passing the 0.98 gate. As of the latest certified run the survivors are `elastic_net` QQQ h20, `random_features_ridge` SPY h20 (recorded under its former name `small_tcn`), and `random_features_ridge` QQQ h20 (likewise); `ridge` and all MSFT candidates were rejected. See "Certification status" below for the provenance caveats that apply to these records.
 
 The local RTX 2060 has 6 GB VRAM, below the external fork's supported Turing floor. Future PyTorch candidates must use the stock harness's conservative runtime profile and official CUDA wheels.
+## Certification status
+
+Ledger schema v2 records carry auditable provenance (git commit, harness code
+hash, snapshot content hash, window definitions, per-window metrics, bootstrap
+CIs, decision reason, and the multiplicity policy). `scripts/run_holdout.py`
+appends such a record for every completed holdout, and `REPORT.md` /
+`experiments.tsv` are regenerated deterministically from the ledger.
+
+All 19 currently kept records predate this schema: they carry
+`snapshot_id: "unknown"` and no stored CIs, so the report labels every one of
+them **LEGACY_UNAUDITED**. Per `program.md` rule 9 they must not be presented
+as certified. Re-certifying any survivor requires one locked holdout run on a
+newly frozen snapshot (new untouched data), which will append a schema-v2
+record and update the generated report automatically.
