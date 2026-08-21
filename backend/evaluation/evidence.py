@@ -210,7 +210,7 @@ def benjamini_hochberg(p_values, *, q: float = 0.10) -> list[bool]:
     order = np.argsort(values)
     thresholds = q * (np.arange(1, len(values) + 1) / len(values))
     passing = values[order] <= thresholds
-    decisions = np.zeros(len(values), dtype=bool)
+    decisions: np.ndarray = np.zeros(len(values), dtype=bool)
     if np.any(passing):
         decisions[order[: np.where(passing)[0][-1] + 1]] = True
     return decisions.tolist()

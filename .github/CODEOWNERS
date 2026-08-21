@@ -1,0 +1,8 @@
+# Default owner for everything; tighten per-path as the team grows.
+* @AnasBabari
+
+# Policy gates and CI definitions are self-referential: changes require owner
+# review so a PR cannot weaken the checks it is judged by.
+/.github/ @AnasBabari
+/scripts/check_*.py @AnasBabari
+/research/program.md @AnasBabari

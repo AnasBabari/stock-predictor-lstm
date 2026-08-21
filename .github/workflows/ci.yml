@@ -23,14 +23,17 @@ jobs:
       - run: uv sync --project backend --frozen --group training
       - run: uv run --project backend ruff check backend
       - run: uv run --project backend ruff format --check backend
-      - run: uv run --project backend mypy --config-file backend/pyproject.toml backend/api.py backend/model.py backend/data_pipeline.py backend/config.py backend/features backend/server_models
+      # Lint the maintained Python outside backend/ too (format --check stays
+      # backend-only until the research tree is formatter-normalized).
+      - run: uv run --project backend ruff check scripts research
+      - run: uv run --project backend mypy --config-file backend/pyproject.toml backend/api.py backend/model.py backend/data_pipeline.py backend/config.py backend/features backend/server_models backend/evaluation backend/experiments backend/services backend/artifacts
       - run: uv run --project backend bandit -r backend -x backend/tests,backend/.venv,backend/venv -ll -q
       - run: uv run --project backend pip-audit
       - run: uv run --project backend python scripts/check_api_docs.py
       - name: Run backend tests with coverage reports
         run: |
           mkdir -p reports
-          uv run --project backend pytest backend/tests -q --cov=backend --cov-report=term-missing --cov-report=json:reports/coverage.json --cov-fail-under=70 --junitxml=reports/pytest.xml
+          uv run --project backend pytest backend/tests -q -ra --cov=backend --cov-report=term-missing --cov-report=json:reports/coverage.json --cov-fail-under=70 --junitxml=reports/pytest.xml
       - name: Write backend test summary
         if: success()
         run: |
@@ -44,13 +47,17 @@ jobs:
 
           report_dir = Path("reports")
           root = ElementTree.parse(report_dir / "pytest.xml").getroot()
-          tests = int(root.attrib.get("tests", sum(int(node.attrib.get("tests", 0)) for node in root.iter("testsuite"))))
+          suites = list(root.iter("testsuite"))
+          tests = int(root.attrib.get("tests", sum(int(node.attrib.get("tests", 0)) for node in suites)))
+          failures = sum(int(node.attrib.get("failures", 0)) for node in suites)
+          errors = sum(int(node.attrib.get("errors", 0)) for node in suites)
+          skipped = sum(int(node.attrib.get("skipped", 0)) for node in suites)
           coverage = json.loads((report_dir / "coverage.json").read_text(encoding="utf-8"))
           percent = coverage["totals"]["percent_covered"]
           summary = os.environ["GITHUB_STEP_SUMMARY"]
           with open(summary, "a", encoding="utf-8") as handle:
               handle.write("## Backend test evidence\\n\\n")
-              handle.write(f"- Tests: {tests}\\n")
+              handle.write(f"- Tests: {tests} (passed {tests - failures - errors - skipped}, failed {failures}, errors {errors}, skipped {skipped})\\n")
               handle.write(f"- Coverage: {percent:.2f}%\\n")
               handle.write(f"- Python: {sys.version.split()[0]}\\n")
               handle.write(f"- Commit: {os.environ.get('GITHUB_SHA', 'unknown')}\\n")
@@ -100,6 +107,30 @@ jobs:
             frontend/playwright-report
             frontend/test-results
 
+  research:
+    # CPU-only methodology/leakage/ledger tests for the offline research
+    # harness, plus the torch-gated backend TCN forecaster tests so that
+    # subsystem is no longer silently skipped in every CI run.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - run: python -m pip install uv==0.11.16
+      - run: uv lock --project backend --check
+      # Default groups include dev (pytest); training/TensorFlow stays out.
+      - run: uv sync --project backend --frozen
+      - name: Install CPU PyTorch for the torch-gated challenger tests
+        run: |
+          uv pip install --project backend --torch-backend=cpu torch
+      - name: Run research harness tests
+        env:
+          PYTHONPATH: research
+        run: |
+          uv run --project backend pytest research/tests backend/tests/test_small_tcn.py -q -ra
+
   policy:
     runs-on: ubuntu-24.04
     steps:
@@ -116,7 +147,7 @@ jobs:
 
   compose-smoke:
     runs-on: ubuntu-24.04
-    needs: [backend, policy, frontend-unit-build, frontend-contract-e2e]
+    needs: [backend, policy, research, frontend-unit-build, frontend-contract-e2e]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - run: docker compose config --quiet

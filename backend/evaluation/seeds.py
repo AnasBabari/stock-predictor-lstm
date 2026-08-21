@@ -24,7 +24,7 @@ def _finite_metric_value(summary: Mapping[str, object] | None, metric: str) -> f
     if value is None:
         return None
     try:
-        numeric = float(value)
+        numeric = float(value)  # type: ignore[arg-type]  # TypeError path validates at runtime
     except (TypeError, ValueError):
         return None
     if not np.isfinite(numeric):

@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Actions are SHA-pinned per check_ci_policy.py; Dependabot updates the
+    # pin together with the version comment.
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    # uv.lock is the canonical resolution; Dependabot PRs must re-run
+    # `uv lock --project backend` so `uv lock --check` stays green.
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"

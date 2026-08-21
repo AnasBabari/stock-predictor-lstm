@@ -63,7 +63,7 @@ def regression_metrics(
     origin=None,
     scale_series=None,
     persistence=None,
-) -> dict[str, float | None]:
+) -> dict[str, Any]:
     """Evaluate one forecast horizon in the target's original units.
 
     ``origin`` is the price known when the forecast was made and is required
@@ -213,7 +213,7 @@ def evaluate_forecast_horizons(
 
     pooled_actual = actual_array.reshape(-1)
     pooled_predicted = predicted_array.reshape(-1)
-    pooled_origins = np.repeat(origin_array, actual_array.shape[1])
+    pooled_origins: np.ndarray = np.repeat(origin_array, actual_array.shape[1])
     pooled = regression_metrics(
         pooled_actual,
         pooled_predicted,

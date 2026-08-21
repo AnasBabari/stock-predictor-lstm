@@ -46,9 +46,11 @@ def population_stability_index(reference, comparison, *, bins: int = 10) -> floa
 
     reference_proportions = _bin_proportions(reference_array, edges)
     comparison_proportions = _bin_proportions(comparison_array, edges)
-    psi = np.sum(
-        (comparison_proportions - reference_proportions)
-        * np.log(comparison_proportions / reference_proportions)
+    psi: float = float(
+        np.sum(
+            (comparison_proportions - reference_proportions)
+            * np.log(comparison_proportions / reference_proportions)
+        )
     )
     return float(psi)
 
@@ -112,12 +114,19 @@ def residual_drift(
     first_half = residuals[:midpoint]
     second_half = residuals[midpoint:]
     block_length = max(1, min(20, min(len(first_half), len(second_half)) // 4))
-    options = {"resamples": resamples, "seed": seed, "confidence": confidence}
     first_interval = moving_block_bootstrap_interval(
-        first_half, block_length=block_length, **options
+        first_half,
+        block_length=block_length,
+        resamples=resamples,
+        seed=seed,
+        confidence=confidence,
     )
     second_interval = moving_block_bootstrap_interval(
-        second_half, block_length=block_length, **options
+        second_half,
+        block_length=block_length,
+        resamples=resamples,
+        seed=seed,
+        confidence=confidence,
     )
     drift_detected = bool(
         first_interval["upper"] < second_interval["lower"]

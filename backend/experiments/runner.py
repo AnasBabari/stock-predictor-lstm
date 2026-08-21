@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -144,7 +145,7 @@ def run_baseline_experiment(
         min_train_size=selected.min_train_size,
         validation_size=selected.validation_size,
         gap=selected.effective_gap,
-        method=selected.method,
+        method=cast(Literal["expanding", "rolling"], selected.method),
     )
     splits = [(fold.training_indices, fold.validation_indices) for fold in fold_plan.folds]
     model_reports: dict[str, dict] = {}
@@ -337,7 +338,7 @@ def run_baseline_experiment(
             # outer training partition, never the outer validation observations.
             for factory_index, factory in enumerate(candidate_factories):
                 try:
-                    candidate = _instantiate_candidate(factory, seed)
+                    candidate: Any = _instantiate_candidate(factory, seed)
                     candidate_name = getattr(candidate, "name", candidate.__class__.__name__)
                     if (
                         str(candidate_name) in deterministic_candidates
@@ -528,10 +529,11 @@ def run_baseline_experiment(
                 continue
             per_seed_summaries: list[dict[str, float] | None] = []
             for seed in seed_loop:
-                rows = seed_pooled_rows.get(model_name, {}).get(seed)
-                if rows is None:
+                rows_seed = seed_pooled_rows.get(model_name, {}).get(seed)
+                if rows_seed is None:
                     per_seed_summaries.append(None)
                     continue
+                rows = rows_seed
                 pooled_metrics = evaluate_forecast_horizons(
                     np.concatenate(rows["actual"]),
                     np.concatenate(rows["predicted"]),

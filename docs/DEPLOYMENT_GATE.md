@@ -21,6 +21,28 @@ GitHub variables/secrets used by deployment-gate workflows:
 
 Branch protection should require the normal CI workflow plus the deployment gate jobs that are relevant for the target environment. Production smoke should be run from the protected `production` environment after Render and Vercel have deployed the same commit.
 
+## Required external repository settings (not provable from code)
+
+Repository files cannot verify GitHub settings; the gates below depend on
+them being configured once by the owner. If they are missing, CI runs but
+does not actually protect `main`:
+
+1. **Branch protection on `main`:** require the status checks named
+   `backend`, `frontend-unit-build`, `frontend-contract-e2e`, `research`,
+   `policy`, and `compose-smoke` (plus any enabled `deployment-gate` jobs),
+   with "require branches to be up to date" enabled.
+2. **Render `autoDeploy: checksPass`:** Render only blocks deploys on failed
+   checks if those GitHub statuses are reported to Render (GitHub App /
+   OAuth integration connected). Without the integration, autodeploy happens
+   regardless of CI outcome.
+3. **CODEOWNERS is advisory on its own:** review requirements come from
+   branch protection ("Require review from Code Owners"). The CODEOWNERS file
+   covers `.github/`, `scripts/check_*.py`, and `research/program.md` so a
+   PR cannot weaken the policy gates it is judged by.
+4. **Dependabot** (`.github/dependabot.yml`) opens update PRs; it does not
+   merge them. pip updates must re-run `uv lock --project backend` so
+   `uv lock --check` stays green.
+
 ## Free-tier constraints
 
 Render free instances can sleep, restart, and have tight memory/CPU budgets. The resource harness fails on startup errors, exit `127`, exit `137`, restarts, and peak RSS above 400 MiB inside a 512 MiB budget. The live smoke checker uses short timeouts and sanitized JSON failures so logs do not expose provider headers or credentials.
