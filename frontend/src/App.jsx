@@ -14,7 +14,7 @@ import PredictionHistory from './components/PredictionHistory';
 import ToastContainer from './components/ToastContainer';
 import { useTheme } from './hooks/useTheme';
 import { useToasts } from './hooks/useToasts';
-import { useWatchlist } from './hooks/useWatchlist';
+import { isValidTicker, useWatchlist } from './hooks/useWatchlist';
 import { FORECAST_TYPES, useForecast } from './hooks/useForecast';
 import { useCompleteAnalysisExport } from './hooks/useCompleteAnalysisExport';
 
@@ -49,7 +49,7 @@ export default function App() {
     apiBase,
   } = useForecast({
     addToast,
-    onNewTickerSearched: (symbol) => addToHistory(symbol),
+    onNewTickerSearched: (predictionResult) => addToHistory(predictionResult),
   });
 
   const {
@@ -81,10 +81,15 @@ export default function App() {
 
   const handleSelectTicker = useCallback(
     (selectedSymbol) => {
-      setTicker(selectedSymbol);
-      handlePredict(selectedSymbol);
+      if (!isValidTicker(selectedSymbol)) {
+        addToast('error', 'That history entry has no valid ticker to predict.');
+        return;
+      }
+      const symbol = selectedSymbol.trim().toUpperCase();
+      setTicker(symbol);
+      handlePredict(symbol);
     },
-    [handlePredict, setTicker]
+    [addToast, handlePredict, setTicker]
   );
 
   const isBusy = isLoading || isExportLoading;

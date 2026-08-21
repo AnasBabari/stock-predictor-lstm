@@ -1,11 +1,15 @@
-function formatHistoryDate(dateInput) {
-  if (!dateInput) return '';
-  const parsed = new Date(dateInput);
+function formatHistoryDate(createdAt) {
+  if (!createdAt) return '';
+  const parsed = new Date(createdAt);
   if (isNaN(parsed.getTime())) return '';
   return parsed.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
   });
+}
+
+function formatPrice(value) {
+  return typeof value === 'number' ? `$${value.toFixed(2)}` : '—';
 }
 
 export default function PredictionHistory({ items, onSelectTicker, onClearAll }) {
@@ -39,34 +43,32 @@ export default function PredictionHistory({ items, onSelectTicker, onClearAll })
             Search a ticker to get started.
           </p>
         ) : (
-          items.map((h) => {
-            const isUp = parseFloat(h.change) >= 0;
-            const color = isUp ? 'var(--bullish)' : 'var(--bearish)';
-            const arrow = isUp ? '▲' : '▼';
-            const dateStr = formatHistoryDate(h.date);
-
-            const formattedLast = typeof h.lastClose === 'number' ? `$${h.lastClose.toFixed(2)}` : (h.lastClose || '—');
-            const formattedForecast = typeof h.forecast === 'number' ? `$${h.forecast.toFixed(2)}` : (h.forecast || '—');
+          items.map((h, index) => {
+            const hasChange = typeof h.changePercent === 'number' && Number.isFinite(h.changePercent);
+            const isUp = hasChange && h.changePercent >= 0;
+            const color = !hasChange ? 'var(--muted)' : isUp ? 'var(--bullish)' : 'var(--bearish)';
+            const arrow = !hasChange ? '•' : isUp ? '▲' : '▼';
+            const dateStr = formatHistoryDate(h.createdAt);
+            const detail =
+              h.forecastType === 'trend'
+                ? `P(up) ${typeof h.predictedValue === 'number' ? (h.predictedValue * 100).toFixed(0) : '—'}% · ${h.horizon ?? '?'}d`
+                : `${formatPrice(h.lastClose)} → ${formatPrice(h.predictedValue)} · ${h.horizon ?? '?'}d`;
 
             return (
               <button
                 type="button"
-                key={`${h.ticker}-${h.date}`}
+                key={`${h.ticker}-${h.createdAt ?? index}`}
                 className="history-item"
                 onClick={() => onSelectTicker(h.ticker)}
               >
                 <span className="hi-ticker">{h.ticker}</span>
-                <span className="hi-detail">
-                  {formattedLast} → {formattedForecast} · {h.days}d
-                </span>
+                <span className="hi-detail">{detail}</span>
                 <span className="hi-change" style={{ color }}>
-                  {arrow} {isUp ? '+' : ''}
-                  {h.change}%
+                  {arrow} {hasChange ? `${isUp ? '+' : ''}${h.changePercent.toFixed(2)}%` : 'n/a'}
                 </span>
                 <span className="hi-date">{dateStr}</span>
               </button>
             );
-
           })
         )}
       </div>

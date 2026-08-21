@@ -295,6 +295,17 @@ export function useForecast({ addToast, onNewTickerSearched }) {
 
   const handlePredict = useCallback(
     async (overrideTicker, overrideDays, overrideType) => {
+      if (
+        overrideTicker !== undefined &&
+        !(typeof overrideTicker === 'string' && overrideTicker.trim())
+      ) {
+        // An explicitly provided but unusable ticker must never silently fall
+        // back to the currently active ticker.
+        const msg = 'Please enter a valid stock ticker symbol.';
+        setErrorMsg(msg);
+        addToast('error', msg);
+        return;
+      }
       const activeTicker = (typeof overrideTicker === 'string' && overrideTicker.trim() ? overrideTicker : ticker).toUpperCase().trim();
       let activeDays = forecastDays;
       let activeType = forecastType;
@@ -327,7 +338,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         setPredictionData(cached);
         setErrorMsg('');
         fetchStockInfo(activeTicker, controller.signal);
-        onNewTickerSearched?.(activeTicker);
+        onNewTickerSearched?.(cached);
         return;
       }
 
@@ -356,7 +367,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
           assertForecastIdentity(data, activeTicker, activeDays, activeType);
           forecastCacheRef.current.set(cacheKey, data);
           setPredictionData(data);
-          onNewTickerSearched?.(activeTicker);
+          onNewTickerSearched?.(data);
           addToast('success', `${activeTicker} ${activeType} forecast ready`);
         }
       } catch (err) {
