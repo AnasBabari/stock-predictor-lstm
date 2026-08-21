@@ -8,6 +8,8 @@ import StockInfoGrid from './components/StockInfoGrid';
 import StatsBar from './components/StatsBar';
 import StockChart from './components/StockChart';
 import MetricsCard from './components/MetricsCard';
+import HoldoutComparisonChart from './components/HoldoutComparisonChart';
+import ModelCard from './components/ModelCard';
 import ForecastChartActions from './components/ForecastChartActions';
 import Watchlist from './components/Watchlist';
 import PredictionHistory from './components/PredictionHistory';
@@ -214,6 +216,8 @@ export default function App() {
               stockData={predictionData}
               forecastType={forecastType}
             />
+            <HoldoutComparisonChart data={predictionData} />
+            <ModelCard data={predictionData} />
           </>
         )}
 

@@ -165,6 +165,7 @@ export function browserResponse(snapshot, result, forecastType, days) {
     predicted_prices: result.predictedPrices,
     learned_prices: result.learnedPrices,
     metrics: result.metrics,
+    ...(result.evaluation_series ? { evaluation_series: result.evaluation_series } : {}),
     metadata,
   };
 }

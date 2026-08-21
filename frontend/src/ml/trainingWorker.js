@@ -8,6 +8,7 @@ import {
   TARGET_MODE,
   TRAIN_SPLIT,
   WINDOW_SIZE,
+  buildEvaluationSeries,
   latestInput,
   modelKey,
   prepareDirectionData,
@@ -427,6 +428,15 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
     dollarMetrics,
     selectedEpochs,
     completedEpochs: selectedEpochs,
+    // Price forecasts on single-holdout profiles expose the untouched
+    // holdout series so the UI can plot model vs persistence vs actual.
+    ...(forecastType === 'price'
+      ? {
+          evaluation_series: buildEvaluationSeries(
+            snapshot, selection, evaluated, horizon
+          ),
+        }
+      : {}),
     evaluation: {
       completed_folds: 1,
       total_folds: 1,

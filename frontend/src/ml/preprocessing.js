@@ -263,3 +263,51 @@ export function modelKey(snapshot, forecastType, profile = 'balanced', backend =
 export function latestInput(prepared) {
   return prepared.scaled.slice(-WINDOW_SIZE);
 }
+
+// Holdout comparison series (price forecasts, single-holdout profiles only).
+// For each evaluation origin, take the FINAL step of the horizon bucket and
+// align actual / model / persistence prices on the true target date. Dates
+// come from the backend snapshot so the chart can never invent timestamps.
+// Research-profile fold aggregation is intentionally not supported here:
+// overlapping windows have no single aligned timeline.
+export function buildEvaluationSeries(
+  snapshot,
+  selection,
+  evaluated,
+  horizon,
+  cap = 240
+) {
+  const h = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(horizon) || OUTPUT_WIDTH)));
+  const { actualPrices, predictedPrices, persistencePrices } = evaluated;
+  if (!Array.isArray(actualPrices) || !Array.isArray(predictedPrices) || !Array.isArray(persistencePrices)) {
+    return null;
+  }
+  if (!(actualPrices.length && actualPrices.length === predictedPrices.length && actualPrices.length === persistencePrices.length)) {
+    return null;
+  }
+  const totalDates = snapshot.dates.length;
+  const points = [];
+  for (let sample = 0; sample < actualPrices.length; sample += 1) {
+    const sequenceIndex = selection.split + sample;
+    const targetRow = WINDOW_SIZE + sequenceIndex + h - 1;
+    if (targetRow >= totalDates) break; // never fabricate dates beyond data
+    const stepIndex = Math.min(h - 1, actualPrices[sample].length - 1);
+    const actual = Number(actualPrices[sample][stepIndex]);
+    const model = Number(predictedPrices[sample][stepIndex]);
+    const persistence = Number(persistencePrices[sample][stepIndex]);
+    if (![actual, model, persistence].every(Number.isFinite)) continue;
+    points.push({ date: snapshot.dates[targetRow], actual, model, persistence });
+  }
+  if (!points.length) return null;
+  return {
+    horizon: h,
+    step: h - 1,
+    metric_scope: 'untouched_post_purge_holdout',
+    // Keep the most recent `cap` origins for chart readability.
+    ...(points.length > cap ? { truncated: points.length - cap } : {}),
+    dates: points.slice(-cap).map((point) => point.date),
+    actual: points.slice(-cap).map((point) => point.actual),
+    model: points.slice(-cap).map((point) => point.model),
+    persistence: points.slice(-cap).map((point) => point.persistence),
+  };
+}
