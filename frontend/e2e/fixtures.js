@@ -276,3 +276,21 @@ export function installStubBrowserWorker(page) {
     };
   });
 }
+
+// Unlearnable fixture: identical causal feature waves to the learnable one,
+// but the close path is a seeded random walk. No architecture can beat
+// persistence on it, so the trained model must fail promotion — exercising
+// the fallback-labelling contract end to end.
+export function rejectedForecastSnapshot(ticker = 'IGC') {
+  const snapshot = deterministicSnapshot(ticker);
+  let state = 987654321;
+  const nextRandom = () => {
+    state = (state * 1103515245 + 12345) % 2147483648;
+    return state / 2147483648 - 0.5;
+  };
+  const prices = [snapshot.historical_prices[0]];
+  for (let i = 1; i < snapshot.historical_prices.length; i += 1) {
+    prices.push(Math.max(1, prices[i - 1] * Math.exp(nextRandom() * 0.02)));
+  }
+  return { ...snapshot, ticker, historical_prices: prices };
+}

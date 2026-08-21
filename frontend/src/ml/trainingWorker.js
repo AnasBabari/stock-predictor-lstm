@@ -29,7 +29,7 @@ import {
 import { buildPersistenceForecast, describePromotionState, evaluatePromotion } from './promotionPolicy';
 import { resolveTrainingProfile } from './trainingProfiles';
 import { buildBrowserModel } from './modelFactory';
-import { isVersionedKey } from './storageKeys';
+import { isRejectedArtifact, isVersionedKey } from './storageKeys';
 
 const DB_NAME = 'stocklstm-browser-models';
 const DB_VERSION = 1;
@@ -647,6 +647,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
   let completedEpochs;
   let cacheStatus = 'miss';
   let storageStatus = 'persistent';
+  let rejectedEvidenceCache = false;
   const cachedMetadata = await getMetadata(key).catch(() => null);
   if (cachedMetadata?.kind !== 'checkpoint') {
     try {
@@ -660,7 +661,16 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       selectedEpochs = cachedMetadata.selected_epochs;
       completedEpochs = cachedMetadata.completed_epochs;
       cacheStatus = 'hit';
-      await putMetadata({ ...cachedMetadata, last_used_at: Date.now() }).catch(() => undefined);
+      // A persisted rejection may be kept for diagnostics but must never be
+      // presented as an active artifact: label the execution mode distinctly
+      // (the deterministic promotion re-evaluation below will reproduce the
+      // baseline decision from stored metrics either way).
+      rejectedEvidenceCache = isRejectedArtifact(cachedMetadata);
+      await putMetadata({
+        ...cachedMetadata,
+        last_used_at: Date.now(),
+        ...(rejectedEvidenceCache ? { execution_mode: 'rejected_evidence_cache' } : {}),
+      }).catch(() => undefined);
       progress(id, startedAt, { stage: 'cache_hit', profile: profile.id, backend, horizon });
     } catch {
       model?.dispose(); model = undefined;
@@ -759,7 +769,9 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       completedEpochs,
       trainingDurationMs: Math.round(performance.now() - startedAt),
       tfjsVersion: tf.version.tfjs,
-      executionMode: cacheStatus === 'hit' ? 'browser_artifact_loaded' : 'browser_trained',
+      executionMode: cacheStatus === 'hit'
+        ? (rejectedEvidenceCache ? 'rejected_evidence_cache' : 'browser_artifact_loaded')
+        : 'browser_trained',
     };
     if (forecastType === 'direction') {
       const clamp = (value) => Math.min(1, Math.max(0, Number(value)));
@@ -814,6 +826,10 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       predictedCumulativeReturn: Number(predicted[0][horizon - 1]),
       closingPrices: snapshot.historical_prices,
     });
+    // Regression guard: forecastStatus MUST be assigned on the price branch
+    // too — a null here silently re-labelled the persistence fallback as a
+    // promoted model forecast in the chart.
+    forecastStatus = describePromotionState(promotion);
     const baselineFallback = !promotion.promoted;
     const persistenceForecast = buildPersistenceForecast(
       snapshot.historical_prices, requestedDays
@@ -840,6 +856,11 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
         applicable: promotion.applicable !== false,
       };
       persistedMetadata.forecast_status = describePromotionState(promotion);
+      persistedMetadata.execution_mode = rejectedEvidenceCache
+        ? 'rejected_evidence_cache'
+        : cacheStatus === 'hit'
+          ? 'browser_artifact_loaded'
+          : 'browser_trained';
       await putMetadata(persistedMetadata).catch(() => undefined);
     }
   }

@@ -49,8 +49,11 @@ export function buildPriceSeries(stockData, daysView, isDark) {
   // historical point, then the anchor.
   const forecastLead = Math.max(0, slicePrices.length - 1);
 
-  const status = stockData.forecast_status || { state: 'promoted', decision: 'model', alpha: 1 };
-  const promoted = status.decision !== 'persistence';
+  // Fail closed: an absent or unrecognised status must never be treated as
+  // promotion. Only an explicit promoted/model decision draws the optimistic
+  // framing; anything else is labelled as what it is.
+  const status = stockData.forecast_status || null;
+  const promoted = status?.state === 'promoted' && status?.decision === 'model';
   const decisionLabel = promoted ? 'Predicted Price' : 'No-change baseline';
   const decisionColor = isDark ? COLORS.decisionDark : COLORS.decisionLight;
   const learnedColor = isDark ? COLORS.learnedDark : COLORS.learnedLight;
@@ -101,25 +104,41 @@ export function buildPriceSeries(stockData, daysView, isDark) {
   // Learned diagnostic path: shown whenever it differs from the decision path
   // so users can see what the model actually produced before policy applied.
   let annotation = null;
-  if (!promoted && Array.isArray(stockData.learned_prices) && stockData.learned_prices.length) {
-    datasets.push({
-      label: 'Learned model (not promoted)',
-      data: padDecision(stockData.learned_prices, forecastLead, lastClose),
-      borderColor: learnedColor,
-      backgroundColor: 'transparent',
-      borderWidth: 1.5,
-      pointRadius: 2,
-      pointBackgroundColor: learnedColor,
-      borderDash: [2, 3],
-      tension: 0.35,
-      fill: false,
-      spanGaps: false,
-    });
-    annotation =
-      'Green path is the no-change baseline: the local model did not beat persistence on its holdout. Dashed grey shows what the model actually predicted.';
-  } else if (!promoted) {
-    annotation =
-      'Green path is the no-change baseline: the local model did not beat persistence on its holdout.';
+  const learnedArray =
+    Array.isArray(stockData.learned_prices) && stockData.learned_prices.length
+      ? stockData.learned_prices
+      : null;
+  if (!promoted) {
+    if (learnedArray) {
+      datasets.push({
+        label: 'Learned model (not promoted)',
+        data: padDecision(learnedArray, forecastLead, lastClose),
+        borderColor: learnedColor,
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        pointRadius: 2,
+        pointBackgroundColor: learnedColor,
+        borderDash: [2, 3],
+        tension: 0.35,
+        fill: false,
+        spanGaps: false,
+      });
+    }
+    if (status?.state === 'experimental_no_demonstrated_edge') {
+      annotation =
+        'Green path is the no-change baseline: the local model did not beat persistence on its holdout.' +
+        (learnedArray ? ' Dashed grey shows what the model actually predicted.' : '');
+    } else if (!status) {
+      annotation =
+        'Green path is the no-change baseline: forecast status is unavailable for this request.' +
+        (learnedArray ? ' Dashed grey shows what the model actually predicted.' : ' No learned path is presented.');
+    } else if (learnedArray) {
+      annotation =
+        'Green path is the no-change baseline: forecast status could not be verified. Dashed grey shows what the model actually predicted.';
+    } else {
+      annotation =
+        'Green path is the no-change baseline: forecast status could not be verified, so no learned path is presented.';
+    }
   }
 
   return { labels: allDates, datasets, annotation, promoted };

@@ -32,9 +32,15 @@ describe('describePromotionState', () => {
     expect(status.label).toMatch(/did not beat persistence/i);
   });
 
-  it('treats a non-applicable gate as promoted (baseline server responses)', () => {
-    const status = describePromotionState(null);
-    expect(status.decision).toBe('model');
+  it('fails closed for missing or non-applicable gates instead of assuming promotion', () => {
+    const unknown = describePromotionState(null);
+    expect(unknown.state).toBe('status_unknown');
+    expect(unknown.decision).toBe('persistence');
+    expect(unknown.alpha).toBe(0);
+
+    const notApplicable = describePromotionState({ promoted: true, applicable: false });
+    expect(notApplicable.decision).toBe('persistence');
+    expect(notApplicable.state).toBe('status_unknown');
   });
 });
 

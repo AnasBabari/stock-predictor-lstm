@@ -210,12 +210,23 @@ export function buildPersistenceForecast(closingPrices, days) {
 // 0 = pure baseline. Blending between 0 and 1 arrives in the per-horizon
 // champion slice; until then the policy remains all-or-nothing.
 export function describePromotionState(promotion) {
-  if (!promotion || promotion.applicable === false) {
+  if (!promotion || typeof promotion !== 'object') {
+    // Never assume promotion from missing evidence.
     return {
-      state: 'promoted',
-      decision: 'model',
-      alpha: 1,
-      label: 'Global-model style forecast (no promotion gate applies).',
+      state: 'status_unknown',
+      decision: 'persistence',
+      alpha: 0,
+      label: 'Forecast status could not be verified; showing the no-change baseline.',
+    };
+  }
+  if (promotion.applicable === false) {
+    // No gate ran: there is no promotion evidence, so fail closed even if a
+    // stray promoted flag is present.
+    return {
+      state: 'status_unknown',
+      decision: 'persistence',
+      alpha: 0,
+      label: 'No promotion gate applies to this response; showing the no-change baseline rather than an uncertified model path.',
     };
   }
   if (promotion.promoted) {

@@ -78,6 +78,35 @@ describe('buildPriceSeries — guards', () => {
   });
 });
 
+describe('buildPriceSeries — fail-closed status', () => {
+  const { forecast_status: _omit, ...noStatus } = base;
+  const { learned_prices: _lp, forecast_status: _fs, ...unavailableNoLearned } = base;
+  const { learned_prices: _ep, ...experimentalNoLearned } = base;
+
+  it('treats an absent status as NOT promoted and still draws the learned path', () => {
+    const series = buildPriceSeries(noStatus, 21, true);
+    const labels = series.datasets.map((d) => d.label);
+    expect(labels).toContain('No-change baseline');
+    expect(labels).not.toContain('Predicted Price');
+    expect(labels).toContain('Learned model (not promoted)');
+    expect(series.annotation).toMatch(/status is unavailable/i);
+    expect(series.annotation).toMatch(/Dashed grey/);
+  });
+
+  it('uses unavailable-status wording for a baseline payload with no status and no learned path', () => {
+    const series = buildPriceSeries(unavailableNoLearned, 21, true);
+    expect(series.datasets.map((d) => d.label)).not.toContain('Learned model (not promoted)');
+    expect(series.annotation).toMatch(/status is unavailable/i);
+    expect(series.annotation).toMatch(/No learned path is presented/i);
+  });
+
+  it('keeps rejection language when the gate ran but no learned path exists', () => {
+    const series = buildPriceSeries(experimentalNoLearned, 21, true);
+    expect(series.annotation).toMatch(/did not beat persistence/i);
+    expect(series.annotation).not.toMatch(/Dashed grey/);
+  });
+});
+
 describe('directionStatusText', () => {
   it('uses base-rate language for non-promoted direction models', () => {
     expect(directionStatusText({ state: 'experimental_no_demonstrated_edge' })).toMatch(
