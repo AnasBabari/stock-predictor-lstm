@@ -86,3 +86,26 @@ def test_fold_metric_evidence_accepts_plain_floats_and_validates() -> None:
         fold_metric_evidence([{"mae": 1.0}])
     with pytest.raises(ValueError):
         fold_metric_evidence([])
+
+
+def test_dm_style_statistic_accepts_explicit_max_lag() -> None:
+    """Overlapping h-step losses need lags >= h; the default rule undersmooths.
+
+    An explicit max_lag must be honoured (larger lag => larger HAC variance
+    for positively autocorrelated differentials => more conservative p).
+    """
+    rng = np.random.default_rng(0)
+    # Positively autocorrelated identical losses for both sides: the
+    # differential is pure noise, but its autocorrelation inflates with lag.
+    base = np.cumsum(rng.normal(0, 1, 200))
+    candidate = base + rng.normal(0, 0.05, 200)
+    baseline = base + rng.normal(0, 0.05, 200)
+
+    default_result = dm_style_statistic(candidate, baseline)
+    conservative = dm_style_statistic(candidate, baseline, max_lag=20)
+
+    assert default_result["sample_count"] == conservative["sample_count"]
+    assert conservative["two_sided_p_value"] >= default_result["two_sided_p_value"] * 0.5
+    # Explicit max_lag below the default rule also works.
+    aggressive = dm_style_statistic(candidate, baseline, max_lag=1)
+    assert aggressive["statistic"] != default_result["statistic"]

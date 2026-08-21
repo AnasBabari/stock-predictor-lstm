@@ -26,12 +26,13 @@ def _bin_proportions(values: np.ndarray, edges: np.ndarray) -> np.ndarray:
     return (counts + _EPSILON) / (values.size + _EPSILON * (len(edges) - 1))
 
 
-def population_stability_index(reference, comparison, *, bins: int = 10) -> float:
+def population_stability_index(reference, comparison, *, bins: int = 10) -> float | None:
     """Quantile-binned PSI of ``comparison`` relative to ``reference``.
 
-    Bin edges are fitted on the reference distribution only. A constant
-    reference collapses to a single effective bin, which yields a finite PSI
-    of zero because both distributions occupy the same bin.
+    Bin edges are fitted on the reference distribution only. A degenerate
+    (constant) reference cannot produce a meaningful divergence measure, so
+    this returns ``None`` with the caller expected to treat it as
+    "insufficient variation" rather than as evidence of no drift.
     """
     reference_array = _one_dimensional(reference, "reference")
     comparison_array = _one_dimensional(comparison, "comparison")
@@ -40,8 +41,8 @@ def population_stability_index(reference, comparison, *, bins: int = 10) -> floa
 
     edges = np.unique(np.quantile(reference_array, np.linspace(0.0, 1.0, bins + 1)))
     if edges.size < 2:
-        # Degenerate reference: a single effective bin cannot diverge.
-        return 0.0
+        # Degenerate reference: PSI is undefined, not zero.
+        return None
 
     reference_proportions = _bin_proportions(reference_array, edges)
     comparison_proportions = _bin_proportions(comparison_array, edges)
@@ -77,10 +78,13 @@ def feature_divergence(train_windows, validation_windows, *, bins: int = 10) -> 
         population_stability_index(train_flat[:, column], validation_flat[:, column], bins=bins)
         for column in range(feature_count)
     ]
+    finite_psi = [value for value in psi_by_column if value is not None]
     return {
         "psi_by_column": psi_by_column,
-        "max_psi": float(max(psi_by_column)),
-        "mean_psi": float(np.mean(psi_by_column)),
+        "max_psi": float(max(finite_psi)) if finite_psi else None,
+        "mean_psi": float(np.mean(finite_psi)) if finite_psi else None,
+        # Columns whose reference was degenerate have undefined PSI.
+        "degenerate_columns": [index for index, value in enumerate(psi_by_column) if value is None],
     }
 
 

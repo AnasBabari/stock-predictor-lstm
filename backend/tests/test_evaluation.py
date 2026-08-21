@@ -29,6 +29,33 @@ def test_direction_accuracy_is_anchored_to_each_forecast_origin():
     assert report["pooled"]["direction_accuracy"] == 1.0
 
 
+def test_direction_accuracy_excludes_ties_instead_of_crediting_them():
+    # Origin 100: actual flat (doji) — persistence would previously score a
+    # free correct tie; origin 200: both directions informative and correct.
+    origins = np.array([100.0, 200.0])
+    actual = np.array([[100.0, 99.0], [198.0, 203.0]])
+    predicted = np.array([[100.0, 98.0], [199.0, 204.0]])
+
+    report = evaluate_forecast_horizons(actual, predicted, origins, horizons=[1, 2])
+
+    # Only the second origin is informative; it is correct => 1.0, not diluted
+    # by the doji, and an all-tie case must be None rather than 1.0.
+    assert report["pooled"]["direction_accuracy"] == 1.0
+
+    all_tied = evaluate_forecast_horizons(
+        np.array([[100.0]]), np.array([[100.0]]), np.array([100.0]), horizons=[1]
+    )
+    assert all_tied["pooled"]["direction_accuracy"] is None
+
+
+def test_direction_accuracy_penalises_wrong_call_on_informative_rows():
+    origins = np.array([100.0])
+    actual = np.array([[101.0]])
+    predicted = np.array([[99.0]])  # called down on an up move
+    report = evaluate_forecast_horizons(actual, predicted, origins, horizons=[1])
+    assert report["pooled"]["direction_accuracy"] == 0.0
+
+
 def test_horizon_report_uses_persistence_from_the_same_origins():
     origins = np.array([100.0, 200.0])
     actual = np.array([[102.0], [198.0]])

@@ -23,12 +23,24 @@ def test_psi_is_large_for_shifted_distribution():
 
 
 def test_psi_handles_constant_reference():
+    """A degenerate reference has undefined PSI — None, never a fake 0.0."""
     constant_reference = np.full(50, 2.5)
-    psi_same = population_stability_index(constant_reference, np.full(30, 2.5))
-    psi_other = population_stability_index(constant_reference, np.arange(30.0))
-    assert np.isfinite(psi_same)
-    assert psi_same == pytest.approx(0.0)
-    assert np.isfinite(psi_other)
+    assert population_stability_index(constant_reference, np.full(30, 2.5)) is None
+    assert population_stability_index(constant_reference, np.arange(30.0)) is None
+
+
+def test_feature_divergence_reports_degenerate_columns():
+    rng = np.random.default_rng(0)
+    train = rng.normal(size=(40, 1, 2))
+    validation = rng.normal(size=(30, 1, 2))
+    # Second feature constant in training => degenerate PSI for that column.
+    train[:, :, 1] = 7.0
+    result = feature_divergence(train, validation)
+    assert result["degenerate_columns"] == [1]
+    assert result["max_psi"] == pytest.approx(result["psi_by_column"][0])
+    fully_degenerate = np.full((10, 1, 1), 3.0)
+    empty = feature_divergence(fully_degenerate, np.full((8, 1, 1), 4.0))
+    assert empty["max_psi"] is None and empty["mean_psi"] is None
 
 
 def test_psi_rejects_invalid_inputs():

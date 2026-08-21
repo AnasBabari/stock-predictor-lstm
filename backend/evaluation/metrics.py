@@ -38,10 +38,22 @@ def _same_shape(actual, predicted) -> tuple[np.ndarray, np.ndarray]:
     return actual_array, predicted_array
 
 
-def _direction_accuracy(actual: np.ndarray, predicted: np.ndarray, origin: np.ndarray) -> float:
+def _direction_accuracy(
+    actual: np.ndarray, predicted: np.ndarray, origin: np.ndarray
+) -> float | None:
+    """Directional accuracy with ties excluded from the denominator.
+
+    A flat close (doji) or a flat prediction carries no directional
+    information; counting ties as correct would silently award persistence
+    free credit on doji sessions. Returns ``None`` when every observation is
+    tied.
+    """
     actual_direction = np.sign(actual - origin)
     predicted_direction = np.sign(predicted - origin)
-    return float(np.mean(actual_direction == predicted_direction))
+    informative = (actual_direction != 0) & (predicted_direction != 0)
+    if not informative.any():
+        return None
+    return float(np.mean(actual_direction[informative] == predicted_direction[informative]))
 
 
 def regression_metrics(

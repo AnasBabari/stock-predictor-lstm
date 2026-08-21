@@ -509,6 +509,12 @@ def run_baseline_experiment(
                     )
                 },
                 "empirical_coverage": diagnostics["empirical_coverage"],
+                # Honest labeling: coverage measured on the SAME pooled
+                # out-of-fold residuals used for calibration is calibration
+                # coverage (in-sample), not independent evidence. Time-series
+                # residuals are not exchangeable, so even held-out-tail
+                # coverage would be approximate.
+                "coverage_scope": "calibration_residuals",
                 "average_width": diagnostics["average_width"],
                 "sample_count": calibration["calibration_count"],
             }

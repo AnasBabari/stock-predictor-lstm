@@ -54,9 +54,10 @@ def fit_constrained_blend(member_predictions, actuals) -> np.ndarray:
     non-negative (any numerical residue is clipped to zero) and are then
     renormalized so the weights sum to at most one: when the NNLS sum exceeds
     one every weight is divided by that sum, which keeps the blend inside the
-    convex hull of persistence and the members. When NNLS returns an
-    all-zero solution (no member reduces squared error) the fallback is equal
-    weights, whose sum is exactly one and therefore still at most one.
+    convex hull of persistence and the members. When NNLS returns an all-zero
+    solution (no member reduces squared error) the honest fallback is pure
+    persistence: all weights stay zero, so the blend degenerates to the
+    baseline instead of committing to members that provably do not help.
     """
     members = np.asarray(member_predictions, dtype=float)
     observed = np.asarray(actuals, dtype=float).reshape(-1)
@@ -73,5 +74,6 @@ def fit_constrained_blend(member_predictions, actuals) -> np.ndarray:
     if total > 1.0:
         weights = weights / total
     elif total == 0.0:
-        weights = np.full(members.shape[1], 1.0 / members.shape[1])
+        # No member helps: stay with persistence (all-zero weights).
+        weights = np.zeros(members.shape[1])
     return weights.astype(float)

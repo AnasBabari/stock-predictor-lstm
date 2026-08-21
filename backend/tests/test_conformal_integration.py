@@ -18,7 +18,10 @@ def test_conformal_intervals_cover_a_predictable_series():
 
     intervals = prediction_intervals(predicted, calibration, coverage=0.9)
     diagnostics = interval_diagnostics(actual.reshape(-1, 1), intervals)
-    # Finite-sample conformal ranks guarantee near-nominal in-sample coverage.
+    # Finite-sample conformal ranks give near-nominal coverage on the
+    # calibration residuals themselves (in-sample); this is NOT independent
+    # evidence — time-series residuals are autocorrelated and not
+    # exchangeable, so held-out coverage is only approximate.
     assert diagnostics["empirical_coverage"] >= 0.88
     assert diagnostics["average_width"] > 0
 

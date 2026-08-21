@@ -58,13 +58,20 @@ def block_bootstrap_interval(
     }
 
 
-def dm_style_statistic(candidate_losses, baseline_losses) -> dict[str, float | int]:
+def dm_style_statistic(
+    candidate_losses, baseline_losses, *, max_lag: int | None = None
+) -> dict[str, float | int]:
     """Paired Diebold-Mariano-style statistic with Newey-West HAC variance.
 
     The loss differential is ``candidate - baseline`` (negative means the
     candidate has lower loss). The variance of the differential mean uses the
-    Newey-West estimator with ``lag_max = floor(4 * (n / 100) ** (2 / 9))`` and
-    a two-sided normal p-value is reported.
+    Newey-West estimator with ``lag_max = floor(4 * (n / 100) ** (2 / 9))``
+    unless ``max_lag`` is given, and a two-sided normal p-value is reported.
+
+    Overlapping multi-step losses (h-step-ahead evaluated at every origin)
+    are autocorrelated up to roughly ``h - 1`` lags; the default rule
+    undersmooths for large ``h``, so callers comparing overlapping horizons
+    should pass ``max_lag >= h``.
     """
     contender = np.asarray(candidate_losses, dtype=float).reshape(-1)
     reference = np.asarray(baseline_losses, dtype=float).reshape(-1)
@@ -77,7 +84,11 @@ def dm_style_statistic(candidate_losses, baseline_losses) -> dict[str, float | i
     difference = contender - reference
     n = len(difference)
     mean_diff = float(np.mean(difference))
-    lag_max = math.floor(4 * ((n / 100) ** (2 / 9)))
+    lag_max = (
+        max(1, int(max_lag))
+        if max_lag is not None
+        else math.floor(4 * ((n / 100) ** (2 / 9)))
+    )
     variance = float(np.var(difference, ddof=0))
     for lag in range(1, min(lag_max, n - 1) + 1):
         covariance = float(

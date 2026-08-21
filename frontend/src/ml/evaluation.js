@@ -23,7 +23,13 @@ export function regressionMetrics(actual, predicted, persistence, metricSource) 
   const baselineErrors = actual.map((value, index) => value - persistence[index]);
   const baselineMae = baselineErrors.reduce((sum, value) => sum + Math.abs(value), 0) / actual.length;
   const baselineRmse = Math.sqrt(baselineErrors.reduce((sum, value) => sum + value ** 2, 0) / actual.length);
-  const mapeTerms = actual.map((value, index) => value === 0 ? null : Math.abs(errors[index] / value));
+  // MAPE over cumulative log returns explodes near zero denominators; the
+  // exact-zero filter is not enough. Exclude |actual| below MAPE_EPSILON and
+  // report the metric only when enough terms survive.
+  const MAPE_EPSILON = 1e-4;
+  const mapeTerms = actual.map((value, index) =>
+    Math.abs(value) < MAPE_EPSILON ? null : Math.abs(errors[index] / value)
+  );
   const finiteMape = mapeTerms.filter((value) => value !== null);
   return {
     metric_source: metricSource,

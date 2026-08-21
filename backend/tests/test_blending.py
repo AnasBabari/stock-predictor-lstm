@@ -53,11 +53,13 @@ def test_constrained_blend_renormalizes_weights_above_one():
     assert weights.sum() <= 1.0
 
 
-def test_constrained_blend_falls_back_to_equal_weights_for_zero_solution():
+def test_constrained_blend_falls_back_to_persistence_for_zero_solution():
     # Opposite-signed members cannot reduce squared error, NNLS returns zeros,
-    # and the documented fallback is equal weights summing to one.
+    # and the honest fallback is pure persistence: all weights stay zero so
+    # the blend degenerates to the baseline instead of committing to members
+    # that provably do not help.
     weights = fit_constrained_blend(-np.eye(3), np.ones(3))
-    assert np.allclose(weights, np.full(3, 1.0 / 3.0))
+    assert np.allclose(weights, np.zeros(3))
     assert weights.sum() <= 1.0
 
 
