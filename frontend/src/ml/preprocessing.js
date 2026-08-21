@@ -1,6 +1,13 @@
 export const MODEL_VERSION = 'tfjs-return-lstm-v4';
 export const ARCHITECTURE_VERSION = 'local-return-lstm-v3';
 export const TARGET_MODE = 'cumulative_log_return_v1';
+// Direction target contract v2: ONE three-way call per forecast origin —
+// the sign of the CUMULATIVE return over the requested horizon with a
+// volatility/tick-aware neutral band — replacing the former h independent
+// next-day signs that let "7-day direction" mean seven daily calls.
+// Version-gated separately from TARGET_MODE so adopting it invalidates only
+// cached direction artifacts.
+export const DIRECTION_TARGET_VERSION = 'cumulative_three_way_v2';
 export const WINDOW_SIZE = 60;
 export const OUTPUT_WIDTH = 30;
 export const HORIZONS = [1, 3, 5, 7, 14, 30];
@@ -244,7 +251,7 @@ export function featureSignature(featureNames) {
 }
 
 export function modelKey(snapshot, forecastType, profile = 'balanced', backend = 'any', horizon = OUTPUT_WIDTH) {
-  return [
+  const parts = [
     MODEL_VERSION,
     ARCHITECTURE_VERSION,
     TARGET_MODE,
@@ -257,11 +264,85 @@ export function modelKey(snapshot, forecastType, profile = 'balanced', backend =
     snapshot.snapshot_id,
     WINDOW_SIZE,
     horizon,
-  ].join('/');
+  ];
+  // Direction artifacts additionally carry the direction target version so
+  // switching to cumulative three-way labels can never load a legacy
+  // per-day-sign model (and vice versa).
+  if (forecastType === 'direction') parts.push(DIRECTION_TARGET_VERSION);
+  return parts.join('/');
 }
 
 export function latestInput(prepared) {
   return prepared.scaled.slice(-WINDOW_SIZE);
+}
+
+// ── Direction target contract v2 (cumulative three-way) ─────────────────
+// Spec §3.2: y = Up if r_cum > τ, Down if r_cum < −τ, Neutral otherwise,
+// with τ computed ONLY from information available at the forecast origin.
+// τ = max(0.0005, 0.10 · σ20,t · √h, tick/P_t). The browser cannot observe
+// exchange tick sizes yet, so callers pass tickPrice = null and the term is
+// dropped; when the backend snapshot starts carrying minimum tick, the same
+// helper consumes it without signature change.
+
+export function trailingSigma20(prices, originIndex) {
+  const endExclusive = Math.max(0, Number(originIndex)); // returns up to origin-1 vs origin-2 … causal
+  const windowStart = Math.max(1, endExclusive - 20);
+  const returns = [];
+  for (let i = windowStart; i < endExclusive; i += 1) {
+    const prev = Number(prices[i - 1]);
+    const cur = Number(prices[i]);
+    if (prev > 0 && cur > 0 && Number.isFinite(prev) && Number.isFinite(cur)) {
+      returns.push(Math.log(cur / prev));
+    }
+  }
+  return standardDeviationOf(returns);
+}
+
+function standardDeviationOf(values) {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  return Math.sqrt(values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1));
+}
+
+export function directionThreshold({ sigma20, horizon, price, tickPrice = null }) {
+  const h = Math.max(1, Math.round(Number(horizon) || 1));
+  const sigma = Math.max(0, Number(sigma20) || 0);
+  const floor = 0.0005;
+  const volTerm = 0.10 * sigma * Math.sqrt(h);
+  let tau = Math.max(floor, volTerm);
+  const p = Number(price);
+  const tick = Number(tickPrice);
+  if (Number.isFinite(tick) && tick > 0 && Number.isFinite(p) && p > 0) {
+    tau = Math.max(tau, tick / p);
+  }
+  return tau;
+}
+
+/**
+ * Three-way cumulative direction labels for every valid forecast origin.
+ *
+ * Origin t is the last row of a lookback window; its label uses the close at
+ * t and the close at t+h only. Returns one entry per origin:
+ *   { originIndex, horizon, sigma20, tau, cumulativeReturn, label }
+ * where label ∈ 'up' | 'down' | 'neutral'. Rows before the first index with
+ * enough history for σ20 are skipped (origins start at index 21).
+ */
+export function buildCumulativeDirectionTargets(historicalPrices, horizon, tickPrice = null) {
+  const prices = (historicalPrices || []).map(Number);
+  const h = Math.max(1, Math.round(Number(horizon) || 1));
+  const labels = [];
+  for (let origin = 21; origin + h < prices.length; origin += 1) {
+    const base = prices[origin];
+    const future = prices[origin + h];
+    if (!(base > 0 && future > 0 && Number.isFinite(base) && Number.isFinite(future))) continue;
+    const sigma20 = trailingSigma20(prices, origin);
+    const tau = directionThreshold({ sigma20, horizon: h, price: base, tickPrice });
+    const cumulativeReturn = Math.log(future / base);
+    const label =
+      cumulativeReturn > tau ? 'up' : cumulativeReturn < -tau ? 'down' : 'neutral';
+    labels.push({ originIndex: origin, horizon: h, sigma20, tau, cumulativeReturn, label });
+  }
+  return labels;
 }
 
 // Holdout comparison series (price forecasts, single-holdout profiles only).
