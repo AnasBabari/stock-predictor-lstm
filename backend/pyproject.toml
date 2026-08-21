@@ -18,7 +18,7 @@ dependencies = [
     "slowapi>=0.1.9,<1.0.0",
     "uvicorn>=0.34.0,<1.0.0",
     "vadersentiment>=3.3.2,<4.0.0",
-    "yfinance>=0.2.50,<1.0.0",
+    "yfinance>=0.2.50,<2.0.0",
     "cryptography>=50.0.0,<51.0.0",
     "filelock>=3.32.0",
 ]
