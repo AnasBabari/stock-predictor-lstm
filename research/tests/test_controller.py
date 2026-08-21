@@ -45,8 +45,10 @@ def sample_snapshot_csv(tmp_path: Path) -> Path:
     return csv_path
 
 
-def test_harness_integrity_check(tmp_path: Path) -> None:
-    assert check_harness_integrity(tmp_path) is True
+def test_harness_integrity_fails_closed_without_git(tmp_path: Path) -> None:
+    """Without git history there is no proof of integrity, so the check must
+    fail closed (it previously returned True on git failure)."""
+    assert check_harness_integrity(tmp_path) is False
 
 
 def test_parity_verification() -> None:

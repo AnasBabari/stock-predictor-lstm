@@ -12,6 +12,15 @@ the method changes.
 recorded_sha: f3361d1
 freeze_record_commit: f3361d113c41f9c30449fb8131bcf73ce06894ce
 
+**Field conventions.** `recorded_sha` identifies the battery-verified tree the
+evidence was produced on (short or full SHA). `freeze_record_commit` is the
+full 40-hex SHA of the commit that last *wrote this record*; it necessarily
+descends from `recorded_sha`, so a two-commit dance is expected when evidence
+is refreshed: run the battery at HEAD, then let a follow-up commit pin its own
+hash here. The gate script validates both fields: existence, ancestry
+(`recorded_sha` must be an ancestor of `freeze_record_commit`), and that any
+git failure fails the check closed rather than skipping it.
+
 
 ## Full check battery
 

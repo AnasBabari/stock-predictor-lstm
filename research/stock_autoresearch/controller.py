@@ -107,7 +107,10 @@ def check_harness_integrity(
                 if changed == prohibited or changed.startswith(prohibited.rstrip("/") + "/"):
                     return False
     except Exception:
-        return True
+        # Fail closed: if git history cannot prove the harness is untouched,
+        # the integrity check must not declare it valid. Callers that need a
+        # definitive answer must supply baseline fingerprints instead.
+        return False
     return True
 
 

@@ -53,74 +53,126 @@ def guarded_name(name: str) -> bool:
     return any(relative.startswith(prefix) for prefix in GUARDED)
 
 
+class GitError(RuntimeError):
+    """A git command required by the gate failed — the gate fails closed."""
+
+
 def git(*args: str) -> str:
-    return subprocess.run(
-        ["git", *args],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        raise GitError(f"git {' '.join(args)} failed: {exc}") from exc
+
+
+SHA_PATTERN = r"[0-9a-f]{7,40}"
+
+
+def validate(text: str, run_git=None) -> list[str]:
+    """Validate the gate record; returns a list of human-readable errors.
+
+    ``run_git`` is injectable so tests can simulate git failures without a
+    real repository. Any git failure is an error (fail closed), never a
+    silent pass.
+    """
+    if run_git is None:
+        run_git = git
+    errors: list[str] = []
+
+    def resolve(label: str, value: str) -> str | None:
+        try:
+            return run_git("rev-parse", f"{value}^{{commit}}")
+        except GitError:
+            errors.append(f"{label} {value} does not exist in git history.")
+            return None
+
+    recorded_match = re.search(rf"recorded_sha:\s*({SHA_PATTERN})", text)
+    freeze_match = re.search(r"freeze_record_commit:\s*([0-9a-f]{40})", text)
+
+    if not recorded_match:
+        errors.append(f"{GATE.relative_to(ROOT)} must record recorded_sha.")
+        return errors
+    recorded = recorded_match.group(1)
+    if recorded == "????":
+        errors.append(
+            "recorded_sha is still the placeholder; run the battery and update the record."
+        )
+        return errors
+
+    recorded_full = resolve("recorded_sha", recorded)
+    if not re.search(r"freeze_record_commit:\s*[0-9a-f]{40}", text):
+        errors.append(
+            f"{GATE.relative_to(ROOT)} must record freeze_record_commit (full 40-hex SHA "
+            "of the commit that last wrote this record)."
+        )
+        return errors
+    freeze = freeze_match.group(1)
+    freeze_full = resolve("freeze_record_commit", freeze)
+
+    if recorded_full is None or freeze_full is None:
+        return errors
+
+    # The battery-verified tree must be contained in the record-writing
+    # commit's history: evidence can only be pinned by a later commit.
+    try:
+        base = run_git("merge-base", recorded_full, freeze_full)
+    except GitError as exc:
+        errors.append(str(exc))
+        return errors
+    if base != recorded_full:
+        errors.append(
+            f"recorded_sha {recorded} is not an ancestor of freeze_record_commit; "
+            "the freeze record must descend from the battery-verified tree."
+        )
+
+    try:
+        changed = run_git("diff", "--name-only", recorded, "HEAD")
+    except GitError as exc:
+        errors.append(f"git diff failed: {exc}")
+        return errors
+    drifted = [name for name in changed.splitlines() if guarded_name(name)]
+    if drifted:
+        errors.append(
+            f"methodology evidence is stale: {len(drifted)} guarded file(s) changed "
+            f"since recorded_sha {recorded}."
+        )
+        errors.append("Rerun the full battery and update docs/METHODOLOGY_GATE.md:")
+        errors.append("  npx vitest run && npm run build (frontend)")
+        errors.append("  npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js")
+        errors.append("  npx playwright test e2e/browser-real-training.spec.js --workers=1")
+        errors.append("  npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1")
+        errors.append(
+            "Then bump recorded_sha to the verified HEAD and let the follow-up "
+            "commit pin freeze_record_commit."
+        )
+
+    for required in REQUIRED_BATTERY:
+        if required not in text:
+            errors.append(f"{GATE.relative_to(ROOT)} battery listing must mention {required!r}.")
+    return errors
 
 
 def main() -> int:
-    errors: list[str] = []
     if not GATE.exists():
-        errors.append(f"{GATE.relative_to(ROOT)} is missing.")
-    else:
-        text = GATE.read_text(encoding="utf-8")
-        match = re.search(r"recorded_sha:\s*([0-9a-f]{7,40}|\?{4})", text)
-        if not match:
-            errors.append(f"{GATE.relative_to(ROOT)} must record recorded_sha.")
-        else:
-            recorded = match.group(1)
-            if recorded == "????":
-                errors.append(
-                    "recorded_sha is still the placeholder; run the battery and update the record."
-                )
-            else:
-                try:
-                    recorded_full = git("rev-parse", f"{recorded}^{{commit}}")
-                except subprocess.CalledProcessError:
-                    errors.append(f"recorded_sha {recorded} does not exist in git history.")
-                else:
-                    base = git("merge-base", "HEAD", recorded_full)
-                    if base != recorded_full:
-                        errors.append(
-                            f"recorded_sha {recorded} is not an ancestor of HEAD; "
-                            "re-run the battery and update the record at HEAD."
-                        )
-                    changed = git("diff", "--name-only", recorded, "HEAD")
-                    drifted = [name for name in changed.splitlines() if guarded_name(name)]
-                    if drifted:
-                        errors.append(
-                            f"methodology evidence is stale: {len(drifted)} guarded file(s) changed "
-                            f"since recorded_sha {recorded}."
-                        )
-                        errors.append("Rerun the full battery and update docs/METHODOLOGY_GATE.md:")
-                        errors.append("  npx vitest run && npm run build (frontend)")
-                        errors.append(
-                            "  npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js"
-                        )
-                        errors.append(
-                            "  npx playwright test e2e/browser-real-training.spec.js --workers=1"
-                        )
-                        errors.append(
-                            "  npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1"
-                        )
-                        errors.append(
-                            "Then bump recorded_sha to the new HEAD and commit the record."
-                        )
-        for required in REQUIRED_BATTERY:
-            if required not in text:
-                errors.append(
-                    f"{GATE.relative_to(ROOT)} battery listing must mention {required!r}."
-                )
+        print(f"ERROR: {GATE.relative_to(ROOT)} is missing.", file=sys.stderr)
+        return 1
+    text = GATE.read_text(encoding="utf-8")
+    try:
+        errors = validate(text)
+    except GitError as exc:
+        # Unavailable git history must fail the gate, never skip it.
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
     if errors:
         print("\n".join(f"ERROR: {error}" for error in errors), file=sys.stderr)
         return 1
-    match = re.search(r"recorded_sha:\s*([0-9a-f]{7,40})", GATE.read_text(encoding="utf-8"))
-    print(f"Methodology evidence is current (recorded at {match.group(1)}).")
+    recorded = re.search(rf"recorded_sha:\s*({SHA_PATTERN})", text).group(1)
+    print(f"Methodology evidence is current (recorded at {recorded}).")
     return 0
 
 
