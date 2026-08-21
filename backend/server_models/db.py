@@ -15,10 +15,15 @@ import threading
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server_models.contracts import ServerModelRecord
+
+# A claimed job whose worker dies stays 'processing' until its lease expires;
+# expiry returns it to 'queued' unless it has burned MAX_JOB_ATTEMPTS.
+DEFAULT_LEASE_SECONDS = 1800
+MAX_JOB_ATTEMPTS = 3
 
 
 def _validate_record_payload(payload: Any) -> ServerModelRecord:
@@ -73,7 +78,7 @@ class ModelRegistry(ABC):
     ) -> str: ...
 
     @abstractmethod
-    def dequeue_job(self) -> dict[str, Any] | None: ...
+    def dequeue_job(self, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict[str, Any] | None: ...
 
     @abstractmethod
     def complete_job(self, job_id: str) -> None: ...
@@ -101,6 +106,7 @@ class InMemoryRegistry(ModelRegistry):
         self._pruned: set[str] = set()
         self._audit_log: list[dict[str, Any]] = []
         self._jobs: list[dict[str, Any]] = []
+        self._clock: Callable[[], datetime] = _now
 
     def insert_artifact(self, record: ServerModelRecord) -> None:
         with self._lock:
@@ -252,26 +258,60 @@ class InMemoryRegistry(ModelRegistry):
                     "status": "queued",
                     "attempts": 0,
                     "enqueued_at": _now().isoformat(),
+                    "leased_at": None,
+                    "lease_expires_at": None,
+                    "last_error": None,
                 }
             )
             return job_id
 
-    def dequeue_job(self) -> dict[str, Any] | None:
-        """Claim the oldest queued job; the lock mirrors SKIP LOCKED semantics."""
+    def dequeue_job(self, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict[str, Any] | None:
+        """Claim the oldest queued job; mirrors the Postgres lease semantics.
 
+        Expired leases are reclaimed first (status back to 'queued', or
+        'failed' once attempts exceed MAX_JOB_ATTEMPTS), then the oldest
+        queued job is claimed under the lock (SKIP LOCKED analogue).
+        """
         with self._lock:
+            now = self._clock()
+            for job in self._jobs:
+                if (
+                    job["status"] == "processing"
+                    and job.get("lease_expires_at") is not None
+                    and job["lease_expires_at"] < now
+                ):
+                    if job["attempts"] >= MAX_JOB_ATTEMPTS:
+                        job["status"] = "failed"
+                        job["last_error"] = "lease expired after max attempts"
+                    else:
+                        job["status"] = "queued"
+                    job["leased_at"] = None
+                    job["lease_expires_at"] = None
             for job in self._jobs:
                 if job["status"] == "queued":
                     job["status"] = "processing"
                     job["attempts"] += 1
+                    job["leased_at"] = now
+                    job["lease_expires_at"] = now + timedelta(seconds=lease_seconds)
                     return dict(job)
             return None
 
     def complete_job(self, job_id: str) -> None:
-        pass
+        with self._lock:
+            for job in self._jobs:
+                if str(job["id"]) == str(job_id):
+                    job["status"] = "completed"
+                    job["leased_at"] = None
+                    job["lease_expires_at"] = None
 
     def fail_job(self, job_id: str, reason: str) -> None:
-        pass
+        with self._lock:
+            for job in self._jobs:
+                if str(job["id"]) == str(job_id):
+                    job["status"] = "failed"
+                    job["last_error"] = reason
+                    job["leased_at"] = None
+                    job["lease_expires_at"] = None
 
     def close(self) -> None:
         pass
@@ -311,7 +351,10 @@ CREATE TABLE IF NOT EXISTS training_jobs (
     payload JSONB,
     status TEXT NOT NULL DEFAULT 'queued',
     attempts INTEGER NOT NULL DEFAULT 0,
-    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    leased_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    last_error TEXT
 );
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
@@ -319,6 +362,13 @@ CREATE TABLE IF NOT EXISTS audit_log (
     details JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+"""
+
+# Idempotent upgrades for registries created before job leasing existed.
+SCHEMA_MIGRATIONS_SQL = """
+ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS leased_at TIMESTAMPTZ;
+ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS last_error TEXT;
 """
 
 
@@ -343,6 +393,7 @@ class PostgresRegistry(ModelRegistry):
     def init_schema(self) -> None:
         with self._conn.cursor() as cursor:
             cursor.execute(SCHEMA_SQL)
+            cursor.execute(SCHEMA_MIGRATIONS_SQL)
         self._conn.commit()
 
     def insert_artifact(self, record: ServerModelRecord) -> None:
@@ -633,10 +684,26 @@ class PostgresRegistry(ModelRegistry):
         self._conn.commit()
         return str(row[0])
 
-    def dequeue_job(self) -> dict[str, Any] | None:
-        """Claim one queued job using FOR UPDATE SKIP LOCKED."""
+    def dequeue_job(self, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict[str, Any] | None:
+        """Claim one queued job using FOR UPDATE SKIP LOCKED.
 
+        Expired leases are reclaimed first: a worker that died mid-run must
+        not strand its job in 'processing' forever. Reclaiming past
+        MAX_JOB_ATTEMPTS fails the job instead of looping forever.
+        """
         with self._conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE training_jobs SET
+                    status = CASE WHEN attempts >= %s THEN 'failed' ELSE 'queued' END,
+                    last_error = CASE WHEN attempts >= %s
+                        THEN 'lease expired after max attempts' ELSE last_error END,
+                    leased_at = NULL,
+                    lease_expires_at = NULL
+                WHERE status = 'processing' AND lease_expires_at < now()
+                """,
+                (MAX_JOB_ATTEMPTS, MAX_JOB_ATTEMPTS),
+            )
             cursor.execute(
                 "SELECT id FROM training_jobs WHERE status = 'queued' "
                 "ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED"
@@ -646,9 +713,16 @@ class PostgresRegistry(ModelRegistry):
                 self._conn.rollback()
                 return None
             cursor.execute(
-                "UPDATE training_jobs SET status = 'processing', attempts = attempts + 1 "
-                "WHERE id = %s RETURNING id, ticker, forecast_type, payload, attempts",
-                (row[0],),
+                """
+                UPDATE training_jobs SET
+                    status = 'processing',
+                    attempts = attempts + 1,
+                    leased_at = now(),
+                    lease_expires_at = now() + make_interval(secs => %s)
+                WHERE id = %s
+                RETURNING id, ticker, forecast_type, payload, attempts
+                """,
+                (lease_seconds, row[0]),
             )
             claimed = cursor.fetchone()
         self._conn.commit()
@@ -662,15 +736,22 @@ class PostgresRegistry(ModelRegistry):
 
     def complete_job(self, job_id: str) -> None:
         with self._conn.cursor() as cursor:
-            cursor.execute("UPDATE training_jobs SET status = 'completed' WHERE id = %s", (job_id,))
+            cursor.execute(
+                "UPDATE training_jobs SET status = 'completed', "
+                "leased_at = NULL, lease_expires_at = NULL WHERE id = %s",
+                (job_id,),
+            )
         self._conn.commit()
 
     def fail_job(self, job_id: str, reason: str) -> None:
         with self._conn.cursor() as cursor:
-            # Maybe append reason to payload for debugging?
             cursor.execute(
-                "UPDATE training_jobs SET status = 'failed', payload = payload || jsonb_build_object('error', %s::text) WHERE id = %s",
+                "UPDATE training_jobs SET status = 'failed', "
+                "leased_at = NULL, lease_expires_at = NULL, "
+                "payload = payload || jsonb_build_object('error', %s::text), "
+                "last_error = %s WHERE id = %s",
                 (
+                    reason,
                     reason,
                     job_id,
                 ),

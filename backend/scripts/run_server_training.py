@@ -12,6 +12,23 @@ from server_models.training import train_server_forecast
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+# Retention re-sweep cadence for the long-lived daemon (startup sweep alone
+# would let expired bundles accumulate until the next restart).
+RETENTION_SWEEP_INTERVAL_SECONDS = 6 * 3600
+
+
+def run_retention_sweep(registry, storage) -> None:
+    pruned = sweep_expired_bundles(
+        registry,
+        storage,
+        retention_days=settings.server_bundle_retention_days,
+    )
+    logger.info(
+        "Server bundle retention removed %d expired object(s) (window=%d days).",
+        len(pruned),
+        settings.server_bundle_retention_days,
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run server-side background training.")
@@ -19,7 +36,13 @@ def main():
         "--once", action="store_true", help="Process the queue once and exit (cron mode)"
     )
     parser.add_argument(
-        "--ticker", type=str, help="Train a specific ticker immediately (bypassing queue)"
+        "--ticker",
+        type=str,
+        help=(
+            "Train a specific ticker immediately (bypassing the queue). Operator tool: "
+            "the serving allowlist is enforced at serve time, not here; all promotion "
+            "gates still apply."
+        ),
     )
     parser.add_argument(
         "--gc-only", action="store_true", help="Prune expired bundle objects and exit"
@@ -39,16 +62,7 @@ def main():
     # The trainer owns the bucket: create it on first run (MinIO/dev) and make
     # the failure loud instead of letting every put_bundle race a missing bucket.
     storage.ensure_bucket()
-    pruned = sweep_expired_bundles(
-        registry,
-        storage,
-        retention_days=settings.server_bundle_retention_days,
-    )
-    logger.info(
-        "Server bundle retention removed %d expired object(s) (window=%d days).",
-        len(pruned),
-        settings.server_bundle_retention_days,
-    )
+    run_retention_sweep(registry, storage)
     if args.gc_only:
         sys.exit(0)
 
@@ -63,8 +77,13 @@ def main():
         sys.exit(0)
 
     logger.info("Starting server training loop...")
+    last_sweep = time.monotonic()
     while True:
         try:
+            if time.monotonic() - last_sweep >= RETENTION_SWEEP_INTERVAL_SECONDS:
+                run_retention_sweep(registry, storage)
+                last_sweep = time.monotonic()
+
             job = registry.dequeue_job()
             if not job:
                 if args.once:
