@@ -212,6 +212,52 @@ test('reports partition counts in the actual sequence coordinates', () => {
   expect(direction.trainCount).toBe(price.trainCount - 1);
 });
 
+test('direction boundary is exactly one row after the price boundary for every length and horizon', () => {
+  // Property sweep: independent flooring used to make the direction split
+  // equal the price split whenever priceSampleCount was not a multiple of 5,
+  // giving the two forecast types different temporal train/holdout eras.
+  const horizons = [1, 3, 7, 14, 30];
+  let checked = 0;
+  for (let rowCount = WINDOW_SIZE + OUTPUT_WIDTH + 1; rowCount <= 800; rowCount += 1) {
+    const snapshot = makeSnapshot(rowCount);
+    for (const horizon of horizons) {
+      let price = null;
+      let direction = null;
+      try {
+        price = sequencePartition(snapshot, 'price', horizon);
+      } catch {
+        /* below minimal size */
+      }
+      try {
+        direction = sequencePartition(snapshot, 'direction', horizon);
+      } catch {
+        /* below minimal size */
+      }
+      if (!price) {
+        // Price is the larger coordinate system; if it cannot be built,
+        // direction never can.
+        expect(direction).toBeNull();
+        continue;
+      }
+      if (!direction) {
+        // The only legitimate asymmetry: direction needs one extra sequence,
+        // so it rejects exactly when price sits on its own minimal boundary
+        // (split_price === horizon, i.e. a single training sequence).
+        expect(price.trainCount).toBe(1);
+        continue;
+      }
+      expect(direction.split).toBe(price.split - 1);
+      expect(direction.trainCount).toBe(price.trainCount - 1);
+      expect(direction.sampleCount).toBe(price.sampleCount - 1);
+      // Purge arithmetic stays intact within each coordinate system.
+      expect(price.trainCount).toBe(price.split - horizon + 1);
+      expect(direction.trainCount).toBe(direction.split - horizon + 1);
+      checked += 1;
+    }
+  }
+  expect(checked).toBeGreaterThan(3000);
+});
+
 test('snaps requested days to supported horizon-specific models', () => {
   expect(resolveHorizon(1)).toBe(1);
   expect(resolveHorizon(2)).toBe(3);

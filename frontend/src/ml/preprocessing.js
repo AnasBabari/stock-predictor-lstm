@@ -174,13 +174,22 @@ export function inverseRobust(value, scaler, column) {
 
 // Sequence-partition arithmetic, shared by price and direction preprocessing.
 // Direction consumes the shifted raw-feature matrix (features.slice(1)), so its
-// sequence count is one shorter than the price coordinate system.
+// sequence count is one shorter than the price coordinate system and every
+// direction boundary sits exactly one raw row after the corresponding price
+// boundary. The direction split is therefore DERIVED from the price split
+// (split_direction = split_price - 1) instead of being floored independently;
+// independent flooring diverges from the price boundary whenever
+// priceSampleCount is not a multiple of 5, which would give the two forecast
+// types different temporal train/holdout eras for ~20% of snapshot lengths.
 export function sequencePartition(snapshot, forecastType, horizon = OUTPUT_WIDTH) {
   const h = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(horizon) || OUTPUT_WIDTH)));
-  const rowCount = forecastType === 'direction' ? snapshot.features.length - 1 : snapshot.features.length;
+  const priceRowCount = snapshot.features.length;
+  const priceSampleCount = priceRowCount - WINDOW_SIZE - h + 1;
+  if (priceSampleCount <= 0) throw new Error('Not enough rows for browser training.');
+  const isDirection = forecastType === 'direction';
+  const rowCount = isDirection ? priceRowCount - 1 : priceRowCount;
   const sampleCount = rowCount - WINDOW_SIZE - h + 1;
-  if (sampleCount <= 0) throw new Error('Not enough rows for browser training.');
-  const split = Math.floor(sampleCount * TRAIN_SPLIT);
+  const split = Math.floor(priceSampleCount * TRAIN_SPLIT) - (isDirection ? 1 : 0);
   const trainCount = split - h + 1;
   if (trainCount < 1 || split >= sampleCount) throw new Error('Training split is too small.');
   return { sampleCount, split, trainCount, horizon: h };
