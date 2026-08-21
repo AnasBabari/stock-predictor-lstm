@@ -122,12 +122,42 @@ def validate(text: str, run_git=None) -> list[str]:
     try:
         base = run_git("merge-base", recorded_full, freeze_full)
     except GitError as exc:
-        errors.append(str(exc))
+        errors.append(f"git merge-base failed: {exc}")
         return errors
     if base != recorded_full:
         errors.append(
             f"recorded_sha {recorded} is not an ancestor of freeze_record_commit; "
             "the freeze record must descend from the battery-verified tree."
+        )
+
+    # And the record-writing commit must itself be contained in the branch
+    # being validated — otherwise a valid-looking freeze from a sibling
+    # branch would certify unrelated code.
+    try:
+        head_base = run_git("merge-base", freeze_full, "HEAD")
+    except GitError as exc:
+        errors.append(f"git merge-base failed: {exc}")
+        return errors
+    if head_base != freeze_full:
+        errors.append(
+            "freeze_record_commit is not an ancestor of HEAD; the current "
+            "branch does not contain the recorded freeze."
+        )
+
+    # The freeze commit must actually have written the gate document.
+    try:
+        freeze_touched = run_git(
+            "diff", "--name-only", f"{freeze_full}^", freeze_full
+        )
+    except GitError as exc:
+        errors.append(f"git diff failed: {exc}")
+        return errors
+    if "docs/METHODOLOGY_GATE.md" not in {
+        name.replace("\\", "/") for name in freeze_touched.splitlines()
+    }:
+        errors.append(
+            "freeze_record_commit did not modify docs/METHODOLOGY_GATE.md; "
+            "it does not look like a record-writing commit."
         )
 
     try:

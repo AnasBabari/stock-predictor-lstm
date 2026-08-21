@@ -34,82 +34,83 @@ def _record_text(recorded: str = RECORDED, freeze: str = FREEZE) -> str:
     )
 
 
-def _runner(mapping):
-    """Build a run_git stand-in from {subcommand: output | callable | exception}."""
+def _make_git(
+    *,
+    recorded_freeze_base=RECORDED,
+    freeze_in_head=True,
+    head_diff="",
+    freeze_diff="docs/METHODOLOGY_GATE.md\n",
+    fail_on=None,
+):
+    """Semantic run_git stand-in.
+
+    Handles rev-parse, both merge-base invocations (recorded<->freeze and
+    freeze<->HEAD), and both diff invocations (recorded..HEAD staleness and
+    freeze^..freeze record-touch). ``fail_on`` is a (subcommand,) prefix that
+    raises GitError to simulate transport failure.
+    """
 
     def run(*args):
+        if fail_on is not None and tuple(args[: len(fail_on)]) == tuple(fail_on):
+            raise GATE.GitError(f"git {args[0]} unavailable")
         sub = args[0]
-        outcome = mapping.get(sub, GATE.GitError(f"unexpected git subcommand: {sub}"))
-        if isinstance(outcome, Exception):
-            raise outcome
-        if callable(outcome):
-            return outcome(*args)
-        return outcome
+        if sub == "rev-parse":
+            return args[1].replace("^{commit}", "")
+        if sub == "merge-base":
+            pair = {args[1], args[2]}
+            if RECORDED in pair and FREEZE in pair:
+                return recorded_freeze_base
+            # freeze <-> HEAD
+            return FREEZE if freeze_in_head else "d" * 40
+        if sub == "diff":
+            return freeze_diff if args[-1] == FREEZE else head_diff
+        raise GATE.GitError(f"unexpected git subcommand: {sub}")
 
     return run
 
 
-def _revparse():
-    # Mirror `git rev-parse <sha>^{commit}` output: full sha without suffix.
-    return lambda *args: args[1].replace("^{commit}", "")
-
-
 def test_valid_record_passes():
-    errors = GATE.validate(
-        _record_text(),
-        run_git=_runner(
-            {
-                "rev-parse": _revparse(),
-                "merge-base": RECORDED,
-                "diff": "",
-            }
-        ),
-    )
+    errors = GATE.validate(_record_text(), run_git=_make_git())
     assert errors == []
 
 
 def test_missing_freeze_record_commit_is_an_error():
     text = _record_text().replace(f"freeze_record_commit: {FREEZE}\n", "")
-    errors = GATE.validate(text, run_git=_runner({}))
+    errors = GATE.validate(text, run_git=_make_git())
     assert any("freeze_record_commit" in error for error in errors)
 
 
 def test_short_or_garbage_freeze_sha_is_rejected():
     text = _record_text(freeze="deadbeef")
-    errors = GATE.validate(text, run_git=_runner({}))
+    errors = GATE.validate(text, run_git=_make_git())
     assert any("freeze_record_commit" in error for error in errors)
 
 
 def test_unknown_shas_fail_closed():
-    boom = GATE.GitError("not a repository")
-    errors = GATE.validate(_record_text(), run_git=_runner({"rev-parse": boom}))
+    errors = GATE.validate(_record_text(), run_git=_make_git(fail_on=("rev-parse",)))
     assert any("does not exist" in error for error in errors)
 
 
 def test_freeze_not_descending_from_recorded_fails():
     errors = GATE.validate(
         _record_text(),
-        run_git=_runner(
-            {
-                "rev-parse": lambda *a: a[1],
-                "merge-base": "c" * 40,
-                "diff": "",
-            }
-        ),
+        run_git=_make_git(recorded_freeze_base="c" * 40),
     )
     assert any("not an ancestor of freeze_record_commit" in error for error in errors)
+
+
+def test_git_failure_during_merge_base_fails_closed():
+    errors = GATE.validate(
+        _record_text(),
+        run_git=_make_git(fail_on=("merge-base",)),
+    )
+    assert any("merge-base failed" in error for error in errors)
 
 
 def test_git_failure_during_diff_fails_closed():
     errors = GATE.validate(
         _record_text(),
-        run_git=_runner(
-            {
-                "rev-parse": _revparse(),
-                "merge-base": RECORDED,
-                "diff": GATE.GitError("diff unavailable"),
-            }
-        ),
+        run_git=_make_git(fail_on=("diff",)),
     )
     assert any("failed" in error for error in errors)
 
@@ -117,15 +118,28 @@ def test_git_failure_during_diff_fails_closed():
 def test_stale_guarded_paths_are_reported():
     errors = GATE.validate(
         _record_text(),
-        run_git=_runner(
-            {
-                "rev-parse": _revparse(),
-                "merge-base": RECORDED,
-                "diff": "frontend/src/ml/trainingWorker.js\nREADME.md\n",
-            }
+        run_git=_make_git(
+            head_diff="frontend/src/ml/trainingWorker.js\nREADME.md\n",
         ),
     )
     assert any("methodology evidence is stale" in error for error in errors)
+
+
+def test_freeze_on_sibling_branch_fails():
+    """A valid-looking freeze that HEAD does not contain certifies nothing."""
+    errors = GATE.validate(
+        _record_text(),
+        run_git=_make_git(freeze_in_head=False),
+    )
+    assert any("freeze_record_commit is not an ancestor of HEAD" in error for error in errors)
+
+
+def test_freeze_commit_must_touch_the_gate_document():
+    errors = GATE.validate(
+        _record_text(),
+        run_git=_make_git(freeze_diff="frontend/src/ml/trainingWorker.js\n"),
+    )
+    assert any("did not modify docs/METHODOLOGY_GATE.md" in error for error in errors)
 
 
 def test_current_repository_record_validates():

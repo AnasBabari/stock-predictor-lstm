@@ -17,9 +17,12 @@ evidence was produced on (short or full SHA). `freeze_record_commit` is the
 full 40-hex SHA of the commit that last *wrote this record*; it necessarily
 descends from `recorded_sha`, so a two-commit dance is expected when evidence
 is refreshed: run the battery at HEAD, then let a follow-up commit pin its own
-hash here. The gate script validates both fields: existence, ancestry
-(`recorded_sha` must be an ancestor of `freeze_record_commit`), and that any
-git failure fails the check closed rather than skipping it.
+hash here. The gate script validates both fields and the full chain:
+existence of both SHAs; `recorded_sha` ancestor-of `freeze_record_commit`;
+`freeze_record_commit` ancestor-of **HEAD** (a valid-looking freeze on a
+sibling branch certifies nothing); the freeze commit actually modified this
+document; staleness of guarded paths relative to `recorded_sha`; and any git
+failure fails the check closed rather than skipping it.
 
 
 ## Full check battery
