@@ -44,7 +44,8 @@ export default function Watchlist({ items, onSelectTicker, onRemoveItem, onClear
               <button
                 type="button"
                 className="wl-remove"
-                title="Remove"
+                title={`Remove ${w.ticker} from watchlist`}
+                aria-label={`Remove ${w.ticker} from watchlist`}
                 onClick={() => onRemoveItem(index)}
               >
                 ✕

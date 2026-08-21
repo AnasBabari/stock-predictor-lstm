@@ -8,10 +8,16 @@ const TOAST_ICONS = {
 
 export default function ToastContainer({ toasts }) {
   return (
-    <div id="toastContainer" className="toast-container">
+    <div
+      id="toastContainer"
+      className="toast-container"
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+    >
       {toasts.map((t) => (
         <div key={t.id} className="toast">
-          <span className="toast-icon">{TOAST_ICONS[t.type] || 'ℹ️'}</span>
+          <span className="toast-icon" aria-hidden="true">{TOAST_ICONS[t.type] || 'ℹ️'}</span>
           <span className="toast-msg">{t.message}</span>
         </div>
       ))}

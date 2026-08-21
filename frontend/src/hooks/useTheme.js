@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
+import { safeGet, safeSet } from '../utils/safeStorage';
 
 const THEME_KEY = 'stock_lstm_theme';
 
 export function useTheme() {
   const [theme, setTheme] = useState(() => {
-    return localStorage.getItem(THEME_KEY) || 'dark';
+    return safeGet(THEME_KEY) || 'dark';
   });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    try {
-      localStorage.setItem(THEME_KEY, theme);
-    } catch {
-      // Ignore storage errors
-    }
+    safeSet(THEME_KEY, theme);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {

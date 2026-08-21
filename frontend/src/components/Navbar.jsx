@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function Navbar({ theme, onToggleTheme }) {
+export default function Navbar({ theme, onToggleTheme, onClearBrowserModels }) {
   return (
     <header className="navbar" id="navbar">
       <div className="nav-brand">
@@ -10,6 +10,17 @@ export default function Navbar({ theme, onToggleTheme }) {
         </span>
       </div>
       <div className="nav-actions">
+        {onClearBrowserModels && (
+          <button
+            type="button"
+            className="icon-btn clear-models-btn"
+            onClick={onClearBrowserModels}
+            aria-label="Clear locally trained browser models"
+            title="Clear locally trained browser models"
+          >
+            <span aria-hidden="true">🧹</span>
+          </button>
+        )}
         <button
           type="button"
           className="icon-btn theme-btn"

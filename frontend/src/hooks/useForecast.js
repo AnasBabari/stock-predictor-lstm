@@ -3,6 +3,7 @@ import { clearBrowserModelCache, trainBrowserForecast } from '../ml/browserTrain
 import { createSnapshotClient } from '../ml/snapshotClient';
 import { fetchServerPrediction } from '../ml/serverModelClient';
 import { defaultTrainingProfile } from '../ml/trainingProfiles';
+import { safeGet, safeSet } from '../utils/safeStorage';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
@@ -171,7 +172,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
   const [daysView, setDaysView] = useState(21);
   const [forecastType, setForecastType] = useState(FORECAST_TYPES.PRICE);
   const [trainingProfile, setTrainingProfile] = useState(() => {
-    const stored = localStorage.getItem(PROFILE_KEY);
+    const stored = safeGet(PROFILE_KEY);
     return ['quick', 'balanced', 'research'].includes(stored) ? stored : defaultTrainingProfile();
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -191,11 +192,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
   }
 
   useEffect(() => {
-    try {
-      localStorage.setItem(PROFILE_KEY, trainingProfile);
-    } catch {
-      // Ignore
-    }
+    safeSet(PROFILE_KEY, trainingProfile);
   }, [trainingProfile]);
 
   const abortActiveRequest = useCallback(() => {

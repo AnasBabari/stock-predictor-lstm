@@ -125,6 +125,7 @@ export default function App() {
             isLoading={isBusy}
             stage={loadingStage}
             progress={trainingProgress}
+            profile={trainingProfile}
             onCancel={handleCancelRequest}
           />
         )}
