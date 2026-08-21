@@ -638,6 +638,9 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
 
   let model;
   let prepared;
+  let persistedMetadata = null;
+  let promotion = null;
+  let forecastStatus = null;
   let metrics;
   let evaluation;
   let selectedEpochs;
@@ -704,6 +707,10 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       training_duration_ms: Math.round(performance.now() - startedAt),
       runtime,
     };
+    // Promotion is evaluated after inference below; once known, the verdict
+    // is persisted so the cache itself records whether this artifact ever
+    // earned active status (slice 2 namespace groundwork).
+    persistedMetadata = metadata;
     let saveTimedOut = false;
     try {
       const saveResult = await saveModelWithTimeout(model, cacheUrl);
@@ -760,7 +767,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       if (!rawProbabilities.every((value) => Number.isFinite(value))) {
         throw new Error('The local direction model produced non-finite probability values.');
       }
-      const promotion = evaluatePromotion({
+      promotion = evaluatePromotion({
         forecastType,
         metrics,
         evaluation,
@@ -776,7 +783,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
         ? sampleCount - profile.validationHorizon
         : Math.floor(sampleCount * TRAIN_SPLIT);
       const majority = directionMajority(prepared.targets.slice(0, preEvaluationEnd));
-      const forecastStatus = describePromotionState(promotion);
+      forecastStatus = describePromotionState(promotion);
       const baselineFallback = !promotion.promoted;
       const modelDirections = rawProbabilities.map((value) => (value >= 0.5 ? 'Up' : 'Down'));
       const baselineDirections = rawProbabilities.map(() => (majority.label === 1 ? 'Up' : 'Down'));
@@ -799,7 +806,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
     }
     const latestClose = Number(snapshot.historical_prices.at(-1));
     const learnedPrices = predictedReturns.map((value) => latestClose * Math.exp(Number(value)));
-    const promotion = evaluatePromotion({
+    promotion = evaluatePromotion({
       forecastType,
       metrics,
       evaluation,
@@ -819,11 +826,22 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       learnedPrices,
       persistence_forecast: persistenceForecast,
       baselineFallback,
-      forecast_status: describePromotionState(promotion),
+      forecast_status: forecastStatus,
       promotion,
     };
   } finally {
     model?.dispose();
+    // Persist the promotion verdict alongside the stored artifact so the
+    // cache itself records whether this model ever earned active status
+    // (rejected artifacts may remain for diagnostics but are flagged).
+    if (cacheStatus === 'stored' && persistedMetadata && promotion) {
+      persistedMetadata.promotion_summary = {
+        promoted: promotion.promoted === true,
+        applicable: promotion.applicable !== false,
+      };
+      persistedMetadata.forecast_status = describePromotionState(promotion);
+      await putMetadata(persistedMetadata).catch(() => undefined);
+    }
   }
 }
 
