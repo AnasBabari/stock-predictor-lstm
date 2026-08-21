@@ -10,7 +10,12 @@ from collections import OrderedDict
 
 from fastapi import APIRouter, HTTPException, Request
 
-from data_pipeline import MarketDataUnavailable, MarketTransportError
+from config import settings
+from data_pipeline import (
+    MarketDataUnavailable,
+    MarketTransportError,
+    UnknownTickerError,
+)
 from features.market import MarketContextUnavailable
 from routes.common import limiter, validate_ticker
 
@@ -76,8 +81,13 @@ async def training_data(request: Request, ticker: str = "AAPL"):
             task.add_done_callback(_cleanup)
 
     try:
-        # Shield task so client cancellation doesn't kill shared in-flight build
-        result = await asyncio.shield(task)
+        # Shield task so client cancellation doesn't kill shared in-flight build.
+        # Bounded wait: a queued build behind the semaphore must not hold this
+        # request indefinitely; on timeout the shared task keeps running for
+        # coalesced callers and the cache, while this caller gets a clean 503.
+        result = await asyncio.wait_for(
+            asyncio.shield(task), timeout=settings.snapshot_build_wait_seconds
+        )
         completion_time = time.time()
         async with lock:
             if len(cache) >= _SNAPSHOT_CACHE_MAX:
@@ -87,18 +97,25 @@ async def training_data(request: Request, ticker: str = "AAPL"):
         return result
     except MarketContextUnavailable as err:
         raise HTTPException(status_code=503, detail=str(err)) from err
+    except UnknownTickerError as err:
+        # Well-formed symbol the provider knows nothing about.
+        raise HTTPException(status_code=404, detail=str(err)) from err
     except (ValueError, MarketDataUnavailable) as err:
         safe_messages = (
             "Not enough historical data",
             "Not enough feature rows",
-            "No market data is available",
         )
         detail = (
             str(err) if str(err).startswith(safe_messages) else "Invalid input data for training."
         )
-        raise HTTPException(status_code=400, detail=detail) from err
+        raise HTTPException(status_code=422, detail=detail) from err
     except MarketTransportError as err:
         raise HTTPException(status_code=503, detail=str(err)) from err
+    except TimeoutError as err:
+        raise HTTPException(
+            status_code=503,
+            detail="Training data build is queued behind other requests. Please retry shortly.",
+        ) from err
     except Exception as err:
         logger.exception("Training-data snapshot failed for %s", ticker)
         raise HTTPException(

@@ -29,7 +29,7 @@ from config import (
     WINDOW_SIZE,
     settings,
 )
-from data_pipeline import MarketTransportError
+from data_pipeline import MarketDataUnavailable, MarketTransportError, UnknownTickerError
 from data_pipeline import fetch_data as default_fetch_data
 from features.market import MarketContextUnavailable
 from news_features import get_live_financial_sentiment as get_financial_sentiment
@@ -542,11 +542,16 @@ async def _await_prediction(
             registry.finish_view(request_id, False)
             view_finished = True
         raise HTTPException(status_code=503, detail=str(err)) from err
-    except (ValueError, MarketTransportError) as err:
+    except UnknownTickerError as err:
         if status_attached and request_id is not None:
             registry.finish_view(request_id, False)
             view_finished = True
-        raise HTTPException(status_code=503, detail=str(err)) from err
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    except (ValueError, MarketDataUnavailable) as err:
+        if status_attached and request_id is not None:
+            registry.finish_view(request_id, False)
+            view_finished = True
+        raise HTTPException(status_code=422, detail=str(err)) from err
     except Exception as err:
         if status_attached and request_id is not None and not view_finished:
             registry.finish_view(request_id, False)

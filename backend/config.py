@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     prediction_workers: int = Field(default=2, ge=1, le=8)
     prediction_queue_size: int = Field(default=4, ge=0, le=64)
     prediction_timeout_seconds: int = Field(default=600, ge=30, le=3600)
+    snapshot_build_wait_seconds: int = Field(default=45, ge=5, le=300)
     upstream_circuit_cooldown_seconds: int = Field(default=30, ge=1, le=300)
     training_concurrency: int = Field(default=1, ge=1, le=4)
     training_wait_seconds: int = Field(default=30, ge=1, le=300)

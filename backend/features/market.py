@@ -74,26 +74,48 @@ def add_market_context_from_frames(
 
 def add_market_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     """
-    Fetch benchmark index prices, join on the target DataFrame's index,
-    and compute 1-day log returns for stationarity.
+    Fetch benchmark index prices in one batched download, join on the target
+    DataFrame's index, and compute 1-day log returns for stationarity.
+
+    A single ``yf.download`` call for all benchmark symbols replaces the
+    former four sequential downloads (4x fewer round-trips on the snapshot
+    build critical path). Any missing/empty benchmark fails closed.
     """
     result = df.copy()
     sources: dict[str, dict] = {}
 
     start_date = df.index.min().strftime("%Y-%m-%d") if not df.empty else None
+    symbols = list(MARKET_TICKERS)
+
+    try:
+        raw = yf.download(
+            symbols,
+            start=start_date,
+            progress=False,
+            auto_adjust=True,
+            timeout=30,
+            group_by="ticker",
+        )
+    except MarketContextUnavailable:
+        raise
+    except Exception as exc:
+        logger.warning("Market context unavailable: %s", type(exc).__name__)
+        raise MarketContextUnavailable("Benchmark market data is temporarily unavailable.") from exc
+
+    if not isinstance(raw, pd.DataFrame) or raw.empty:
+        raise MarketContextUnavailable("Benchmark market data is temporarily unavailable.")
 
     for ticker, feature_name in MARKET_TICKERS.items():
         try:
-            m_data = yf.download(
-                ticker,
-                start=start_date,
-                progress=False,
-                auto_adjust=True,
-                timeout=30,
-            )
-
-            if isinstance(m_data.columns, pd.MultiIndex):
-                m_data.columns = m_data.columns.get_level_values(0)
+            if isinstance(raw.columns, pd.MultiIndex):
+                if ticker not in raw.columns.get_level_values(0):
+                    raise MarketContextUnavailable(
+                        f"Benchmark {ticker} returned no closing prices."
+                    )
+                m_data = raw[ticker]
+            else:
+                # Single-symbol fallback shape (no group_by hierarchy).
+                m_data = raw
 
             if m_data.empty or "Close" not in m_data.columns:
                 raise MarketContextUnavailable(f"Benchmark {ticker} returned no closing prices.")
@@ -101,6 +123,7 @@ def add_market_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
             m_close = m_data["Close"]
             if isinstance(m_close, pd.DataFrame):
                 m_close = m_close.iloc[:, 0]
+            m_close = m_close.dropna()
 
             # Reindex the complete source series before differencing so the first target row
             # uses a genuinely prior observation and closed-market days become a real 0 return.
@@ -124,9 +147,7 @@ def add_market_context(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 "ticker": ticker,
                 "status": "live",
                 "rows": int(len(m_data)),
-                "last_date": m_close.dropna().index[-1].strftime("%Y-%m-%d")
-                if len(m_close.dropna())
-                else None,
+                "last_date": m_close.index[-1].strftime("%Y-%m-%d") if len(m_close) else None,
                 "alignment": "prior_observation_carry_forward_v2",
             }
 

@@ -30,7 +30,16 @@ class MarketTransportError(RuntimeError):
 
 
 class MarketDataUnavailable(ValueError):
-    """Raised when specific market data/ticker is unavailable or invalid."""
+    """Raised when market data exists but is unusable (insufficient history,
+    missing columns, non-finite or invalid values). Maps to HTTP 422."""
+
+
+class UnknownTickerError(MarketDataUnavailable):
+    """The provider returned no data at all for a syntactically valid symbol.
+
+    Distinct from :class:`MarketDataUnavailable` so routes can answer 404
+    (unknown symbol) instead of a generic client/temporary error.
+    Maps to HTTP 404."""
 
 
 class MarketCircuitBreaker:
@@ -179,15 +188,13 @@ def _download_ohlcv(ticker: str) -> pd.DataFrame:
             timeout=30,
         )
         if not isinstance(data, pd.DataFrame) or data.empty:
-            raise MarketDataUnavailable(f"No market data is available for {ticker}.")
+            raise UnknownTickerError(f"No market data is available for {ticker}.")
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
 
         required_ohlcv = {"Open", "High", "Low", "Close", "Volume"}
         if not required_ohlcv.issubset(data.columns):
-            raise MarketDataUnavailable(
-                f"Market data for {ticker} is missing required OHLCV columns."
-            )
+            raise UnknownTickerError(f"No usable OHLCV market data is available for {ticker}.")
         data = (
             data.loc[~data.index.duplicated(keep="last")].sort_index().dropna(subset=required_ohlcv)
         )

@@ -56,6 +56,9 @@ export function predictionErrorMessage(error) {
   if (message.includes('timed out') || message.includes('timeout')) {
     return 'Prediction timed out. The shared work may still finish; try again shortly.';
   }
+  if (message.includes('no market data')) {
+    return 'Unknown or untracked symbol. Try a different ticker.';
+  }
   if (
     message.includes('market data') ||
     message.includes('upstream') ||
