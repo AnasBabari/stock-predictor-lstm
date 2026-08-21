@@ -29,7 +29,7 @@ import os
 import threading
 import time
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 from cachetools import TTLCache
 from cryptography.hazmat.primitives import serialization
@@ -259,7 +259,7 @@ def _absence_response(response: Response, reason: str) -> FallbackResponse:
     return _fallback_response(response, reason)
 
 
-def _raise_infrastructure_error(code: str, exc: Exception | None, *args: Any) -> None:
+def _raise_infrastructure_error(code: str, exc: Exception | None, *args: Any) -> NoReturn:
     logger.exception(
         "%s", MESSAGES[code], exc_info=(type(exc), exc, exc.__traceback__) if exc else None
     )
@@ -418,6 +418,10 @@ def get_forecast(
         "signature": promoted.signature,
     }
     started = time.perf_counter()
+    if verifier is None:
+        # Configured readiness guarantees a verifier; fail closed if that
+        # invariant is ever violated rather than skipping verification.
+        _raise_infrastructure_error("integrity_failure", RuntimeError("verifier unavailable"))
     try:
         verify_bundle(bundle_bytes, manifest, verifier)
     except Exception as exc:

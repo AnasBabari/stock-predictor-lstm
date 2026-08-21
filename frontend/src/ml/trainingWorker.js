@@ -372,6 +372,7 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
   let metrics;
   let dollarMetrics;
   let selectedEpochs;
+  let evaluationSeries = null;
   try {
     const innerValidationSize = Math.max(1, Math.floor(selection.trainCount * 0.1));
     const innerValidationStart = selection.trainCount - innerValidationSize;
@@ -406,6 +407,11 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
       metrics.direction_per_horizon = evaluated.direction_per_horizon;
     }
     dollarMetrics = evaluated.dollarMetrics;
+    // Capture the untouched holdout series while `selection` is alive so the
+    // UI can plot model vs persistence vs actual (price profiles only).
+    if (forecastType === 'price') {
+      evaluationSeries = buildEvaluationSeries(snapshot, selection, evaluated, horizon);
+    }
   } finally {
     selectionModel.dispose();
   }
@@ -428,15 +434,7 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
     dollarMetrics,
     selectedEpochs,
     completedEpochs: selectedEpochs,
-    // Price forecasts on single-holdout profiles expose the untouched
-    // holdout series so the UI can plot model vs persistence vs actual.
-    ...(forecastType === 'price'
-      ? {
-          evaluation_series: buildEvaluationSeries(
-            snapshot, selection, evaluated, horizon
-          ),
-        }
-      : {}),
+    ...(evaluationSeries ? { evaluation_series: evaluationSeries } : {}),
     evaluation: {
       completed_folds: 1,
       total_folds: 1,
