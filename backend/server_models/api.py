@@ -34,11 +34,12 @@ from typing import Any, Literal
 from cachetools import TTLCache
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from artifacts.signing import Ed25519ManifestVerifier
 from config import settings
+from routes.common import limiter
 from server_models.compatibility import check_record_compatibility, is_fresh
 from server_models.contracts import ServerForecastBundle
 from server_models.db import PostgresRegistry
@@ -85,20 +86,56 @@ _SOFT_ABSENCES = {"disabled", "not_allowlisted", "unsupported_forecast_type"}
 _HARD_ABSENCES = {"unconfigured", "missing", "stale", "incompatible"}
 
 
+_shared_registry: PostgresRegistry | None = None
+_shared_storage: S3ObjectStore | None = None
+_infra_lock = threading.Lock()
+
+
 def get_registry() -> PostgresRegistry:
-    return PostgresRegistry(database_url=settings.registry_database_url)
+    """Return the process-wide registry instance.
+
+    A fresh psycopg connection per request allowed an unauthenticated caller
+    to exhaust the Postgres pool at request rate. The shared instance lives
+    for the process lifetime; tests substitute this getter entirely.
+    """
+    global _shared_registry
+    with _infra_lock:
+        if _shared_registry is None:
+            _shared_registry = PostgresRegistry(database_url=settings.registry_database_url)
+        return _shared_registry
 
 
 def get_storage() -> S3ObjectStore:
-    return S3ObjectStore(
-        bucket=settings.s3_bucket or "fallback-bucket",
-        prefix=settings.s3_key_prefix,
-        endpoint_url=settings.s3_endpoint_url,
-    )
+    """Return the process-wide object-store client (boto3 clients are thread-safe)."""
+    global _shared_storage
+    with _infra_lock:
+        if _shared_storage is None:
+            _shared_storage = S3ObjectStore(
+                bucket=settings.s3_bucket or "fallback-bucket",
+                prefix=settings.s3_key_prefix,
+                endpoint_url=settings.s3_endpoint_url,
+            )
+        return _shared_storage
+
+
+def close_shared_infrastructure() -> None:
+    """Close shared registry/storage (test and shutdown helper, not request path)."""
+    global _shared_registry, _shared_storage
+    with _infra_lock:
+        if _shared_registry is not None:
+            _shared_registry.close()
+            _shared_registry = None
+        _shared_storage = None
+
+
+# Verifier cache keyed by key path; re-loads when the file's mtime changes so
+# a trust-anchor replacement is picked up (and logged) instead of being
+# invisible, while avoiding a disk read on every request.
+_verifier_cache: dict[str, tuple[float, Ed25519ManifestVerifier]] = {}
 
 
 def load_verifier() -> tuple[Ed25519ManifestVerifier | None, str | None]:
-    """Load the Ed25519 verifier from the configured public key path.
+    """Load (and cache by path+mtime) the Ed25519 verifier for the configured key.
 
     Returns ``(None, "unconfigured")`` when no key is configured,
     ``(None, "integrity_failure")`` when a configured key is missing or cannot
@@ -107,9 +144,14 @@ def load_verifier() -> tuple[Ed25519ManifestVerifier | None, str | None]:
     key_path = settings.server_forecast_public_key_path
     if not key_path:
         return None, "unconfigured"
-    if not os.path.exists(key_path):
+    try:
+        mtime = os.path.getmtime(key_path)
+    except OSError:
         logger.error("Server forecast public key path configured but missing: %s", key_path)
         return None, "integrity_failure"
+    cached = _verifier_cache.get(key_path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1], None
     try:
         with open(key_path, "rb") as handle:
             key = serialization.load_pem_public_key(handle.read())
@@ -119,7 +161,9 @@ def load_verifier() -> tuple[Ed25519ManifestVerifier | None, str | None]:
     if not isinstance(key, Ed25519PublicKey):
         logger.error("Configured server forecast public key is not an Ed25519 key.")
         return None, "integrity_failure"
-    return Ed25519ManifestVerifier(key), None
+    verifier = Ed25519ManifestVerifier(key)
+    _verifier_cache[key_path] = (mtime, verifier)
+    return verifier, None
 
 
 def _server_pretrained() -> bool:
@@ -227,11 +271,13 @@ def _raise_infrastructure_error(code: str, exc: Exception | None, *args: Any) ->
 
 
 @router.get("/availability", response_model=AvailabilityResponse)
-def get_availability(response: Response) -> AvailabilityResponse:
-    response.headers["Cache-Control"] = "public, max-age=300"
-
+@limiter.limit("30/minute")
+def get_availability(request: Request, response: Response) -> AvailabilityResponse:
     readiness = server_forecast_readiness()
     if not settings.server_forecast_serving_enabled:
+        # Mode/config disclosure is harmless but stale enable/disable flapping
+        # is not; only the enabled+configured state is cheaply cacheable.
+        response.headers["Cache-Control"] = "no-store"
         return AvailabilityResponse(
             enabled=False,
             mode="browser_only",
@@ -241,6 +287,7 @@ def get_availability(response: Response) -> AvailabilityResponse:
             tickers=[],
         )
     if not readiness.configured:
+        response.headers["Cache-Control"] = "no-store"
         return AvailabilityResponse(
             enabled=True,
             mode=settings.training_mode,
@@ -249,15 +296,14 @@ def get_availability(response: Response) -> AvailabilityResponse:
             allowlist=settings.server_forecast_allowlist,
             tickers=[],
         )
+    response.headers["Cache-Control"] = "public, max-age=300"
 
     with _availability_lock:
         cached = _availability_cache.get("availability")
         if cached is not None:
             return cached
 
-    # One registry instance for the whole allowlist, closed once. Per-ticker
-    # connections leak and can exhaust the Postgres pool under repeated probes.
-    registry = None
+    # One shared registry instance for the whole allowlist (process-wide).
     try:
         registry = get_registry()
         tickers = []
@@ -283,9 +329,6 @@ def get_availability(response: Response) -> AvailabilityResponse:
             )
     except Exception as exc:
         _raise_infrastructure_error("registry_unavailable", exc)
-    finally:
-        if registry is not None:
-            registry.close()
 
     result = AvailabilityResponse(
         enabled=True,
@@ -303,7 +346,9 @@ def get_availability(response: Response) -> AvailabilityResponse:
 
 
 @router.get("/{ticker}")
+@limiter.limit("60/minute")
 def get_forecast(
+    request: Request,
     ticker: str,
     response: Response,
     forecast_type: str = Query("price"),
@@ -323,15 +368,11 @@ def get_forecast(
     if not readiness.configured:
         return _absence_response(response, readiness.reason or "disabled")
 
-    registry = None
     try:
         registry = get_registry()
         promoted = registry.get_promoted(ticker, forecast_type="price")
     except Exception as exc:
         _raise_infrastructure_error("registry_unavailable", exc)
-    finally:
-        if registry is not None:
-            registry.close()
 
     if promoted is None:
         return _absence_response(response, "missing")
@@ -344,13 +385,22 @@ def get_forecast(
 
     version_id = promoted.key.version_id
     cache_key = f"{version_id}:{days}"
+    # Quoted validator varying across every body dimension (days changes the
+    # sliced payload), enabling real If-None-Match/304 revalidation.
+    etag = f'"{version_id}:{days}"'
+    if_none_match = request.headers.get("if-none-match")
+
+    def _not_modified() -> Response:
+        return Response(status_code=304, headers={"ETag": etag})
 
     with _bundle_lock:
         cached = _bundle_cache.get(cache_key)
-        if cached is not None:
-            response.headers["ETag"] = version_id
-            response.headers["Cache-Control"] = "public, max-age=900"
-            return cached
+    if cached is not None:
+        response.headers["ETag"] = etag
+        response.headers["Cache-Control"] = "public, max-age=900"
+        if if_none_match == etag:
+            return _not_modified()
+        return cached
 
     try:
         bundle_bytes = get_storage().get_bundle(version_id)
@@ -433,7 +483,9 @@ def get_forecast(
     with _bundle_lock:
         _bundle_cache[cache_key] = result
 
-    response.headers["ETag"] = version_id
+    response.headers["ETag"] = etag
     response.headers["Cache-Control"] = "public, max-age=900"
+    if if_none_match == etag:
+        return _not_modified()
 
     return result

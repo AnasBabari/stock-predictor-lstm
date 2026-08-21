@@ -218,7 +218,7 @@ def test_availability_reports_fresh_when_promoted(monkeypatch):
     assert data["tickers"][0]["version_id"] == record.key.version_id
 
 
-def test_availability_uses_one_registry_and_closes_it(monkeypatch):
+def test_availability_uses_one_shared_registry(monkeypatch):
     record = make_record()
     registry = MagicMock()
     registry.get_promoted.return_value = record
@@ -226,7 +226,8 @@ def test_availability_uses_one_registry_and_closes_it(monkeypatch):
 
     CLIENT.get("/api/v1/server-forecasts/availability")
     assert registry.get_promoted.call_count == 1
-    registry.close.assert_called_once()
+    # Shared instance: the request path must not close it.
+    registry.close.assert_not_called()
 
 
 # ── soft absences ────────────────────────────────────────────────────
@@ -403,7 +404,9 @@ def test_forecast_registry_unavailable_has_no_fallback_in_server_pretrained(monk
     assert detail["fallback"] is None
 
 
-def test_forecast_success_closes_registry(monkeypatch):
+def test_forecast_keeps_shared_registry_open_across_requests(monkeypatch):
+    """The registry is a process-wide shared instance; request paths must not
+    close it (per-request closes exhausted the Postgres pool under load)."""
     registry = MagicMock()
     registry.get_promoted.return_value = make_record()
     storage = MagicMock()
@@ -412,7 +415,7 @@ def test_forecast_success_closes_registry(monkeypatch):
     _compat_ok(monkeypatch)
     response = CLIENT.get("/api/v1/server-forecasts/AAPL")
     assert response.status_code == 503  # bundle does not parse; infra failure path
-    registry.close.assert_called_once()
+    registry.close.assert_not_called()
 
 
 # ── successful serving ───────────────────────────────────────────────
@@ -458,7 +461,25 @@ def test_forecast_success_returns_canonical_bundle(monkeypatch):
     assert triage.artifact_load_validation is not None
     assert triage.total is not None and triage.total >= 0
     assert triage.queue_wait is None and triage.training is None and triage.inference is None
-    assert response.headers["etag"] == final_record.key.version_id
+    # Quoted validator varying with the requested horizon.
+    assert response.headers["etag"] == f'"{final_record.key.version_id}:7"'
+
+
+def test_forecast_if_none_match_returns_304(monkeypatch):
+    private_key = Ed25519PrivateKey.generate()
+    signer = Ed25519ManifestSigner(private_key)
+    record = make_record()
+    registry, final_record = _happy(monkeypatch, record, signer=signer)
+    etag = f'"{final_record.key.version_id}:7"'
+    first = CLIENT.get("/api/v1/server-forecasts/AAPL?days=7")
+    assert first.status_code == 200
+    second = CLIENT.get("/api/v1/server-forecasts/AAPL?days=7", headers={"If-None-Match": etag})
+    assert second.status_code == 304
+    assert second.headers["etag"] == etag
+    # Different horizon => different validator, full body again.
+    other = CLIENT.get("/api/v1/server-forecasts/AAPL?days=5")
+    assert other.status_code == 200
+    assert other.headers["etag"] != etag
 
 
 def test_forecast_success_verifies_ed25519_when_key_configured(monkeypatch):
