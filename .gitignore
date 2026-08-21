@@ -37,3 +37,6 @@ reports/
 data/snapshots/
 *.parquet
 *.jsonl
+
+# Vitest/Node caches that may appear at repo root
+node_modules/
