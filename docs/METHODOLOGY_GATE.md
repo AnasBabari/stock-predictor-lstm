@@ -9,8 +9,8 @@ pre-evaluation labels. Direction evidence is reported per forecast day. The
 served artifact is the final refit, and cached evidence is superseded whenever
 the method changes.
 
-recorded_sha: 1f29bb9
-freeze_record_commit: 1f29bb9bddc5dfa2d360baf50fa56d9894e95906
+recorded_sha: f3361d1
+freeze_record_commit: f3361d113c41f9c30449fb8131bcf73ce06894ce
 
 
 ## Full check battery
@@ -18,8 +18,8 @@ freeze_record_commit: 1f29bb9bddc5dfa2d360baf50fa56d9894e95906
 Recorded evidence is valid only when every step below passes at `recorded_sha`
 (the tree the battery was re-run on) on a clean worktree:
 
-1. `npx vitest run` (frontend unit suite) — currently 112 tests across 15
-   files for frontend/src/ml units.
+1. `npx vitest run` (frontend unit suite) — currently 152 tests across 23
+   files for frontend units.
 2. `npm run build` (frontend production build).
 3. Contract e2e: `npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js` — server contract and fixture contracts without real TensorFlow.js training.
 4. Real-training e2e: `npx playwright test e2e/browser-real-training.spec.js --workers=1` — a real TensorFlow.js model trains in Chromium against the deterministic fixture for price and direction; the direction run must fall back to the majority-class baseline and render per-day direction evidence.
