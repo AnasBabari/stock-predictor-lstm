@@ -239,7 +239,7 @@ export default function App() {
 
       <footer className="footer">
         <p>
-          StockLSTM — Browser-Trained Deep Learning & Conformal Calibration. Pure stationary features.
+          StockLSTM — browser-trained LSTM with purged-holdout evaluation, persistence baselines, and stationary features.
         </p>
       </footer>
 

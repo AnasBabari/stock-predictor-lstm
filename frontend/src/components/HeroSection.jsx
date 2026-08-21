@@ -11,7 +11,9 @@ export default function HeroSection() {
         Stock Price <span className="gradient-text">Predictor</span>
       </h1>
       <p className="subtitle">
-        Harness the power of LSTM deep learning to forecast any stock ticker — up to 30 trading days ahead
+        Train a compact LSTM in your own browser on stationary features and compare it against
+        persistence baselines on an untouched holdout — up to 30 trading days ahead. Educational
+        project; forecasts are not financial advice.
       </p>
     </section>
   );

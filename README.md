@@ -47,6 +47,9 @@ Balanced is the capable-desktop default; constrained or mobile devices default t
 
 Quick and Balanced metrics are labelled `browser_purged_holdout`. Research metrics are aggregated from untouched predictions and labelled `browser_walk_forward_out_of_fold`; incomplete or cancelled folds never receive that label. Price evidence includes MAE, MSE, RMSE, MAPE, R², and relative MAE/RMSE versus persistence. Direction evidence includes accuracy, precision, recall, F1, balanced accuracy, Brier score, and majority-class accuracy. Price forecasts do not claim an “accuracy” percentage.
 
+> [!IMPORTANT]
+> **How to read the numbers.** The holdout/walk-forward metrics are computed once on data the selection model never saw. The *deployed* forecast is produced by a final model refitted on all available history — the UI's model card and holdout chart state this explicitly. In the offline research harness (`research/`), all 19 currently kept records predate provenance tracking and are labelled `LEGACY_UNAUDITED`; per that package's multiplicity policy they must not be presented as certified. Simple baselines (persistence, majority class) are first-class citizens here: every learned model is compared against them on identical rows, and the offline research found linear/random-feature models at least as competitive as neural ones on daily data.
+
 The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available during migration. Their response metadata always identifies `server_disabled_fallback`; they are not used for learned browser forecasts. `/models` reports `server_models.status = disabled` and `browser_training.status = available`.
 
 ## Server-side forecast serving
@@ -56,7 +59,7 @@ The server can also serve pre-trained, signed, versioned forecast bundles alongs
 - `GET /api/v1/server-forecasts/availability` — running mode, configured allowlist, and per-ticker freshness (cached 300 s).
 - `GET /api/v1/server-forecasts/{ticker}?forecast_type=price|direction&days=N` — a persisted bundle when fresh and compatible; otherwise `200 OK` with `{available: false, fallback: "browser_training"}` in the browser training modes. In `server_pretrained` mode a missing/stale/incompatible bundle is a `503`; infrastructure failures (registry unavailable, unreadable bundle, digest mismatch, failed signature verification) always fail closed with `503`. Successful responses carry `ETag` = bundle version ID and are cached 900 s.
 
-Artifacts come only from an explicit background job (`backend/scripts/run_server_training.py`). The job is torch-free: it evaluates the `elastic_net` family on the full 1–30-day horizon range without the histogram gradient booster, and promotes a signed, digest-checked bundle only when pooled `relative_rmse < 0.98` and `relative_mae < 0.98`. Each bundle records reproducibility metadata (git commit, scaler parameters, feature names, per-horizon metrics) and embeds the last 120 trading days of history for the chart. Bundles are immutable in storage and versioned by ticker, forecast type, training timestamp, git SHA, and snapshot fingerprint; serving verifies the Ed25519 signature with the configured public key and there is deliberately no digest-only acceptance mode (a missing key means serving is `unconfigured`, a broken key is `integrity_failure`, both fail closed). Serving stays dormant until an allowlisted ticker actually has a fresh promoted artifact, so free-tier memory and CPU budgets are unaffected; `/models` still reports server models disabled. See [docs/server_models.md](docs/server_models.md).
+Artifacts come only from an explicit background job (`backend/scripts/run_server_training.py`). The job is torch-free: it evaluates the `elastic_net` family on the full 1–30-day horizon range without the histogram gradient booster, and promotes a signed, digest-checked bundle only when pooled `relative_rmse < 0.98` and `relative_mae < 0.98`. Each bundle records reproducibility metadata (git commit, scaler parameters, feature names, per-horizon metrics) and embeds the last 120 trading days of history for the chart. Bundles are immutable in storage and versioned by ticker, forecast type, training timestamp, git SHA, and snapshot fingerprint; serving verifies the Ed25519 signature with the configured public key and there is deliberately no digest-only acceptance mode (a missing key means serving is `unconfigured`, a broken key is `integrity_failure`, both fail closed). Serving stays dormant until an allowlisted ticker actually has a fresh promoted artifact, so free-tier memory and CPU budgets are unaffected; `/models` still reports server models disabled. See [docs/server_models.md](docs/server_models.md). No bundle is currently promoted: the research survivors behind these gates are `LEGACY_UNAUDITED` until re-certified on new untouched data (see [research/README.md](research/README.md)).
 
 ## News and sentiment
 
@@ -72,6 +75,9 @@ docker compose up
 ```
 
 Open <http://localhost:5500>. Nginx serves the frontend on port 5500 and proxies `/api/` to the lightweight FastAPI service. The backend binds to loopback for local access and the internal Compose network for the proxy. No model volume is required. The same browser worker/IndexedDB flow is used locally and on Render.
+
+> [!NOTE]
+> **Single-process by design.** Rate-limit buckets, caches, and the work coordinator are process-local, and both deployment targets (Render, Compose) run exactly one API worker. Scaling to multiple replicas would require external coordination and is intentionally out of scope.
 
 ## Local development
 
