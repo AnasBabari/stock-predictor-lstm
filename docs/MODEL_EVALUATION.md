@@ -74,8 +74,8 @@ below 1.0:
 | model | ticker | horizon | windows passing | pooled rel RMSE |
 | --- | --- | ---: | ---: | ---: |
 | `elastic_net` | QQQ | 20 | 3/4 | 0.9237 |
-| `small_tcn` | SPY | 20 | 3/4 | 0.9156 |
-| `small_tcn` | QQQ | 20 | 3/4 | 0.8946 |
+| `random_features_ridge` (recorded as `small_tcn`) | SPY | 20 | 3/4 | 0.9156 |
+| `random_features_ridge` (recorded as `small_tcn`) | QQQ | 20 | 3/4 | 0.8946 |
 
 `ridge` is intentionally absent: its earlier sweep promotion was an artifact
 of pre-RobustScaler data and does not reproduce on corrected, hash-verified
@@ -83,8 +83,10 @@ snapshots (post-fix SPY h20 pooled RMSE 1.1531). MSFT was rejected at the
 holdout: all survivors compressed toward a 1.0 ratio in the most recent
 rolling window and MSFT fell below the gate in only 2 of 4 windows.
 
-`ridge` and `elastic_net` run in the backend benchmark ladder. `small_tcn`
-remains available for research ladder runs behind the opt-in `include_tcn`
+`ridge` and `elastic_net` run in the backend benchmark ladder. The backend
+`SmallTCNForecaster` — a genuine causal dilated TCN, unrelated to the research
+family that formerly borrowed the name — remains available for research ladder
+runs behind the opt-in `include_tcn`
 flag on `ExperimentConfig` (seeded, stochastic, absent from default reports,
 and requires the opt-in PyTorch dependency) but is **excluded from server
 promotion**, which is deliberately torch-free.
@@ -212,7 +214,7 @@ keys are unchanged:
 
 The optional blocks are gated by `ExperimentConfig` opt-in flags: `blend` by
 `include_blends`, `quantile_diagnostics` by `include_quantiles`, `drift`
-by `include_drift`, and the `small_tcn` challenger model by `include_tcn`.
+by `include_drift`, and the genuine `small_tcn` TCN challenger model by `include_tcn`.
 All other extension keys are emitted by default.
 
 

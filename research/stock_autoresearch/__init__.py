@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from .candidates import (
+    LEGACY_FAMILY_ALIASES,
     Candidate,
     CompactMLPCandidate,
     DLinearCandidate,
     ElasticNetCandidate,
     PersistenceCandidate,
+    RandomFeaturesRidgeCandidate,
     RidgeCandidate,
-    SmallTCNCandidate,
+    canonical_family,
 )
 from .config import EVALUATION_POLICY, RUNTIME_BUDGET, EvaluationPolicy, RuntimeBudget
 from .controller import ExperimentController, SubprocessResult, run_isolated_candidate_eval
@@ -27,7 +29,9 @@ __all__ = [
     "ElasticNetCandidate",
     "CompactMLPCandidate",
     "DLinearCandidate",
-    "SmallTCNCandidate",
+    "RandomFeaturesRidgeCandidate",
+    "LEGACY_FAMILY_ALIASES",
+    "canonical_family",
     "RuntimeBudget",
     "EvaluationPolicy",
     "RUNTIME_BUDGET",

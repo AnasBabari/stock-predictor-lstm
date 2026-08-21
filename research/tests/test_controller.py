@@ -17,8 +17,8 @@ from stock_autoresearch.candidates import (
     DLinearCandidate,
     ElasticNetCandidate,
     PersistenceCandidate,
+    RandomFeaturesRidgeCandidate,
     RidgeCandidate,
-    SmallTCNCandidate,
     elastic_net_family_factories,
     elastic_net_family_name,
 )
@@ -76,7 +76,7 @@ def test_all_candidates_implement_interface() -> None:
         ElasticNetCandidate(alpha=1.0, l1_ratio=0.5),
         CompactMLPCandidate(max_iter=10),
         DLinearCandidate(kernel_size=3),
-        SmallTCNCandidate(channels=8),
+        RandomFeaturesRidgeCandidate(channels=8),
     ]
     # Tuned Elastic Net grid variants share the same interface contract.
     factories = elastic_net_family_factories()
@@ -345,10 +345,14 @@ def test_run_isolated_candidate_eval_rss_budget_exceeded(sample_snapshot_csv: Pa
     tiny_budget = RuntimeBudget(rss_kill_mb=100, vram_kill_mb=5500)
     fake_sample = ResourceSample(rss_mb=250, peak_vram_mb=0, warning=True, exceeded=True)
 
-    with mock.patch(
-        "stock_autoresearch.controller.sample_process_tree_memory", return_value=fake_sample
-    ), mock.patch(
-        "subprocess.Popen.communicate", side_effect=[subprocess.TimeoutExpired(cmd="test", timeout=0.1), ("", "")]
+    with (
+        mock.patch(
+            "stock_autoresearch.controller.sample_process_tree_memory", return_value=fake_sample
+        ),
+        mock.patch(
+            "subprocess.Popen.communicate",
+            side_effect=[subprocess.TimeoutExpired(cmd="test", timeout=0.1), ("", "")],
+        ),
     ):
         result = run_isolated_candidate_eval(
             sample_snapshot_csv,

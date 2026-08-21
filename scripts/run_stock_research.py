@@ -24,8 +24,8 @@ from stock_autoresearch.candidates import (  # noqa: E402 - research dir added t
     DLinearCandidate,
     ElasticNetCandidate,
     PersistenceCandidate,
+    RandomFeaturesRidgeCandidate,
     RidgeCandidate,
-    SmallTCNCandidate,
     elastic_net_family_factories,
 )
 from stock_autoresearch.config import EVALUATION_POLICY  # noqa: E402
@@ -55,7 +55,14 @@ def main() -> int:
     parser.add_argument(
         "--families",
         nargs="+",
-        default=["persistence", "ridge", "elastic_net", "compact_mlp", "dlinear", "small_tcn"],
+        default=[
+            "persistence",
+            "ridge",
+            "elastic_net",
+            "compact_mlp",
+            "dlinear",
+            "random_features_ridge",
+        ],
         help="Candidate families to evaluate.",
     )
     parser.add_argument("--run-tag", default="dev_run", help="Run tag for experiment grouping.")
@@ -118,7 +125,7 @@ def main() -> int:
         "elastic_net": lambda seed: ElasticNetCandidate(),
         "compact_mlp": lambda seed: CompactMLPCandidate(),
         "dlinear": lambda seed: DLinearCandidate(),
-        "small_tcn": lambda seed: SmallTCNCandidate(seed=seed),
+        "random_features_ridge": lambda seed: RandomFeaturesRidgeCandidate(seed=seed),
     }
     # Tuned Elastic Net grid variants (elastic_net_a*_l*); baseline above is unchanged.
     factories.update(elastic_net_family_factories())

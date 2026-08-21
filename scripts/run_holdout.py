@@ -18,8 +18,9 @@ from stock_autoresearch.candidates import (  # noqa: E402 - imported after resea
     DLinearCandidate,
     ElasticNetCandidate,
     PersistenceCandidate,
+    RandomFeaturesRidgeCandidate,
     RidgeCandidate,
-    SmallTCNCandidate,
+    canonical_family,
     elastic_net_family_factories,
 )
 from stock_autoresearch.holdout import (  # noqa: E402 - imported after research path setup
@@ -28,20 +29,23 @@ from stock_autoresearch.holdout import (  # noqa: E402 - imported after research
 
 
 def get_factory(family: str):
-    if family == "persistence":
+    # Legacy family names are accepted at this CLI boundary and mapped to the
+    # renamed implementation (small_tcn -> random_features_ridge).
+    canonical = canonical_family(family)
+    if canonical == "persistence":
         return lambda seed: PersistenceCandidate()
-    elif family == "ridge":
+    elif canonical == "ridge":
         return lambda seed: RidgeCandidate()
-    elif family == "elastic_net":
+    elif canonical == "elastic_net":
         return lambda seed: ElasticNetCandidate()
-    elif family == "compact_mlp":
+    elif canonical == "compact_mlp":
         return lambda seed: CompactMLPCandidate()
-    elif family == "dlinear":
+    elif canonical == "dlinear":
         return lambda seed: DLinearCandidate()
-    elif family == "small_tcn":
-        return lambda seed: SmallTCNCandidate()
-    elif family in elastic_net_family_factories():
-        return elastic_net_family_factories()[family]
+    elif canonical == "random_features_ridge":
+        return lambda seed: RandomFeaturesRidgeCandidate()
+    elif canonical in elastic_net_family_factories():
+        return elastic_net_family_factories()[canonical]
     else:
         raise ValueError(f"Unknown candidate family: {family}")
 

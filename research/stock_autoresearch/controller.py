@@ -89,7 +89,9 @@ def get_protected_fingerprints(repo_root: Path) -> dict[str, str]:
     return fingerprints
 
 
-def check_harness_integrity(repo_root: Path, baseline_fingerprints: dict[str, str] | None = None) -> bool:
+def check_harness_integrity(
+    repo_root: Path, baseline_fingerprints: dict[str, str] | None = None
+) -> bool:
     """Verify candidate edits have NOT modified protected harness or production files."""
     if baseline_fingerprints is not None:
         current_fingerprints = get_protected_fingerprints(repo_root)
@@ -130,7 +132,7 @@ from stock_autoresearch.config import EVALUATION_POLICY
 from stock_autoresearch.evaluation import evaluate_candidate
 from stock_autoresearch.candidates import (
     PersistenceCandidate, RidgeCandidate, ElasticNetCandidate,
-    CompactMLPCandidate, DLinearCandidate, SmallTCNCandidate,
+    CompactMLPCandidate, DLinearCandidate, RandomFeaturesRidgeCandidate,
     elastic_net_family_factories
 )
 
@@ -147,7 +149,7 @@ factories = {{
     'elastic_net': lambda seed: ElasticNetCandidate(),
     'compact_mlp': lambda seed: CompactMLPCandidate(),
     'dlinear': lambda seed: DLinearCandidate(),
-    'small_tcn': lambda seed: SmallTCNCandidate(seed=seed),
+    'random_features_ridge': lambda seed: RandomFeaturesRidgeCandidate(seed=seed),
 }}
 # Tuned Elastic Net grid variants (elastic_net_a*_l*); baseline above unchanged.
 factories.update(elastic_net_family_factories())

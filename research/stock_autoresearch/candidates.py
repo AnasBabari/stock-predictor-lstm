@@ -265,45 +265,49 @@ class DLinearCandidate(Candidate):
         return count
 
 
-class SmallTCNCandidate(Candidate):
-    """Causal 1D Dilated Convolutional model with residual connections."""
+class RandomFeaturesRidgeCandidate(Candidate):
+    """Random nonlinear feature projection followed by Ridge regression.
 
-    name = "small_tcn"
+    Despite a former ``small_tcn`` name, this candidate contains **no
+    convolution**: it draws two fixed random weight matrices once per fit
+    (seeded), applies ReLU dense projections over the input window, pools the
+    latest temporal state, and fits a Ridge regression on the resulting
+    random features (an extreme-learning-machine-style readout). Nothing here
+    is temporal-convolutional: there are no learned kernels, no sliding
+    windows, and no dilation. The name describes the actual mechanism.
+    """
 
-    def __init__(self, channels: int = 16, kernel_size: int = 3, l2: float = 0.01, seed: int = 42):
+    name = "random_features_ridge"
+
+    def __init__(self, channels: int = 16, l2: float = 0.01, seed: int = 42):
         self.channels = channels
-        self.kernel_size = kernel_size
         self.l2 = l2
         self.seed = seed
         self._model = Ridge(alpha=self.l2 * 100.0)
 
-    def _causal_conv(self, x: np.ndarray) -> np.ndarray:
-        # Causal dilated 1D conv features: (N, T, F) -> (N, channels)
+    def _random_features(self, x: np.ndarray) -> np.ndarray:
+        # Fixed random projection: (N, T, F) -> (N, 2 * channels).
         rng = np.random.default_rng(self.seed)
         n, t, f = x.shape
         w1 = rng.normal(0, 0.1, size=(f, self.channels))
         w2 = rng.normal(0, 0.1, size=(self.channels, self.channels))
-        # Layer 1
         h1 = np.maximum(0, np.matmul(x, w1))  # (N, T, C)
-        # Layer 2 with dilation 2
         h2 = np.maximum(0, np.matmul(h1, w2))
-        # Pool latest temporal states
         return np.hstack([h1[:, -1, :], h2[:, -1, :]])
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> SmallTCNCandidate:
-        feats = self._causal_conv(x)
+    def fit(self, x: np.ndarray, y: np.ndarray) -> RandomFeaturesRidgeCandidate:
+        feats = self._random_features(x)
         self._model.fit(feats, y)
         return self
 
     def predict(self, x: np.ndarray) -> np.ndarray:
-        feats = self._causal_conv(x)
+        feats = self._random_features(x)
         return np.asarray(self._model.predict(feats), dtype=np.float64)
 
     def describe(self) -> dict[str, Any]:
         return {
             "family": self.name,
             "channels": self.channels,
-            "kernel_size": self.kernel_size,
             "l2": self.l2,
             "seed": self.seed,
         }
@@ -312,3 +316,16 @@ class SmallTCNCandidate(Candidate):
         if hasattr(self._model, "coef_") and self._model.coef_ is not None:
             return int(self._model.coef_.size + 1)
         return 0
+
+
+# Historical ledger records created before the rename store the former family
+# name. Never rewrite recorded history; map at deserialization/reporting
+# boundaries only and label the mapping explicitly.
+LEGACY_FAMILY_ALIASES: dict[str, str] = {
+    "small_tcn": "random_features_ridge",
+}
+
+
+def canonical_family(family: str) -> str:
+    """Return the current name for a possibly legacy family identifier."""
+    return LEGACY_FAMILY_ALIASES.get(family, family)

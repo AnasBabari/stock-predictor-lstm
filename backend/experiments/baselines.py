@@ -289,10 +289,16 @@ if torch is not None:
 class SmallTCNForecaster:
     """Small causal dilated temporal-convolutional direct-horizon forecaster.
 
-    Mirrors the research ``small_tcn`` holdout survivor family: bounded
-    channel count, causal dilated convolutions with residual connections, and
-    L2 regularisation applied as weight decay. Training is stochastic and
-    fully determined by ``seed`` (fixed seed, full-batch, unshuffled).
+    A genuine TCN: bounded channel count, causal dilated convolutions with
+    residual connections, and L2 regularisation applied as weight decay.
+    Training is stochastic and fully determined by ``seed`` (fixed seed,
+    full-batch, unshuffled).
+
+    Note: this is NOT the model behind the research ledger's former
+    ``small_tcn`` family. That family was renamed ``random_features_ridge``
+    after review showed it was a fixed random-feature projection with a Ridge
+    readout, not a convolutional network. The name ``small_tcn`` is retained
+    here because this implementation actually performs temporal convolution.
 
     Construction raises a clear ``RuntimeError`` when PyTorch is missing; the
     default benchmark ladder never instantiates this forecaster.
