@@ -23,16 +23,17 @@ describe('PredictionHistory', () => {
     expect(screen.queryByText(/undefined/)).not.toBeInTheDocument();
   });
 
-  it('renders trend entries with probability detail', () => {
+  it('renders trend entries with the selected direction and horizon', () => {
     const trend = {
       ...validEntry,
       forecastType: 'trend',
+      direction: 'Up',
       lastClose: null,
       predictedValue: 0.62,
       changePercent: null,
     };
     render(<PredictionHistory items={[trend]} onSelectTicker={() => {}} onClearAll={() => {}} />);
-    expect(screen.getByText('P(up) 62% · 7d')).toBeInTheDocument();
+    expect(screen.getByText('Up · 7d')).toBeInTheDocument();
     expect(screen.getByText('• n/a')).toBeInTheDocument();
   });
 

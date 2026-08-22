@@ -25,11 +25,11 @@ The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints re
 
 ## Browser model boundary
 
-The worker offers three immutable profiles. Quick uses a 32/16-unit LSTM for a single purged holdout; Balanced uses a 64/32-unit LSTM with two dropout layers and a single purged holdout; Research uses the Balanced architecture for five expanding 60-session folds before a final fit. The shared semantics are:
+The worker offers three immutable profiles. Quick uses a 16/8-unit LSTM for a single purged holdout; Balanced uses a 32/16-unit LSTM with two dropout layers and a single purged holdout; Research uses the Balanced architecture for five expanding 60-session folds before a final fit. The shared semantics are:
 
 - 60-session inputs with horizon-sized outputs, batch size 32, Adam 0.001, and no shuffle. The requested horizon is bucketed to one of {1, 3, 5, 7, 14, 30}, and each trained model's output width equals its resolved horizon bucket. The API snapshot still carries 30 future dates under `output_width` as the payload contract, but a trained model predicts only its selected horizon span.
 - A train-only min/max or robust scaler and a 29-sample purge at every evaluation or early-stopping boundary.
-- Linear cumulative log-return price output ($r_{t,h} = \ln(P_{t+h}/P_t)$) and sigmoid/binary-cross-entropy direction output.
+- Linear cumulative log-return price output ($r_{t,h} = \ln(P_{t+h}/P_t)$) and a three-way softmax direction head ([down, neutral, up], categorical cross-entropy): one call per origin on the cumulative h-day return, with a volatility-aware neutral band (target contract `cumulative_three_way_v2`).
 - WebGPU, WebGL, then CPU selection, with runtime and capability metadata recorded.
 - Cooperative cancellation, tensor disposal, and final-model refitting using the selected epoch count.
 

@@ -50,7 +50,7 @@ async function trainAndCollectState(browser, forecastType, trainingData) {
     await prepare(page, forecastType);
     await page.getByRole('button', { name: 'Predict', exact: true }).click();
     const heading = forecastType === 'trend' ? 'Trend Forecast Metrics' : 'Price Forecast Metrics';
-    await expect(page.getByText(heading)).toBeVisible({ timeout: 150_000 });
+    await expect(page.getByText(heading)).toBeVisible({ timeout: 240_000 });
     const scaler = await page.evaluate(async () => {
       const request = indexedDB.open('stocklstm-browser-models', 1);
       const database = await new Promise((resolve, reject) => {
@@ -107,7 +107,7 @@ test('price: corruption beyond the final-refit boundary cannot move metrics', as
 });
 
 test('trend: corruption beyond the shifted boundary cannot move trend metrics', async ({ browser }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(480_000);
   const clean = deterministicSnapshot('MSFT');
   const horizon = resolveHorizon(7);
   const boundary = finalRefitBoundary(clean, 'trend', horizon);

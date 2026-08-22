@@ -51,7 +51,7 @@ export default function PredictionHistory({ items, onSelectTicker, onClearAll })
             const dateStr = formatHistoryDate(h.createdAt);
             const detail =
               h.forecastType === 'trend'
-                ? `P(up) ${typeof h.predictedValue === 'number' ? (h.predictedValue * 100).toFixed(0) : '—'}% · ${h.horizon ?? '?'}d`
+                ? `${h.direction || '—'} · ${h.horizon ?? '?'}d`
                 : `${formatPrice(h.lastClose)} → ${formatPrice(h.predictedValue)} · ${h.horizon ?? '?'}d`;
 
             return (

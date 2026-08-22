@@ -7,7 +7,6 @@ import {
   MODEL_VERSION,
   OUTPUT_WIDTH,
   TARGET_MODE,
-  TRAIN_SPLIT,
   WINDOW_SIZE,
   buildEvaluationSeries,
   latestInput,
@@ -362,22 +361,18 @@ async function evaluateRange(model, prepared, forecastType, start, end, metricSo
 
 function aggregateFoldMetrics(records, forecastType, horizon) {
   if (forecastType === 'direction') {
-    // Pool untouched out-of-fold class labels and probability rows, and pool
-    // each fold's pre-evaluation base rate by its validation size.
+    // Pool untouched out-of-fold class labels and probability rows. Every
+    // OOF observation is scored against ITS OWN fold's pre-evaluation base
+    // rate (fold-matched baseline), not a pooled average.
     const actuals = records.flatMap((record) => record.actual);
     const predicteds = records.flatMap((record) => record.predicted);
-    const weights = records.map(
-      (record) => (Array.isArray(record.actual) ? record.actual.length : 0)
+    const baselineRows = records.flatMap((record) =>
+      record.actual.map(() => record.baseline_probabilities)
     );
-    const baselineProbabilities = [0, 1, 2].map((c) => {
-      const weightSum = weights.reduce((s, w, i) => s + records[i].baseline_probabilities[c] * (w + 3), 0);
-      const total = weights.reduce((s, w) => s + w + 3, 0);
-      return weightSum / total;
-    });
     const metrics = classificationMetricsV3({
       actualClasses: actuals,
       probabilityRows: predicteds,
-      baselineProbabilities,
+      baselineProbabilities: baselineRows,
       classes: ['down', 'neutral', 'up'],
       metricSource: 'browser_walk_forward_out_of_fold',
     });
@@ -427,9 +422,11 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
       stage: 'training',
     });
     selectedEpochs = fit.bestEpoch;
-    // The three-class base rate must not peek into the evaluation window: it
-    // is derived from labels strictly prior to the holdout split.
-    const baselineProbabilities = classBaseRates(selection.targets.slice(0, selection.split));
+    // The three-class base rate must use EXACTLY the training information
+    // set: labels [0, trainCount) whose target windows end before the purge.
+    // Including split..trainCount would leak purged labels whose target
+    // windows overlap the evaluation period into the baseline.
+    const baselineProbabilities = classBaseRates(selection.targets.slice(0, selection.trainCount));
     const evaluated = await evaluateRange(
       selectionModel, selection, forecastType, selection.split, selection.inputs.length, profile.metricSource, horizon, baselineProbabilities,
     );
@@ -513,8 +510,9 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
     checkCancelled(id);
     const foldPrepared = prepare(snapshot, forecastType, split.trainEnd, horizon);
     // Every validation fold defines its own untouched evaluation window; the
-    // three-class base rate comes from labels strictly before that window.
-    const foldBaseRates = classBaseRates(foldPrepared.targets.slice(0, split.validationStart));
+    // base rate uses only that fold's training labels (trainEnd already
+    // excludes the purge zone).
+    const foldBaseRates = classBaseRates(foldPrepared.targets.slice(0, split.trainEnd));
     const innerValidationSize = Math.max(1, Math.floor(split.trainEnd * 0.1));
     const innerValidationStart = split.trainEnd - innerValidationSize;
     const fitSequenceEndExclusive = innerValidationStart - (horizon - 1);
@@ -827,14 +825,11 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
         evaluation,
         horizon,
       });
-      // Baseline = pre-evaluation three-class base rate only (holdout split,
-      // or the research fold's validation start spanning every fold's
-      // pre-evaluation labels).
-      const sampleCount = sequencePartition(snapshot, forecastType, horizon).sampleCount;
-      const preEvaluationEnd = profile.id === 'research'
-        ? sampleCount - profile.validationHorizon
-        : Math.floor(sampleCount * TRAIN_SPLIT);
-      const baselineProbabilities = classBaseRates(prepared.targets.slice(0, preEvaluationEnd));
+      // Decision-time base rate: the final model refits on ALL history and
+      // the forecast origin is "now", so every historical label precedes the
+      // decision. (Evaluation-time baselines above use the stricter
+      // trainCount/trainEnd sets; this one is disclosure for the user.)
+      const baselineProbabilities = classBaseRates(prepared.targets);
       forecastStatus = describePromotionState(promotion);
       const baselineFallback = !promotion.promoted;
 
@@ -848,7 +843,6 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
         return ['Down', 'Neutral', 'Up'][bestIdx];
       };
       const decisionProbs = baselineFallback ? baselineProbabilities : modelProbabilities;
-      const decisionDirection = argmaxLabel(decisionProbs);
 
       return {
         ...common,
@@ -861,7 +855,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
         model_direction_probabilities: Object.fromEntries(
           Object.entries(modelProbabilities).map(([k, v]) => [k, Number(v.toFixed(6))])
         ),
-        persistence_direction_probabilities: Object.fromEntries(
+        base_rate_direction_probabilities: Object.fromEntries(
           Object.entries(baselineProbabilities).map(([k, v]) => [k, Number(v.toFixed(6))])
         ),
         baselineFallback,
@@ -946,7 +940,7 @@ async function processMessage(event) {
       emit(id, { type: 'complete', result: { cleared: true } });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not clear browser models.';
-      emit(id, { type: 'error', message, category: categorizeWorkerError(error), debug: String(error && error.stack || error).slice(0, 800) });
+      emit(id, { type: 'error', message, category: categorizeWorkerError(error) });
     }
     return;
   }
@@ -956,7 +950,7 @@ async function processMessage(event) {
     emit(id, { type: 'complete', result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Browser training failed.';
-    emit(id, { type: 'error', message, category: categorizeWorkerError(error), debug: String(error && error.stack || error).slice(0, 800) });
+    emit(id, { type: 'error', message, category: categorizeWorkerError(error) });
   } finally {
     cancelledIds.delete(id);
   }

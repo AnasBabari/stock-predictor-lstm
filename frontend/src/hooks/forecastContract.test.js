@@ -98,7 +98,7 @@ describe('browserResponse contract — direction v2', () => {
         direction: 'Down',                       // argmax of the baseline distribution
         direction_probabilities: { down: 0.4, neutral: 0.25, up: 0.35 },
         model_direction_probabilities: { down: 0.1, neutral: 0.2, up: 0.7 },
-        persistence_direction_probabilities: { down: 0.5, neutral: 0.3, up: 0.2 },
+        base_rate_direction_probabilities: { down: 0.5, neutral: 0.3, up: 0.2 },
         baselineFallback: true,
         forecast_status: { state: 'experimental_no_demonstrated_edge', decision: 'persistence', alpha: 0, label: 'z' },
         metrics: {},
@@ -110,7 +110,7 @@ describe('browserResponse contract — direction v2', () => {
     expect(response.direction).toBe('Down');
     expect(response.direction_probabilities).toEqual({ down: 0.4, neutral: 0.25, up: 0.35 });
     expect(response.model_direction_probabilities.up).toBe(0.7);
-    expect(response.persistence_direction_probabilities.down).toBe(0.5);
+    expect(response.base_rate_direction_probabilities.down).toBe(0.5);
     expect(response.forecast_status.decision).toBe('persistence');
     // Legacy per-day arrays must not exist under the v2 contract.
     expect(response.directions).toBeUndefined();

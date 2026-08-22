@@ -2,7 +2,7 @@ import React from 'react';
 
 const TARGET_DESCRIPTION = {
   price: 'Cumulative log return r(t,h) = ln(P(t+h) / P(t)); prices reconstructed from the latest close.',
-  trend: 'Sign of the next future log return per step (up/down classification).',
+  trend: 'One three-way call per forecast origin: sign of the CUMULATIVE h-day log return with a volatility-aware neutral band (Down/Neutral/Up softmax).',
 };
 
 function row(label, value) {

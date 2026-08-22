@@ -115,11 +115,29 @@ export function classificationMetricsV3({
     const total = clipped.reduce((s, v) => s + v, 0);
     return total > 0 ? clipped.map((v) => v / total) : oneHot(1, classCount); // degenerate → neutral
   });
-  const base = baselineProbabilities.map((p) => Math.min(1, Math.max(0, Number(p))));
-  const baseSum = base.reduce((s, v) => s + v, 0);
-  const baseline = baseSum > 0 ? base.map((v) => v / baseSum) : oneHot(1, classCount);
 
-  // Multiclass Brier = mean over origins of Σ_c (p_c − y_c)².
+  // Baselines: either ONE vector applied to every origin (single holdout,
+  // matched training set) or ONE ROW PER OBSERVATION (pooled out-of-fold
+  // origins, each scored against its own fold's pre-evaluation base rate).
+  const baselineIsMatrix =
+    Array.isArray(baselineProbabilities) &&
+    Array.isArray(baselineProbabilities[0]) &&
+    baselineProbabilities.length === n;
+  const baselineRows = baselineIsMatrix
+    ? baselineProbabilities
+    : Array.from({ length: n }, () => baselineProbabilities);
+  const normalizedBaselineRows = baselineRows.map((row) => {
+    const clipped = row.map((p) => Math.min(1, Math.max(0, Number(p))));
+    const total = clipped.reduce((s, v) => s + v, 0);
+    return total > 0 ? clipped.map((v) => v / total) : oneHot(1, classCount);
+  });
+  // Disclosure vector = size-weighted mean of the baseline rows.
+  const baselineMean = classes.map((_, c) =>
+    normalizedBaselineRows.reduce((s, row) => s + row[c], 0) / n
+  );
+
+  // Multiclass Brier = mean over origins of Σ_c (p_c − y_c)², scored against
+  // each origin's MATCHED baseline row.
   let brier = 0;
   let brierBase = 0;
   let logLoss = 0;
@@ -127,9 +145,10 @@ export function classificationMetricsV3({
   const confusion = Array.from({ length: classCount }, () => Array(classCount).fill(0));
   rows.forEach((row, i) => {
     const truth = oneHot(actualClasses[i], classCount);
+    const baseRow = normalizedBaselineRows[i];
     row.forEach((p, c) => {
       brier += (p - truth[c]) ** 2;
-      brierBase += (baseline[c] - truth[c]) ** 2;
+      brierBase += (baseRow[c] - truth[c]) ** 2;
     });
     logLoss += -Math.log(Math.max(row[actualClasses[i]], 1e-12));
     const argmax = row.indexOf(Math.max(...row));
@@ -178,8 +197,8 @@ export function classificationMetricsV3({
     ? eceBins.reduce((s, b) => (b.count ? s + (b.count / totalBins) * Math.abs(b.correct / b.count - b.confidence / b.count) : s), 0)
     : 0;
 
-  // Baseline argmax label distribution (for disclosure).
-  const baselineArgmax = baselineProbabilitiesFromCounts(baseline);
+  // Baseline argmax label from the disclosure vector.
+  const baselineArgmax = baselineProbabilitiesFromCounts(baselineMean);
 
   return {
     metric_source: metricSource,
@@ -195,7 +214,8 @@ export function classificationMetricsV3({
     brier_skill: brierBase > 0 ? 1 - brier / brierBase : null,
     log_loss: logLoss / n,
     expected_calibration_error: expectedCalibrationError,
-    baseline_probabilities: [...baseline],
+    baseline_probabilities: [...baselineMean],
+    baseline_probabilities_scope: baselineIsMatrix ? 'per_fold_pre_evaluation' : 'single_pre_evaluation',
     baseline_argmax_label: baselineArgmax,
     evaluation_origins: n,
     evaluation_labels: n,

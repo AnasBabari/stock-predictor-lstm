@@ -11,6 +11,7 @@ const HIST_KEY = 'stock_lstm_history';
  *   createdAt: string | null  - ISO timestamp of the prediction
  *   horizon: number | null    - forecast days requested
  *   forecastType: string|null - 'price' | 'trend'
+ *   direction: string|null    - 'Up' | 'Down' | 'Neutral' (trend entries)
  *   lastClose: number | null  - latest historical close (price forecasts)
  *   predictedValue: number|null - final-day predicted price, or mean up-probability (trend)
  *   changePercent: number|null  - predicted % change vs lastClose (price only)
@@ -41,6 +42,7 @@ export function normalizeHistoryEntry(raw) {
       createdAt: null,
       horizon: null,
       forecastType: null,
+      direction: null,
       lastClose: null,
       predictedValue: null,
       changePercent: null,
@@ -56,6 +58,9 @@ export function normalizeHistoryEntry(raw) {
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : null,
     horizon: toFiniteNumberOrNull(raw.horizon),
     forecastType: raw.forecastType === 'trend' ? 'trend' : raw.forecastType === 'price' ? 'price' : null,
+    direction: typeof raw.direction === 'string' && ['Up', 'Down', 'Neutral'].includes(raw.direction)
+      ? raw.direction
+      : null,
     lastClose: toFiniteNumberOrNull(raw.lastClose),
     predictedValue: toFiniteNumberOrNull(raw.predictedValue),
     changePercent: toFiniteNumberOrNull(raw.changePercent),
@@ -67,18 +72,18 @@ export function normalizeHistoryEntry(raw) {
 export function historyEntryFromPrediction(data) {
   const base = normalizeHistoryEntry(data?.ticker);
   if (!base) return null;
-  const isTrend = data?.directions?.length > 0;
+  const isTrend = data?.direction != null;
   const lastClose = toFiniteNumberOrNull(
     data?.historical_prices?.[data.historical_prices.length - 1]
   );
   let predictedValue = null;
   let changePercent = null;
   if (isTrend) {
-    const probabilities = Array.isArray(data.probabilities) ? data.probabilities : [];
-    if (probabilities.length) {
-      const mean = probabilities.reduce((sum, p) => sum + (toFiniteNumberOrNull(p) ?? 0), 0) / probabilities.length;
-      predictedValue = Number.isFinite(mean) ? mean : null;
-    }
+    // v2: one three-way decision; confidence = probability of the selected
+    // class (Down/Neutral/Up → down/neutral/up).
+    const probs = data.direction_probabilities || {};
+    const key = String(data.direction || '').toLowerCase();
+    predictedValue = toFiniteNumberOrNull(probs[key]);
   } else {
     const prices = Array.isArray(data.predicted_prices) ? data.predicted_prices : [];
     predictedValue = toFiniteNumberOrNull(prices[prices.length - 1]);
@@ -91,6 +96,7 @@ export function historyEntryFromPrediction(data) {
     createdAt: new Date().toISOString(),
     horizon: toFiniteNumberOrNull(data?.forecast_days),
     forecastType: isTrend ? 'trend' : 'price',
+    direction: isTrend ? String(data.direction) : null,
     lastClose,
     predictedValue,
     changePercent,

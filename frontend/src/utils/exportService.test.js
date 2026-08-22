@@ -16,9 +16,11 @@ function forecast(ticker, days) {
     direction: {
       ticker,
       forecast_days: days,
+      direction_horizon_days: days,
+      direction: 'Up',
+      direction_probabilities: { down: 0.1, neutral: 0.3, up: 0.6 },
+      forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'x' },
       future_dates: dates,
-      directions: Array.from({ length: days }, () => 'Up'),
-      probabilities: Array.from({ length: days }, () => 0.6),
       attention_weights: [{ index: 0, date: '2026-07-31', weight: 1 }],
     },
   };
@@ -50,7 +52,10 @@ describe('complete analysis export identity', () => {
     expect(filename).toBe('AAPL_complete_analysis.zip');
     expect(exportedMetadata).toEqual(metadata);
     expect(priceCsv.split('\n')).toHaveLength(9);
+    // v2 trend CSV: header + 8 key/value rows for the single decision.
     expect(directionCsv.split('\n')).toHaveLength(8);
+    expect(directionCsv).toContain('Decision,Up');
+    expect(directionCsv).toContain('P(Up),0.600000');
     expect(priceCsv).not.toContain('TSLA');
     expect(directionCsv).not.toContain('TSLA');
   });

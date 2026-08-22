@@ -154,7 +154,7 @@ export function browserResponse(snapshot, result, forecastType, days) {
       direction: result.direction,
       direction_probabilities: result.direction_probabilities,
       model_direction_probabilities: result.model_direction_probabilities,
-      persistence_direction_probabilities: result.persistence_direction_probabilities,
+      base_rate_direction_probabilities: result.base_rate_direction_probabilities,
       forecast_status: result.forecast_status,
       attention_weights: [],
       metrics: result.metrics,

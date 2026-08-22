@@ -4,10 +4,13 @@ The browser evidence contract is pinned to a full check: reported numbers must
 never outlive the method that produced them. Quick/Balanced metrics come from a
 single untouched post-purge holdout of the selection model; Research metrics
 come from untouched out-of-fold predictions pooled across five expanding
-folds. Scalers fit only fitting observations. Direction baselines derive from
-pre-evaluation labels. Direction evidence is reported per forecast day. The
-served artifact is the final refit, and cached evidence is superseded whenever
-the method changes.
+folds. Scalers fit only fitting observations. Direction evidence follows target
+contract `cumulative_three_way_v2` (one Down/Neutral/Up softmax call per origin
+on the cumulative horizon return); direction baselines are three-class
+pre-evaluation base rates matched to each evaluation set — holdout trainCount,
+per-fold trainEnd, and per-observation fold rows when pooling out-of-fold
+predictions. The served artifact is the final refit, and cached evidence is
+superseded whenever the method changes.
 
 recorded_sha: f3361d1
 freeze_record_commit: c385ab869cf0df556af214b079cb69e74ac9f64b

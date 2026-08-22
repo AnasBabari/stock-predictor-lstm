@@ -19,8 +19,9 @@ const pricePayload = {
 const trendPayload = {
   ticker: 'AAPL',
   forecast_days: 3,
-  directions: [1, 0],
-  probabilities: [0.6, 0.8],
+  direction_horizon_days: 3,
+  direction: 'Up',
+  direction_probabilities: { down: 0.2, neutral: 0.15, up: 0.65 },
   metadata: { snapshot_id: 'snap-2', engine: { role: 'baseline_fallback' } },
 };
 
@@ -38,10 +39,11 @@ describe('historyEntryFromPrediction', () => {
     expect(typeof entry.createdAt).toBe('string');
   });
 
-  it('builds a trend entry with mean up-probability and no change percent', () => {
+  it('builds a trend entry with the selected direction and its confidence', () => {
     const entry = historyEntryFromPrediction(trendPayload);
     expect(entry.forecastType).toBe('trend');
-    expect(entry.predictedValue).toBeCloseTo(0.7, 5);
+    expect(entry.direction).toBe('Up');
+    expect(entry.predictedValue).toBeCloseTo(0.65, 5);
     expect(entry.changePercent).toBeNull();
     expect(entry.lastClose).toBeNull();
   });
