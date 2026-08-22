@@ -39,13 +39,15 @@ Three local training profiles are available:
 
 | Profile | Model and evaluation | Typical capable-desktop time |
 | --- | --- | --- |
-| Quick | LSTM 32/16, 12 epochs maximum, one untouched purged holdout | 30–90 seconds |
-| Balanced | LSTM 64/32, 25 epochs maximum, one untouched purged holdout | 2–10 minutes |
+| Profile | Model and evaluation | Typical capable-desktop time |
+| --- | --- | --- |
+| Quick | LSTM 16/8, 12 epochs maximum, one untouched purged holdout | 30–90 seconds |
+| Balanced | LSTM 32/16, 25 epochs maximum, one untouched purged holdout | 2–10 minutes |
 | Research | Balanced model, five expanding 60-session purged folds, then a final fit | 10–45+ minutes |
 
 Balanced is the capable-desktop default; constrained or mobile devices default to Quick. Research is always an explicit choice. The worker tries WebGPU, then WebGL, then CPU. All profiles use batch size 32, Adam 0.001, no shuffle, train-only scaling, early stopping, and a final refit for local inference. Browser GPU results are methodologically reproducible from the recorded snapshot, profile, seed, split, and runtime metadata, but are not guaranteed to be bit-identical across browsers.
 
-Quick and Balanced metrics are labelled `browser_purged_holdout`. Research metrics are aggregated from untouched predictions and labelled `browser_walk_forward_out_of_fold`; incomplete or cancelled folds never receive that label. Price evidence includes MAE, MSE, RMSE, MAPE, R², and relative MAE/RMSE versus persistence. Direction evidence includes accuracy, precision, recall, F1, balanced accuracy, Brier score, and majority-class accuracy. Price forecasts do not claim an “accuracy” percentage.
+Quick and Balanced metrics are labelled `browser_purged_holdout`. Research metrics are aggregated from untouched predictions and labelled `browser_walk_forward_out_of_fold`; incomplete or cancelled folds never receive that label. Price evidence includes MAE, MSE, RMSE, MAPE, R², and relative MAE/RMSE versus persistence. Direction evidence (target contract `cumulative_three_way_v2`) is one three-way call per forecast origin — Down/Neutral/Up on the cumulative horizon return with a volatility-aware neutral band — scored by multiclass Brier skill against the pre-evaluation base rate, macro balanced accuracy/F1, log loss, and calibration ECE. Price forecasts do not claim an “accuracy” percentage.
 
 > [!IMPORTANT]
 > **How to read the numbers.** The holdout/walk-forward metrics are computed once on data the selection model never saw. The *deployed* forecast is produced by a final model refitted on all available history — the UI's model card and holdout chart state this explicitly. In the offline research harness (`research/`), all 19 currently kept records predate provenance tracking and are labelled `LEGACY_UNAUDITED`; per that package's multiplicity policy they must not be presented as certified. Simple baselines (persistence, majority class) are first-class citizens here: every learned model is compared against them on identical rows, and the offline research found linear/random-feature models at least as competitive as neural ones on daily data.
