@@ -102,3 +102,43 @@ def test_wrong_key_fails_signature(tmp_path: Path, key_pair) -> None:
     # base64 of a foreign signature still parses, so verification must reject.
     with pytest.raises((ValueError, Exception)):
         verify_release(out, public_key_path=other_public)
+
+
+def test_detached_signature_file_written(tmp_path: Path, key_pair) -> None:
+    private_pem, _ = key_pair
+    out = build_release(tmp_path / "rel", model_files(), METADATA, private_key_path=private_pem)
+    sig_file = out / "manifest.sig"
+    assert sig_file.exists()
+    assert len(sig_file.read_text(encoding="utf-8")) >= 64
+
+
+def test_missing_listed_file_raises_not_found(tmp_path: Path, key_pair) -> None:
+    private_pem, public_pem = key_pair
+    out = build_release(tmp_path / "rel", model_files(), METADATA, private_key_path=private_pem)
+    (out / "group1-shard1of2.bin").unlink()
+    with pytest.raises(FileNotFoundError, match="absent from disk"):
+        verify_release(out, public_key_path=public_pem)
+
+
+def test_unsupported_schema_version_rejected(tmp_path: Path, key_pair) -> None:
+    private_pem, public_pem = key_pair
+    out = build_release(tmp_path / "rel", model_files(), METADATA, private_key_path=private_pem)
+    manifest_path = out / "manifest.json"
+    doc = json.loads(manifest_path.read_bytes())
+    doc["schema_version"] = 999
+    manifest_path.write_bytes(json.dumps(doc, indent=2).encode())
+    with pytest.raises(ValueError, match="Unsupported release schema version"):
+        verify_release(out, public_key_path=public_pem)
+
+
+def test_build_catalog_validates_required_fields() -> None:
+    from release.bundle import build_catalog
+
+    artifacts = [{"name": "m1", "url": "/m1", "sha256": "a" * 64, "horizons": [1, 5]}]
+    cat = build_catalog(artifacts, signature="b" * 64, recorded_sha="c" * 8)
+    assert cat["schema_version"] == 1
+    assert cat["signature"] == "b" * 64
+    assert len(cat["artifacts"]) == 1
+
+    with pytest.raises(ValueError, match="at least one artifact"):
+        build_catalog([], signature="b" * 64, recorded_sha="c" * 8)

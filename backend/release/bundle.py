@@ -43,8 +43,9 @@ def build_release(
     file_checksums: dict[str, str] = {}
     for name in sorted(model_files):
         data = model_files[name]
-        (out_dir / name).parent.mkdir(parents=True, exist_ok=True)
-        (out_dir / name).write_bytes(data)
+        target_path = out_dir / name
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(data)
         file_checksums[name] = _sha256_bytes(data)
 
     manifest = {
@@ -52,20 +53,45 @@ def build_release(
         "metadata": metadata,
         "files": file_checksums,
     }
-    manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
+    canonical_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
     signer = Ed25519ManifestSigner.from_pem_file(private_key_path)
-    signature = signer(manifest_bytes)
+    signature = signer(canonical_bytes)
+
+    # Write detached signature and embedded manifest
+    (out_dir / "manifest.sig").write_text(signature, encoding="utf-8")
     manifest["signature"] = signature
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
     (out_dir / "manifest.json").write_bytes(manifest_bytes)
     return out_dir
 
 
+def build_catalog(
+    artifacts: list[dict],
+    *,
+    signature: str,
+    recorded_sha: str,
+    schema_version: int = 1,
+) -> dict:
+    """Build deployment catalog.json metadata."""
+    if not artifacts:
+        raise ValueError("catalog requires at least one artifact entry")
+    if not signature or len(signature) < 64:
+        raise ValueError("catalog requires a valid 64+ char signature")
+    if not recorded_sha or len(recorded_sha) < 7:
+        raise ValueError("catalog requires a valid git SHA of at least 7 chars")
+    return {
+        "schema_version": schema_version,
+        "recorded_sha": recorded_sha,
+        "signature": signature,
+        "artifacts": artifacts,
+    }
+
+
 def verify_release(release_dir: Path, *, public_key_path: Path) -> dict:
     """Verify signature + all file checksums; returns the manifest.
 
     Raises on: missing key/manifest/signature, invalid signature, any file
-    checksum mismatch, or any listed file absent from disk.
+    checksum mismatch, unsupported schema, or any listed file absent from disk.
     """
     import base64
 
@@ -73,11 +99,25 @@ def verify_release(release_dir: Path, *, public_key_path: Path) -> dict:
     from cryptography.hazmat.primitives import serialization
 
     manifest_path = release_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Missing manifest file at {manifest_path}")
+
     raw = manifest_path.read_bytes()
-    manifest = json.loads(raw)
+    try:
+        manifest = json.loads(raw)
+    except Exception as exc:
+        raise ValueError("Failed to parse manifest.json") from exc
+
+    if manifest.get("schema_version") != RELEASE_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported release schema version: {manifest.get('schema_version')}")
+
     signature_b64 = manifest.pop("signature", None)
     if not signature_b64:
         raise ValueError("manifest.json has no signature.")
+
+    if not public_key_path.exists():
+        raise FileNotFoundError(f"Missing public key at {public_key_path}")
+
     key = serialization.load_pem_public_key(public_key_path.read_bytes())
     canonical = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
     try:
@@ -87,8 +127,11 @@ def verify_release(release_dir: Path, *, public_key_path: Path) -> dict:
 
     for name, expected in manifest["files"].items():
         path = release_dir / name
+        if not path.exists():
+            raise FileNotFoundError(f"Listed release file absent from disk: {name}")
         actual = _sha256_bytes(path.read_bytes())
         if actual != expected:
             raise ValueError(f"checksum mismatch for {name}: tampered or truncated.")
 
+    manifest["signature"] = signature_b64
     return manifest
