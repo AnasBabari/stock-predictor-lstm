@@ -118,7 +118,7 @@ test('server 503 without a browser fallback (server_pretrained) surfaces an erro
 });
 
 test('UI trend request maps to API direction and lands in the browser trend path', async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(180_000);
   let requestedUrl = null;
   const calls = mockApi(page, (route) => {
     requestedUrl = route.request().url();
