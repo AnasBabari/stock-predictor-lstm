@@ -158,6 +158,11 @@ class GarchParams:
     alpha: float
     gamma: float  # 0 for plain GARCH
     beta: float
+    optimizer: str = "SLSQP"
+    initialization_count: int = 1
+    convergence_state: str = "converged"
+    objective: float = 0.0
+    fallback_reason: str | None = None
 
     @property
     def persistence(self) -> float:
@@ -182,48 +187,171 @@ def _garch_nll(theta: np.ndarray, returns: np.ndarray, gjr: bool) -> float:
     if omega <= 0 or alpha < 0 or beta < 0 or gamma < 0:
         return 1e12
     persistence = alpha + beta + (gamma / 2 if gjr else 0.0)
-    if persistence >= 0.999999:
+    if persistence >= 0.99999:
         return 1e12
     params = GarchParams(omega, alpha, gamma, beta)
     var = _garch_filter(returns, params)
-    if (var <= 0).any():
+    if not np.isfinite(var).all() or (var <= 0).any():
         return 1e12
     z2 = returns.astype(float) ** 2 / var
     nll = 0.5 * np.sum(np.log(var) + z2)
-    return float(min(nll, 1e18))
+    return float(min(nll, 1e18)) if np.isfinite(nll) else 1e12
 
 
 def fit_garch(returns: np.ndarray, *, gjr: bool = False) -> GarchParams:
-    """Normal-innovation GARCH(1,1)/GJR MLE on the training slice."""
+    """Deterministic constrained multi-start MLE for GARCH(1,1)/GJR-GARCH(1,1,1)."""
     r = np.asarray(returns, dtype=float)
-    seed_var = float(np.var(r)) or 1e-10
-    x0 = np.array([seed_var * 0.05, 0.08, 0.88, 0.02][: 4 if gjr else 3])
-    result = minimize(
-        _garch_nll,
-        x0,
-        args=(r, gjr),
-        method="Nelder-Mead",
-        options={"maxiter": 2000, "xatol": 1e-6, "fatol": 1e-6},
-    )
-    omega = float(result.x[0])
-    alpha = float(abs(result.x[1]))
-    beta = float(abs(result.x[2]))
-    gamma = float(abs(result.x[3])) if gjr else 0.0
-    persistence = alpha + beta + gamma / 2
-    if persistence >= 0.999999 or omega <= 0:
-        # Fail safe: fall back to a near-RiskMetrics parameterization rather
-        # than emitting an explosive process.
-        scale = 0.95 / max(persistence, 1e-9)
-        alpha = float(alpha * scale)
-        beta = float(beta * scale)
-        gamma = float(gamma * scale)
-        omega = float(
-            max(omega, 1e-12)
-            * (1 - alpha - beta - gamma / 2)
-            / max(1e-12, 1 - (alpha + beta + gamma / 2))
+    if len(r) == 0:
+        return GarchParams(
+            omega=1e-6,
+            alpha=0.06,
+            gamma=0.0,
+            beta=0.92,
+            optimizer="none",
+            initialization_count=0,
+            convergence_state="failed",
+            objective=float("inf"),
+            fallback_reason="empty_series",
         )
-        omega = max(omega, 1e-14)
-    return GarchParams(omega, alpha, gamma, beta)
+
+    seed_var = float(np.var(r))
+    if not np.isfinite(seed_var) or seed_var <= 1e-12:
+        safe_omega = 1e-8
+        return GarchParams(
+            omega=safe_omega,
+            alpha=0.04 if gjr else 0.06,
+            gamma=0.04 if gjr else 0.0,
+            beta=0.92,
+            optimizer="none",
+            initialization_count=0,
+            convergence_state="fallback",
+            objective=0.0,
+            fallback_reason="degenerate_variance",
+        )
+
+    if gjr:
+        starts = [
+            (0.95, 0.05, 0.86, 0.08),
+            (0.98, 0.03, 0.93, 0.04),
+            (0.90, 0.08, 0.76, 0.12),
+            (0.85, 0.06, 0.75, 0.08),
+            (0.96, 0.08, 0.88, 0.00),
+        ]
+        bounds = [(1e-12, 10.0), (0.0, 0.99), (0.0, 0.99), (0.0, 0.99)]
+        constraints = [{"type": "ineq", "fun": lambda x: 0.9999 - (x[1] + x[2] + x[3] / 2.0)}]
+    else:
+        starts = [
+            (0.95, 0.08, 0.87, 0.0),
+            (0.98, 0.04, 0.94, 0.0),
+            (0.90, 0.12, 0.78, 0.0),
+            (0.80, 0.15, 0.65, 0.0),
+            (0.99, 0.02, 0.97, 0.0),
+        ]
+        bounds = [(1e-12, 10.0), (0.0, 0.99), (0.0, 0.99)]
+        constraints = [{"type": "ineq", "fun": lambda x: 0.9999 - (x[1] + x[2])}]
+
+    candidates: list[tuple[float, GarchParams]] = []
+    init_count = 0
+
+    for p_init, a_init, b_init, g_init in starts:
+        init_count += 1
+        w_init = seed_var * max(1.0 - p_init, 0.01)
+        x0 = (
+            np.array([w_init, a_init, b_init, g_init], dtype=float)
+            if gjr
+            else np.array([w_init, a_init, b_init], dtype=float)
+        )
+
+        try:
+            res = minimize(
+                _garch_nll,
+                x0,
+                args=(r, gjr),
+                method="SLSQP",
+                bounds=bounds,
+                constraints=constraints,
+                options={"maxiter": 400, "ftol": 1e-7},
+            )
+            if res.success or res.fun < 1e10:
+                w, a, b = float(res.x[0]), float(res.x[1]), float(res.x[2])
+                g = float(res.x[3]) if gjr else 0.0
+                pers = a + b + g / 2.0
+                if w > 0 and a >= 0 and b >= 0 and g >= 0 and pers < 0.99999:
+                    obj = _garch_nll(res.x, r, gjr)
+                    if np.isfinite(obj) and obj < 1e10:
+                        params = GarchParams(
+                            omega=w,
+                            alpha=a,
+                            gamma=g,
+                            beta=b,
+                            optimizer="SLSQP",
+                            initialization_count=init_count,
+                            convergence_state="converged",
+                            objective=float(obj),
+                            fallback_reason=None,
+                        )
+                        candidates.append((obj, params))
+        except Exception:
+            pass
+
+        try:
+            res = minimize(
+                _garch_nll,
+                x0,
+                args=(r, gjr),
+                method="L-BFGS-B",
+                bounds=bounds,
+                options={"maxiter": 400, "ftol": 1e-7},
+            )
+            if res.success or res.fun < 1e10:
+                w, a, b = float(res.x[0]), float(res.x[1]), float(res.x[2])
+                g = float(res.x[3]) if gjr else 0.0
+                pers = a + b + g / 2.0
+                if w > 0 and a >= 0 and b >= 0 and g >= 0 and pers < 0.99999:
+                    obj = _garch_nll(res.x, r, gjr)
+                    if np.isfinite(obj) and obj < 1e10:
+                        params = GarchParams(
+                            omega=w,
+                            alpha=a,
+                            gamma=g,
+                            beta=b,
+                            optimizer="L-BFGS-B",
+                            initialization_count=init_count,
+                            convergence_state="converged",
+                            objective=float(obj),
+                            fallback_reason=None,
+                        )
+                        candidates.append((obj, params))
+        except Exception:
+            pass
+
+    if candidates:
+        candidates.sort(key=lambda c: c[0])
+        best_params = candidates[0][1]
+        return GarchParams(
+            omega=best_params.omega,
+            alpha=best_params.alpha,
+            gamma=best_params.gamma,
+            beta=best_params.beta,
+            optimizer=best_params.optimizer,
+            initialization_count=init_count,
+            convergence_state=best_params.convergence_state,
+            objective=best_params.objective,
+            fallback_reason=None,
+        )
+
+    fb_omega = seed_var * 0.02
+    return GarchParams(
+        omega=max(fb_omega, 1e-12),
+        alpha=0.04 if gjr else 0.06,
+        gamma=0.04 if gjr else 0.0,
+        beta=0.92,
+        optimizer="fallback_riskmetrics",
+        initialization_count=init_count,
+        convergence_state="fallback",
+        objective=float("inf"),
+        fallback_reason="all_starts_failed_constraints",
+    )
 
 
 def garch_forecast_cumulative(returns: np.ndarray, params: GarchParams, horizon: int) -> float:

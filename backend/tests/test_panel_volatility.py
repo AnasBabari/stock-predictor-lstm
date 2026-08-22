@@ -107,11 +107,7 @@ def test_har_recovers_synthetic_linear_structure() -> None:
 
 
 def test_garch_recovers_plausible_persistence_and_forecasts_positive() -> None:
-    """GARCH MLE recovers persistence on synthetic data.
-
-    Nelder-Mead is sensitive to starting conditions; running three seeds
-    and requiring at least one to converge robustly avoids CI flakiness.
-    """
+    """GARCH MLE recovers persistence and produces finite positive forecasts."""
     rng = np.random.default_rng(9)
     n = 1500
     omega, alpha, beta = 2e-7, 0.08, 0.88
@@ -124,10 +120,59 @@ def test_garch_recovers_plausible_persistence_and_forecasts_positive() -> None:
         var[i] = sigma2
     params = fit_garch(rets[:1200])
     assert 0.5 < params.persistence < 1.0
+    assert params.omega > 0
+    assert params.alpha >= 0
+    assert params.beta >= 0
     forecast = garch_forecast_cumulative(rets[:1200], params, 5)
     long_run_5 = 5 * params.omega / (1 - params.persistence)
     assert forecast > 0
     assert 0.1 * long_run_5 < forecast < 10 * long_run_5
+
+
+def test_garch_and_gjr_deterministic_across_repeated_runs() -> None:
+    rets = np.random.default_rng(42).normal(0, 0.015, 600)
+    p1 = fit_garch(rets, gjr=False)
+    p2 = fit_garch(rets, gjr=False)
+    assert p1 == p2
+
+    p_gjr1 = fit_garch(rets, gjr=True)
+    p_gjr2 = fit_garch(rets, gjr=True)
+    assert p_gjr1 == p_gjr2
+
+
+def test_garch_and_gjr_satisfy_stationarity_and_positivity_constraints() -> None:
+    for seed in range(5):
+        rets = np.random.default_rng(seed).normal(0, 0.02, 500)
+        p = fit_garch(rets, gjr=False)
+        assert p.omega > 0
+        assert p.alpha >= 0
+        assert p.beta >= 0
+        assert p.persistence < 1.0
+
+        p_gjr = fit_garch(rets, gjr=True)
+        assert p_gjr.omega > 0
+        assert p_gjr.alpha >= 0
+        assert p_gjr.beta >= 0
+        assert p_gjr.gamma >= 0
+        assert p_gjr.persistence < 1.0
+
+
+def test_garch_pathological_inputs_fail_safely() -> None:
+    # Constant zeroes
+    p_zero = fit_garch(np.zeros(200), gjr=False)
+    assert p_zero.persistence < 1.0
+    assert p_zero.omega > 0
+    assert p_zero.fallback_reason is not None
+
+    # Empty array
+    p_empty = fit_garch(np.array([]), gjr=False)
+    assert p_empty.persistence < 1.0
+    assert p_empty.omega > 0
+
+    # Near-zero constant
+    p_const = fit_garch(np.full(100, 1e-10), gjr=True)
+    assert p_const.persistence < 1.0
+    assert p_const.omega > 0
 
 
 def test_gjr_penalises_negative_shocks_via_leverage_term() -> None:
