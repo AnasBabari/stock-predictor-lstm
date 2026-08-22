@@ -67,6 +67,15 @@ Artifacts come only from an explicit background job (`backend/scripts/run_server
 
 Live Yahoo Finance headlines are still fetched for the direction response as context (`sentiment.status`/coverage metadata). They are deliberately not sent in the 28-feature browser matrix, so headline sentiment cannot silently become a learned input. Historical news experiments remain offline-only and must use timestamped articles, leakage-safe alignment, controlled ablations, and the same purged holdout/promotion gates as price features. This separation keeps the browser model reproducible and makes the current news limitation explicit instead of claiming that sentiment improves the forecast.
 
+
+## Global model pipeline
+
+An offline global-model training pipeline (slices 4–10) is under active
+development. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the
+architecture, evaluation protocol, candidate space, and known limitations.
+The browser-local training path remains available behind a feature flag
+and is labelled as a research fallback, never as the production model.
+
 ## Docker Compose
 
 ```bash
