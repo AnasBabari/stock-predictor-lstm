@@ -27,13 +27,15 @@ test('builds direction output as a 3-way softmax over [down, neutral, up]', asyn
   input.dispose(); output.dispose(); model.dispose();
 });
 
-test('compiles direction with categorical cross-entropy', () => {
+test('compiles direction with categorical cross-entropy', async () => {
   const model = buildBrowserModel('direction', 22, resolveTrainingProfile('quick'));
   expect(model.loss).toBeDefined();
   // tfjs exposes compiled loss via model.compile config only at train time;
   // assert through a tiny fit step that CCE accepts one-hot targets.
   const xs = tf.zeros([2, 60, 22]);
   const ys = tf.oneHot(tf.tensor1d([1, 2], 'int32'), 3);
-  expect(() => model.fit(xs, ys, { epochs: 1 })).not.toThrow();
-  xs.dispose(); ys.dispose(); model.dispose();
+  await expect(model.fit(xs, ys, { epochs: 1 })).resolves.toBeDefined();
+  xs.dispose();
+  ys.dispose();
+  model.dispose();
 });

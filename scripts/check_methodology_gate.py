@@ -146,9 +146,7 @@ def validate(text: str, run_git=None) -> list[str]:
 
     # The freeze commit must actually have written the gate document.
     try:
-        freeze_touched = run_git(
-            "diff", "--name-only", f"{freeze_full}^", freeze_full
-        )
+        freeze_touched = run_git("diff", "--name-only", f"{freeze_full}^", freeze_full)
     except GitError as exc:
         errors.append(f"git diff failed: {exc}")
         return errors

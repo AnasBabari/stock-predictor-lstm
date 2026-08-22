@@ -282,10 +282,13 @@ class GarchLstmCandidate:
             econometric=self.econometric,  # frozen parameters
             lookback=self.lookback,
         )
-        log_var = self._model.predict(
-            {"window": dataset["windows"], "econometric": dataset["features"]},
-            verbose=0,
-        )
+        if len(dataset["windows"]) == 0:
+            return np.empty((0, self.horizon), dtype=float)
+        tf_inputs = {
+            "window": np.asarray(dataset["windows"], dtype=np.float32),
+            "econometric": np.asarray(dataset["features"], dtype=np.float32),
+        }
+        log_var = self._model(tf_inputs, training=False).numpy()
         return np.exp(np.clip(log_var, -30.0, 30.0))
 
 
