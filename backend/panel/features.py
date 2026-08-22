@@ -8,10 +8,14 @@ panel level (same-date across tickers) and never use future membership.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
-V5_SCHEMA_VERSION = 5
+DEPLOYABLE_SCHEMA_VERSION = "deployable_v5"
+RESEARCH_SCHEMA_VERSION = "research_v5"
 EWMA_LAMBDA = 0.94
 REGIME_LOOKBACK = 126
 
@@ -53,9 +57,98 @@ REGIME_COLUMNS = [
     "Regime_Liquidity",
 ]
 
-FEATURE_COLUMNS_V5 = (
+DEPLOYABLE_FEATURE_COLUMNS_V5: tuple[str, ...] = tuple(
+    RETURN_STRUCTURE_COLUMNS + VOLATILITY_COLUMNS + LIQUIDITY_COLUMNS
+)
+
+RESEARCH_FEATURE_COLUMNS_V5: tuple[str, ...] = tuple(
     RETURN_STRUCTURE_COLUMNS + VOLATILITY_COLUMNS + LIQUIDITY_COLUMNS + REGIME_COLUMNS
 )
+
+FEATURE_COLUMNS_V5 = list(RESEARCH_FEATURE_COLUMNS_V5)
+
+
+@dataclass(frozen=True)
+class DeployableFeatureContract:
+    schema_version: str = DEPLOYABLE_SCHEMA_VERSION
+    feature_names: tuple[str, ...] = DEPLOYABLE_FEATURE_COLUMNS_V5
+    window_size: int = 60
+    transformation_version: str = "v5_robust"
+    target_version: str = "cumulative_three_way_v2"
+
+    def validate(
+        self,
+        names: list[str] | tuple[str, ...],
+        schema_ver: str,
+        transformation_ver: str,
+    ) -> None:
+        if schema_ver != self.schema_version:
+            raise ValueError(
+                f"Schema version mismatch: expected {self.schema_version}, got {schema_ver}"
+            )
+        if transformation_ver != self.transformation_version:
+            raise ValueError(
+                f"Transformation version mismatch: expected {self.transformation_version}, "
+                f"got {transformation_ver}"
+            )
+        if tuple(names) != self.feature_names:
+            raise ValueError(
+                f"Feature contract mismatch: expected {len(self.feature_names)} features in order, "
+                f"got {len(names)} features."
+            )
+
+
+@dataclass(frozen=True)
+class DeployableRobustScaler:
+    median: list[float]
+    iqr: list[float]
+    feature_names: tuple[str, ...] = DEPLOYABLE_FEATURE_COLUMNS_V5
+    schema_version: str = DEPLOYABLE_SCHEMA_VERSION
+
+    @classmethod
+    def fit(
+        cls,
+        rows: np.ndarray | pd.DataFrame,
+        feature_names: tuple[str, ...] = DEPLOYABLE_FEATURE_COLUMNS_V5,
+    ) -> DeployableRobustScaler:
+        arr = np.asarray(rows, dtype=float)
+        if arr.ndim != 2 or arr.shape[-1] != len(feature_names):
+            raise ValueError(
+                f"Scaler input shape mismatch: expected (*, {len(feature_names)}), got {arr.shape}"
+            )
+        # Robust statistics per column: median and IQR
+        med = [float(np.nanmedian(arr[:, c])) for c in range(arr.shape[-1])]
+        q75 = [float(np.nanpercentile(arr[:, c], 75)) for c in range(arr.shape[-1])]
+        q25 = [float(np.nanpercentile(arr[:, c], 25)) for c in range(arr.shape[-1])]
+        iqr = [float(max(q75[c] - q25[c], 1e-12)) for c in range(arr.shape[-1])]
+        return cls(median=med, iqr=iqr, feature_names=feature_names)
+
+    def transform(self, rows: np.ndarray) -> np.ndarray:
+        arr = np.asarray(rows, dtype=float)
+        if arr.shape[-1] != len(self.median):
+            raise ValueError(
+                f"Feature dimension mismatch: expected {len(self.median)}, got {arr.shape[-1]}"
+            )
+        med = np.asarray(self.median, dtype=float)
+        spread = np.asarray(self.iqr, dtype=float)
+        return (arr - med) / spread
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "feature_names": list(self.feature_names),
+            "median": list(self.median),
+            "iqr": list(self.iqr),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DeployableRobustScaler:
+        return cls(
+            median=[float(x) for x in data["median"]],
+            iqr=[float(x) for x in data["iqr"]],
+            feature_names=tuple(data["feature_names"]),
+            schema_version=str(data.get("schema_version", DEPLOYABLE_SCHEMA_VERSION)),
+        )
 
 
 def _log(x: pd.Series) -> pd.Series:

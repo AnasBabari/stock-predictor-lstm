@@ -121,3 +121,57 @@ def test_cross_sectional_ranks_are_same_date_across_tickers() -> None:
 def test_warmup_rows_remain_nan_not_zero() -> None:
     out = build_features_v5(make_ohlcv())
     assert out["Vol_C2C_20"].iloc[:19].isna().all()
+
+
+def test_deployable_feature_contract_validates_exact_ordered_subset() -> None:
+    from panel.features import (
+        DEPLOYABLE_FEATURE_COLUMNS_V5,
+        DEPLOYABLE_SCHEMA_VERSION,
+        DeployableFeatureContract,
+    )
+
+    contract = DeployableFeatureContract()
+    assert len(contract.feature_names) == 26
+    # Valid validation passes
+    contract.validate(
+        list(DEPLOYABLE_FEATURE_COLUMNS_V5),
+        DEPLOYABLE_SCHEMA_VERSION,
+        "v5_robust",
+    )
+
+    # Feature order mismatch fails
+    reordered = list(DEPLOYABLE_FEATURE_COLUMNS_V5)
+    reordered[0], reordered[1] = reordered[1], reordered[0]
+    with pytest.raises(ValueError, match="Feature contract mismatch"):
+        contract.validate(reordered, DEPLOYABLE_SCHEMA_VERSION, "v5_robust")
+
+    # Missing feature fails
+    with pytest.raises(ValueError, match="Feature contract mismatch"):
+        contract.validate(
+            list(DEPLOYABLE_FEATURE_COLUMNS_V5[:-1]), DEPLOYABLE_SCHEMA_VERSION, "v5_robust"
+        )
+
+    # Stale schema fails
+    with pytest.raises(ValueError, match="Schema version mismatch"):
+        contract.validate(list(DEPLOYABLE_FEATURE_COLUMNS_V5), "deployable_v4", "v5_robust")
+
+
+def test_deployable_robust_scaler_roundtrip_and_transform_parity() -> None:
+    from panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5, DeployableRobustScaler
+
+    rng = np.random.default_rng(42)
+    data = rng.normal(10.0, 2.0, (100, len(DEPLOYABLE_FEATURE_COLUMNS_V5)))
+
+    scaler = DeployableRobustScaler.fit(data)
+    d = scaler.to_dict()
+    restored = DeployableRobustScaler.from_dict(d)
+
+    assert scaler.median == restored.median
+    assert scaler.iqr == restored.iqr
+
+    scaled = scaler.transform(data)
+    assert scaled.shape == data.shape
+    # Median should be approximately zero
+    np.testing.assert_allclose(
+        np.median(scaled, axis=0), np.zeros(len(DEPLOYABLE_FEATURE_COLUMNS_V5)), atol=1e-5
+    )
