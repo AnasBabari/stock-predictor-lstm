@@ -13,7 +13,7 @@ predictions. The served artifact is the final refit, and cached evidence is
 superseded whenever the method changes.
 
 recorded_sha: 2f1fd2a
-freeze_record_commit: 5b8279eb4c83852e34550e2de245ab2c08bae843
+freeze_record_commit: fb1bbbf020a19ff2482225ab60941f4b24cdd0bb
 
 **Field conventions.** `recorded_sha` identifies the battery-verified tree the
 evidence was produced on (short or full SHA). `freeze_record_commit` is the
