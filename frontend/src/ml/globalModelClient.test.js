@@ -68,3 +68,33 @@ describe('isGlobalModelEnabled', () => {
     expect(isGlobalModelEnabled()).toBe(false);
   });
 });
+
+describe('verifyCatalogSignature', () => {
+  it('verifies a genuine Ed25519 signed catalog and rejects tampered ones', async () => {
+    const { verifyCatalogSignature, canonicalCatalogBytes } = await import('./globalModelClient');
+
+    // Generate real test keypair in WebCrypto
+    const keyPair = await crypto.subtle.generateKey(
+      { name: 'Ed25519' },
+      true,
+      ['sign', 'verify']
+    );
+
+    const catalogObj = validCatalog();
+    delete catalogObj.signature;
+    const canonicalBytes = canonicalCatalogBytes({ ...catalogObj, signature: 'placeholder' });
+    const sigBuffer = await crypto.subtle.sign({ name: 'Ed25519' }, keyPair.privateKey, canonicalBytes);
+    const sigHex = [...new Uint8Array(sigBuffer)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+    const signedCatalog = { ...catalogObj, signature: sigHex };
+
+    // Valid signature passes
+    const result = await verifyCatalogSignature(signedCatalog, keyPair.publicKey);
+    expect(result).toBe(true);
+
+    // Tampered payload fails
+    const tampered = { ...signedCatalog, recorded_sha: '1111111111111' };
+    await expect(verifyCatalogSignature(tampered, keyPair.publicKey)).rejects.toThrow(/verification failed/);
+  });
+});
+

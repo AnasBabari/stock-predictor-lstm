@@ -33,7 +33,60 @@ export function validateCatalog(raw) {
   return raw;
 }
 
-async function sha256Hex(buffer) {
+export function canonicalCatalogBytes(catalog) {
+  const { signature: _sig, ...canonicalObj } = catalog;
+  const sortedKeys = Object.keys(canonicalObj).sort();
+  const sortedObj = {};
+  for (const k of sortedKeys) {
+    sortedObj[k] = canonicalObj[k];
+  }
+  return new TextEncoder().encode(JSON.stringify(sortedObj, null, 2));
+}
+
+export async function verifyCatalogSignature(catalog, publicKey) {
+  validateCatalog(catalog);
+  const canonicalBytes = canonicalCatalogBytes(catalog);
+
+  let sigBytes;
+  if (/^[0-9a-fA-F]+$/.test(catalog.signature) && catalog.signature.length === 128) {
+    sigBytes = new Uint8Array(catalog.signature.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
+  } else {
+    try {
+      sigBytes = Uint8Array.from(atob(catalog.signature), (c) => c.charCodeAt(0));
+    } catch {
+      throw new Error('Invalid signature encoding.');
+    }
+  }
+
+  let cryptoKey;
+  if (publicKey instanceof CryptoKey) {
+    cryptoKey = publicKey;
+  } else if (typeof publicKey === 'string') {
+    const cleanBase64 = publicKey.replace(/-----[^-]+-----|\s+/g, '');
+    const rawKey = Uint8Array.from(atob(cleanBase64), (c) => c.charCodeAt(0));
+    try {
+      cryptoKey = await crypto.subtle.importKey('spki', rawKey, { name: 'Ed25519' }, false, ['verify']);
+    } catch {
+      cryptoKey = await crypto.subtle.importKey('raw', rawKey, { name: 'Ed25519' }, false, ['verify']);
+    }
+  } else if (publicKey instanceof Uint8Array || publicKey instanceof ArrayBuffer) {
+    try {
+      cryptoKey = await crypto.subtle.importKey('raw', publicKey, { name: 'Ed25519' }, false, ['verify']);
+    } catch {
+      cryptoKey = await crypto.subtle.importKey('spki', publicKey, { name: 'Ed25519' }, false, ['verify']);
+    }
+  } else {
+    throw new Error('Invalid public key format.');
+  }
+
+  const isValid = await crypto.subtle.verify({ name: 'Ed25519' }, cryptoKey, sigBytes, canonicalBytes);
+  if (!isValid) {
+    throw new Error('Global catalog signature verification failed.');
+  }
+  return true;
+}
+
+export async function sha256Hex(buffer) {
   const digest = await crypto.subtle.digest('SHA-256', buffer);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -59,13 +112,17 @@ export function isGlobalModelEnabled() {
  * Load the first artifact whose horizons include the requested days.
  * Returns { model, catalog, artifact } or null when disabled/unavailable.
  */
-export async function loadGlobalModel(days, tf, fetchImpl = fetch) {
+export async function loadGlobalModel(days, tf, options = {}) {
+  const { fetchImpl = fetch, publicKey = null } = options;
   if (!isGlobalModelEnabled()) return null;
   let catalog;
   try {
     const response = await fetchImpl(GLOBAL_CATALOG_URL);
     if (!response.ok) return null;
     catalog = validateCatalog(await response.json());
+    if (publicKey) {
+      await verifyCatalogSignature(catalog, publicKey);
+    }
   } catch {
     return null; // fail closed — caller falls back to browser training
   }
