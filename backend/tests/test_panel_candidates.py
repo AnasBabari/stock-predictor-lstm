@@ -74,3 +74,62 @@ def test_prediction_shapes_match_rows() -> None:
     model = RidgeCandidate(alpha=1.0).fit(x[:80], np.zeros(80))
     out = model.predict(x[80:])
     assert out.point.shape == (len(x) - 80,)
+
+
+def test_missing_direction_labels_raises_error_when_direction_task_enabled() -> None:
+    from panel.candidates import CandidateTargets, GlobalRecurrentCandidate
+
+    x, y = make_pooled(rows=20, n_tickers=2)
+    model = GlobalRecurrentCandidate(lookback=20, epochs=1, tasks=("returns", "direction"))
+    # Targets without direction_classes must fail closed
+    targets = CandidateTargets(cumulative_returns=y)
+    with pytest.raises(ValueError, match="requires direction_classes in targets"):
+        model.fit(x, targets)
+
+
+def test_direction_probabilities_sum_to_one_and_quantiles_are_monotonic() -> None:
+    from panel.candidates import CandidateTargets, GlobalRecurrentCandidate
+
+    x, y = make_pooled(rows=20, n_tickers=2)
+    dir_classes = (y > 0.05).astype(int) + (y < -0.05).astype(int) * 0  # 0, 1, 2
+    # Ensure all three classes present
+    dir_classes[0] = 0
+    dir_classes[1] = 1
+    dir_classes[2] = 2
+    targets = CandidateTargets(cumulative_returns=y, direction_classes=dir_classes)
+
+    model = GlobalRecurrentCandidate(lookback=20, epochs=2, tasks=("returns", "direction"), seed=42)
+    model.fit(x, targets)
+    pred = model.predict(x[:10])
+
+    assert pred.direction_probabilities is not None
+    assert pred.direction_probabilities.shape == (10, 3)
+    assert np.isfinite(pred.direction_probabilities).all()
+    np.testing.assert_allclose(pred.direction_probabilities.sum(axis=1), np.ones(10), atol=1e-5)
+
+    assert pred.return_quantiles is not None
+    q10 = pred.return_quantiles["0.1"]
+    q50 = pred.return_quantiles["0.5"]
+    q90 = pred.return_quantiles["0.9"]
+    # Quantiles must be monotonic: q10 <= q50 <= q90
+    assert (q10 <= q50 + 1e-6).all()
+    assert (q50 <= q90 + 1e-6).all()
+
+
+def test_deterministic_seed_produces_identical_predictions() -> None:
+    from panel.candidates import CandidateTargets, GlobalRecurrentCandidate
+
+    x, y = make_pooled(rows=20, n_tickers=2, seed=10)
+    dir_classes = np.ones(len(y), dtype=int)
+    targets = CandidateTargets(cumulative_returns=y, direction_classes=dir_classes)
+
+    m1 = GlobalRecurrentCandidate(lookback=20, epochs=2, seed=77)
+    m1.fit(x, targets)
+    p1 = m1.predict(x)
+
+    m2 = GlobalRecurrentCandidate(lookback=20, epochs=2, seed=77)
+    m2.fit(x, targets)
+    p2 = m2.predict(x)
+
+    np.testing.assert_allclose(p1.return_point, p2.return_point, atol=1e-5)
+    np.testing.assert_allclose(p1.direction_probabilities, p2.direction_probabilities, atol=1e-5)

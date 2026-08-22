@@ -22,22 +22,72 @@ import numpy as np
 
 
 @dataclass(frozen=True)
-class Prediction:
-    point: np.ndarray
-    quantiles: dict[str, np.ndarray] | None = None  # keys '0.1', '0.5', '0.9'
+class CandidateTargets:
+    """Explicit multi-task training targets for global candidates."""
+
+    cumulative_returns: np.ndarray | None = None
+    direction_classes: np.ndarray | None = None  # integer class indices: 0: down, 1: neutral, 2: up
+    realized_variance: np.ndarray | None = None
+    quantile_targets: np.ndarray | None = None
+    horizons: tuple[int, ...] = (1,)
+
+    @classmethod
+    def from_returns(cls, y: np.ndarray, horizons: tuple[int, ...] = (1,)) -> CandidateTargets:
+        return cls(cumulative_returns=np.asarray(y, dtype=float), horizons=horizons)
+
+
+@dataclass(frozen=True)
+class CandidatePrediction:
+    """Explicit multi-task predictions emitted by global candidates."""
+
+    return_point: np.ndarray | None = None
+    return_quantiles: dict[str, np.ndarray] | None = None  # keys '0.1', '0.5', '0.9'
+    direction_probabilities: np.ndarray | None = None  # shape [n, 3], columns [down, neutral, up]
+    variance_forecast: np.ndarray | None = None
+
+    @property
+    def point(self) -> np.ndarray:
+        """Backward compatibility alias for return_point."""
+        if self.return_point is None:
+            raise AttributeError("CandidatePrediction has no return_point forecast.")
+        return self.return_point
+
+    @property
+    def quantiles(self) -> dict[str, np.ndarray] | None:
+        """Backward compatibility alias for return_quantiles."""
+        return self.return_quantiles
+
+
+# Alias for backwards compatibility
+Prediction = CandidatePrediction
 
 
 class Candidate:
     name: str = "candidate"
+    supported_tasks: tuple[str, ...] = ("returns",)
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> Candidate:
+    def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray) -> Candidate:
         raise NotImplementedError
 
-    def predict(self, x: np.ndarray) -> Prediction:
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
         raise NotImplementedError
 
-    def describe(self) -> dict:
-        return {"family": self.name}
+    def describe(self) -> dict[str, Any]:
+        return {
+            "family": self.name,
+            "architecture": getattr(self, "architecture", self.name),
+            "seed": getattr(self, "seed", None),
+            "tasks": self.supported_tasks,
+            "horizons": getattr(self, "horizons", (1,)),
+        }
+
+
+def _ensure_targets(targets: CandidateTargets | np.ndarray) -> CandidateTargets:
+    if isinstance(targets, CandidateTargets):
+        return targets
+    if isinstance(targets, np.ndarray):
+        return CandidateTargets.from_returns(targets)
+    raise TypeError(f"Expected CandidateTargets or np.ndarray, got {type(targets)}")
 
 
 def _flatten(x: np.ndarray) -> np.ndarray:
@@ -53,15 +103,19 @@ class PersistenceCandidate(Candidate):
     """Zero cumulative excess return — the no-edge reference."""
 
     name = "persistence"
+    supported_tasks = ("returns", "direction", "volatility")
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> PersistenceCandidate:
+    def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray) -> PersistenceCandidate:
         return self
 
-    def predict(self, x: np.ndarray) -> Prediction:
-        zeros = np.zeros(len(x))
-        return Prediction(
-            point=zeros,
-            quantiles={"0.1": zeros * -1.645, "0.5": zeros, "0.9": zeros * 1.645},
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
+        zeros = np.zeros(len(x), dtype=float)
+        unif_dir = np.full((len(x), 3), 1.0 / 3.0, dtype=float)
+        return CandidatePrediction(
+            return_point=zeros,
+            return_quantiles={"0.1": zeros, "0.5": zeros, "0.9": zeros},
+            direction_probabilities=unif_dir,
+            variance_forecast=zeros,
         )
 
 
@@ -69,30 +123,42 @@ class RollingMeanCandidate(Candidate):
     """Shrunk trailing mean of normalized targets seen in training."""
 
     name = "rolling_mean_shrunk"
+    supported_tasks = ("returns",)
 
     def __init__(self, shrinkage: float = 0.5):
         self.shrinkage = shrinkage
         self._mean = 0.0
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> RollingMeanCandidate:
-        mean = float(np.mean(y)) if len(y) else 0.0
+    def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray) -> RollingMeanCandidate:
+        tgt = _ensure_targets(targets)
+        if tgt.cumulative_returns is None or len(tgt.cumulative_returns) == 0:
+            self._mean = 0.0
+            return self
+        mean = float(np.mean(tgt.cumulative_returns))
         self._mean = mean * (1 - self.shrinkage)
         return self
 
-    def predict(self, x: np.ndarray) -> Prediction:
-        values = np.full(len(x), self._mean)
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
+        values = np.full(len(x), self._mean, dtype=float)
         spread = float(np.std([self._mean])) or 0.01
-        return Prediction(
-            point=values,
-            quantiles={
+        return CandidatePrediction(
+            return_point=values,
+            return_quantiles={
                 "0.1": values - 1.2816 * spread,
                 "0.5": values,
                 "0.9": values + 1.2816 * spread,
             },
         )
 
-    def describe(self) -> dict:
-        return {"family": self.name, "shrinkage": self.shrinkage}
+    def describe(self) -> dict[str, Any]:
+        return {
+            "family": self.name,
+            "shrinkage": self.shrinkage,
+            "tasks": self.supported_tasks,
+        }
+
+
+# ── Regularised linear / DLinear ────────────────────────────────────────
 
 
 # ── Regularised linear / DLinear ────────────────────────────────────────
@@ -100,66 +166,84 @@ class RollingMeanCandidate(Candidate):
 
 class RidgeCandidate(Candidate):
     name = "ridge_global"
+    supported_tasks = ("returns",)
 
-    def __init__(self, alpha: float = 10.0):
+    def __init__(self, alpha: float = 10.0, seed: int | None = None):
         self.alpha = alpha
+        self.seed = seed
         self._model: Any | None = None
         self._scaler_mean: Any | None = None
         self._scaler_scale: Any | None = None
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> RidgeCandidate:
+    def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray) -> RidgeCandidate:
         from sklearn.linear_model import Ridge
 
+        tgt = _ensure_targets(targets)
+        if tgt.cumulative_returns is None:
+            raise ValueError(f"{self.name} requires cumulative_returns in targets.")
+        y = tgt.cumulative_returns
         flat = _flatten(x)
         self._scaler_mean = flat.mean(axis=0)
         self._scaler_scale = flat.std(axis=0) + 1e-12
         scaled = (flat - self._scaler_mean) / self._scaler_scale
-        self._model = Ridge(alpha=self.alpha).fit(scaled, y)
+        self._model = Ridge(alpha=self.alpha, random_state=self.seed).fit(scaled, y)
         return self
 
-    def predict(self, x: np.ndarray) -> Prediction:
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
         if self._model is None or self._scaler_mean is None or self._scaler_scale is None:
             raise RuntimeError("RidgeCandidate used before fit().")
         flat = (_flatten(x) - self._scaler_mean) / self._scaler_scale
-        return Prediction(point=self._model.predict(flat))
+        point = self._model.predict(flat)
+        return CandidatePrediction(return_point=point)
 
 
 class ElasticNetCandidate(Candidate):
     name = "elastic_net_global"
+    supported_tasks = ("returns",)
 
-    def __init__(self, alpha: float = 0.01, l1_ratio: float = 0.15):
+    def __init__(self, alpha: float = 0.01, l1_ratio: float = 0.15, seed: int | None = None):
         self.alpha = alpha
         self.l1_ratio = l1_ratio
+        self.seed = seed
         self._model: Any | None = None
         self._mean: Any | None = None
         self._scale: Any | None = None
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> ElasticNetCandidate:
+    def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray) -> ElasticNetCandidate:
         from sklearn.linear_model import ElasticNet
 
+        tgt = _ensure_targets(targets)
+        if tgt.cumulative_returns is None:
+            raise ValueError(f"{self.name} requires cumulative_returns in targets.")
+        y = tgt.cumulative_returns
         flat = _flatten(x)
         self._mean = flat.mean(axis=0)
         self._scale = flat.std(axis=0) + 1e-12
         scaled = (flat - self._mean) / self._scale
-        self._model = ElasticNet(alpha=self.alpha, l1_ratio=self.l1_ratio, max_iter=5000)
+        self._model = ElasticNet(
+            alpha=self.alpha, l1_ratio=self.l1_ratio, max_iter=5000, random_state=self.seed
+        )
         self._model.fit(scaled, y)
         return self
 
-    def predict(self, x: np.ndarray) -> Prediction:
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
         if self._model is None or self._mean is None or self._scale is None:
             raise RuntimeError("ElasticNetCandidate used before fit().")
         flat = (_flatten(x) - self._mean) / self._scale
-        return Prediction(point=self._model.predict(flat))
+        point = self._model.predict(flat)
+        return CandidatePrediction(return_point=point)
 
 
 class DLinearGlobalCandidate(Candidate):
     """Decomposition linear model over the shared window (per-feature trend)."""
 
     name = "dlinear_global"
+    supported_tasks = ("returns",)
 
-    def __init__(self, kernel: int = 21, ridge_alpha: float = 5.0):
+    def __init__(self, kernel: int = 21, ridge_alpha: float = 5.0, seed: int | None = None):
         self.kernel = kernel
         self.ridge_alpha = ridge_alpha
+        self.seed = seed
         self._model: Any | None = None
         self._trend_model: Any | None = None
 
@@ -170,21 +254,26 @@ class DLinearGlobalCandidate(Candidate):
         windows = np.lib.stride_tricks.sliding_window_view(padded, k, axis=1)
         return windows.mean(axis=-1)
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> DLinearGlobalCandidate:
+    def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray) -> DLinearGlobalCandidate:
         from sklearn.linear_model import Ridge
 
+        tgt = _ensure_targets(targets)
+        if tgt.cumulative_returns is None:
+            raise ValueError(f"{self.name} requires cumulative_returns in targets.")
+        y = tgt.cumulative_returns
         trend = self._moving_average(x, self.kernel).reshape(len(x), -1)
         seasonal = x.reshape(len(x), -1) - trend
-        self._trend_model = Ridge(alpha=self.ridge_alpha).fit(trend, y)
-        self._model = Ridge(alpha=self.ridge_alpha).fit(seasonal, y)
+        self._trend_model = Ridge(alpha=self.ridge_alpha, random_state=self.seed).fit(trend, y)
+        self._model = Ridge(alpha=self.ridge_alpha, random_state=self.seed).fit(seasonal, y)
         return self
 
-    def predict(self, x: np.ndarray) -> Prediction:
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
         if self._trend_model is None or self._model is None:
             raise RuntimeError("DLinearGlobalCandidate used before fit().")
         trend = self._moving_average(x, self.kernel).reshape(len(x), -1)
         seasonal = x.reshape(len(x), -1) - trend
-        return Prediction(point=self._trend_model.predict(trend) + self._model.predict(seasonal))
+        point = self._trend_model.predict(trend) + self._model.predict(seasonal)
+        return CandidatePrediction(return_point=point)
 
 
 # ── Global recurrent / convolutional candidates (lazy TensorFlow) ────────
@@ -200,6 +289,20 @@ def _require_tf():
             "dependency group."
         ) from exc
     return tf
+
+
+def _set_deterministic_seed(seed: int | None) -> None:
+    if seed is not None:
+        import random
+
+        random.seed(seed)
+        np.random.seed(seed)
+        try:
+            import tensorflow as tf  # type: ignore[import-untyped]
+
+            tf.random.set_seed(seed)
+        except Exception:
+            pass
 
 
 def _pinball_loss(q: float):
@@ -220,6 +323,7 @@ class GlobalRecurrentCandidate(Candidate):
     """
 
     name = "global_lstm"
+    supported_tasks = ("returns", "direction")
 
     def __init__(
         self,
@@ -230,7 +334,8 @@ class GlobalRecurrentCandidate(Candidate):
         lookback: int = 60,
         epochs: int = 12,
         batch_size: int = 64,
-        direction_labels: np.ndarray | None = None,
+        tasks: tuple[str, ...] = ("returns", "direction"),
+        seed: int | None = None,
     ):
         self.architecture = architecture
         self.units = units
@@ -238,8 +343,10 @@ class GlobalRecurrentCandidate(Candidate):
         self.lookback = lookback
         self.epochs = epochs
         self.batch_size = batch_size
-        self.direction_labels = direction_labels
+        self.tasks = tasks
+        self.seed = seed
         self._model: Any | None = None
+        self.diagnostics: dict[str, Any] = {}
 
     def _build(self, n_features: int):
         tf = _require_tf()
@@ -272,17 +379,40 @@ class GlobalRecurrentCandidate(Candidate):
         )
         return model
 
-    def fit(self, x: np.ndarray, y: np.ndarray) -> GlobalRecurrentCandidate:
+    def fit(
+        self, x: np.ndarray, targets: CandidateTargets | np.ndarray
+    ) -> GlobalRecurrentCandidate:
         tf = _require_tf()
+        tgt = _ensure_targets(targets)
+
+        if "returns" in self.tasks and tgt.cumulative_returns is None:
+            raise ValueError(f"{self.name} requires cumulative_returns in targets.")
+        if "direction" in self.tasks and tgt.direction_classes is None:
+            raise ValueError(
+                f"{self.name} requires direction_classes in targets when direction task is enabled; "
+                "implicit neutral substitution is forbidden."
+            )
+
+        _set_deterministic_seed(self.seed)
         self._model = self._build(x.shape[-1])
-        ys_quantile = np.column_stack([y, y, y])
-        if self.direction_labels is not None and len(self.direction_labels) == len(y):
-            ys_direction = tf.one_hot(self.direction_labels.astype(int), 3).numpy()
+
+        y_ret = (
+            tgt.cumulative_returns
+            if tgt.cumulative_returns is not None
+            else np.zeros(len(x), dtype=float)
+        )
+        ys_quantile = np.column_stack([y_ret, y_ret, y_ret])
+
+        if tgt.direction_classes is not None:
+            dir_classes = np.asarray(tgt.direction_classes, dtype=int)
+            if (dir_classes < 0).any() or (dir_classes > 2).any():
+                raise ValueError("direction_classes must contain class indices in {0, 1, 2}.")
+            ys_direction = tf.one_hot(dir_classes, 3).numpy()
         else:
-            neutral = np.zeros((len(y), 3))
-            neutral[:, 1] = 1.0
-            ys_direction = neutral
-        self._model.fit(
+            # If direction is not in tasks, provide dummy one-hot (uniform) for compilation
+            ys_direction = np.full((len(x), 3), 1.0 / 3.0)
+
+        history = self._model.fit(
             x,
             {"quantiles": ys_quantile, "direction": ys_direction},
             epochs=self.epochs,
@@ -290,13 +420,29 @@ class GlobalRecurrentCandidate(Candidate):
             shuffle=False,
             verbose=0,
         )
+        self.diagnostics = {
+            "completed_epochs": len(history.history.get("loss", [])),
+            "final_loss": float(history.history["loss"][-1])
+            if history.history.get("loss")
+            else None,
+            "tasks": self.tasks,
+            "seed": self.seed,
+        }
         return self
 
-    def predict(self, x: np.ndarray) -> Prediction:
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
         if self._model is None:
-            raise RuntimeError("GlobalRecurrentCandidate used before fit().")
-        q, _ = self._model.predict(x, verbose=0)
-        return Prediction(point=q[:, 1], quantiles={"0.1": q[:, 0], "0.5": q[:, 1], "0.9": q[:, 2]})
+            raise RuntimeError(f"{self.name} used before fit().")
+        q, d = self._model.predict(x, verbose=0)
+        # Prevent quantile crossing by monotonic projection
+        sorted_q = np.sort(q, axis=-1)
+        dir_probs = np.clip(d, 0.0, 1.0)
+        dir_probs = dir_probs / np.sum(dir_probs, axis=-1, keepdims=True)
+        return CandidatePrediction(
+            return_point=sorted_q[:, 1],
+            return_quantiles={"0.1": sorted_q[:, 0], "0.5": sorted_q[:, 1], "0.9": sorted_q[:, 2]},
+            direction_probabilities=dir_probs,
+        )
 
 
 class TemporalConvolutionCandidate(GlobalRecurrentCandidate):
@@ -325,21 +471,30 @@ class TemporalConvolutionCandidate(GlobalRecurrentCandidate):
         q_head = layers.Dense(3, name="quantiles")(h)
         d_head = layers.Dense(3, activation="softmax", name="direction")(h)
         model = tf.keras.Model(inp, [q_head, d_head])
-        model.compile(optimizer=tf.keras.optimizers.Adam(1e-3))
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(1e-3),
+            loss={
+                "quantiles": lambda yt, yp: sum(
+                    _pinball_loss(q)(yt[:, i], yp[:, i]) for i, q in enumerate((0.1, 0.5, 0.9))
+                ),
+                "direction": "categorical_crossentropy",
+            },
+            loss_weights={"quantiles": 0.4, "direction": 0.2},
+        )
         return model
 
 
 REGISTRY: dict[str, Callable[[int], Candidate]] = {
     PersistenceCandidate.name: lambda seed: PersistenceCandidate(),
     RollingMeanCandidate.name: lambda seed: RollingMeanCandidate(),
-    RidgeCandidate.name: lambda seed: RidgeCandidate(),
-    ElasticNetCandidate.name: lambda seed: ElasticNetCandidate(),
-    DLinearGlobalCandidate.name: lambda seed: DLinearGlobalCandidate(),
+    RidgeCandidate.name: lambda seed: RidgeCandidate(seed=seed),
+    ElasticNetCandidate.name: lambda seed: ElasticNetCandidate(seed=seed),
+    DLinearGlobalCandidate.name: lambda seed: DLinearGlobalCandidate(seed=seed),
 }
 
 
 def register_neural_candidates(registry: dict[str, Callable[[int], Candidate]]) -> None:
     """Opt-in registration so importing this module never requires TF."""
-    registry["global_lstm"] = lambda seed: GlobalRecurrentCandidate()
-    registry["global_gru"] = lambda seed: GlobalRecurrentCandidate(architecture="gru")
-    registry["global_tcn"] = lambda seed: TemporalConvolutionCandidate()
+    registry["global_lstm"] = lambda seed: GlobalRecurrentCandidate(seed=seed)
+    registry["global_gru"] = lambda seed: GlobalRecurrentCandidate(architecture="gru", seed=seed)
+    registry["global_tcn"] = lambda seed: TemporalConvolutionCandidate(seed=seed)
