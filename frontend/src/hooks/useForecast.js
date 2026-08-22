@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { clearBrowserModelCache, trainBrowserForecast } from '../ml/browserTrainingClient';
 import { createSnapshotClient } from '../ml/snapshotClient';
 import { fetchServerPrediction } from '../ml/serverModelClient';
+import { isGlobalModelEnabled, loadGlobalModel } from '../ml/globalModelClient';
 import { defaultTrainingProfile } from '../ml/trainingProfiles';
 import { safeGet, safeSet } from '../utils/safeStorage';
 
@@ -252,6 +253,73 @@ export function useForecast({ addToast, onNewTickerSearched }) {
       if (serverPrediction) {
         onProgress?.({ stage: 'server_model_loaded', message: 'Loaded server-pretrained model.' });
         return serverPrediction;
+      }
+
+      if (isGlobalModelEnabled()) {
+        try {
+          onProgress?.({ stage: 'checking_global', message: 'Checking verified global models…' });
+          const tf = await import('@tensorflow/tfjs').catch(() => null);
+          if (tf) {
+            const globalResult = await loadGlobalModel(days, tf);
+            if (globalResult) {
+              onProgress?.({ stage: 'global_model_loaded', message: 'Executing certified global model…' });
+              const snapshot = await snapshotClientRef.current.fetchTrainingSnapshot(symbol, signal);
+              const features = snapshot.features;
+              const prices = snapshot.historical_prices;
+              const lastPrice = prices[prices.length - 1];
+              if (features && features.length >= 60 && lastPrice > 0) {
+                const windowFeatures = features.slice(features.length - 60);
+                const inputTensor = tf.tensor3d([windowFeatures], [1, 60, windowFeatures[0].length]);
+                const rawOutput = globalResult.model.predict(inputTensor);
+                const outputArray = Array.isArray(rawOutput) ? await rawOutput[0].data() : await rawOutput.data();
+                inputTensor.dispose();
+                if (Array.isArray(rawOutput)) rawOutput.forEach((t) => t.dispose());
+                else rawOutput.dispose();
+
+                const h = Math.min(days, outputArray.length || days);
+                const predictedPrices = [];
+                const futureDates = snapshot.future_dates.slice(0, h);
+                for (let i = 0; i < h; i += 1) {
+                  const ret = Number(outputArray[i]) || 0;
+                  predictedPrices.push(lastPrice * Math.exp(ret));
+                }
+                const alpha = Number(globalResult.artifact?.alpha ?? 1.0);
+                return {
+                  ticker: symbol,
+                  forecast_days: days,
+                  forecast_type: type,
+                  current_price: lastPrice,
+                  predicted_prices: predictedPrices,
+                  learned_prices: predictedPrices,
+                  persistence_forecast: Array(h).fill(lastPrice),
+                  future_dates: futureDates,
+                  historical_dates: snapshot.dates,
+                  historical_prices: snapshot.historical_prices,
+                  forecast_status: {
+                    state: alpha > 0 ? 'promoted' : 'experimental_no_demonstrated_edge',
+                    decision: alpha > 0 ? 'model' : 'persistence',
+                    alpha,
+                    label: `Certified Global Model (${globalResult.artifact?.name || 'global_v1'})`,
+                  },
+                  metadata: {
+                    model_source: 'global_model',
+                    artifact_name: globalResult.artifact?.name,
+                    catalog_recorded_sha: globalResult.catalog?.recorded_sha,
+                    alpha,
+                    browser_training: false,
+                    engine: {
+                      family: 'global_model',
+                      role: 'global_champion',
+                      baseline_fallback: false,
+                    },
+                  },
+                };
+              }
+            }
+          }
+        } catch {
+          // Global model execution failed -> fail closed to browser training
+        }
       }
 
       if (!BROWSER_TRAINING_ENABLED) {
