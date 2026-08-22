@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from panel.selection import (
     HorizonEvidence,
@@ -112,3 +113,73 @@ def test_dm_detects_systematic_improvement() -> None:
     stat, p = diebold_mariano_hac(cand, base, max_lag=2)
     assert stat < 0
     assert p < 0.05
+
+
+def test_three_folds_cannot_promote() -> None:
+    cand, base = _clean_losses()
+    # Only 3 folds provided (required 5)
+    dec = select_champion(
+        evidence(folds=(0.85, 0.88, 0.90)),
+        validation_learned_loss=cand,
+        validation_baseline_loss=base,
+    )
+    assert dec.status == "experimental_no_demonstrated_edge"
+    assert any("insufficient folds" in r for r in dec.reasons)
+
+
+def test_neural_candidate_requires_sufficient_seeds() -> None:
+    cand, base = _clean_losses()
+    ev = evidence(seeds=[0.90, 0.91])
+    ev.is_neural = True
+    dec = select_champion(
+        ev,
+        validation_learned_loss=cand,
+        validation_baseline_loss=base,
+    )
+    assert dec.status == "experimental_no_demonstrated_edge"
+    assert any("requires at least 3 seeds" in r for r in dec.reasons)
+
+
+def test_statistically_worse_candidate_rejected_even_with_low_p_value() -> None:
+    # Candidate loss is strictly larger than baseline (e.g. 2.0 vs 1.0)
+    base = np.full(100, 1.0)
+    cand = np.full(100, 2.0)
+    dec = select_champion(
+        evidence(rel_mae=0.9, rel_rmse=0.9),  # claimed good relative point metrics
+        validation_learned_loss=cand,
+        validation_baseline_loss=base,
+    )
+    assert dec.status == "experimental_no_demonstrated_edge"
+    assert any("candidate loss not lower than baseline" in r for r in dec.reasons)
+
+
+def test_misaligned_loss_arrays_raises_error() -> None:
+    with pytest.raises(ValueError, match="Misaligned loss arrays"):
+        select_champion(
+            evidence(),
+            validation_learned_loss=np.ones(100),
+            validation_baseline_loss=np.ones(90),
+        )
+
+
+def test_calibration_failure_blocks_promotion() -> None:
+    cand, base = _clean_losses()
+    ev = evidence()
+    ev.calibration_ok = False
+    dec = select_champion(
+        ev,
+        validation_learned_loss=cand,
+        validation_baseline_loss=base,
+    )
+    assert dec.status == "experimental_no_demonstrated_edge"
+    assert any("calibration" in r for r in dec.reasons)
+
+
+def test_bootstrap_ratio_upper_bound_recovers_ground_truth() -> None:
+    from panel.selection import compute_bootstrap_ratio_upper_bound
+
+    # Baseline is mean 1.0, candidate is mean 0.64 (ratio 0.8)
+    cand_sq = np.full(100, 0.64)
+    base_sq = np.full(100, 1.0)
+    upper = compute_bootstrap_ratio_upper_bound(cand_sq, base_sq, resamples=100)
+    assert upper == pytest.approx(0.8, rel=1e-3)
