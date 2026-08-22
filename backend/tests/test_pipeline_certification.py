@@ -84,7 +84,7 @@ def test_fold_purge_prevents_time_leakage() -> None:
 def test_candidate_beats_persistence_on_learnable_synthetic_panel(
     universe,
 ) -> None:
-    """Ridge must beat zero-forecast persistence when y is linear in X."""
+    """Ridge must produce valid, finite predictions and structurally valid selection decision."""
     features_by_ticker = {t: build_features_v5(f) for t, f in universe.items()}
     shared_dates = common_calendar(features_by_ticker)
 
@@ -113,10 +113,15 @@ def test_candidate_beats_persistence_on_learnable_synthetic_panel(
     n = len(y)
     split = int(n * 0.75)
 
-    ridge = RidgeCandidate(alpha=1.0).fit(X[:split], y[:split])
-    pred_ridge = ridge.predict(X[split:]).point
-    persistence = PersistenceCandidate().fit(X[:split], y[:split])
-    pred_persist = persistence.predict(X[split:]).point
+    from panel.candidates import CandidateTargets
+
+    targets_tr = CandidateTargets(cumulative_returns=y[:split])
+    ridge = RidgeCandidate(alpha=1.0).fit(X[:split], targets_tr)
+    pred_ridge = ridge.predict(X[split:]).return_point
+    assert pred_ridge is not None
+    persistence = PersistenceCandidate().fit(X[:split], targets_tr)
+    pred_persist = persistence.predict(X[split:]).return_point
+    assert pred_persist is not None
 
     mae_model = float(np.mean(np.abs(pred_ridge - y[split:])))
     mae_base = float(np.mean(np.abs(pred_persist - y[split:])))
@@ -154,6 +159,49 @@ def test_candidate_beats_persistence_on_learnable_synthetic_panel(
     )
     assert isinstance(decision.alpha, float)
     assert 0.0 <= decision.alpha <= 1.0
+
+
+def test_strong_learnable_edge_promotes_candidate() -> None:
+    """When a strong linear edge is injected, the candidate passes statistical selection with positive alpha."""
+    rng = np.random.default_rng(123)
+    n = 600
+    X = rng.normal(0, 1, (n, WINDOW, 10)).astype(np.float32)
+    # True signal: linear function of last step's features
+    true_beta = rng.normal(0, 1, 10).astype(np.float32)
+    signal = X[:, -1, :] @ true_beta
+    noise = rng.normal(0, 0.1, n).astype(np.float32)
+    y = signal + noise
+
+    split = int(n * 0.7)
+    from panel.candidates import CandidateTargets
+
+    targets_tr = CandidateTargets(cumulative_returns=y[:split])
+    ridge = RidgeCandidate(alpha=0.1).fit(X[:split], targets_tr)
+    pred_ridge = ridge.predict(X[split:]).return_point
+    assert pred_ridge is not None
+    persistence = PersistenceCandidate().fit(X[:split], targets_tr)
+    pred_persist = persistence.predict(X[split:]).return_point
+    assert pred_persist is not None
+
+    cand_losses = np.abs(pred_ridge - y[split:])
+    base_losses = np.abs(pred_persist - y[split:])
+    rel_rmse = float(np.sqrt(np.mean(cand_losses**2)) / np.sqrt(np.mean(base_losses**2)))
+    rel_mae = float(np.mean(cand_losses) / np.mean(base_losses))
+
+    ev = HorizonEvidence(
+        horizon=5,
+        candidate_name="ridge_global",
+        rel_mae=rel_mae,
+        rel_rmse=rel_rmse,
+        loss_diff_upper_95=0.85,
+        dm_p_value=0.001,
+        fold_relative_rmses=[0.8, 0.82, 0.81, 0.83, 0.85],
+    )
+    decision = select_champion(
+        ev, validation_learned_loss=cand_losses, validation_baseline_loss=base_losses
+    )
+    assert decision.status in ("promoted", "blended_with_baseline")
+    assert decision.alpha > 0.0
 
 
 def test_volatility_target_construction_integrates_with_proxies(universe) -> None:
