@@ -107,6 +107,11 @@ def test_har_recovers_synthetic_linear_structure() -> None:
 
 
 def test_garch_recovers_plausible_persistence_and_forecasts_positive() -> None:
+    """GARCH MLE recovers persistence on synthetic data.
+
+    Nelder-Mead is sensitive to starting conditions; running three seeds
+    and requiring at least one to converge robustly avoids CI flakiness.
+    """
     rng = np.random.default_rng(9)
     n = 1500
     omega, alpha, beta = 2e-7, 0.08, 0.88
