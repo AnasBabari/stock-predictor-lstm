@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 
@@ -26,15 +27,138 @@ class PanelFold:
         return self.validation_start - self.train_end
 
 
-def common_calendar(frames: dict[str, pd.DataFrame]) -> pd.DatetimeIndex:
-    """Intersection of every ticker's sessions, sorted, unique."""
+@dataclass(frozen=True)
+class AssetCoverage:
+    ticker: str
+    start_date: pd.Timestamp
+    end_date: pd.Timestamp
+    total_master_sessions: int
+    available_sessions: int
+    coverage_fraction: float
+    missing_session_count: int
+    max_stale_run: int
+    is_admissible: bool
+    exclusion_reasons: list[str]
+
+
+def master_session_calendar(
+    frames: dict[str, pd.DataFrame],
+    *,
+    union: bool = True,
+) -> pd.DatetimeIndex:
+    """Master exchange session grid across the panel.
+
+    When union=True (default), takes the union of all trading dates across tickers,
+    avoiding truncation by recently listed IPOs or sparse assets.
+    """
     if not frames:
         raise ValueError("Panel requires at least one frame.")
-    calendars = [pd.DatetimeIndex(f.index).unique() for f in frames.values()]
-    shared = calendars[0]
-    for cal in calendars[1:]:
-        shared = shared.intersection(cal)
-    return shared.sort_values()
+    calendars = [pd.DatetimeIndex(f.index).unique() for f in frames.values() if len(f) > 0]
+    if not calendars:
+        raise ValueError("All supplied frames are empty.")
+    if union:
+        shared = calendars[0]
+        for cal in calendars[1:]:
+            shared = shared.union(cal)
+    else:
+        shared = calendars[0]
+        for cal in calendars[1:]:
+            shared = shared.intersection(cal)
+    return shared.sort_values().unique()
+
+
+def common_calendar(frames: dict[str, pd.DataFrame]) -> pd.DatetimeIndex:
+    """Intersection of every ticker's sessions, sorted, unique."""
+    return master_session_calendar(frames, union=False)
+
+
+def analyze_asset_coverage(
+    ticker: str,
+    frame: pd.DataFrame,
+    master_cal: pd.DatetimeIndex,
+    *,
+    min_coverage_fraction: float = 0.50,
+    min_sessions: int = 60,
+    max_stale_run_limit: int = 10,
+) -> tuple[pd.Series, AssetCoverage]:
+    """Reindex frame against master_cal and assess per-asset coverage without forward-filling."""
+    if len(frame) == 0:
+        empty_mask = pd.Series(False, index=master_cal, name=ticker)
+        cov = AssetCoverage(
+            ticker=ticker,
+            start_date=pd.NaT,
+            end_date=pd.NaT,
+            total_master_sessions=len(master_cal),
+            available_sessions=0,
+            coverage_fraction=0.0,
+            missing_session_count=len(master_cal),
+            max_stale_run=len(master_cal),
+            is_admissible=False,
+            exclusion_reasons=["empty_frame"],
+        )
+        return empty_mask, cov
+
+    reindexed = frame.reindex(master_cal)  # Do NOT forward fill!
+    close = reindexed["Close"] if "Close" in reindexed.columns else reindexed.iloc[:, 0]
+    close_vals = pd.to_numeric(close, errors="coerce").to_numpy(dtype=float)
+    valid_mask = np.isfinite(close_vals) & (close_vals > 0)
+
+    # Calculate stale price runs (consecutive identical closes)
+    diff = np.diff(close_vals, prepend=np.nan)
+    is_stale = (diff == 0) & valid_mask
+    max_stale = 0
+    current_stale = 0
+    for st in is_stale:
+        if st:
+            current_stale += 1
+            if current_stale > max_stale:
+                max_stale = current_stale
+        else:
+            current_stale = 0
+
+    valid_idx = master_cal[valid_mask]
+    start_date = valid_idx[0] if len(valid_idx) > 0 else pd.NaT
+    end_date = valid_idx[-1] if len(valid_idx) > 0 else pd.NaT
+    avail_count = int(valid_mask.sum())
+    cov_frac = float(avail_count / max(1, len(master_cal)))
+    missing_count = len(master_cal) - avail_count
+
+    reasons: list[str] = []
+    if avail_count < min_sessions:
+        reasons.append(f"available sessions {avail_count} < min {min_sessions}")
+    if cov_frac < min_coverage_fraction:
+        reasons.append(f"coverage fraction {cov_frac:.3f} < min {min_coverage_fraction}")
+    if max_stale > max_stale_run_limit:
+        reasons.append(f"max stale price run {max_stale} > limit {max_stale_run_limit}")
+
+    coverage = AssetCoverage(
+        ticker=ticker,
+        start_date=start_date,
+        end_date=end_date,
+        total_master_sessions=len(master_cal),
+        available_sessions=avail_count,
+        coverage_fraction=cov_frac,
+        missing_session_count=missing_count,
+        max_stale_run=max_stale,
+        is_admissible=(len(reasons) == 0),
+        exclusion_reasons=reasons,
+    )
+    return pd.Series(valid_mask, index=master_cal, name=ticker), coverage
+
+
+def cross_sectional_ranks_causal(
+    values_by_ticker: dict[str, pd.Series],
+    master_cal: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Compute cross-sectional percentile ranks per date using ONLY assets available on that date.
+
+    Never includes future asset availability in a historical cross-sectional calculation.
+    """
+    df = pd.DataFrame(
+        {t: s.reindex(master_cal) for t, s in values_by_ticker.items()}, index=master_cal
+    )
+    # rank pct=True computes rank across axis=1 (columns) ignoring NaNs
+    return df.rank(axis=1, pct=True, method="average")
 
 
 def calendar_folds(

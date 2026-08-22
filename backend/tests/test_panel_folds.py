@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -77,3 +78,61 @@ def test_asset_transfer_validates_fraction_and_size() -> None:
         asset_transfer_split(["A", "B"], holdout_fraction=0.0)
     with pytest.raises(ValueError, match="at least two"):
         asset_transfer_split(["A"], holdout_fraction=0.5)
+
+
+def test_master_session_calendar_union_preserves_full_history() -> None:
+    from panel.folds import analyze_asset_coverage, master_session_calendar
+
+    idx_old = pd.bdate_range("2020-01-02", periods=500)
+    idx_new = pd.bdate_range("2021-06-01", periods=100)  # Recent IPO
+
+    df_old = pd.DataFrame({"Close": 100.0}, index=idx_old)
+    df_new = pd.DataFrame({"Close": 50.0}, index=idx_new)
+
+    master = master_session_calendar({"OLD": df_old, "IPO": df_new}, union=True)
+    # Master calendar spans full 500+ sessions rather than being truncated to 100
+    assert len(master) >= 500
+
+    mask_old, cov_old = analyze_asset_coverage("OLD", df_old, master)
+    mask_new, cov_new = analyze_asset_coverage("IPO", df_new, master)
+
+    assert cov_old.available_sessions == 500
+    assert cov_new.available_sessions == 100
+    # IPO is not available during old sessions
+    assert not mask_new.iloc[0]
+    assert mask_old.iloc[0]
+
+
+def test_missing_rows_are_not_forward_filled() -> None:
+    from panel.folds import analyze_asset_coverage
+
+    idx = pd.bdate_range("2023-01-02", periods=50)
+    # Asset with a gap in the middle
+    idx_gapped = idx[:20].union(idx[30:])
+    df_gapped = pd.DataFrame({"Close": 100.0}, index=idx_gapped)
+
+    master = idx
+    mask, cov = analyze_asset_coverage("GAP", df_gapped, master)
+
+    assert cov.missing_session_count == 10
+    # The 10 missing dates must strictly be False in the mask
+    assert not mask.iloc[20:30].any()
+
+
+def test_cross_sectional_ranks_are_strictly_contemporaneous() -> None:
+    from panel.folds import cross_sectional_ranks_causal, master_session_calendar
+
+    dates = pd.bdate_range("2023-01-02", periods=10)
+    s1 = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0], index=dates)
+    # s2 starts on day 5 (index 4)
+    s2 = pd.Series([10.0, 20.0, 30.0, 40.0, 50.0, 60.0], index=dates[4:])
+
+    master = master_session_calendar({"S1": pd.DataFrame(s1), "S2": pd.DataFrame(s2)})
+    ranks = cross_sectional_ranks_causal({"S1": s1, "S2": s2}, master)
+
+    # For dates 0..3, only S1 is available, so its percentile rank is 1.0, S2 is NaN
+    assert np.isnan(ranks["S2"].iloc[0])
+    assert ranks["S1"].iloc[0] == 1.0
+
+    # On date 4, S2 is 10.0 and S1 is 5.0 -> S2 rank > S1 rank
+    assert ranks["S2"].iloc[4] > ranks["S1"].iloc[4]
