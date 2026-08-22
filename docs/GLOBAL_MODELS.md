@@ -48,23 +48,26 @@ and redistribution restrictions first.
 listed US equities) is survivor-biased. Results must be labelled as such
 until a point-in-time universe containing delisted securities is available.
 
-Run: `PANEL_LICENSE_ACKNOWLEDGED=true python scripts/build_panel.py --tickers-file universe.txt`
+Run pipeline:
+`python scripts/run_global_pipeline.py --run-dir runs/prod`
+or build panel snapshot:
+`python scripts/build_panel.py --run-dir runs/panel_snapshot --n-tickers 50 --n-sessions 500`
 
-## Feature schema v5 (slice 5)
+To evaluate and certify against the locked holdout:
+`python scripts/run_global_pipeline.py --open-locked-certification-holdout --run-dir runs/certified`
 
-Schema v5 retains causal v4 groups and adds:
+## Feature schema (slice 5 & 9)
 
-- **Return structure**: overnight return, open-to-close return, high-low
-  log range, downside semivariance, realized skew/kurtosis, drawdown from
-  rolling peak, positive/negative streaks.
-- **Volatility structure**: close-to-close vol at 5/10/20/60, EWMA variance
-  (λ=0.94), vol-of-vol, trailing-252 volatility percentile.
-- **Liquidity**: log dollar volume, volume surprise, Amihud illiquidity,
-  zero-return fraction, stale-price flag.
-- **Regime labels**: trend/volatility/liquidity terciles from a trailing
-  126-session window only.
-- **Cross-sectional ranks**: same-date percentile ranks for momentum, vol,
-  and liquidity columns — no future universe membership.
+Features are split into two explicit contracts:
+
+### Deployable Schema (`deployable_v5` — 26 features)
+Single-ticker stationary indicators reproducible causal at browser/backend inference:
+- **Return structure (13)**: Return_1D, Return_5D, Return_10D, Return_20D, Overnight_Return, OpenToClose_Return, HL_Range_Log, Downside_Semivar_20, Realized_Skew_20, Realized_Kurt_20, Drawdown_From_Peak, Up_Streak, Down_Streak.
+- **Volatility structure (7)**: Vol_C2C_5, Vol_C2C_10, Vol_C2C_20, Vol_C2C_60, EWMA_Var (λ=0.94), Vol_Of_Vol_20, Vol_Percentile_252.
+- **Liquidity (6)**: Log_Dollar_Volume, Dollar_Volume_Median_20, Volume_Surprise, Amihud_Illiquidity_20, Zero_Return_Fraction_20, Stale_Price_Flag.
+
+### Research Schema (`research_v5`)
+Extends `deployable_v5` with research-only regime labels (trend/vol/liquidity terciles) and causal same-date cross-sectional ranks (`*_XSRank`). Cross-sectional features require the whole panel and are excluded from single-ticker deployable champion models.
 
 Every feature is causal: row t uses only information from rows ≤ t.
 Ablation testing is required before promoting any feature group.
