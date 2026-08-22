@@ -100,3 +100,62 @@ def test_predictions_beat_constant_baseline_on_qlike(trained) -> None:
 def test_predict_fails_closed_before_fit() -> None:
     with pytest.raises(RuntimeError, match="before fit"):
         GarchLstmCandidate(horizon=5, train_end=500).predict(garch_returns(200))
+
+
+def test_training_origins_strictly_precede_train_end() -> None:
+    returns = garch_returns(600)
+    train_end = 400
+    horizon = 5
+    candidate = GarchLstmCandidate(horizon=horizon, train_end=train_end, epochs=2)
+    candidate.fit_returns(returns)
+    assert candidate.diagnostics["max_target_index"] < train_end
+    assert candidate.diagnostics["last_training_origin"] + horizon < train_end
+
+
+def test_changing_evaluation_returns_does_not_affect_training_weights_or_diagnostics() -> None:
+    returns1 = garch_returns(600, seed=42)
+    returns2 = returns1.copy()
+    train_end = 400
+    returns2[train_end:] = 999.0  # Massive perturbation after train_end
+
+    candidate1 = GarchLstmCandidate(horizon=5, train_end=train_end, epochs=3, seed=123)
+    candidate1.fit_returns(returns1)
+
+    candidate2 = GarchLstmCandidate(horizon=5, train_end=train_end, epochs=3, seed=123)
+    candidate2.fit_returns(returns2)
+
+    assert candidate1.diagnostics == candidate2.diagnostics
+    for w1, w2 in zip(
+        candidate1._model.get_weights(), candidate2._model.get_weights(), strict=True
+    ):
+        np.testing.assert_array_almost_equal(w1, w2)
+
+
+def test_econometric_parameters_fit_only_on_train_slice() -> None:
+    returns = garch_returns(500, seed=7)
+    train_end = 350
+    candidate = GarchLstmCandidate(horizon=5, train_end=train_end, epochs=1)
+    candidate.fit_returns(returns)
+    expected_ecom = fit_econometric(returns[:train_end], gjr=True)
+    assert candidate.econometric is not None
+    assert candidate.econometric["params"] == expected_ecom["params"]
+    np.testing.assert_array_almost_equal(candidate.econometric["coef"], expected_ecom["coef"])
+
+
+def test_evaluation_inference_is_causal() -> None:
+    candidate = GarchLstmCandidate(horizon=5, train_end=300, epochs=2, seed=99)
+    candidate.fit_returns(garch_returns(400))
+    full_returns = garch_returns(500, seed=101)
+    # Predict on full series vs prefix
+    pred_full = candidate.predict(full_returns)
+    pred_prefix = candidate.predict(full_returns[:350])
+    # The predictions up to index len(pred_prefix) must match because features are causal
+    np.testing.assert_array_almost_equal(pred_full[: len(pred_prefix)], pred_prefix)
+
+
+def test_insufficient_training_history_fails_closed() -> None:
+    with pytest.raises(ValueError, match="Insufficient training history"):
+        GarchLstmCandidate(horizon=5, train_end=15, lookback=20).fit_returns(garch_returns(100))
+
+    with pytest.raises(ValueError, match="Invalid train_end"):
+        GarchLstmCandidate(horizon=5, train_end=-5).fit_returns(garch_returns(100))

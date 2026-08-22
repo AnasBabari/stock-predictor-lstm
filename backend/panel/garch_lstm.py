@@ -178,6 +178,7 @@ class GarchLstmCandidate:
         epochs: int = 8,
         batch_size: int = 64,
         gjr: bool = True,
+        seed: int | None = None,
     ):
         self.horizon = horizon
         self.train_end = train_end
@@ -185,34 +186,63 @@ class GarchLstmCandidate:
         self.epochs = epochs
         self.batch_size = batch_size
         self.gjr = gjr
+        self.seed = seed
         self._model: Any | None = None
         self.history: Any | None = None
         self.econometric: dict | None = None
+        self.diagnostics: dict[str, Any] = {}
 
     def fit_returns(self, returns: np.ndarray) -> GarchLstmCandidate:
         r = np.asarray(returns, dtype=float)
-        # Parameters are FROZEN at train time and reused at predict time;
+        if self.train_end <= 0 or self.train_end > len(r):
+            raise ValueError(f"Invalid train_end {self.train_end} for returns of length {len(r)}")
+
+        r_train = r[: self.train_end]
+        if len(r_train) < self.lookback + self.horizon:
+            raise ValueError(
+                f"Insufficient training history: train_end={self.train_end}, "
+                f"lookback={self.lookback}, horizon={self.horizon}"
+            )
+
+        if self.seed is not None:
+            import random
+
+            tf = _require_tf()
+            random.seed(self.seed)
+            np.random.seed(self.seed)
+            tf.random.set_seed(self.seed)
+
+        # Parameters are FROZEN at train time on r[:train_end] and reused at predict time;
         # refitting on the evaluation series would shift the feature
         # distribution between training and serving.
-        self.econometric = fit_econometric(r[: self.train_end], gjr=self.gjr)
+        self.econometric = fit_econometric(r_train, gjr=self.gjr)
         dataset = build_dataset(
-            r,
+            r_train,
             horizon=self.horizon,
             econometric=self.econometric,
             lookback=self.lookback,
         )
-        rv_daily = r**2
         origins = np.asarray(dataset["origins"], dtype=int)
+        if len(origins) == 0:
+            raise ValueError(
+                f"No valid training origins available before train_end={self.train_end}."
+            )
+
+        # Strict boundary invariant: target window must not reach or cross train_end
+        if not (origins + self.horizon < self.train_end).all():
+            raise RuntimeError("Evaluation leakage: training target reaches or exceeds train_end.")
+
+        rv_daily = r_train**2
         # Daily-variance matrix [n, horizon]: rv at t+1..t+h per origin.
         labels = np.column_stack([rv_daily[origins + 1 + step] for step in range(self.horizon)])
         finite_rows = np.isfinite(labels).all(axis=1) & (labels > 0).all(axis=1)
         windows = dataset["windows"][finite_rows]
         features = dataset["features"][finite_rows]
-        # Labels stay on the RAW variance scale — qlike_loss_logparam
-        # interprets y_true as raw realized variance and applies exp() to the
-        # model's log-space output itself. Taking np.log here too would feed
-        # floored garbage into the ratio term.
         labels = labels[finite_rows]
+        valid_origins = origins[finite_rows]
+
+        if len(labels) == 0:
+            raise ValueError("No finite positive training targets for GARCH-LSTM.")
 
         mean_daily_log_var = float(np.mean(np.log(labels)))
         model: Any = build_garch_lstm(
@@ -231,6 +261,16 @@ class GarchLstmCandidate:
             verbose=0,
         )
         self._model = model
+        self.diagnostics = {
+            "train_end": self.train_end,
+            "lookback": self.lookback,
+            "horizon": self.horizon,
+            "n_training_origins": len(valid_origins),
+            "first_training_origin": int(valid_origins[0]),
+            "last_training_origin": int(valid_origins[-1]),
+            "max_target_index": int(valid_origins[-1] + self.horizon),
+            "econometric_params": self.econometric["params"],
+        }
         return self
 
     def predict(self, returns: np.ndarray) -> np.ndarray:
