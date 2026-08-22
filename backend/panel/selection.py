@@ -147,9 +147,8 @@ def select_champion(
         reasons.append(f"worst fold {worst_fold:.3f} exceeded ceiling {MAX_FOLD_RELATIVE_RMSE}")
 
     if len(evidence.seed_relative_rmses) >= 2:
-        spread = (max(evidence.seed_relative_rmses) - min(evidence.seed_relative_rmses)) / max(
-            1e-12, np.mean(evidence.seed_relative_rmses)
-        )
+        seed_arr = np.asarray(evidence.seed_relative_rmses, dtype=float)
+        spread = float((seed_arr.max() - seed_arr.min()) / max(1e-12, float(np.mean(seed_arr))))
         if spread > SEED_DISPERSION_MAX:
             reasons.append(f"seed dispersion {spread:.3f} exceeded {SEED_DISPERSION_MAX}")
 
