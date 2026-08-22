@@ -57,44 +57,8 @@ function HorizonTable({ metrics }) {
   );
 }
 
-function DirectionHorizonTable({ metrics }) {
-  const perHorizon = metrics.direction_per_horizon;
-  if (!Array.isArray(perHorizon) || !perHorizon.length) return null;
-  return (
-    <div className="metrics-horizons">
-      <div className="metric-divider"></div>
-      <MetricItem
-        iconTitle="Direction evidence is reported per forecast day and pooled. The baseline is the pre-evaluation majority class."
-        label="Direction by forecast day"
-        value="Per-day accuracy"
-      />
-      <table className="horizon-metrics-table">
-        <thead>
-          <tr>
-            <th>Day</th>
-            <th>Accuracy</th>
-            <th>Balanced</th>
-            <th>Brier</th>
-            <th>Baseline</th>
-            <th>Rows</th>
-          </tr>
-        </thead>
-        <tbody>
-          {perHorizon.map((entry) => (
-            <tr key={entry.horizon}>
-              <td>{entry.horizon}d</td>
-              <td className="mono">{entry.accuracy == null ? '—' : `${(entry.accuracy * 100).toFixed(0)}%`}</td>
-              <td className="mono">{entry.balanced_accuracy == null ? '—' : `${(entry.balanced_accuracy * 100).toFixed(0)}%`}</td>
-              <td className="mono">{entry.brier_score?.toFixed(4)}</td>
-              <td className="mono">{entry.naive_baseline == null ? '—' : `${(entry.naive_baseline * 100).toFixed(0)}%`}</td>
-              <td className="mono">{entry.rows}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+// DirectionHorizonTable removed with direction target v2: the three-way
+// cumulative contract has no per-day decomposition.
 
 function PromotionNotice({ stockData, forecastType }) {
   const engine = stockData.metadata?.engine;
@@ -160,13 +124,13 @@ export default function MetricsCard({ stockData, forecastType }) {
     [`${unitLabel} R²`, m.r2?.toFixed(4), `R² on cumulative log returns — higher is better`],
   ];
   const trendMetrics = [
-    ['Accuracy', m.accuracy == null ? null : `${(m.accuracy * 100).toFixed(1)}%`, 'Fraction of correct direction labels'],
-    ['Balanced acc.', m.balanced_accuracy == null ? null : `${(m.balanced_accuracy * 100).toFixed(1)}%`, 'Average recall across up and down classes'],
-    ['Precision', m.precision?.toFixed(4), 'Positive-class precision'],
-    ['Recall', m.recall?.toFixed(4), 'Positive-class recall'],
-    ['F1', m.f1?.toFixed(4), 'Harmonic mean of precision and recall'],
-    ['Brier score', m.brier_score?.toFixed(4), 'Probability calibration error — lower is better'],
-    ['Majority baseline', m.naive_baseline == null ? null : `${(m.naive_baseline * 100).toFixed(1)}%`, 'Accuracy from always selecting the majority class'],
+    ['Macro balanced acc.', m.macro_balanced_accuracy == null ? null : `${(m.macro_balanced_accuracy * 100).toFixed(1)}%`, 'Mean per-class recall across down/neutral/up'],
+    ['Macro F1', m.macro_f1?.toFixed(4), 'Harmonic mean of per-class precision/recall'],
+    ['Multiclass Brier', m.multiclass_brier?.toFixed(4), 'Probability error across all three classes — lower is better'],
+    ['Brier skill', m.brier_skill == null ? '—' : `${(m.brier_skill * 100).toFixed(1)}%`, 'Improvement over the pre-evaluation base-rate baseline (above 0 beats it)'],
+    ['Log loss', m.log_loss?.toFixed(4), 'Penalised probability score — lower is better'],
+    ['Calibration ECE', m.expected_calibration_error?.toFixed(4), 'Expected calibration error on max-class confidence — lower is better'],
+    ['Base-rate baseline', Array.isArray(m.baseline_probabilities) ? m.baseline_probabilities.map((p) => `${(p * 100).toFixed(0)}%`).join(' / ') : null, 'Pre-evaluation down / neutral / up frequencies'],
   ];
   const metrics = (isTrend ? trendMetrics : priceMetrics).map(([label, value, title]) => ({
     label, value: value ?? '—', title,
@@ -176,7 +140,7 @@ export default function MetricsCard({ stockData, forecastType }) {
     : engine?.family ? engine.family.replaceAll('_', ' ') : 'Prepared model';
 
   const localStatus = engine?.baseline_fallback
-    ? isTrend ? 'Baseline fallback — majority class displayed' : 'Baseline fallback — persistence displayed'
+    ? isTrend ? 'Baseline fallback — pre-evaluation base rate displayed' : 'Baseline fallback — persistence displayed'
     : stockData.metadata?.server_pretrained || engine?.role === 'server_pretrained'
       ? 'Trained offline on server'
       : engine?.role === 'learned_candidate'
@@ -205,7 +169,6 @@ export default function MetricsCard({ stockData, forecastType }) {
         </React.Fragment>
       ))}
       {!isTrend && <HorizonTable metrics={m} />}
-      {isTrend && <DirectionHorizonTable metrics={m} />}
       <PromotedNotice stockData={stockData} />
       <PromotionNotice stockData={stockData} forecastType={forecastType} />
       {underperforms && (

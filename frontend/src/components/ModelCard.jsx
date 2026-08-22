@@ -18,10 +18,10 @@ function row(label, value) {
  * Lightweight methodology card. Facts only, derived from the prediction
  * payload; no marketing language. Renders nothing without a payload.
  */
-export default function ModelCard({ data }) {
-  const metadata = data?.metadata;
+export default function ModelCard({ data: stockData }) {
+  const metadata = stockData?.metadata;
   if (!metadata) return null;
-  const isTrend = Array.isArray(data.directions);
+  const isTrend = stockData.direction != null;
   const engineRole = metadata.engine?.role || 'unknown';
   const snapshot = metadata.data_snapshot || {};
   const qualityStatus = snapshot.quality?.status;
@@ -34,7 +34,7 @@ export default function ModelCard({ data }) {
       <div className="model-card-body">
         {row('Target', TARGET_DESCRIPTION[isTrend ? 'trend' : 'price'])}
         {row('Lookback window', `${metadata.window_size ?? '?'} sessions`)}
-        {row('Forecast horizon', `${data.forecast_days ?? '?'} day(s)`)}
+        {row('Forecast horizon', `${stockData.forecast_days ?? '?'} day(s)`)}
         {row(
           'Model',
           `${metadata.engine?.family ?? 'baseline'} (${engineRole})`

@@ -2,6 +2,7 @@ import * as tf from '@tensorflow/tfjs';
 import '@tensorflow/tfjs-backend-webgpu';
 
 import {
+  DIRECTION_CLASSES,
   ARCHITECTURE_VERSION,
   MODEL_VERSION,
   OUTPUT_WIDTH,
@@ -18,10 +19,8 @@ import {
   validateSnapshot,
 } from './preprocessing';
 import {
-  classificationMetrics,
-  directionMajority,
+  classificationMetricsV3,
   generateResearchSplits,
-  horizonClassificationMetrics,
   horizonRegressionMetrics,
   median,
   regressionMetrics,
@@ -193,9 +192,35 @@ async function predictRows(model, inputs) {
   }
 }
 
-async function fitSelectionModel({ id, model, inputs, targets, fitSequenceEndExclusive, validationStart, validationEnd = inputs.length, profile, startedAt, stage, fold }) {
+// Direction v2 targets are integer class indices; the softmax head trains on
+// one-hot rows. Price targets stay raw numeric matrices.
+function toTensorTargets(targets, forecastType) {
+  if (forecastType === 'direction' || forecastType === 'trend') {
+    return tf.tensor2d(targets.map((cls) => oneHotDirection(cls)));
+  }
+  return tf.tensor2d(targets);
+}
+
+function oneHotDirection(classIndex) {
+  const row = [0, 0, 0];
+  const idx = Math.max(0, Math.min(2, Math.round(Number(classIndex) || 0)));
+  row[idx] = 1;
+  return row;
+}
+// Three-class base rate from pre-evaluation labels with Laplace smoothing
+// (alpha=1) so an empty class never yields a hard zero probability.
+function classBaseRates(classIndices) {
+  const counts = [0, 0, 0];
+  for (const value of classIndices) {
+    const idx = Math.max(0, Math.min(2, Math.round(Number(value) || 0)));
+    counts[idx] += 1;
+  }
+  const total = counts.reduce((s, v) => s + v, 0) + 3;
+  return counts.map((c) => (c + 1) / total);
+}
+async function fitSelectionModel({ id, model, inputs, targets, forecastType, fitSequenceEndExclusive, validationStart, validationEnd = inputs.length, profile, startedAt, stage, fold }) {
   const xs = tf.tensor3d(inputs);
-  const ys = tf.tensor2d(targets);
+  const ys = toTensorTargets(targets, forecastType);
   const trainXs = xs.slice([0, 0, 0], [fitSequenceEndExclusive, -1, -1]);
   const trainYs = ys.slice([0, 0], [fitSequenceEndExclusive, -1]);
   const validationXs = xs.slice([validationStart, 0, 0], [validationEnd - validationStart, -1, -1]);
@@ -245,9 +270,9 @@ async function fitSelectionModel({ id, model, inputs, targets, fitSequenceEndExc
   }
 }
 
-async function fitFinalModel({ id, model, prepared, epochs, profile, startedAt }) {
+async function fitFinalModel({ id, model, prepared, forecastType, epochs, profile, startedAt }) {
   const xs = tf.tensor3d(prepared.inputs);
-  const ys = tf.tensor2d(prepared.targets);
+  const ys = toTensorTargets(prepared.targets, forecastType);
   try {
     await model.fit(xs, ys, {
       epochs,
@@ -300,17 +325,20 @@ function combineMetrics(returnMetrics, dollarMetrics, horizon, metricSource) {
   };
 }
 
-async function evaluateRange(model, prepared, forecastType, start, end, metricSource, horizon, majorityLabel) {
+async function evaluateRange(model, prepared, forecastType, start, end, metricSource, horizon, baselineProbabilities) {
   const predictedRows = await predictRows(model, prepared.inputs.slice(start, end));
   if (forecastType === 'direction') {
+    // v2: predictedRows are softmax distributions [down, neutral, up] and
+    // prepared.targets are integer class labels — one row per origin.
     const actual = prepared.targets.slice(start, end);
-    const evidence = horizonClassificationMetrics(actual, predictedRows, metricSource, majorityLabel);
-    return {
-      actual,
-      predicted: predictedRows,
-      metrics: evidence.pooled,
-      direction_per_horizon: evidence.per_horizon,
-    };
+    const metrics = classificationMetricsV3({
+      actualClasses: actual,
+      probabilityRows: predictedRows,
+      baselineProbabilities,
+      classes: prepared.direction_classes,
+      metricSource,
+    });
+    return { actual, predicted: predictedRows, metrics };
   }
   const actualRows = prepared.targets.slice(start, end);
   const origins = prepared.origins.slice(start, end);
@@ -332,21 +360,28 @@ async function evaluateRange(model, prepared, forecastType, start, end, metricSo
   };
 }
 
-function aggregateFoldMetrics(records, forecastType, horizon, majorityLabel) {
+function aggregateFoldMetrics(records, forecastType, horizon) {
   if (forecastType === 'direction') {
+    // Pool untouched out-of-fold class labels and probability rows, and pool
+    // each fold's pre-evaluation base rate by its validation size.
     const actuals = records.flatMap((record) => record.actual);
     const predicteds = records.flatMap((record) => record.predicted);
-    const evidence = horizonClassificationMetrics(
-      actuals,
-      predicteds,
-      'browser_walk_forward_out_of_fold',
-      majorityLabel,
+    const weights = records.map(
+      (record) => (Array.isArray(record.actual) ? record.actual.length : 0)
     );
-    return {
-      metrics: evidence.pooled,
-      dollarMetrics: null,
-      direction_per_horizon: evidence.per_horizon,
-    };
+    const baselineProbabilities = [0, 1, 2].map((c) => {
+      const weightSum = weights.reduce((s, w, i) => s + records[i].baseline_probabilities[c] * (w + 3), 0);
+      const total = weights.reduce((s, w) => s + w + 3, 0);
+      return weightSum / total;
+    });
+    const metrics = classificationMetricsV3({
+      actualClasses: actuals,
+      probabilityRows: predicteds,
+      baselineProbabilities,
+      classes: ['down', 'neutral', 'up'],
+      metricSource: 'browser_walk_forward_out_of_fold',
+    });
+    return { metrics, dollarMetrics: null };
   }
   const returnMetrics = horizonRegressionMetrics(
     records.flatMap((record) => record.actual),
@@ -383,6 +418,7 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
       model: selectionModel,
       inputs: selection.inputs,
       targets: selection.targets,
+      forecastType,
       fitSequenceEndExclusive,
       validationStart: innerValidationStart,
       validationEnd: selection.trainCount,
@@ -391,11 +427,11 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
       stage: 'training',
     });
     selectedEpochs = fit.bestEpoch;
-    // The majority baseline must not peek into the evaluation window: it is
-    // derived from labels strictly prior to the holdout split.
-    const majority = directionMajority(selection.targets.slice(0, selection.split));
+    // The three-class base rate must not peek into the evaluation window: it
+    // is derived from labels strictly prior to the holdout split.
+    const baselineProbabilities = classBaseRates(selection.targets.slice(0, selection.split));
     const evaluated = await evaluateRange(
-      selectionModel, selection, forecastType, selection.split, selection.inputs.length, profile.metricSource, horizon, majority.label,
+      selectionModel, selection, forecastType, selection.split, selection.inputs.length, profile.metricSource, horizon, baselineProbabilities,
     );
     metrics = evaluated.metrics ?? combineMetrics(
       evaluated.returnMetrics,
@@ -421,7 +457,7 @@ async function trainHoldout(id, snapshot, forecastType, profile, startedAt, hori
   const finalPrepared = prepare(snapshot, forecastType, sampleCount, horizon);
   const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
   try {
-    await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, epochs: selectedEpochs, profile, startedAt });
+    await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, forecastType, epochs: selectedEpochs, profile, startedAt });
   } catch (error) {
     finalModel.dispose();
     throw error;
@@ -477,8 +513,8 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
     checkCancelled(id);
     const foldPrepared = prepare(snapshot, forecastType, split.trainEnd, horizon);
     // Every validation fold defines its own untouched evaluation window; the
-    // majority class is taken from labels strictly before that window.
-    const foldMajority = directionMajority(foldPrepared.targets.slice(0, split.validationStart));
+    // three-class base rate comes from labels strictly before that window.
+    const foldBaseRates = classBaseRates(foldPrepared.targets.slice(0, split.validationStart));
     const innerValidationSize = Math.max(1, Math.floor(split.trainEnd * 0.1));
     const innerValidationStart = split.trainEnd - innerValidationSize;
     const fitSequenceEndExclusive = innerValidationStart - (horizon - 1);
@@ -490,6 +526,7 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         model: foldModel,
         inputs: foldPrepared.inputs.slice(0, split.trainEnd),
         targets: foldPrepared.targets.slice(0, split.trainEnd),
+        forecastType,
         fitSequenceEndExclusive,
         validationStart: innerValidationStart,
         validationEnd: split.trainEnd,
@@ -506,13 +543,13 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         split.validationEnd,
         profile.metricSource,
         horizon,
-        foldMajority.label,
+        foldBaseRates,
       );
       records.push({
         fold: split.fold,
         best_epoch: fit.bestEpoch,
         metrics: evaluated.metrics,
-        majority: foldMajority,
+        baseline_probabilities: foldBaseRates,
         actual: evaluated.actual,
         predicted: evaluated.predicted,
         ...(evaluated.persistence ? { persistence: evaluated.persistence } : {}),
@@ -543,18 +580,14 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
     records,
     forecastType,
     horizon,
-    records[records.length - 1]?.majority?.label,
   );
   const metrics = aggregated.metrics;
   const dollarMetrics = aggregated.dollarMetrics;
-  if (aggregated.direction_per_horizon?.length) {
-    metrics.direction_per_horizon = aggregated.direction_per_horizon;
-  }
   const selectedEpochs = Math.max(1, median(records.map((record) => record.best_epoch)));
   const finalPrepared = prepare(snapshot, forecastType, sampleCount, horizon);
   const finalModel = buildBrowserModel(forecastType, snapshot.feature_names.length, profile, horizon);
   try {
-    await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, epochs: selectedEpochs, profile, startedAt });
+    await fitFinalModel({ id, model: finalModel, prepared: finalPrepared, forecastType, epochs: selectedEpochs, profile, startedAt });
   } catch (error) {
     finalModel.dispose();
     throw error;
@@ -576,9 +609,9 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         best_epoch: record.best_epoch,
         relative_rmse: record.fold_relative_rmse,
         ...(record.metrics ? {
-          balanced_accuracy: record.metrics.balanced_accuracy,
-          brier_score: record.metrics.brier_score,
-          naive_baseline: record.metrics.naive_baseline,
+          macro_balanced_accuracy: record.metrics.macro_balanced_accuracy,
+          multiclass_brier: record.metrics.multiclass_brier,
+          brier_skill: record.metrics.brier_skill,
         } : {}),
       })),
     },
@@ -744,13 +777,17 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
     }
   }
 
-  try {
-    checkCancelled(id);
-    const predicted = await predictRows(model, [latestInput(prepared)]);
-    const predictedReturns = predicted[0].slice(0, requestedDays);
-    if (!predictedReturns.every((value) => Number.isFinite(Number(value)))) {
-      throw new Error('The local model produced invalid forecast values.');
-    }
+    try {
+      checkCancelled(id);
+      const predicted = await predictRows(model, [latestInput(prepared)]);
+      // Direction v2 emits ONE softmax row [down, neutral, up]; price emits a
+      // per-step vector sliced to the requested days.
+      const predictedReturns = forecastType === 'direction'
+        ? predicted[0]
+        : predicted[0].slice(0, requestedDays);
+      if (!predictedReturns.every((value) => Number.isFinite(Number(value)))) {
+        throw new Error('The local model produced invalid forecast values.');
+      }
     const common = {
       forecastType,
       metrics,
@@ -775,42 +812,58 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
     };
     if (forecastType === 'direction') {
       const clamp = (value) => Math.min(1, Math.max(0, Number(value)));
-      const rawProbabilities = predictedReturns.map(clamp);
-      if (!rawProbabilities.every((value) => Number.isFinite(value))) {
-        throw new Error('The local direction model produced non-finite probability values.');
+      const modelRow = predictedReturns.map(clamp);
+      if (modelRow.length !== 3 || !modelRow.every((value) => Number.isFinite(value))) {
+        throw new Error('The local direction model produced invalid class probabilities.');
       }
+      const rowSum = modelRow.reduce((s, v) => s + v, 0);
+      const modelProbabilities = DIRECTION_CLASSES.reduce((obj, name, idx) => {
+        obj[name] = rowSum > 0 ? modelRow[idx] / rowSum : 0;
+        return obj;
+      }, {});
       promotion = evaluatePromotion({
         forecastType,
         metrics,
         evaluation,
         horizon,
       });
-      // The fallback baseline must use pre-evaluation prevalence only: the
-      // majority class and its positive-class rate are derived from labels
-      // strictly before the evaluation window (the holdout split, or the
-      // final research fold's validation start, which spans the union of
-      // every fold's pre-evaluation labels).
+      // Baseline = pre-evaluation three-class base rate only (holdout split,
+      // or the research fold's validation start spanning every fold's
+      // pre-evaluation labels).
       const sampleCount = sequencePartition(snapshot, forecastType, horizon).sampleCount;
       const preEvaluationEnd = profile.id === 'research'
         ? sampleCount - profile.validationHorizon
         : Math.floor(sampleCount * TRAIN_SPLIT);
-      const majority = directionMajority(prepared.targets.slice(0, preEvaluationEnd));
+      const baselineProbabilities = classBaseRates(prepared.targets.slice(0, preEvaluationEnd));
       forecastStatus = describePromotionState(promotion);
       const baselineFallback = !promotion.promoted;
-      const modelDirections = rawProbabilities.map((value) => (value >= 0.5 ? 'Up' : 'Down'));
-      const baselineDirections = rawProbabilities.map(() => (majority.label === 1 ? 'Up' : 'Down'));
-      const baselineProbabilities = rawProbabilities.map(() => majority.rate);
+
+      // Argmax labels from either an array or a named probability object.
+      const argmaxLabel = (probs) => {
+        const values = Array.isArray(probs)
+          ? probs
+          : DIRECTION_CLASSES.map((key) => Number(probs[key]) || 0);
+        let bestIdx = 0;
+        values.forEach((p, i) => { if (p > values[bestIdx]) bestIdx = i; });
+        return ['Down', 'Neutral', 'Up'][bestIdx];
+      };
+      const decisionProbs = baselineFallback ? baselineProbabilities : modelProbabilities;
+      const decisionDirection = argmaxLabel(decisionProbs);
+
       return {
         ...common,
-        // Decision path (what the UI presents as the forecast).
-        directions: baselineFallback ? baselineDirections : modelDirections,
-        probabilities: baselineFallback ? baselineProbabilities : rawProbabilities,
-        // Raw paths, always preserved so a safety fallback can never be
-        // mistaken for a learned output.
-        model_directions: modelDirections,
-        model_probabilities: rawProbabilities,
-        persistence_directions: baselineDirections,
-        persistence_probabilities: baselineProbabilities,
+        // v2 response contract: one three-way call per origin.
+        direction_horizon_days: requestedDays,
+        direction: baselineFallback ? argmaxLabel(baselineProbabilities) : argmaxLabel(modelProbabilities),
+        direction_probabilities: Object.fromEntries(
+          Object.entries(decisionProbs).map(([k, v]) => [k, Number(v.toFixed(6))])
+        ),
+        model_direction_probabilities: Object.fromEntries(
+          Object.entries(modelProbabilities).map(([k, v]) => [k, Number(v.toFixed(6))])
+        ),
+        persistence_direction_probabilities: Object.fromEntries(
+          Object.entries(baselineProbabilities).map(([k, v]) => [k, Number(v.toFixed(6))])
+        ),
         baselineFallback,
         forecast_status: forecastStatus,
         promotion,
@@ -893,7 +946,7 @@ async function processMessage(event) {
       emit(id, { type: 'complete', result: { cleared: true } });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not clear browser models.';
-      emit(id, { type: 'error', message, category: categorizeWorkerError(error) });
+      emit(id, { type: 'error', message, category: categorizeWorkerError(error), debug: String(error && error.stack || error).slice(0, 800) });
     }
     return;
   }
@@ -903,7 +956,7 @@ async function processMessage(event) {
     emit(id, { type: 'complete', result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Browser training failed.';
-    emit(id, { type: 'error', message, category: categorizeWorkerError(error) });
+    emit(id, { type: 'error', message, category: categorizeWorkerError(error), debug: String(error && error.stack || error).slice(0, 800) });
   } finally {
     cancelledIds.delete(id);
   }

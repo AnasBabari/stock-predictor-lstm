@@ -137,13 +137,13 @@ test('future feature rows cannot move research fold scaler state', () => {
   }
 });
 
-test('direction matrix shift consumes the same feature rows as price', () => {
+test('direction v2 shares the exact fitting bounds of price', () => {
   const snapshot = makeSnapshot(300);
   const price = preparePriceData(snapshot, undefined, 7);
   const direction = prepareDirectionData(snapshot, undefined, 7);
-  expect(direction.scalerRawEndExclusive + 1).toBe(price.scalerRawEndExclusive);
-  expect(price.scalerRawEndExclusive - price.fitSequenceEndExclusive)
-    .toBe(direction.scalerRawEndExclusive - direction.fitSequenceEndExclusive);
+  expect(direction.scalerRawStart).toBe(price.scalerRawStart);
+  expect(direction.scalerRawEndExclusive).toBe(price.scalerRawEndExclusive);
+  expect(direction.fitSequenceEndExclusive).toBe(price.fitSequenceEndExclusive);
 });
 
 test('corrupting every fitting raw row moves the scaler, corrupted excluded rows cannot', () => {

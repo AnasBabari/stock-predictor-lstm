@@ -50,30 +50,30 @@ test('classification metrics honor an externally supplied majority label', () =>
   expect(preEvaluation.accuracy).toBe(inSet.accuracy);
 });
 
-test('majority is derived from pre-evaluation labels, never the evaluation window', () => {
+test('three-way base rate is derived from pre-evaluation labels, never the evaluation window', () => {
   const baseline = prepareDirectionData(makeSnapshot(baselinePrices()), undefined, 7);
   const split = baseline.split;
 
-  // Corrupt prices strictly after the last price any pre-split training
-  // sequence can reference (sequence rows shift by WINDOW_SIZE inside target
-  // construction), so only evaluation-window labels can change.
+  // Corrupt prices strictly after the last close any pre-split training
+  // label can reference (target close = WINDOW + j - 1 + h for j < split),
+  // so only evaluation-window labels can move.
   const flipped = baselinePrices();
   const flipFrom = WINDOW_SIZE + split + 7;
   for (let row = flipFrom; row < ROW_COUNT; row += 1) flipped[row] *= 1.5;
   const corrupted = prepareDirectionData(makeSnapshot(flipped), undefined, 7);
 
-  const majorityBefore = directionMajority(baseline.targets.slice(0, split));
-  const majorityAfter = directionMajority(corrupted.targets.slice(0, split));
-  expect(majorityAfter).toEqual(majorityBefore);
+  const before = classCounts(baseline.targets.slice(0, split));
+  const after = classCounts(corrupted.targets.slice(0, split));
+  expect(after).toEqual(before);
 
-  // The corrupted labels themselves do move: the mutation is real and the
-  // invariance above is not vacuous.
-  const labelsBefore = flatten2D(baseline.targets.slice(split));
-  const labelsAfter = flatten2D(corrupted.targets.slice(split));
-  expect(labelsBefore.length).toBe(labelsAfter.length);
-  expect(labelsBefore.every((value, index) => value === labelsAfter[index])).toBe(false);
+  // The mutation is real: evaluation-side label distribution moves.
+  expect(classCounts(baseline.targets.slice(split))).not.toEqual(
+    classCounts(corrupted.targets.slice(split))
+  );
 });
 
-function flatten2D(rows) {
-  return rows.flatMap((row) => row.map((value) => Number(value) > 0.5 ? 1 : 0));
+function classCounts(classIndices) {
+  const counts = [0, 0, 0];
+  for (const value of classIndices) counts[value] += 1;
+  return counts;
 }

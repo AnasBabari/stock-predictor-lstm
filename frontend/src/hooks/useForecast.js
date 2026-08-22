@@ -97,7 +97,8 @@ export function assertForecastIdentity(data, ticker, days, type) {
   const hasExpectedPayload =
     type === FORECAST_TYPES.PRICE
       ? data.predicted_prices?.length === Number(days)
-      : data.directions?.length === Number(days) && data.probabilities?.length === Number(days);
+      : data.direction_probabilities != null &&
+        Number(data.direction_horizon_days) === Number(days);
   if (!hasExpectedPayload || data.future_dates?.length !== Number(days)) {
     throw new Error('The forecast response is incomplete for the selected forecast type.');
   }
@@ -148,12 +149,12 @@ export function browserResponse(snapshot, result, forecastType, days) {
       ticker: snapshot.ticker,
       forecast_days: days,
       future_dates: snapshot.future_dates.slice(0, days),
-      directions: result.directions,
-      probabilities: result.probabilities,
-      model_directions: result.model_directions,
-      model_probabilities: result.model_probabilities,
-      persistence_directions: result.persistence_directions,
-      persistence_probabilities: result.persistence_probabilities,
+      // Direction v2 contract: one three-way call per origin.
+      direction_horizon_days: result.direction_horizon_days,
+      direction: result.direction,
+      direction_probabilities: result.direction_probabilities,
+      model_direction_probabilities: result.model_direction_probabilities,
+      persistence_direction_probabilities: result.persistence_direction_probabilities,
       forecast_status: result.forecast_status,
       attention_weights: [],
       metrics: result.metrics,

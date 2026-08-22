@@ -90,6 +90,128 @@ export function classificationMetrics(actual, predicted, metricSource, majorityL
   };
 }
 
+// ── Direction v2: multiclass metrics over [down, neutral, up] ───────────
+// Spec §6.4: Brier skill vs the matched pre-evaluation baseline, macro
+// balanced accuracy, macro F1, log loss, and calibration (ECE on max prob).
+
+function oneHot(classIndex, classCount) {
+  return Array.from({ length: classCount }, (_, i) => (i === classIndex ? 1 : 0));
+}
+
+export function classificationMetricsV3({
+  actualClasses,
+  probabilityRows,
+  baselineProbabilities,
+  classes,
+  metricSource,
+}) {
+  const classCount = classes.length;
+  const n = actualClasses.length;
+  if (!n || probabilityRows.length !== n) {
+    return { metric_source: metricSource, metric_scope: 'insufficient_data', evaluation_origins: 0, evaluation_labels: 0, evaluation_rows: 0 };
+  }
+  const rows = probabilityRows.map((row) => {
+    const clipped = row.map((p) => Math.min(1, Math.max(0, Number(p))));
+    const total = clipped.reduce((s, v) => s + v, 0);
+    return total > 0 ? clipped.map((v) => v / total) : oneHot(1, classCount); // degenerate → neutral
+  });
+  const base = baselineProbabilities.map((p) => Math.min(1, Math.max(0, Number(p))));
+  const baseSum = base.reduce((s, v) => s + v, 0);
+  const baseline = baseSum > 0 ? base.map((v) => v / baseSum) : oneHot(1, classCount);
+
+  // Multiclass Brier = mean over origins of Σ_c (p_c − y_c)².
+  let brier = 0;
+  let brierBase = 0;
+  let logLoss = 0;
+  let correct = 0;
+  const confusion = Array.from({ length: classCount }, () => Array(classCount).fill(0));
+  rows.forEach((row, i) => {
+    const truth = oneHot(actualClasses[i], classCount);
+    row.forEach((p, c) => {
+      brier += (p - truth[c]) ** 2;
+      brierBase += (baseline[c] - truth[c]) ** 2;
+    });
+    logLoss += -Math.log(Math.max(row[actualClasses[i]], 1e-12));
+    const argmax = row.indexOf(Math.max(...row));
+    confusion[actualClasses[i]][argmax] += 1;
+    if (argmax === actualClasses[i]) correct += 1;
+  });
+  brier /= n;
+  brierBase /= n;
+
+  // Macro balanced accuracy = mean per-class recall (classes present in y).
+  const perClassRecall = [];
+  for (let c = 0; c < classCount; c += 1) {
+    const support = confusion[c].reduce((s, v) => s + v, 0);
+    if (support > 0) perClassRecall.push(confusion[c][c] / support);
+  }
+  const macroBalancedAccuracy = perClassRecall.length
+    ? perClassRecall.reduce((s, v) => s + v, 0) / perClassRecall.length
+    : 0;
+
+  // Macro F1.
+  const f1s = [];
+  for (let c = 0; c < classCount; c += 1) {
+    let tp = 0; let fp = 0; let fn = 0;
+    rows.forEach((row, i) => {
+      const predC = row.indexOf(Math.max(...row));
+      if (predC === c && actualClasses[i] === c) tp += 1;
+      else if (predC === c) fp += 1;
+      else if (actualClasses[i] === c) fn += 1;
+    });
+    const denom = 2 * tp + fp + fn;
+    if (denom > 0) f1s.push((2 * tp) / denom);
+  }
+  const macroF1 = f1s.length ? f1s.reduce((s, v) => s + v, 0) / f1s.length : 0;
+
+  // ECE: 10 equal-width bins on max predicted probability.
+  const eceBins = Array.from({ length: 10 }, () => ({ confidence: 0, correct: 0, count: 0 }));
+  rows.forEach((row, i) => {
+    const confidence = Math.max(...row);
+    const bin = Math.min(9, Math.floor(confidence * 10));
+    eceBins[bin].confidence += confidence;
+    eceBins[bin].correct += row.indexOf(confidence) === actualClasses[i] ? 1 : 0;
+    eceBins[bin].count += 1;
+  });
+  const totalBins = eceBins.reduce((s, b) => s + b.count, 0);
+  const expectedCalibrationError = totalBins
+    ? eceBins.reduce((s, b) => (b.count ? s + (b.count / totalBins) * Math.abs(b.correct / b.count - b.confidence / b.count) : s), 0)
+    : 0;
+
+  // Baseline argmax label distribution (for disclosure).
+  const baselineArgmax = baselineProbabilitiesFromCounts(baseline);
+
+  return {
+    metric_source: metricSource,
+    metric_scope: metricSource === 'browser_walk_forward_out_of_fold'
+      ? 'untouched_expanding_walk_forward_folds'
+      : 'untouched_post_purge_holdout',
+    direction_classes: [...classes],
+    accuracy: correct / n,
+    macro_balanced_accuracy: macroBalancedAccuracy,
+    macro_f1: macroF1,
+    multiclass_brier: brier,
+    baseline_multiclass_brier: brierBase,
+    brier_skill: brierBase > 0 ? 1 - brier / brierBase : null,
+    log_loss: logLoss / n,
+    expected_calibration_error: expectedCalibrationError,
+    baseline_probabilities: [...baseline],
+    baseline_argmax_label: baselineArgmax,
+    evaluation_origins: n,
+    evaluation_labels: n,
+    evaluation_rows: n,
+  };
+}
+
+function baselineProbabilitiesFromCounts(baselineVector) {
+  const idx = baselineVector.indexOf(Math.max(...baselineVector));
+  return ['down', 'neutral', 'up'][idx] || 'neutral';
+}
+
+// Direction evidence per horizon is no longer meaningful under the v2
+// contract (one three-way call per origin, not per-day signs). Use
+// classificationMetricsV3.
+
 export function directionalAccuracy(actualReturns, predictedReturns) {
   const actual = flatten(actualReturns);
   const predicted = flatten(predictedReturns);
@@ -101,31 +223,9 @@ export function directionalAccuracy(actualReturns, predictedReturns) {
   return agreement / pairs.length;
 }
 
-// Direction evidence split by forecast day: each matrix column is one horizon
-// step ahead, reported with the same pooled/pre-evaluation majority label.
-export function horizonClassificationMetrics(actualRows, predictedRows, metricSource, majorityLabel) {
-  const steps = Math.max(1, actualRows?.[0]?.length || 1);
-  const perHorizon = Array.from({ length: steps }, (_, step) => {
-    const actual = actualRows.map((row) => [row[step]]);
-    const predicted = predictedRows.map((row) => [row[step]]);
-    const metrics = classificationMetrics(actual, predicted, metricSource, majorityLabel);
-    return {
-      horizon: step + 1,
-      rows: actual.length,
-      accuracy: metrics.accuracy,
-      balanced_accuracy: metrics.balanced_accuracy,
-      precision: metrics.precision,
-      recall: metrics.recall,
-      f1: metrics.f1,
-      brier_score: metrics.brier_score,
-      naive_baseline: metrics.naive_baseline,
-    };
-  });
-  return {
-    pooled: classificationMetrics(actualRows, predictedRows, metricSource, majorityLabel),
-    per_horizon: perHorizon,
-  };
-}
+// horizonClassificationMetrics was removed with direction target v2 — the
+// three-way cumulative contract has no per-day decomposition. Use
+// classificationMetricsV3.
 
 export function horizonRegressionMetrics(actualRows, predictedRows, persistenceRows, horizon, metricSource) {
   const pooled = regressionMetrics(

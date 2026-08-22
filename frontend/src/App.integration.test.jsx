@@ -12,7 +12,7 @@ vi.mock('./ml/browserTrainingClient', () => ({
     browserTrainingState.signal = signal;
     onProgress?.({ stage: 'training', message: 'Training epoch 4 of 12…' });
     const result = forecastType === 'trend'
-      ? { directions: Array.from({ length: days }, () => 'Up'), probabilities: Array.from({ length: days }, () => 0.65), metrics: { metric_source: 'browser_purged_holdout', accuracy: 0.6 }, cacheStatus: 'stored', backend: 'cpu', executionMode: 'browser_trained' }
+      ? { direction_horizon_days: days, direction: 'Up', direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 }, model_direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 }, persistence_direction_probabilities: { down: 0.2, neutral: 0.6, up: 0.2 }, forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Promoted' }, promotion: { promoted: true }, metrics: { metric_source: 'browser_purged_holdout', macro_balanced_accuracy: 0.6 }, cacheStatus: 'stored', backend: 'cpu', executionMode: 'browser_trained' }
       : { predictedPrices: Array.from({ length: days }, (_, index) => 405 + index), metrics: { metric_source: 'browser_purged_holdout', rmse: 1.2, mae: 0.8 }, cacheStatus: 'stored', backend: 'cpu', executionMode: 'browser_trained' };
     return new Promise((resolve, reject) => {
       browserTrainingState.reject = reject;
@@ -87,14 +87,15 @@ const priceResponse = {
 const trendResponse = {
   ticker: 'TSLA',
   forecast_days: 7,
+  direction_horizon_days: 7,
+  direction: 'Up',
+  direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 },
   future_dates: Array.from({ length: 7 }, (_, index) => `2026-07-${24 + index}`),
-  directions: ['Up', 'Down', 'Up', 'Up', 'Down', 'Up', 'Down'],
-  probabilities: [0.65, 0.42, 0.7, 0.6, 0.4, 0.8, 0.3],
   attention_weights: [
     { index: 0, date: '2026-07-18', weight: 0.2 },
     { index: 1, date: '2026-07-21', weight: 0.8 },
   ],
-  metrics: { precision: 0.7, recall: 0.6, f1: 0.65, naive_baseline: 0.5 },
+  metrics: { macro_balanced_accuracy: 0.7, macro_f1: 0.66, multiclass_brier: 0.4, log_loss: 0.9 },
   sentiment: { score: 0.1, status: 'ok', provider: 'test', method: 'mock' },
 };
 

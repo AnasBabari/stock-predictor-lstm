@@ -89,27 +89,31 @@ describe('browserResponse contract — price', () => {
   });
 });
 
-describe('browserResponse contract — direction', () => {
-  it('exposes model vs persistence trios plus the decision arrays', () => {
+describe('browserResponse contract — direction v2', () => {
+  it('exposes the three-way decision plus model and base-rate distributions', () => {
     const response = browserResponse(
       snapshot,
       {
-        directions: ['Down', 'Down'],           // decision = majority when not promoted
-        probabilities: [0.4, 0.4],
-        model_directions: ['Up', 'Up'],
-        model_probabilities: [0.7, 0.8],
-        persistence_directions: ['Down', 'Down'],
-        persistence_probabilities: [0.35, 0.35],
+        direction_horizon_days: 7,
+        direction: 'Down',                       // argmax of the baseline distribution
+        direction_probabilities: { down: 0.4, neutral: 0.25, up: 0.35 },
+        model_direction_probabilities: { down: 0.1, neutral: 0.2, up: 0.7 },
+        persistence_direction_probabilities: { down: 0.5, neutral: 0.3, up: 0.2 },
         baselineFallback: true,
         forecast_status: { state: 'experimental_no_demonstrated_edge', decision: 'persistence', alpha: 0, label: 'z' },
         metrics: {},
       },
       FORECAST_TYPES.TREND,
-      2
+      7
     );
-    expect(response.directions).toEqual(['Down', 'Down']);
-    expect(response.model_directions).toEqual(['Up', 'Up']);
-    expect(response.persistence_probabilities).toEqual([0.35, 0.35]);
+    expect(response.direction_horizon_days).toBe(7);
+    expect(response.direction).toBe('Down');
+    expect(response.direction_probabilities).toEqual({ down: 0.4, neutral: 0.25, up: 0.35 });
+    expect(response.model_direction_probabilities.up).toBe(0.7);
+    expect(response.persistence_direction_probabilities.down).toBe(0.5);
     expect(response.forecast_status.decision).toBe('persistence');
+    // Legacy per-day arrays must not exist under the v2 contract.
+    expect(response.directions).toBeUndefined();
+    expect(response.probabilities).toBeUndefined();
   });
 });

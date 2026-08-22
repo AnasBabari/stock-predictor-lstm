@@ -45,16 +45,25 @@ describe('directionThreshold', () => {
 });
 
 describe('trailingSigma20', () => {
-  it('is causal: perturbing the origin close and beyond cannot change σ', () => {
+  it('includes the return ending at the origin: perturbing the ORIGIN close changes sigma', () => {
     const prices = makePrices(120, () => 0.001);
     const before = trailingSigma20(prices, 80);
-    const perturbed = [...prices];
-    for (let i = 80; i < perturbed.length; i += 1) perturbed[i] *= 3;
-    expect(trailingSigma20(perturbed, 80)).toBe(before);
+    const perturbedAtOrigin = [...prices];
+    perturbedAtOrigin[80] *= 1.05;
+    expect(trailingSigma20(perturbedAtOrigin, 80)).not.toBe(before);
   });
 
-  it('returns 0 without enough history', () => {
-    expect(trailingSigma20([100, 101], 2)).toBe(0);
+  it('is causal: perturbing rows strictly after the origin cannot change sigma', () => {
+    const prices = makePrices(120, () => 0.001);
+    const before = trailingSigma20(prices, 80);
+    const perturbedAfter = [...prices];
+    for (let i = 81; i < perturbedAfter.length; i += 1) perturbedAfter[i] *= 3;
+    expect(trailingSigma20(perturbedAfter, 80)).toBe(before);
+  });
+
+  it('returns 0 without enough history (needs 21 closes for 20 returns)', () => {
+    expect(trailingSigma20([100, 101], 1)).toBe(0);
+    expect(trailingSigma20(makePrices(21, () => 0.001), 20)).toBeGreaterThan(0);
   });
 });
 

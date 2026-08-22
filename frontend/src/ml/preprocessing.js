@@ -8,6 +8,9 @@ export const TARGET_MODE = 'cumulative_log_return_v1';
 // Version-gated separately from TARGET_MODE so adopting it invalidates only
 // cached direction artifacts.
 export const DIRECTION_TARGET_VERSION = 'cumulative_three_way_v2';
+// Canonical class order for the v2 softmax head and every probability vector.
+export const DIRECTION_CLASSES = Object.freeze(['down', 'neutral', 'up']);
+export const DIRECTION_CLASS_INDEX = Object.freeze({ DOWN: 0, NEUTRAL: 1, UP: 2 });
 export const WINDOW_SIZE = 60;
 export const OUTPUT_WIDTH = 30;
 export const HORIZONS = [1, 3, 5, 7, 14, 30];
@@ -190,13 +193,13 @@ export function inverseRobust(value, scaler, column) {
 // types different temporal train/holdout eras for ~20% of snapshot lengths.
 export function sequencePartition(snapshot, forecastType, horizon = OUTPUT_WIDTH) {
   const h = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(horizon) || OUTPUT_WIDTH)));
-  const priceRowCount = snapshot.features.length;
-  const priceSampleCount = priceRowCount - WINDOW_SIZE - h + 1;
-  if (priceSampleCount <= 0) throw new Error('Not enough rows for browser training.');
-  const isDirection = forecastType === 'direction';
-  const rowCount = isDirection ? priceRowCount - 1 : priceRowCount;
+  const rowCount = snapshot.features.length;
   const sampleCount = rowCount - WINDOW_SIZE - h + 1;
-  const split = Math.floor(priceSampleCount * TRAIN_SPLIT) - (isDirection ? 1 : 0);
+  if (sampleCount <= 0) throw new Error('Not enough rows for browser training.');
+  // Direction target contract v2 consumes the SAME origin grid as price
+  // (origin = last row of the lookback window, no shifted matrix), so both
+  // forecast types share identical partitions by construction.
+  const split = Math.floor(sampleCount * TRAIN_SPLIT);
   const trainCount = split - h + 1;
   if (trainCount < 1 || split >= sampleCount) throw new Error('Training split is too small.');
   return { sampleCount, split, trainCount, horizon: h };
@@ -223,11 +226,13 @@ export function preparePriceData(snapshot, fitSequenceEndExclusive, horizon = OU
 }
 
 export function prepareDirectionData(snapshot, fitSequenceEndExclusive, horizon = OUTPUT_WIDTH) {
+  // Direction contract v2 (DIRECTION_TARGET_VERSION): one three-way
+  // cumulative-horizon label per sequence origin, classes ordered
+  // [down, neutral, up] to match the softmax head.
   const partition = sequencePartition(snapshot, 'direction', horizon);
   const { sampleCount, split, trainCount, horizon: h } = partition;
-  const rawRows = snapshot.features.slice(1).map((row) => row.map(Number));
+  const rawRows = snapshot.features.map((row) => row.map(Number));
   const prices = snapshot.historical_prices.map(Number);
-  const returns = prices.slice(1).map((price, index) => Math.log(price / prices[index]));
   const bounds = fittingScalerBounds(0, fitSequenceEndExclusive ?? trainCount);
   if (!bounds.hasFittingSequences) throw new Error('No fitting sequences are available for scaler bounds.');
   const scaler = fitRobustScaler(rawRows, bounds.scalerRawEndExclusive);
@@ -236,9 +241,23 @@ export function prepareDirectionData(snapshot, fitSequenceEndExclusive, horizon 
   const targets = [];
   for (let index = WINDOW_SIZE; index < WINDOW_SIZE + sampleCount; index += 1) {
     inputs.push(scaled.slice(index - WINDOW_SIZE, index));
-    targets.push(returns.slice(index, index + h).map((value) => (value > 0 ? 1 : 0)));
+    // Origin close = last row of this window; target close = h sessions later.
+    const base = prices[index - 1];
+    const future = prices[index - 1 + h];
+    const sigma20 = trailingSigma20(prices, index - 1);
+    const tau = directionThreshold({ sigma20, horizon: h, price: base });
+    if (!(base > 0 && future > 0)) throw new Error('Direction targets require positive closes.');
+    const cumulativeReturn = Math.log(future / base);
+    targets.push(
+      cumulativeReturn > tau ? DIRECTION_CLASS_INDEX.UP
+        : cumulativeReturn < -tau ? DIRECTION_CLASS_INDEX.DOWN
+          : DIRECTION_CLASS_INDEX.NEUTRAL
+    );
   }
-  return { inputs, targets, scaler, split, trainCount, scaled, horizon: h, ...bounds };
+  return {
+    inputs, targets, scaler, split, trainCount, scaled, horizon: h,
+    direction_classes: DIRECTION_CLASSES, ...bounds,
+  };
 }
 
 export function featureSignature(featureNames) {
@@ -285,10 +304,12 @@ export function latestInput(prepared) {
 // helper consumes it without signature change.
 
 export function trailingSigma20(prices, originIndex) {
-  const endExclusive = Math.max(0, Number(originIndex)); // returns up to origin-1 vs origin-2 … causal
-  const windowStart = Math.max(1, endExclusive - 20);
+  // The origin close is KNOWN at forecast time, so sigma includes the return
+  // ending AT the origin (prices[t]/prices[t-1]) and excludes only t+1 onward.
+  const endInclusive = Math.max(0, Number(originIndex));
+  const windowStart = Math.max(1, endInclusive - 19);
   const returns = [];
-  for (let i = windowStart; i < endExclusive; i += 1) {
+  for (let i = windowStart; i <= endInclusive; i += 1) {
     const prev = Number(prices[i - 1]);
     const cur = Number(prices[i]);
     if (prev > 0 && cur > 0 && Number.isFinite(prev) && Number.isFinite(cur)) {

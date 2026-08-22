@@ -184,15 +184,18 @@ test('last included raw row changes the scaler, first excluded row cannot', () =
   expect(unchanged.scaler.iqr[0]).toBe(prepared.scaler.iqr[0]);
 });
 
-test('direction scaler uses shifted matrix rows within the same sequence bounds', () => {
+test('direction scaler consumes unshifted rows under the v2 shared origin grid', () => {
   const snapshot = makeSnapshot(200);
   const direction = prepareDirectionData(snapshot, undefined, 7);
   expect(direction.scalerRawEndExclusive).toBe(direction.trainCount - 1 + WINDOW_SIZE);
   const rawRows = snapshot.features
-    .slice(1, direction.scalerRawEndExclusive + 1)
+    .slice(0, direction.scalerRawEndExclusive)
     .map((row) => row.map((value) => Number(value)));
   const expected = fitRobustScaler(rawRows);
   expect(direction.scaler.median).toEqual(expected.median);
+  // Parity with the price coordinate system.
+  const price = preparePriceData(snapshot, undefined, 7);
+  expect(direction.scalerRawEndExclusive).toBe(price.scalerRawEndExclusive);
 });
 
 test('supports an explicit fitting end (research fold) in both coordinates', () => {
@@ -208,14 +211,14 @@ test('supports an explicit fitting end (research fold) in both coordinates', () 
 test('reports partition counts in the actual sequence coordinates', () => {
   const price = sequencePartition(makeSnapshot(300), 'price', 7);
   const direction = sequencePartition(makeSnapshot(300), 'direction', 7);
-  expect(direction.sampleCount).toBe(price.sampleCount - 1);
-  expect(direction.trainCount).toBe(price.trainCount - 1);
+  expect(direction.sampleCount).toBe(price.sampleCount);
+  expect(direction.trainCount).toBe(price.trainCount);
+  expect(direction.split).toBe(price.split);
 });
 
-test('direction boundary is exactly one row after the price boundary for every length and horizon', () => {
-  // Property sweep: independent flooring used to make the direction split
-  // equal the price split whenever priceSampleCount was not a multiple of 5,
-  // giving the two forecast types different temporal train/holdout eras.
+test('direction partitions are identical to price under the v2 shared origin grid', () => {
+  // Direction contract v2 consumes the same origin grid (no shifted matrix),
+  // so both forecast types share identical splits — one temporal era each.
   const horizons = [1, 3, 7, 14, 30];
   let checked = 0;
   for (let rowCount = WINDOW_SIZE + OUTPUT_WIDTH + 1; rowCount <= 800; rowCount += 1) {
@@ -225,31 +228,17 @@ test('direction boundary is exactly one row after the price boundary for every l
       let direction = null;
       try {
         price = sequencePartition(snapshot, 'price', horizon);
-      } catch {
-        /* below minimal size */
-      }
-      try {
         direction = sequencePartition(snapshot, 'direction', horizon);
       } catch {
-        /* below minimal size */
-      }
-      if (!price) {
-        // Price is the larger coordinate system; if it cannot be built,
-        // direction never can.
-        expect(direction).toBeNull();
+        // Identical grids => identical feasibility: either both construct or
+        // both reject the same minimal-data combination.
+        expect(() => sequencePartition(snapshot, 'price', horizon)).toThrow();
+        expect(() => sequencePartition(snapshot, 'direction', horizon)).toThrow();
         continue;
       }
-      if (!direction) {
-        // The only legitimate asymmetry: direction needs one extra sequence,
-        // so it rejects exactly when price sits on its own minimal boundary
-        // (split_price === horizon, i.e. a single training sequence).
-        expect(price.trainCount).toBe(1);
-        continue;
-      }
-      expect(direction.split).toBe(price.split - 1);
-      expect(direction.trainCount).toBe(price.trainCount - 1);
-      expect(direction.sampleCount).toBe(price.sampleCount - 1);
-      // Purge arithmetic stays intact within each coordinate system.
+      expect(direction.split).toBe(price.split);
+      expect(direction.trainCount).toBe(price.trainCount);
+      expect(direction.sampleCount).toBe(price.sampleCount);
       expect(price.trainCount).toBe(price.split - horizon + 1);
       expect(direction.trainCount).toBe(direction.split - horizon + 1);
       checked += 1;
@@ -281,11 +270,18 @@ test('includes horizon and target mode in the cache identity', () => {
   expect(modelKey(snapshot, 'price')).not.toBe(modelKey(snapshot, 'direction'));
 });
 
-test('aligns direction returns to the shifted 60-day feature windows', () => {
+test('direction v2 targets are one integer class per origin in canonical order', () => {
   const prepared = prepareDirectionData(makeSnapshot());
   expect(prepared.inputs[0]).toHaveLength(WINDOW_SIZE);
-  expect(prepared.targets[0]).toHaveLength(OUTPUT_WIDTH);
-  expect(prepared.targets.flat().every((value) => value === 0 || value === 1)).toBe(true);
+  expect(prepared.targets.length).toBe(prepared.inputs.length);
+  expect(prepared.direction_classes).toEqual(['down', 'neutral', 'up']);
+  expect(
+    prepared.targets.every((value) => Number.isInteger(value) && value >= 0 && value <= 2)
+  ).toBe(true);
+  // The learnable fixture trends upward: cumulative labels must be dominated
+  // by 'up' (class index 2).
+  const ups = prepared.targets.filter((v) => v === 2).length;
+  expect(ups / prepared.targets.length).toBeGreaterThan(0.9);
 });
 
 test('produces horizon-specific target widths for every sample', () => {

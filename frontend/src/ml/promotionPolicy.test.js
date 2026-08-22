@@ -33,25 +33,29 @@ function researchEvaluation(relativeRmses) {
 }
 
 function directionResearchEvaluation(accuracies) {
-  const foldSummaries = accuracies.map((balanced_accuracy, index) => ({
+  const foldSummaries = accuracies.map((macro_balanced_accuracy, index) => ({
     fold: index + 1,
-    balanced_accuracy,
-    brier_score: 0.23,
-    naive_baseline: 0.55,
+    macro_balanced_accuracy,
+    multiclass_brier: 0.5,
+    brier_skill: 0.1,
+    best_epoch: 3,
   }));
   return { complete: true, completed_folds: foldSummaries.length, total_folds: foldSummaries.length, fold_summaries: foldSummaries };
 }
 
-function directionMetrics(balancedAccuracy, brier, naive, rows = 600) {
+function directionMetrics(macroBalancedAccuracy, brierSkill, logLoss = 0.9, rows = 600, macroF1 = 0.6) {
   return {
     metric_source: 'browser_walk_forward_out_of_fold',
-    accuracy: balancedAccuracy,
-    balanced_accuracy: balancedAccuracy,
-    brier_score: brier,
-    naive_baseline: naive,
+    direction_classes: ['down', 'neutral', 'up'],
+    macro_balanced_accuracy: macroBalancedAccuracy,
+    macro_f1: macroF1,
+    multiclass_brier: 0.55,
+    baseline_multiclass_brier: 0.62,
+    brier_skill: brierSkill,
+    log_loss: logLoss,
+    expected_calibration_error: 0.04,
     evaluation_rows: rows,
     evaluation_origins: rows,
-    evaluation_labels: rows * 30,
   };
 }
 
@@ -231,7 +235,7 @@ test('creates a valid high-volatility forecast that stays inside the plausibilit
 test('promotes a direction model that beats the majority-class baseline', () => {
   const result = evaluatePromotion({
     forecastType: 'direction',
-    metrics: directionMetrics(0.62, 0.2, 0.55, 300),
+    metrics: directionMetrics(0.62, 0.15),
     evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
     horizon: 7,
   });
@@ -243,29 +247,29 @@ test('promotes a direction model that beats the majority-class baseline', () => 
 test('rejects a direction model with low balanced accuracy', () => {
   const result = evaluatePromotion({
     forecastType: 'direction',
-    metrics: directionMetrics(0.52, 0.2, 0.55, 300),
+    metrics: directionMetrics(0.42, 0.05),
     evaluation: directionResearchEvaluation([0.55, 0.5, 0.52, 0.54, 0.53]),
     horizon: 7,
   });
   expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('Balanced accuracy did not clear the minimum requirement.');
+  expect(result.reasons).toContain('Macro balanced accuracy did not clear the minimum requirement.');
 });
 
 test('rejects a direction model whose Brier score fails the majority-class baseline', () => {
   const result = evaluatePromotion({
     forecastType: 'direction',
-    metrics: directionMetrics(0.62, 0.45, 0.55, 300),
+    metrics: directionMetrics(0.62, -0.1),
     evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
     horizon: 7,
   });
   expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('Brier score did not beat the majority-class baseline.');
+  expect(result.reasons).toContain('Multiclass Brier skill did not beat the pre-evaluation base-rate baseline.');
 });
 
 test('rejects a direction model with incomplete or unstable folds', () => {
   const incomplete = evaluatePromotion({
     forecastType: 'direction',
-    metrics: directionMetrics(0.62, 0.2, 0.55, 300),
+    metrics: directionMetrics(0.62, 0.15),
     evaluation: { complete: false, completed_folds: 2, total_folds: 5, fold_summaries: [] },
     horizon: 7,
   });
@@ -274,7 +278,7 @@ test('rejects a direction model with incomplete or unstable folds', () => {
 
   const unstable = evaluatePromotion({
     forecastType: 'direction',
-    metrics: directionMetrics(0.62, 0.2, 0.55, 300),
+    metrics: directionMetrics(0.62, 0.15),
     evaluation: directionResearchEvaluation([0.61, 0.42, 0.63, 0.4, 0.62]),
     horizon: 7,
   });
@@ -295,18 +299,10 @@ test('rejects a direction model with too few evaluated observations', () => {
 
 test('asks for evaluated origins, not flattened labels, in the direction row gate', () => {
   // Flattened labels balloon past 60 while the true origin count is tiny.
+  const v3 = (origins) => directionMetrics(0.62, 0.15, 0.9, origins);
   const manyLabels = evaluatePromotion({
     forecastType: 'direction',
-    metrics: {
-      metric_source: 'browser_walk_forward_out_of_fold',
-      accuracy: 0.62,
-      balanced_accuracy: 0.62,
-      brier_score: 0.2,
-      naive_baseline: 0.55,
-      evaluation_origins: 4,
-      evaluation_rows: 4 * 30,
-      evaluation_labels: 4 * 30,
-    },
+    metrics: { ...v3(4), evaluation_origins: 4 },
     evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
     horizon: 7,
   });
@@ -315,16 +311,7 @@ test('asks for evaluated origins, not flattened labels, in the direction row gat
 
   const enough = evaluatePromotion({
     forecastType: 'direction',
-    metrics: {
-      metric_source: 'browser_walk_forward_out_of_fold',
-      accuracy: 0.62,
-      balanced_accuracy: 0.62,
-      brier_score: 0.2,
-      naive_baseline: 0.55,
-      evaluation_origins: 300,
-      evaluation_rows: 300,
-      evaluation_labels: 300 * 30,
-    },
+    metrics: v3(300),
     evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
     horizon: 7,
   });

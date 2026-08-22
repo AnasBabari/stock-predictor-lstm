@@ -7,17 +7,20 @@ export default function StatsBar({ stockData, forecastType }) {
     }
 
     if (forecastType === 'trend') {
-      const firstDirection = stockData.directions?.[0] || '—';
-      const firstProbability = stockData.probabilities?.[0];
+      // Direction v2: one three-way call per origin with named probabilities.
+      const direction = stockData.direction || '—';
+      const probs = stockData.direction_probabilities || {};
+      const confidence = probs[direction.toLowerCase()];
 
       return {
         ticker: stockData.ticker,
-        forecastLabel: 'Trend Forecast',
+        forecastLabel: `Trend Forecast (${stockData.direction_horizon_days ?? stockData.forecast_days ?? '?'}d)`,
         lastClose: '—',
-        forecast: firstDirection,
-        changeText: firstProbability != null ? `${(firstProbability * 100).toFixed(1)}%` : '—',
-        trendText: firstDirection,
-        isUp: firstDirection === 'Up',
+        forecast: direction,
+        changeText: confidence != null ? `${(confidence * 100).toFixed(1)}%` : '—',
+        trendText: direction,
+        isUp: direction === 'Up',
+        isFlat: direction === 'Neutral',
       };
     }
 

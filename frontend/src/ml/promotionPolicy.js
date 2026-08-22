@@ -248,6 +248,9 @@ export function describePromotionState(promotion) {
 }
 
 export function evaluateDirectionPromotion({ metrics, evaluation, thresholds = PROMOTION_THRESHOLDS }) {
+  // Direction v2 gates operate on the multiclass evidence produced by
+  // classificationMetricsV3 (three-way cumulative contract). Numeric gates
+  // are interim; slice 10 replaces them with block-bootstrap/DM significance.
   const checks = { applicable: true };
   const reasons = [];
 
@@ -256,32 +259,34 @@ export function evaluateDirectionPromotion({ metrics, evaluation, thresholds = P
     return { promoted: false, applicable: true, reasons, checks };
   }
 
-  const balancedAccuracy = Number(metrics.balanced_accuracy);
-  const brier = Number(metrics.brier_score);
-  const naiveRate = Number(metrics.naive_baseline);
-  // Evidence is measured in forecast origins, not flattened horizon labels:
-  // require at least minimumEvaluationRows origins so a single origin with many
-  // horizons can never satisfy the minimum evidence gate by itself.
-  const rowCount = Number(metrics.evaluation_origins ?? metrics.evaluation_rows ?? 0);
-  checks.balancedAccuracy = balancedAccuracy;
-  checks.brierScore = brier;
-  checks.naiveBaseline = naiveRate;
-  checks.evaluationRows = rowCount;
-  checks.evaluationLabels = Number(metrics.evaluation_labels ?? metrics.evaluation_rows ?? 0);
+  const macroBalancedAccuracy = Number(metrics.macro_balanced_accuracy);
+  const macroF1 = Number(metrics.macro_f1);
+  const brierSkill = metrics.brier_skill == null ? null : Number(metrics.brier_skill);
+  const logLoss = Number(metrics.log_loss);
+  const rowCount = Number(
+    metrics.evaluation_origins ?? metrics.evaluation_rows ?? 0
+  );
+  checks.macroBalancedAccuracy = macroBalancedAccuracy;
+  checks.macroF1 = macroF1;
+  checks.brierSkill = brierSkill;
+  checks.logLoss = logLoss;
+  checks.evaluationOrigins = rowCount;
 
-  const metricsFinite = finite(balancedAccuracy) && finite(brier) && finite(naiveRate);
+  const finite = (v) => Number.isFinite(Number(v));
+  const metricsFinite = [macroBalancedAccuracy, macroF1, logLoss].every(finite) &&
+    (brierSkill == null || finite(brierSkill));
   checks.finiteMetrics = metricsFinite;
   if (!metricsFinite) {
     reasons.push('Metrics contain non-finite values.');
   } else {
-    if (balancedAccuracy < Number(thresholds.minimumBalancedAccuracy)) {
-      reasons.push('Balanced accuracy did not clear the minimum requirement.');
+    if (macroBalancedAccuracy < Number(thresholds.minimumBalancedAccuracy)) {
+      reasons.push('Macro balanced accuracy did not clear the minimum requirement.');
     }
-    const baselineBrier = 1 - naiveRate;
-    const relativeBrier = baselineBrier > 1e-9 ? brier / baselineBrier : null;
-    checks.relativeBrier = relativeBrier;
-    if (relativeBrier == null || relativeBrier >= Number(thresholds.maximumRelativeBrier)) {
-      reasons.push('Brier score did not beat the majority-class baseline.');
+    if (brierSkill == null || brierSkill <= 0) {
+      reasons.push('Multiclass Brier skill did not beat the pre-evaluation base-rate baseline.');
+    }
+    if (!(logLoss > 0)) {
+      reasons.push('Log loss is not positive; evaluation is degenerate.');
     }
   }
 
@@ -297,13 +302,13 @@ export function evaluateDirectionPromotion({ metrics, evaluation, thresholds = P
     reasons.push('Evaluation is incomplete.');
   } else if (totalFolds > 1) {
     const validFolds = foldSummaries.every(
-      (summary) => summary && finite(summary.balanced_accuracy ?? summary.metrics?.balanced_accuracy) &&
-        finite(summary.brier_score ?? summary.metrics?.brier_score)
+      (summary) => summary && finite(summary.macro_balanced_accuracy ?? summary.metrics?.macro_balanced_accuracy) &&
+        finite(summary.multiclass_brier ?? summary.metrics?.multiclass_brier)
     );
     if (!validFolds) reasons.push('Evaluation is incomplete.');
     else {
       const foldAccuracies = foldSummaries.map(
-        (summary) => Number(summary.balanced_accuracy ?? summary.metrics?.balanced_accuracy)
+        (summary) => Number(summary.macro_balanced_accuracy ?? summary.metrics?.macro_balanced_accuracy)
       );
       const winningFolds = foldAccuracies.filter(
         (value) => value > Number(thresholds.minimumDirectionFoldAccuracy)

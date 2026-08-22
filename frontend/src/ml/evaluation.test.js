@@ -1,8 +1,9 @@
 import {
   classificationMetrics,
+  classificationMetricsV3,
   directionalAccuracy,
+  flatten,
   generateResearchSplits,
-  horizonClassificationMetrics,
   horizonRegressionMetrics,
   regressionMetrics,
 } from './evaluation';
@@ -65,26 +66,44 @@ test('keeps direction probabilities bounded and reports the majority baseline', 
   expect(metrics.brier_score).toBeGreaterThanOrEqual(0);
 });
 
-test('reports direction evidence separately for each forecast day', () => {
-  const actual = [[1, 0, 1], [0, 1, 1]];
-  const predicted = [[0.9, 0.1, 0.8], [0.2, 0.9, 0.4]];
-  const evidence = horizonClassificationMetrics(actual, predicted, 'browser_walk_forward_out_of_fold');
-  expect(evidence.per_horizon).toHaveLength(3);
-  expect(evidence.per_horizon[0].horizon).toBe(1);
-  expect(evidence.per_horizon[0].rows).toBe(2);
-  expect(evidence.per_horizon[0].accuracy).toBe(1);
-  expect(evidence.per_horizon[1].accuracy).toBe(1);
-  expect(evidence.per_horizon[2].accuracy).toBe(0.5);
-  expect(evidence.per_horizon[2].naive_baseline).toBe(1);
-  expect(evidence.pooled.accuracy).toBeCloseTo(5 / 6);
-  expect(evidence.pooled.evaluation_rows).toBe(6);
+test('reports multiclass direction evidence under the v2 three-way contract', () => {
+  const classes = ['down', 'neutral', 'up'];
+  // 4 origins: truths up, down, neutral, up. Model is confident and right
+  // except origin 1 (predicted up, truth down).
+  const actualClasses = [2, 0, 1, 2];
+  const probabilityRows = [
+    [0.05, 0.05, 0.9],
+    [0.2, 0.3, 0.5],
+    [0.1, 0.8, 0.1],
+    [0.1, 0.1, 0.8],
+  ];
+  const baseline = [0.25, 0.5, 0.25];
+
+  const metrics = classificationMetricsV3({
+    actualClasses, probabilityRows, baselineProbabilities: baseline,
+    classes, metricSource: 'browser_purged_holdout',
+  });
+
+  expect(metrics.direction_classes).toEqual(classes);
+  expect(metrics.evaluation_origins).toBe(4);
+  expect(metrics.accuracy).toBe(0.75);
+  expect(metrics.multiclass_brier).toBeGreaterThan(0);
+  expect(metrics.baseline_multiclass_brier).toBeGreaterThan(metrics.multiclass_brier);
+  expect(metrics.brier_skill).toBeGreaterThan(0);
+  expect(metrics.log_loss).toBeGreaterThan(0);
+  expect(metrics.expected_calibration_error).toBeGreaterThanOrEqual(0);
+  expect(metrics.baseline_argmax_label).toBe('neutral');
+  // Macro recall: class0 0/1, class1 1/1, class2 2/2 → (0+1+1)/3.
+  expect(metrics.macro_balanced_accuracy).toBeCloseTo(2 / 3, 10);
 });
 
-test('per-horizon direction evidence honors the pre-evaluation majority label', () => {
-  const actual = [[1, 0, 1], [0, 1, 1]];
-  const predicted = [[0.9, 0.1, 0.8], [0.2, 0.9, 0.4]];
-  const evidence = horizonClassificationMetrics(actual, predicted, 'browser_purged_holdout', 0);
-  expect(evidence.per_horizon[0].naive_baseline).toBe(0.5);
-  expect(evidence.per_horizon[1].naive_baseline).toBe(0.5);
-  expect(evidence.per_horizon[2].naive_baseline).toBe(0);
+test('brier skill fails closed against a stronger-than-model baseline', () => {
+  const metrics = classificationMetricsV3({
+    actualClasses: [2, 2, 2, 2],
+    probabilityRows: [[0.1, 0.1, 0.8], [0.6, 0.2, 0.2], [0.3, 0.4, 0.3], [0.2, 0.2, 0.6]],
+    baselineProbabilities: [0.05, 0.05, 0.9], // near-perfect constant-up baseline
+    classes: ['down', 'neutral', 'up'],
+    metricSource: 'browser_purged_holdout',
+  });
+  expect(metrics.brier_skill).toBeLessThanOrEqual(0);
 });
