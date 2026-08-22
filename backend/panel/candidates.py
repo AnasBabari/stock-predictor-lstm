@@ -335,6 +335,7 @@ class GlobalRecurrentCandidate(Candidate):
         epochs: int = 12,
         batch_size: int = 64,
         tasks: tuple[str, ...] = ("returns", "direction"),
+        inner_val_split: float = 0.0,
         seed: int | None = None,
     ):
         self.architecture = architecture
@@ -344,6 +345,7 @@ class GlobalRecurrentCandidate(Candidate):
         self.epochs = epochs
         self.batch_size = batch_size
         self.tasks = tasks
+        self.inner_val_split = inner_val_split
         self.seed = seed
         self._model: Any | None = None
         self.diagnostics: dict[str, Any] = {}
@@ -382,6 +384,8 @@ class GlobalRecurrentCandidate(Candidate):
     def fit(
         self, x: np.ndarray, targets: CandidateTargets | np.ndarray
     ) -> GlobalRecurrentCandidate:
+        import time
+
         tf = _require_tf()
         tgt = _ensure_targets(targets)
 
@@ -409,40 +413,96 @@ class GlobalRecurrentCandidate(Candidate):
                 raise ValueError("direction_classes must contain class indices in {0, 1, 2}.")
             ys_direction = tf.one_hot(dir_classes, 3).numpy()
         else:
-            # If direction is not in tasks, provide dummy one-hot (uniform) for compilation
             ys_direction = np.full((len(x), 3), 1.0 / 3.0)
 
-        history = self._model.fit(
-            x,
-            {"quantiles": ys_quantile, "direction": ys_direction},
-            epochs=self.epochs,
-            batch_size=self.batch_size,
-            shuffle=False,
-            verbose=0,
-        )
-        self.diagnostics = {
-            "completed_epochs": len(history.history.get("loss", [])),
-            "final_loss": float(history.history["loss"][-1])
-            if history.history.get("loss")
-            else None,
-            "tasks": self.tasks,
-            "seed": self.seed,
-        }
+        callbacks: list[Any] = []
+        validation_data = None
+        n = len(x)
+        if self.inner_val_split > 0 and n >= 50:
+            n_val = max(int(n * self.inner_val_split), 10)
+            purge_gap = 5
+            cutoff = n - n_val - purge_gap
+            if cutoff > 20:
+                x_train = x[:cutoff]
+                y_train = {
+                    "quantiles": ys_quantile[:cutoff],
+                    "direction": ys_direction[:cutoff],
+                }
+                x_val = x[n - n_val :]
+                y_val = {
+                    "quantiles": ys_quantile[n - n_val :],
+                    "direction": ys_direction[n - n_val :],
+                }
+                validation_data = (x_val, y_val)
+                callbacks.append(
+                    tf.keras.callbacks.EarlyStopping(
+                        monitor="val_loss", patience=3, restore_best_weights=True
+                    )
+                )
+            else:
+                x_train = x
+                y_train = {"quantiles": ys_quantile, "direction": ys_direction}
+        else:
+            x_train = x
+            y_train = {"quantiles": ys_quantile, "direction": ys_direction}
+
+        t0 = time.perf_counter()
+        try:
+            history = self._model.fit(
+                x_train,
+                y_train,
+                validation_data=validation_data,
+                callbacks=callbacks,
+                epochs=self.epochs,
+                batch_size=self.batch_size,
+                shuffle=False,
+                verbose=0,
+            )
+            duration = time.perf_counter() - t0
+            completed_epochs = len(history.history.get("loss", []))
+            self.diagnostics = {
+                "completed_epochs": completed_epochs,
+                "selected_epoch": completed_epochs,
+                "training_duration_seconds": duration,
+                "final_loss": float(history.history["loss"][-1])
+                if history.history.get("loss")
+                else None,
+                "tasks": self.tasks,
+                "seed": self.seed,
+                "termination_reason": "completed",
+            }
+        except Exception as exc:
+            self.dispose()
+            raise RuntimeError(f"Failed to train {self.name}: {exc}") from exc
         return self
 
     def predict(self, x: np.ndarray) -> CandidatePrediction:
         if self._model is None:
             raise RuntimeError(f"{self.name} used before fit().")
         q, d = self._model.predict(x, verbose=0)
-        # Prevent quantile crossing by monotonic projection
         sorted_q = np.sort(q, axis=-1)
         dir_probs = np.clip(d, 0.0, 1.0)
         dir_probs = dir_probs / np.sum(dir_probs, axis=-1, keepdims=True)
         return CandidatePrediction(
             return_point=sorted_q[:, 1],
-            return_quantiles={"0.1": sorted_q[:, 0], "0.5": sorted_q[:, 1], "0.9": sorted_q[:, 2]},
+            return_quantiles={
+                "0.1": sorted_q[:, 0],
+                "0.5": sorted_q[:, 1],
+                "0.9": sorted_q[:, 2],
+            },
             direction_probabilities=dir_probs,
         )
+
+    def dispose(self) -> None:
+        if self._model is not None:
+            del self._model
+            self._model = None
+        try:
+            import tensorflow as tf  # type: ignore[import-untyped]
+
+            tf.keras.backend.clear_session()
+        except Exception:
+            pass
 
 
 class TemporalConvolutionCandidate(GlobalRecurrentCandidate):
@@ -484,6 +544,77 @@ class TemporalConvolutionCandidate(GlobalRecurrentCandidate):
         return model
 
 
+class GarchLstmGlobalCandidate(Candidate):
+    """Global candidate wrapper around GarchLstmCandidate for volatility tasks."""
+
+    name = "global_garch_lstm"
+    supported_tasks = ("volatility",)
+
+    def __init__(
+        self,
+        *,
+        horizon: int = 5,
+        lookback: int = 20,
+        epochs: int = 8,
+        batch_size: int = 64,
+        gjr: bool = True,
+        seed: int | None = None,
+    ):
+        self.horizon = horizon
+        self.lookback = lookback
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.gjr = gjr
+        self.seed = seed
+        self._candidate: Any | None = None
+        self.diagnostics: dict[str, Any] = {}
+
+    def fit(
+        self, x: np.ndarray, targets: CandidateTargets | np.ndarray
+    ) -> GarchLstmGlobalCandidate:
+        from panel.garch_lstm import GarchLstmCandidate
+
+        tgt = _ensure_targets(targets)
+        returns = (
+            tgt.cumulative_returns
+            if tgt.cumulative_returns is not None
+            else np.asarray(x, dtype=float).squeeze()
+        )
+        if returns.ndim > 1:
+            returns = returns[:, -1] if returns.shape[-1] < returns.shape[0] else returns[0]
+        self._candidate = GarchLstmCandidate(
+            horizon=self.horizon,
+            train_end=len(returns),
+            lookback=self.lookback,
+            epochs=self.epochs,
+            batch_size=self.batch_size,
+            gjr=self.gjr,
+            seed=self.seed,
+        ).fit_returns(returns)
+        self.diagnostics = getattr(self._candidate, "diagnostics", {})
+        return self
+
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
+        if self._candidate is None:
+            raise RuntimeError("GarchLstmGlobalCandidate used before fit().")
+        returns = np.asarray(x, dtype=float).squeeze()
+        if returns.ndim > 1:
+            returns = returns[:, -1] if returns.shape[-1] < returns.shape[0] else returns[0]
+        var_path = self._candidate.predict(returns)
+        return CandidatePrediction(variance_forecast=var_path)
+
+    def dispose(self) -> None:
+        if self._candidate is not None:
+            self._candidate._model = None
+            self._candidate = None
+        try:
+            import tensorflow as tf  # type: ignore[import-untyped]
+
+            tf.keras.backend.clear_session()
+        except Exception:
+            pass
+
+
 REGISTRY: dict[str, Callable[[int], Candidate]] = {
     PersistenceCandidate.name: lambda seed: PersistenceCandidate(),
     RollingMeanCandidate.name: lambda seed: RollingMeanCandidate(),
@@ -498,3 +629,4 @@ def register_neural_candidates(registry: dict[str, Callable[[int], Candidate]]) 
     registry["global_lstm"] = lambda seed: GlobalRecurrentCandidate(seed=seed)
     registry["global_gru"] = lambda seed: GlobalRecurrentCandidate(architecture="gru", seed=seed)
     registry["global_tcn"] = lambda seed: TemporalConvolutionCandidate(seed=seed)
+    registry["global_garch_lstm"] = lambda seed: GarchLstmGlobalCandidate(seed=seed)

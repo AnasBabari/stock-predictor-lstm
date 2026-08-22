@@ -133,3 +133,48 @@ def test_deterministic_seed_produces_identical_predictions() -> None:
 
     np.testing.assert_allclose(p1.return_point, p2.return_point, atol=1e-5)
     np.testing.assert_allclose(p1.direction_probabilities, p2.direction_probabilities, atol=1e-5)
+
+
+def test_tcn_gru_lstm_neural_candidates_train_and_compile_losses() -> None:
+    from panel.candidates import (
+        CandidateTargets,
+        GlobalRecurrentCandidate,
+        TemporalConvolutionCandidate,
+    )
+
+    x, y = make_pooled(rows=30, n_tickers=2, window=20, features=4, seed=5)
+    dir_classes = np.ones(len(y), dtype=int)
+    targets = CandidateTargets(cumulative_returns=y, direction_classes=dir_classes)
+
+    # Test TCN
+    tcn = TemporalConvolutionCandidate(lookback=20, epochs=2, seed=1)
+    tcn.fit(x, targets)
+    pred_tcn = tcn.predict(x[:5])
+    assert pred_tcn.return_point is not None
+    assert pred_tcn.direction_probabilities is not None
+    assert pred_tcn.return_quantiles is not None
+    assert tcn.diagnostics["completed_epochs"] == 2
+    tcn.dispose()
+    assert tcn._model is None
+
+    # Test GRU with inner validation
+    gru = GlobalRecurrentCandidate(
+        architecture="gru", lookback=20, epochs=2, inner_val_split=0.2, seed=2
+    )
+    gru.fit(x, targets)
+    pred_gru = gru.predict(x[:5])
+    assert pred_gru.return_point is not None
+    gru.dispose()
+
+
+def test_garch_lstm_global_candidate_trains_and_predicts() -> None:
+    from panel.candidates import CandidateTargets, GarchLstmGlobalCandidate
+
+    rng = np.random.default_rng(123)
+    rets = rng.normal(0, 0.015, 300)
+    candidate = GarchLstmGlobalCandidate(horizon=5, lookback=20, epochs=2, seed=42)
+    candidate.fit(rets, CandidateTargets(cumulative_returns=rets))
+    pred = candidate.predict(rets)
+    assert pred.variance_forecast is not None
+    assert (pred.variance_forecast > 0).all()
+    candidate.dispose()
