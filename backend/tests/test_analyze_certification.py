@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
-from scripts.analyze_certification import analyze_certification_artifact
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(ROOT / "backend") not in sys.path:
+    sys.path.insert(0, str(ROOT / "backend"))
+
+from scripts.analyze_certification import analyze_certification_artifact  # noqa: E402
 
 
 def test_analyze_certification_artifact_parses_cleanly(tmp_path: Path) -> None:

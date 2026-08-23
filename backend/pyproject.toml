@@ -65,7 +65,7 @@ disable_error_code = ["import-untyped"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
-pythonpath = [".", "../research"]
+pythonpath = [".", "..", "../research"]
 
 [tool.coverage.run]
 omit = ["tests/*", "conftest.py"]
