@@ -142,3 +142,91 @@ def test_build_catalog_validates_required_fields() -> None:
 
     with pytest.raises(ValueError, match="at least one artifact"):
         build_catalog([], signature="b" * 64, recorded_sha="c" * 8)
+
+
+def test_validate_certification_manifest_rejects_falsified_pass_when_transfer_fails() -> None:
+    from release.bundle import validate_certification_manifest
+
+    # Falsified manifest: claims pass and failed_gates=[], but transfer RMSE violates threshold
+    manifest = {
+        "status": "holdout_opened",
+        "certification_protocol_version": "global-cert-v2",
+        "gate_config": {
+            "require_temporal_relative_rmse": True,
+            "max_temporal_relative_rmse": 1.0,
+            "require_transfer_relative_rmse": True,
+            "max_transfer_relative_rmse": 1.0,
+        },
+        "decisions": {
+            "5": {
+                "decision": "pass",
+                "temporal_relative_rmse": 0.99,
+                "temporal_relative_mae": 0.99,
+                "transfer_relative_rmse": 1.05,  # Violates 1.0 threshold!
+                "failed_gates": [],  # Producer lied
+            }
+        },
+    }
+    assert validate_certification_manifest(manifest) is False
+
+
+def test_validate_certification_manifest_rejects_missing_required_metric() -> None:
+    from release.bundle import validate_certification_manifest
+
+    manifest = {
+        "status": "holdout_opened",
+        "certification_protocol_version": "global-cert-v2",
+        "gate_config": {
+            "require_transfer_relative_rmse": True,
+            "max_transfer_relative_rmse": 1.0,
+        },
+        "decisions": {
+            "5": {
+                "decision": "pass",
+                "temporal_relative_rmse": 0.99,
+                "temporal_relative_mae": 0.99,
+                # transfer_relative_rmse is missing
+                "failed_gates": [],
+            }
+        },
+    }
+    with pytest.raises(ValueError, match="Decision missing required 'transfer_relative_rmse'"):
+        validate_certification_manifest(manifest)
+
+
+def test_validate_certification_manifest_rejects_config_and_protocol_mismatches() -> None:
+    from release.bundle import validate_certification_manifest
+
+    # Gate config mismatch
+    mismatched_cfg = {
+        "status": "holdout_opened",
+        "certification_protocol_version": "global-cert-v2",
+        "gate_config": {"require_temporal_relative_rmse": True},
+        "decisions": {
+            "5": {
+                "decision": "pass",
+                "temporal_relative_rmse": 0.99,
+                "temporal_relative_mae": 0.99,
+                "gate_config": {"require_temporal_relative_rmse": False},
+                "failed_gates": [],
+            }
+        },
+    }
+    assert validate_certification_manifest(mismatched_cfg) is False
+
+    # Protocol version mismatch
+    mismatched_proto = {
+        "status": "holdout_opened",
+        "certification_protocol_version": "global-cert-v2",
+        "gate_config": {"require_temporal_relative_rmse": True},
+        "decisions": {
+            "5": {
+                "decision": "pass",
+                "temporal_relative_rmse": 0.99,
+                "temporal_relative_mae": 0.99,
+                "certification_protocol_version": "global-cert-v1",
+                "failed_gates": [],
+            }
+        },
+    }
+    assert validate_certification_manifest(mismatched_proto) is False

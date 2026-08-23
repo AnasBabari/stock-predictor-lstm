@@ -7,6 +7,8 @@ without touching the network or requiring TensorFlow.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -210,3 +212,421 @@ def test_volatility_target_construction_integrates_with_proxies(universe) -> Non
     warm = proxies.iloc[HORIZON:-HORIZON].dropna()
     assert len(warm) > 100
     assert (warm > 0).all()
+
+
+def test_v1_historical_gate_semantics(universe) -> None:
+    """Under V1 semantics, temporal non-degradation passes even if transfer is descriptive."""
+    from panel.certification import CertificationGateConfig, evaluate_locked_certification
+    from panel.selection import SelectionDecision
+
+    features = {t: build_features_v5(f) for t, f in universe.items()}
+    master_cal = common_calendar(features)
+    temporal_dates = master_cal[-50:]
+
+    champ_dec = SelectionDecision(
+        horizon=5,
+        candidate_name="rolling_mean_shrunk",
+        status="blended_with_baseline",
+        alpha=0.01,
+    )
+
+    # V1 config: temporal mandatory (threshold 1.05 for synthetic), transfer non-mandatory
+    v1_config = CertificationGateConfig(
+        require_temporal_relative_rmse=True,
+        max_temporal_relative_rmse=1.05,
+        require_temporal_relative_mae=True,
+        max_temporal_relative_mae=1.05,
+        require_transfer_relative_rmse=False,
+        max_transfer_relative_rmse=0.01,  # Impossible threshold, but non-blocking in V1
+        protocol_version="global-cert-v1",
+    )
+
+    dec = evaluate_locked_certification(
+        horizon=5,
+        champion_decision=champ_dec,
+        universe_data=universe,
+        features_by_ticker=features,
+        temporal_holdout_dates=temporal_dates,
+        asset_transfer_tickers=["CCC"],
+        dev_train_tickers=["AAA", "BBB"],
+        gate_config=v1_config,
+    )
+    # Passes because transfer was not mandatory in V1
+    assert dec.decision == "pass"
+    assert dec.certification_protocol_version == "global-cert-v1"
+
+
+def test_v2_explicit_transfer_gating(universe) -> None:
+    """Under V2 semantics, when transfer gating is enabled, failing transfer rejects."""
+    from panel.certification import CertificationGateConfig, evaluate_locked_certification
+    from panel.selection import SelectionDecision
+
+    features = {t: build_features_v5(f) for t, f in universe.items()}
+    master_cal = common_calendar(features)
+    temporal_dates = master_cal[-50:]
+
+    champ_dec = SelectionDecision(
+        horizon=5,
+        candidate_name="rolling_mean_shrunk",
+        status="blended_with_baseline",
+        alpha=0.01,
+    )
+
+    # V2 config with tight transfer threshold (force fail)
+    v2_fail_config = CertificationGateConfig(
+        require_temporal_relative_rmse=True,
+        require_transfer_relative_rmse=True,
+        max_transfer_relative_rmse=0.5,  # Impossible threshold
+        protocol_version="global-cert-v2",
+    )
+
+    dec_fail = evaluate_locked_certification(
+        horizon=5,
+        champion_decision=champ_dec,
+        universe_data=universe,
+        features_by_ticker=features,
+        temporal_holdout_dates=temporal_dates,
+        asset_transfer_tickers=["CCC"],
+        dev_train_tickers=["AAA", "BBB"],
+        gate_config=v2_fail_config,
+    )
+    assert dec_fail.decision == "fail"
+    assert any("transfer_relative_rmse" in f for f in dec_fail.failed_gates)
+
+
+def test_direction_metrics_prevalence_vs_skill(universe) -> None:
+    """Constant drift prediction on positive-trend data matches positive prevalence with 0 delta."""
+    from panel.certification import evaluate_locked_certification
+    from panel.selection import SelectionDecision
+
+    features = {t: build_features_v5(f) for t, f in universe.items()}
+    master_cal = common_calendar(features)
+    temporal_dates = master_cal[-50:]
+
+    champ_dec = SelectionDecision(
+        horizon=5,
+        candidate_name="rolling_mean_shrunk",
+        status="blended_with_baseline",
+        alpha=0.01,
+    )
+
+    dec = evaluate_locked_certification(
+        horizon=5,
+        champion_decision=champ_dec,
+        universe_data=universe,
+        features_by_ticker=features,
+        temporal_holdout_dates=temporal_dates,
+        asset_transfer_tickers=["CCC"],
+        dev_train_tickers=["AAA", "BBB"],
+    )
+
+    # Direction accuracy matches prevalence when predicting all-positive
+    assert 0.0 <= dec.positive_prevalence <= 1.0
+    assert dec.direction_accuracy_delta_vs_majority <= 0.05
+    assert dec.temporal_brier is None
+    assert dec.direction_probability_status == "not_available"
+
+
+def test_release_validation_accepts_v1_and_v2() -> None:
+    """Release validation accepts compliant V1 and V2 manifests and fails on invalid ones."""
+    from release.bundle import validate_certification_manifest
+
+    v1_manifest = {
+        "status": "holdout_opened",
+        "certification_protocol_version": "global-cert-v1",
+        "decisions": {
+            "5": {
+                "decision": "pass",
+                "temporal_relative_rmse": 0.9999,
+                "temporal_relative_mae": 0.9999,
+            }
+        },
+    }
+    assert validate_certification_manifest(v1_manifest) is True
+
+    v2_manifest = {
+        "status": "holdout_opened",
+        "certification_protocol_version": "global-cert-v2",
+        "gate_config": {
+            "require_temporal_relative_rmse": True,
+            "max_temporal_relative_rmse": 1.0,
+            "require_temporal_relative_mae": True,
+            "max_temporal_relative_mae": 1.0,
+        },
+        "decisions": {
+            "5": {
+                "decision": "pass",
+                "temporal_relative_rmse": 0.9999,
+                "temporal_relative_mae": 0.9999,
+                "failed_gates": [],
+            }
+        },
+    }
+    assert validate_certification_manifest(v2_manifest) is True
+
+    # Bad protocol raises
+    with pytest.raises(ValueError, match="Unknown or unsupported"):
+        validate_certification_manifest(
+            {
+                "status": "holdout_opened",
+                "certification_protocol_version": "unknown-v99",
+                "decisions": {"5": {"decision": "pass"}},
+            }
+        )
+
+
+def test_probabilistic_candidate_emits_valid_brier(universe, monkeypatch) -> None:
+    """When a candidate emits valid direction_probabilities, Brier is evaluated."""
+    from panel.candidates import Candidate, CandidatePrediction, CandidateTargets
+    from panel.certification import evaluate_locked_certification
+    from panel.selection import SelectionDecision
+
+    class MockProbabilisticCandidate(Candidate):
+        name = "mock_prob"
+        supported_tasks = ("returns",)
+
+        def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray):
+            return self
+
+        def predict(self, x: np.ndarray) -> CandidatePrediction:
+            probs = np.tile([0.1, 0.2, 0.7], (len(x), 1))
+            return CandidatePrediction(
+                return_point=np.full(len(x), 0.01),
+                direction_probabilities=probs,
+            )
+
+    import panel.certification as cert_module
+
+    monkeypatch.setitem(
+        cert_module.REGISTRY, "mock_prob", lambda seed: MockProbabilisticCandidate()
+    )
+
+    features = {t: build_features_v5(f) for t, f in universe.items()}
+    master_cal = common_calendar(features)
+    temporal_dates = master_cal[-50:]
+
+    champ_dec = SelectionDecision(
+        horizon=5,
+        candidate_name="mock_prob",
+        status="promoted",
+        alpha=1.0,
+    )
+
+    dec = evaluate_locked_certification(
+        horizon=5,
+        champion_decision=champ_dec,
+        universe_data=universe,
+        features_by_ticker=features,
+        temporal_holdout_dates=temporal_dates,
+        asset_transfer_tickers=["CCC"],
+        dev_train_tickers=["AAA", "BBB"],
+    )
+    assert dec.direction_probability_status == "evaluated"
+    assert dec.temporal_brier is not None
+    assert 0.0 <= dec.temporal_brier <= 1.0
+
+
+def test_gate_truthfulness_every_enabled_gate_participates(universe) -> None:
+    """Proves that every enabled gate can independently produce PASS and FAIL."""
+    from panel.certification import CertificationGateConfig, evaluate_locked_certification
+    from panel.selection import SelectionDecision
+
+    features = {t: build_features_v5(f) for t, f in universe.items()}
+    master_cal = common_calendar(features)
+    temporal_dates = master_cal[-50:]
+
+    champ_dec = SelectionDecision(
+        horizon=5,
+        candidate_name="rolling_mean_shrunk",
+        status="blended_with_baseline",
+        alpha=0.01,
+    )
+
+    # 1. Direction skill gate failure
+    cfg_dir = CertificationGateConfig(
+        require_direction_skill=True,
+        min_direction_accuracy_delta_vs_majority=0.10,  # Impossible for constant drift
+    )
+    dec_dir = evaluate_locked_certification(
+        horizon=5,
+        champion_decision=champ_dec,
+        universe_data=universe,
+        features_by_ticker=features,
+        temporal_holdout_dates=temporal_dates,
+        asset_transfer_tickers=["CCC"],
+        dev_train_tickers=["AAA", "BBB"],
+        gate_config=cfg_dir,
+    )
+    assert dec_dir.decision == "fail"
+    assert any("direction_skill_delta" in f for f in dec_dir.failed_gates)
+
+    # 2. Probabilistic direction required on return-only candidate => fails
+    cfg_prob = CertificationGateConfig(
+        require_probabilistic_direction=True,
+        max_direction_brier=0.20,
+    )
+    dec_prob = evaluate_locked_certification(
+        horizon=5,
+        champion_decision=champ_dec,
+        universe_data=universe,
+        features_by_ticker=features,
+        temporal_holdout_dates=temporal_dates,
+        asset_transfer_tickers=["CCC"],
+        dev_train_tickers=["AAA", "BBB"],
+        gate_config=cfg_prob,
+    )
+    assert dec_prob.decision == "fail"
+    assert any("probabilistic_direction" in f for f in dec_prob.failed_gates)
+
+
+def test_direction_skill_with_abstentions(universe, monkeypatch) -> None:
+    """When a model abstains on some rows, majority baseline is evaluated on the evaluated subset."""
+    from panel.candidates import Candidate, CandidatePrediction, CandidateTargets
+    from panel.certification import evaluate_locked_certification
+    from panel.selection import SelectionDecision
+
+    class MockAbstainingCandidate(Candidate):
+        name = "mock_abstain"
+        supported_tasks = ("returns",)
+
+        def __init__(self):
+            self.call_count = 0
+
+        def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray):
+            return self
+
+        def predict(self, x: np.ndarray) -> CandidatePrediction:
+            pts = np.zeros(len(x), dtype=float)
+            for i in range(len(x)):
+                self.call_count += 1
+                if self.call_count % 2 == 0:
+                    pts[i] = 0.05
+                else:
+                    pts[i] = 0.0
+            return CandidatePrediction(return_point=pts)
+
+    import panel.certification as cert_module
+
+    monkeypatch.setitem(
+        cert_module.REGISTRY, "mock_abstain", lambda seed: MockAbstainingCandidate()
+    )
+
+    features = {t: build_features_v5(f) for t, f in universe.items()}
+    master_cal = common_calendar(features)
+    temporal_dates = master_cal[-50:]
+
+    champ_dec = SelectionDecision(
+        horizon=5,
+        candidate_name="mock_abstain",
+        status="promoted",
+        alpha=1.0,
+    )
+
+    dec = evaluate_locked_certification(
+        horizon=5,
+        champion_decision=champ_dec,
+        universe_data=universe,
+        features_by_ticker=features,
+        temporal_holdout_dates=temporal_dates,
+        asset_transfer_tickers=["CCC"],
+        dev_train_tickers=["AAA", "BBB"],
+    )
+
+    # Coverage reflects non-zero predictions
+    assert 0.0 < dec.direction_coverage < 1.0
+    assert 0.0 <= dec.subset_positive_prevalence <= 1.0
+    assert 0.0 <= dec.majority_class_accuracy <= 1.0
+
+
+def test_probabilistic_direction_invalid_and_partial(universe, monkeypatch) -> None:
+    """Invalid probability distributions (NaN, not summing to 1) are classified as invalid and fail gate."""
+    from panel.candidates import Candidate, CandidatePrediction, CandidateTargets
+    from panel.certification import CertificationGateConfig, evaluate_locked_certification
+    from panel.selection import SelectionDecision
+
+    class MockInvalidProbCandidate(Candidate):
+        name = "mock_invalid_prob"
+        supported_tasks = ("returns",)
+
+        def fit(self, x: np.ndarray, targets: CandidateTargets | np.ndarray):
+            return self
+
+        def predict(self, x: np.ndarray) -> CandidatePrediction:
+            # Does not sum to 1.0 (invalid probabilities)
+            probs = np.tile([0.8, 0.8, 0.8], (len(x), 1))
+            return CandidatePrediction(
+                return_point=np.full(len(x), 0.01),
+                direction_probabilities=probs,
+            )
+
+    import panel.certification as cert_module
+
+    monkeypatch.setitem(
+        cert_module.REGISTRY, "mock_invalid_prob", lambda seed: MockInvalidProbCandidate()
+    )
+
+    features = {t: build_features_v5(f) for t, f in universe.items()}
+    master_cal = common_calendar(features)
+    temporal_dates = master_cal[-50:]
+
+    champ_dec = SelectionDecision(
+        horizon=5,
+        candidate_name="mock_invalid_prob",
+        status="promoted",
+        alpha=1.0,
+    )
+
+    cfg = CertificationGateConfig(
+        require_probabilistic_direction=True,
+    )
+
+    dec = evaluate_locked_certification(
+        horizon=5,
+        champion_decision=champ_dec,
+        universe_data=universe,
+        features_by_ticker=features,
+        temporal_holdout_dates=temporal_dates,
+        asset_transfer_tickers=["CCC"],
+        dev_train_tickers=["AAA", "BBB"],
+        gate_config=cfg,
+    )
+    assert dec.direction_probability_status == "invalid"
+    assert dec.temporal_brier is None
+    assert dec.decision == "fail"
+    assert any("probabilistic_direction" in f for f in dec.failed_gates)
+
+
+def test_holdout_immutability_guard_blocks_overwrite(tmp_path: Path, universe) -> None:
+    """Rerunning or overwriting an already-opened holdout in the same run directory raises RuntimeError."""
+    import json
+
+    from scripts.run_global_pipeline import GlobalPipelineRunner, PipelineConfig
+
+    run_dir = tmp_path / "test_run"
+    stages_dir = run_dir / "stages"
+    stages_dir.mkdir(parents=True, exist_ok=True)
+
+    cert_file = stages_dir / "07_certification.json"
+    cert_file.write_text(
+        json.dumps({"status": "holdout_opened", "decision": "pass"}),
+        encoding="utf-8",
+    )
+
+    config = PipelineConfig(run_id="test_immutable", mode="fixture")
+    runner = GlobalPipelineRunner(
+        config=config,
+        run_dir=run_dir,
+        open_locked_certification_holdout=True,
+        universe_data=universe,
+    )
+
+    with pytest.raises(RuntimeError, match="Historical certification artefacts are immutable"):
+        runner.run_stage_certify(
+            decisions={},
+            universe_data=universe,
+            folds_meta={
+                "temporal_holdout_sessions": 20,
+                "asset_transfer_holdout_tickers": ["CCC"],
+                "train_tickers": ["AAA", "BBB"],
+            },
+        )

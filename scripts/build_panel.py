@@ -18,6 +18,7 @@ from panel.snapshots import (  # noqa: E402
     fetch_panel_universe,
     write_snapshot,
 )
+
 from scripts.run_global_pipeline import generate_synthetic_universe  # noqa: E402
 
 

@@ -158,11 +158,11 @@ def test_pipeline_executes_explicit_stages_and_resumes(
     assert res_cert_open["stages"]["certification"]["status"] == "holdout_opened"
     assert "decisions" in res_cert_open["stages"]["certification"]
 
-    # 8. Execute stage all (refit and release bundle assembly)
+    # 8. Execute stage release (refit and release bundle assembly)
     res_all = run_pipeline(
         config=cfg,
         run_dir=run_dir,
-        stage="all",
+        stage="release",
         open_locked_certification_holdout=True,
         universe_data=universe,
     )

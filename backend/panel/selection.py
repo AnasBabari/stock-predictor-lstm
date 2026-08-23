@@ -36,7 +36,7 @@ def compute_bootstrap_ratio_upper_bound(
     bl = max(1, min(block_length, n // 2))
     n_blocks = int(np.ceil(n / bl))
     num_starts = n - bl + 1
-    ratios = np.empty(resamples, dtype=float)
+    ratios: np.ndarray = np.empty(resamples, dtype=float)
 
     for i in range(resamples):
         starts = rng.integers(0, num_starts, size=n_blocks)

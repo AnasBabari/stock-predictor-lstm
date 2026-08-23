@@ -13,14 +13,15 @@ A candidate architecture is eligible for release **only when all of the followin
 3. **Independent Multi-Seed Admissibility**: Neural candidates must be trained across at least 3 independent seeds (`seeds=[42, 43, 44]`) with seed dispersion $\sigma_{\text{seed}} \le 0.05$.
 4. **Statistical Edge over Baselines**:
    - $\text{Relative RMSE} < 1.0$ (beats naive persistence on out-of-fold validation).
-   - Bootstrap ratio upper bound $R_{0.95} < 1.0$.
+   - Paired moving-block bootstrap ratio upper bound $R_{0.95} < 1.0$.
    - Diebold-Mariano HAC test with family-wise Holm adjustment $p_{\text{adj}} < 0.05$.
 5. **Locked Holdout Certification**:
    - The holdout is opened **exactly once** via `--open-locked-certification-holdout`.
-   - The temporal holdout (last 252 sessions) and asset-transfer holdout must achieve $\text{Relative RMSE} < 1.00$.
+   - **Protocol V1 (Historical)**: Enforced $\text{Temporal Relative RMSE} \le 1.00$ and $\text{Temporal Relative MAE} \le 1.00$ on the 252-session future holdout; asset-transfer metrics were descriptive.
+   - **Protocol V2 (Future Standard)**: Explicitly precommits mandatory temporal non-degradation and optional asset-transfer non-degradation gates (`require_transfer_relative_rmse: true`). Direction skill is evaluated against majority-class baseline prevalence, and Brier calibration is emitted only when true direction probabilities exist.
 6. **Provenance & Release Integrity**:
    - Refit models are signed with detached Ed25519 signatures.
-   - Verification confirms SHA256 checksums, manifest structure, and cryptographic signature.
+   - Verification confirms SHA256 checksums, manifest structure, protocol version compatibility, and cryptographic signature.
 
 ---
 
