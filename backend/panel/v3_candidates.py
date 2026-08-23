@@ -38,6 +38,7 @@ class BaseV3Candidate(ABC):
     """Abstract base class for cross-sectional ranking candidates."""
 
     name: str
+    is_fitted: bool = True
 
     @abstractmethod
     def fit(

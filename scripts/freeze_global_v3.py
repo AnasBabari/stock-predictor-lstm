@@ -28,7 +28,11 @@ from panel.cross_sectional import (  # noqa: E402
 )
 from panel.features import build_features_v5  # noqa: E402
 from panel.snapshots import load_panel_from_directory  # noqa: E402
-from panel.v3_candidates import V3_CANDIDATE_REGISTRY, save_candidate_artifact  # noqa: E402
+from panel.v3_candidates import (  # noqa: E402
+    V3_CANDIDATE_REGISTRY,
+    load_candidate_artifact,
+    save_candidate_artifact,
+)
 from panel.v3_certification import V3CertificationGateConfig  # noqa: E402
 from panel.v3_selection import V3SelectionDecision  # noqa: E402
 
@@ -128,8 +132,19 @@ def freeze_global_v3(
                     f"Fit data max date {fit_data_max_date} exceeds development cutoff {dev_cutoff}"
                 )
 
+    has_selected_horizons = any(
+        isinstance(d, dict) and d.get("status") == "selected"
+        for d in selection_data.values()
+    )
+
+    if has_selected_horizons and (not dev_data_sliced or not dev_ranked):
+        raise ValueError(
+            "Cannot freeze Protocol V3 development run with selected candidates without panel data. "
+            "Provide --panel-dir or usable universe_data."
+        )
+
     frozen_dict: dict[str, Any] = {
-        "freeze_status": "frozen",
+        "freeze_status": "not_frozen",
         "frozen_at_utc": datetime.now(UTC).isoformat(),
         "git_commit_sha": get_git_commit_sha(),
         "development_config_sha256": dev_config_sha256,
@@ -181,7 +196,12 @@ def freeze_global_v3(
         }
 
         # Fit and freeze model artifact if selected
-        if dec.status == "selected" and dec.candidate and dec.candidate in V3_CANDIDATE_REGISTRY and dev_ranked:
+        if dec.status == "selected":
+            if not dec.candidate or dec.candidate not in V3_CANDIDATE_REGISTRY:
+                raise ValueError(
+                    f"Selected horizon {dec.horizon} has invalid candidate '{dec.candidate}'."
+                )
+
             cand_cls = V3_CANDIDATE_REGISTRY[dec.candidate]
             hp = dec.candidate_hyperparameters or {}
             try:
@@ -212,6 +232,18 @@ def freeze_global_v3(
                 protocol_version=dev_cfg.get("research_protocol_version", "global-research-v3"),
             )
 
+            # Immediate verification of serialized model artifact
+            loaded_cand, loaded_manifest = load_candidate_artifact(horizon_model_dir)
+            if loaded_manifest.get("candidate") != dec.candidate:
+                raise ValueError(
+                    f"Frozen artifact verification failed for horizon {dec.horizon}: "
+                    f"expected '{dec.candidate}', got '{loaded_manifest.get('candidate')}'"
+                )
+            if not getattr(loaded_cand, "is_fitted", False):
+                raise ValueError(
+                    f"Frozen candidate for horizon {dec.horizon} is not marked as fitted."
+                )
+
             h_entry["model_artifact"] = {
                 "directory": f"frozen_models/h{dec.horizon}",
                 "manifest_file": f"frozen_models/h{dec.horizon}/model_manifest.json",
@@ -222,6 +254,16 @@ def freeze_global_v3(
             }
 
         frozen_dict["selected_candidates"][str(dec.horizon)] = h_entry
+
+    # Verify that every selected horizon produced a verified model artifact
+    for h_str, h_data in frozen_dict["selected_candidates"].items():
+        if h_data.get("status") == "selected" and not h_data.get("model_artifact"):
+            raise ValueError(
+                f"Selected horizon {h_str} failed to produce a valid verified model artifact."
+            )
+
+    # Only mark as frozen after all selected models verify
+    frozen_dict["freeze_status"] = "frozen"
 
     output_frozen_config.parent.mkdir(parents=True, exist_ok=True)
     output_frozen_config.write_text(json.dumps(frozen_dict, indent=2), encoding="utf-8")

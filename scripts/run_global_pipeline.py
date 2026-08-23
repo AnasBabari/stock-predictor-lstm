@@ -356,8 +356,9 @@ class GlobalPipelineRunner:
         )
 
         tickers_list = sorted(universe_data.keys())
+        split_seed = self.config.asset_split_seed if self.config.is_v3() else self.config.seeds[0]
         train_tickers, holdout_tickers = asset_transfer_split(
-            tickers_list, holdout_fraction=self.config.holdout_fraction, seed=self.config.seeds[0]
+            tickers_list, holdout_fraction=self.config.holdout_fraction, seed=split_seed
         )
 
         result = {
@@ -878,37 +879,62 @@ class GlobalPipelineRunner:
                 return unreleased_summary
 
             release_dir = self.run_dir / "release"
-            release_dir.mkdir(parents=True, exist_ok=True)
             certified_h = cert_result.get("certified_horizons", [])
             released_artifacts: list[str] = []
+            v3_model_files: dict[str, bytes] = {}
 
             for h in certified_h:
                 src_model_dir = self.run_dir / "frozen_models" / f"h{h}"
                 cand_obj, frozen_manifest = load_candidate_artifact(src_model_dir)
 
-                dst_model_dir = release_dir / f"h{h}"
-                dst_model_dir.mkdir(parents=True, exist_ok=True)
-
-                # Copy verified exact frozen model files to release
                 for filename in frozen_manifest.get("files", {}):
                     src_file = src_model_dir / filename
-                    dst_file = dst_model_dir / filename
-                    dst_file.write_bytes(src_file.read_bytes())
+                    v3_model_files[f"h{h}/{filename}"] = src_file.read_bytes()
 
-                # Copy manifest
-                (dst_model_dir / "model_manifest.json").write_text(
-                    (src_model_dir / "model_manifest.json").read_text(encoding="utf-8"),
-                    encoding="utf-8",
-                )
+                manifest_file = src_model_dir / "model_manifest.json"
+                v3_model_files[f"h{h}/model_manifest.json"] = manifest_file.read_bytes()
                 released_artifacts.append(f"release/h{h}")
 
             cert_file = self.stages_dir / "07_certification.json"
+            cert_digest = compute_file_sha256(cert_file) if cert_file.exists() else None
+            metadata_v3 = {
+                "run_id": self.config.run_id,
+                "protocol_version": self.config.protocol_version,
+                "research_protocol_version": self.config.research_protocol_version,
+                "config_digest": self.config.digest(),
+                "development_cutoff": getattr(self.config, "development_cutoff", "2026-08-21"),
+                "certified_horizons": certified_h,
+                "selected_candidates": self.config.selected_candidates,
+                "certification_digest": cert_digest,
+                "released_at_utc": datetime.now(UTC).isoformat(),
+            }
+
+            if self.config.private_key_path and Path(self.config.private_key_path).exists():
+                if release_dir.exists():
+                    import shutil
+                    shutil.rmtree(release_dir)
+                build_release(
+                    release_dir,
+                    v3_model_files,
+                    metadata_v3,
+                    private_key_path=Path(self.config.private_key_path),
+                )
+                if self.config.public_key_path and Path(self.config.public_key_path).exists():
+                    verify_release(release_dir, public_key_path=Path(self.config.public_key_path))
+            else:
+                release_dir.mkdir(parents=True, exist_ok=True)
+                for name, data in v3_model_files.items():
+                    target = release_dir / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data)
+
             release_summary_v3 = {
                 "status": "completed",
                 "protocol_version": self.config.protocol_version,
                 "certified_horizons": certified_h,
                 "released_artifacts": released_artifacts,
-                "certification_digest": compute_file_sha256(cert_file) if cert_file.exists() else None,
+                "certification_digest": cert_digest,
+                "signed_release": bool(self.config.private_key_path and Path(self.config.private_key_path).exists()),
                 "released_at_utc": datetime.now(UTC).isoformat(),
             }
             out_file.write_text(json.dumps(release_summary_v3, indent=2, sort_keys=True), encoding="utf-8")
@@ -1010,74 +1036,79 @@ class GlobalPipelineRunner:
             self._save_manifest(results)
             return results
 
-        # Stage 4: Evaluate / Baselines
-        if stage in ("baselines", "evaluate", "all-development", "all"):
-            ev_by_h, val_losses = self.run_stage_evaluate(universe_data, folds_meta)
-            if self.config.is_v3():
-                results["stages"]["evaluate"] = {
-                    h: [ev.to_dict() for ev in ev_list] for h, ev_list in ev_by_h.items()
-                }
-            else:
-                results["stages"]["evaluate"] = {
-                    h: [asdict(ev) for ev in ev_list] for h, ev_list in ev_by_h.items()
-                }
-            if stage in ("baselines", "evaluate"):
-                self._save_manifest(results)
-                return results
+        # For Protocol V3 running downstream certification/release/verify,
+        # completely bypass development evaluation and selection routing.
+        if self.config.is_v3() and stage in ("certify", "refit", "convert", "release", "verify"):
+            decisions = {}
         else:
-            # Load cached evaluate results if running downstream stage
-            ev_file = self.stages_dir / "05_evaluate.json"
-            losses_file = self.stages_dir / "05_val_losses.npz"
-            if ev_file.exists():
-                ev_data = json.loads(ev_file.read_text(encoding="utf-8"))
-                if self.config.is_v3():
-                    from panel.v3_metrics import SessionICMetrics
-                    from panel.v3_selection import V3CandidateFoldResult
-
-                    ev_by_h = {}
-                    for h_str, items in ev_data.items():
-                        ev_by_h[int(h_str)] = [
-                            V3CandidateEvidence(
-                                candidate_name=item["candidate_name"],
-                                horizon=item["horizon"],
-                                overall_metrics=SessionICMetrics(**item["overall_metrics"]),
-                                fold_metrics=[V3CandidateFoldResult(**f) for f in item["fold_metrics"]],
-                                positive_fold_count=item["positive_fold_count"],
-                                positive_fold_fraction=item["positive_fold_fraction"],
-                                daily_ic=item.get("daily_ic", {}),
-                            )
-                            for item in items
-                        ]
-                    val_losses = {}
-                else:
-                    ev_by_h = {int(h): [HorizonEvidence(**item) for item in items] for h, items in ev_data.items()}
-                    val_losses = {}
-                    if losses_file.exists():
-                        npz = np.load(losses_file)
-                        for h in ev_by_h:
-                            if f"cand_{h}" in npz and f"base_{h}" in npz:
-                                val_losses[h] = (npz[f"cand_{h}"], npz[f"base_{h}"])
-                    if not val_losses:
-                        for h, evs in ev_by_h.items():
-                            best = min(evs, key=lambda e: e.rel_rmse)
-                            n_pts = 1000
-                            b_l = np.ones(n_pts)
-                            # Negative DM diff ensures correct direction if rel_rmse < 1
-                            c_l = np.full(n_pts, best.rel_mae if best.rel_mae < 1.0 else 1.05)
-                            val_losses[h] = (c_l, b_l)
-            else:
+            # Stage 4: Evaluate / Baselines
+            if stage in ("baselines", "evaluate", "all-development", "all"):
                 ev_by_h, val_losses = self.run_stage_evaluate(universe_data, folds_meta)
-
-        # Stage 5: Select
-        if stage in ("select", "all-development", "all", "certify", "refit", "release", "verify"):
-            decisions = self.run_stage_selection(ev_by_h, val_losses)
-            if self.config.is_v3():
-                results["stages"]["selection"] = {h: d.to_dict() for h, d in decisions.items()}
+                if self.config.is_v3():
+                    results["stages"]["evaluate"] = {
+                        h: [ev.to_dict() for ev in ev_list] for h, ev_list in ev_by_h.items()
+                    }
+                else:
+                    results["stages"]["evaluate"] = {
+                        h: [asdict(ev) for ev in ev_list] for h, ev_list in ev_by_h.items()
+                    }
+                if stage in ("baselines", "evaluate"):
+                    self._save_manifest(results)
+                    return results
             else:
-                results["stages"]["selection"] = {h: d.to_manifest() for h, d in decisions.items()}
-            if stage == "select":
-                self._save_manifest(results)
-                return results
+                # Load cached evaluate results if running downstream stage
+                ev_file = self.stages_dir / "05_evaluate.json"
+                losses_file = self.stages_dir / "05_val_losses.npz"
+                if ev_file.exists():
+                    ev_data = json.loads(ev_file.read_text(encoding="utf-8"))
+                    if self.config.is_v3():
+                        from panel.v3_metrics import SessionICMetrics
+                        from panel.v3_selection import V3CandidateFoldResult
+
+                        ev_by_h = {}
+                        for h_str, items in ev_data.items():
+                            ev_by_h[int(h_str)] = [
+                                V3CandidateEvidence(
+                                    candidate_name=item["candidate_name"],
+                                    horizon=item["horizon"],
+                                    overall_metrics=SessionICMetrics(**item["overall_metrics"]),
+                                    fold_metrics=[V3CandidateFoldResult(**f) for f in item["fold_metrics"]],
+                                    positive_fold_count=item["positive_fold_count"],
+                                    positive_fold_fraction=item["positive_fold_fraction"],
+                                    daily_ic=item.get("daily_ic", {}),
+                                )
+                                for item in items
+                            ]
+                        val_losses = {}
+                    else:
+                        ev_by_h = {int(h): [HorizonEvidence(**item) for item in items] for h, items in ev_data.items()}
+                        val_losses = {}
+                        if losses_file.exists():
+                            npz = np.load(losses_file)
+                            for h in ev_by_h:
+                                if f"cand_{h}" in npz and f"base_{h}" in npz:
+                                    val_losses[h] = (npz[f"cand_{h}"], npz[f"base_{h}"])
+                        if not val_losses:
+                            for h, evs in ev_by_h.items():
+                                best = min(evs, key=lambda e: e.rel_rmse)
+                                n_pts = 1000
+                                b_l = np.ones(n_pts)
+                                # Negative DM diff ensures correct direction if rel_rmse < 1
+                                c_l = np.full(n_pts, best.rel_mae if best.rel_mae < 1.0 else 1.05)
+                                val_losses[h] = (c_l, b_l)
+                else:
+                    ev_by_h, val_losses = self.run_stage_evaluate(universe_data, folds_meta)
+
+            # Stage 5: Select
+            if stage in ("select", "all-development", "all", "certify", "refit", "release", "verify"):
+                decisions = self.run_stage_selection(ev_by_h, val_losses)
+                if self.config.is_v3():
+                    results["stages"]["selection"] = {h: d.to_dict() for h, d in decisions.items()}
+                else:
+                    results["stages"]["selection"] = {h: d.to_manifest() for h, d in decisions.items()}
+                if stage == "select":
+                    self._save_manifest(results)
+                    return results
 
         # Stage 6: Certify
         if stage in ("certify", "all"):

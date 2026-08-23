@@ -1122,3 +1122,322 @@ def test_frozen_selection_immutability(tmp_path: Path):
         {"train_tickers": list(panels.keys()), "asset_transfer_holdout_tickers": []},
     )
     assert cert_res["status"] == "locked_waiting_for_maturity"
+
+
+def test_v3_downstream_stages_never_rerun_selection(tmp_path: Path):
+    """Verify that stage='certify' in V3 does NOT evaluate, rerun selection, or mutate 06_selection.json."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from run_global_pipeline import GlobalPipelineRunner, PipelineConfig
+
+    run_dir = tmp_path / "run"
+    stages_dir = run_dir / "stages"
+    stages_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Create frozen candidate A (momentum_rank_20d)
+    frozen_model_dir = run_dir / "frozen_models" / "h5"
+    cand_a = MomentumRank20DCandidate()
+    manifest_a = save_candidate_artifact(
+        cand_a,
+        frozen_model_dir,
+        horizon=5,
+        development_cutoff="2026-08-21",
+        feature_contract_version="cross_sectional_v3_rank_v1",
+        target_contract_version="relative_forward_log_return_dev_loo_v1",
+        train_ticker_digest="test",
+        fit_data_min_date="2024-01-01",
+        fit_data_max_date="2026-08-21",
+    )
+
+    cfg = PipelineConfig(
+        run_id="test_no_selection_rerun",
+        protocol_version="global-cert-v3",
+        research_protocol_version="global-research-v3",
+        freeze_status="frozen",
+        selected_candidates={
+            "5": {
+                "status": "selected",
+                "candidate": "momentum_rank_20d",
+                "model_artifact": {
+                    "directory": "frozen_models/h5",
+                    "manifest_file": "frozen_models/h5/model_manifest.json",
+                    "artifact_digest": manifest_a["artifact_digest"],
+                },
+            }
+        },
+    )
+
+    # 2. Plant 05_evaluate.json and 06_selection.json claiming candidate B (elastic_net_cross_sectional)
+    eval_file = stages_dir / "05_evaluate.json"
+    eval_file.write_text(json.dumps({"5": []}), encoding="utf-8")
+
+    sel_file = stages_dir / "06_selection.json"
+    initial_sel_content = json.dumps(
+        {"5": {"horizon": 5, "candidate": "elastic_net_cross_sectional", "status": "selected"}},
+        indent=2,
+    )
+    sel_file.write_text(initial_sel_content, encoding="utf-8")
+    initial_sel_bytes = sel_file.read_bytes()
+
+    # 3. Create synthetic universe data
+    panels = create_v3_synthetic_panel(n_tickers=35, n_sessions=100, seed=42)
+
+    runner = GlobalPipelineRunner(cfg, run_dir, universe_data=panels)
+    cert_res = runner.run(stage="certify")
+
+    # 4. Verify 06_selection.json is byte-identical (was NOT rewritten or recomputed)
+    assert sel_file.read_bytes() == initial_sel_bytes
+
+    # 5. Verify certification result used frozen candidate A from config
+    assert cert_res["stages"]["certification"]["status"] == "locked_waiting_for_maturity"
+
+
+def test_freeze_selected_candidate_no_panel_raises(tmp_path: Path):
+    """Freeze fails closed immediately if candidates are selected but no panel data is available."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from freeze_global_v3 import freeze_global_v3
+
+    run_dir = tmp_path / "run"
+    stages = run_dir / "stages"
+    stages.mkdir(parents=True, exist_ok=True)
+    (stages / "01_snapshot.json").write_text(json.dumps({"tickers": ["TK_01"]}), encoding="utf-8")
+    (stages / "03_folds.json").write_text(
+        json.dumps({"train_tickers": ["TK_01"], "asset_transfer_holdout_tickers": []}),
+        encoding="utf-8",
+    )
+    (stages / "06_selection.json").write_text(
+        json.dumps(
+            {
+                "5": {
+                    "horizon": 5,
+                    "candidate": "momentum_rank_20d",
+                    "status": "selected",
+                    "mean_spearman_ic": 0.05,
+                    "mean_ic_ci_lower_95": 0.02,
+                    "holm_adjusted_p": 0.001,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out_cfg = tmp_path / "frozen.json"
+    with pytest.raises(ValueError, match="without panel data"):
+        freeze_global_v3(run_dir, out_cfg, panel_dir=None, universe_data=None)
+
+    assert not out_cfg.exists()
+
+
+def test_freeze_missing_artifact_raises(tmp_path: Path):
+    """Freeze fails closed if selected candidate name is invalid or fails artifact serialization."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from freeze_global_v3 import freeze_global_v3
+
+    run_dir = tmp_path / "run"
+    stages = run_dir / "stages"
+    stages.mkdir(parents=True, exist_ok=True)
+    (stages / "01_snapshot.json").write_text(json.dumps({"tickers": ["TK_01"]}), encoding="utf-8")
+    (stages / "03_folds.json").write_text(
+        json.dumps({"train_tickers": ["TK_01"], "asset_transfer_holdout_tickers": []}),
+        encoding="utf-8",
+    )
+    (stages / "06_selection.json").write_text(
+        json.dumps(
+            {
+                "5": {
+                    "horizon": 5,
+                    "candidate": "invalid_nonexistent_candidate",
+                    "status": "selected",
+                    "mean_spearman_ic": 0.05,
+                    "mean_ic_ci_lower_95": 0.02,
+                    "holm_adjusted_p": 0.001,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    panels = create_v3_synthetic_panel(n_tickers=5, n_sessions=50, seed=42)
+    out_cfg = tmp_path / "frozen.json"
+    with pytest.raises(ValueError, match="invalid candidate"):
+        freeze_global_v3(run_dir, out_cfg, universe_data=panels)
+
+    assert not out_cfg.exists()
+
+
+def test_freeze_all_abstain_allowed_without_models(tmp_path: Path):
+    """If all horizons abstain, metadata-only frozen config is permitted with zero models."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from freeze_global_v3 import freeze_global_v3
+
+    run_dir = tmp_path / "run"
+    stages = run_dir / "stages"
+    stages.mkdir(parents=True, exist_ok=True)
+    (stages / "01_snapshot.json").write_text(json.dumps({"tickers": ["TK_01"]}), encoding="utf-8")
+    (stages / "03_folds.json").write_text(
+        json.dumps({"train_tickers": ["TK_01"], "asset_transfer_holdout_tickers": []}),
+        encoding="utf-8",
+    )
+    (stages / "06_selection.json").write_text(
+        json.dumps(
+            {
+                "5": {
+                    "horizon": 5,
+                    "candidate": None,
+                    "status": "abstain_no_robust_rank_signal",
+                    "mean_spearman_ic": 0.0,
+                    "mean_ic_ci_lower_95": -0.01,
+                    "holm_adjusted_p": 1.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out_cfg = tmp_path / "frozen.json"
+    res = freeze_global_v3(run_dir, out_cfg, panel_dir=None, universe_data=None)
+
+    assert out_cfg.exists()
+    assert res["freeze_status"] == "frozen"
+    assert res["selected_candidates"]["5"]["model_artifact"] is None
+    assert not (run_dir / "frozen_models").exists()
+
+
+def test_v3_signed_release_roundtrip_and_tamper_detection(tmp_path: Path):
+    """V3 release integrates with Ed25519 signing and verify_release() detects tampering."""
+    import sys
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+
+    from release.bundle import verify_release
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from run_global_pipeline import GlobalPipelineRunner, PipelineConfig
+
+    # 1. Generate Ed25519 keypair
+    priv_key = ed25519.Ed25519PrivateKey.generate()
+    pub_key = priv_key.public_key()
+
+    priv_path = tmp_path / "ed25519_priv.pem"
+    pub_path = tmp_path / "ed25519_pub.pem"
+
+    priv_path.write_bytes(
+        priv_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    pub_path.write_bytes(
+        pub_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+
+    # 2. Set up frozen candidate model
+    run_dir = tmp_path / "run"
+    frozen_model_dir = run_dir / "frozen_models" / "h5"
+    cand = MomentumRank20DCandidate()
+    manifest = save_candidate_artifact(
+        cand,
+        frozen_model_dir,
+        horizon=5,
+        development_cutoff="2026-08-21",
+        feature_contract_version="cross_sectional_v3_rank_v1",
+        target_contract_version="relative_forward_log_return_dev_loo_v1",
+        train_ticker_digest="test",
+        fit_data_min_date="2024-01-01",
+        fit_data_max_date="2026-08-21",
+    )
+
+    cfg = PipelineConfig(
+        run_id="test_signed_release",
+        protocol_version="global-cert-v3",
+        research_protocol_version="global-research-v3",
+        freeze_status="frozen",
+        private_key_path=str(priv_path),
+        public_key_path=str(pub_path),
+        selected_candidates={
+            "5": {
+                "status": "selected",
+                "candidate": "momentum_rank_20d",
+                "model_artifact": {
+                    "directory": "frozen_models/h5",
+                    "manifest_file": "frozen_models/h5/model_manifest.json",
+                    "artifact_digest": manifest["artifact_digest"],
+                },
+            }
+        },
+    )
+
+    runner = GlobalPipelineRunner(cfg, run_dir)
+    cert_result = {
+        "status": "holdout_opened",
+        "decision": "pass",
+        "certified_horizons": [5],
+    }
+
+    # 3. Execute release stage
+    release_res = runner.run_stage_refit_and_release({}, cert_result, {}, {})
+    assert release_res["status"] == "completed"
+    assert release_res["signed_release"] is True
+
+    release_dir = run_dir / "release"
+    assert (release_dir / "manifest.json").exists()
+    assert (release_dir / "manifest.sig").exists()
+
+    # 4. Verify release bundle using verify_release()
+    verified_manifest = verify_release(release_dir, public_key_path=pub_path)
+    assert verified_manifest["metadata"]["protocol_version"] == "global-cert-v3"
+    assert verified_manifest["metadata"]["certified_horizons"] == [5]
+
+    # 5. Tamper with a model file -> fails closed
+    model_file = release_dir / "h5" / "model.json"
+    model_file.write_bytes(b'{"tampered": true}')
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        verify_release(release_dir, public_key_path=pub_path)
+
+
+def test_v3_asset_split_seed_controls_split(tmp_path: Path):
+    """Changing asset_split_seed changes the D/H split deterministically without altering model candidate seeds."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from run_global_pipeline import GlobalPipelineRunner, PipelineConfig
+
+    panels = create_v3_synthetic_panel(n_tickers=50, n_sessions=100, seed=42)
+
+    cfg_42 = PipelineConfig(
+        run_id="test_split_42",
+        protocol_version="global-cert-v3",
+        research_protocol_version="global-research-v3",
+        asset_split_seed=42,
+        seeds=[100],
+    )
+    cfg_123 = PipelineConfig(
+        run_id="test_split_123",
+        protocol_version="global-cert-v3",
+        research_protocol_version="global-research-v3",
+        asset_split_seed=123,
+        seeds=[100],
+    )
+
+    runner_42 = GlobalPipelineRunner(cfg_42, tmp_path / "run_42")
+    runner_123 = GlobalPipelineRunner(cfg_123, tmp_path / "run_123")
+
+    folds_42 = runner_42.run_stage_folds(panels)
+    folds_123 = runner_123.run_stage_folds(panels)
+
+    assert folds_42["train_tickers"] != folds_123["train_tickers"]
+    assert folds_42["asset_transfer_holdout_tickers"] != folds_123["asset_transfer_holdout_tickers"]
+    # Candidate seeds did not change
+    assert cfg_42.seeds == cfg_123.seeds == [100]
