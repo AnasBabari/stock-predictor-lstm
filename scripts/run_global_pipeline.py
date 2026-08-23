@@ -113,6 +113,12 @@ class PipelineConfig:
     license_acknowledged: bool = False
     private_key_path: str | None = None
     public_key_path: str | None = None
+    certification_gate: dict[str, Any] = field(default_factory=dict)
+
+    def get_gate_config(self) -> CertificationGateConfig:
+        if self.certification_gate:
+            return CertificationGateConfig.from_dict(self.certification_gate)
+        return CertificationGateConfig()
 
     def digest(self) -> str:
         d = asdict(self)
@@ -442,7 +448,7 @@ class GlobalPipelineRunner:
         for h, (c_l, b_l) in validation_losses_by_horizon.items():
             loss_dict[f"cand_{h}"] = c_l
             loss_dict[f"base_{h}"] = b_l
-        np.savez_compressed(self.stages_dir / "05_val_losses.npz", **loss_dict)
+        np.savez_compressed(str(self.stages_dir / "05_val_losses.npz"), **loss_dict)  # type: ignore[arg-type]
 
         return evidence_by_horizon, validation_losses_by_horizon
 
@@ -498,21 +504,35 @@ class GlobalPipelineRunner:
         """Stage: certify - locked temporal & asset-transfer holdout evaluation."""
         out_file = self.stages_dir / "07_certification.json"
 
+        if out_file.exists():
+            try:
+                existing = json.loads(out_file.read_text(encoding="utf-8"))
+                if existing.get("status") == "holdout_opened":
+                    raise RuntimeError(
+                        f"Certification holdout in '{out_file}' has already been opened. "
+                        "Historical certification artefacts are immutable and cannot be rerun or overwritten."
+                    )
+            except json.JSONDecodeError:
+                pass
+
         if not self.open_locked_certification_holdout:
-            result = {
+            locked_result: dict[str, Any] = {
                 "status": "locked_untouched",
                 "reason": "--open-locked-certification-holdout flag not specified",
                 "certified_horizons": [],
                 "decisions": {},
             }
-            out_file.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
-            return result
+            out_file.write_text(json.dumps(locked_result, indent=2, sort_keys=True), encoding="utf-8")
+            return locked_result
 
         features_by_ticker = {t: build_features_v5(f) for t, f in universe_data.items()}
         master_cal = master_session_calendar(universe_data, union=True)
         holdout_sessions = folds_meta["temporal_holdout_sessions"]
-        _, temporal_holdout_cal = reserve_temporal_holdout(master_cal, holdout_sessions=holdout_sessions)
+        _, temporal_holdout_cal = reserve_temporal_holdout(
+            master_cal, holdout_sessions=holdout_sessions
+        )
 
+        gate_cfg = self.config.get_gate_config()
         cert_decisions: dict[int, CertificationDecision] = {}
         for horizon, champ_dec in sorted(decisions.items()):
             cert_dec = evaluate_locked_certification(
@@ -524,12 +544,12 @@ class GlobalPipelineRunner:
                 asset_transfer_tickers=folds_meta["asset_transfer_holdout_tickers"],
                 dev_train_tickers=folds_meta["train_tickers"],
                 seed=self.config.seeds[0],
+                gate_config=gate_cfg,
             )
             cert_decisions[horizon] = cert_dec
 
         passed_horizons = [h for h, cd in cert_decisions.items() if cd.decision == "pass"]
-        gate_cfg = CertificationGateConfig()
-        result = {
+        opened_result: dict[str, Any] = {
             "certification_protocol_version": gate_cfg.protocol_version,
             "status": "holdout_opened",
             "decision": (
@@ -539,10 +559,10 @@ class GlobalPipelineRunner:
             ),
             "certified_horizons": passed_horizons,
             "gate_config": gate_cfg.to_dict(),
-            "decisions": {h: cd.to_dict() for h, cd in cert_decisions.items()},
+            "decisions": {str(h): cd.to_dict() for h, cd in cert_decisions.items()},
         }
-        out_file.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
-        return result
+        out_file.write_text(json.dumps(opened_result, indent=2, sort_keys=True), encoding="utf-8")
+        return opened_result
 
     def run_stage_refit_and_release(
         self,
@@ -692,12 +712,20 @@ class GlobalPipelineRunner:
                 return results
 
         # Stage 6: Certify
-        if stage in ("certify", "all", "refit", "release", "verify"):
+        if stage in ("certify", "all"):
             cert_result = self.run_stage_certify(decisions, universe_data, folds_meta)
             results["stages"]["certification"] = cert_result
             if stage == "certify":
                 self._save_manifest(results)
                 return results
+        elif (self.stages_dir / "07_certification.json").exists():
+            try:
+                cert_result = json.loads(
+                    (self.stages_dir / "07_certification.json").read_text(encoding="utf-8")
+                )
+                results["stages"]["certification"] = cert_result
+            except Exception:
+                cert_result = {"status": "locked_untouched"}
         else:
             cert_result = {"status": "locked_untouched"}
 

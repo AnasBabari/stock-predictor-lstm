@@ -21,5 +21,19 @@
   ],
   "seeds": [42, 43, 44],
   "resamples": 500,
-  "license_acknowledged": true
+  "license_acknowledged": true,
+  "certification_gate": {
+    "protocol_version": "global-cert-v2",
+    "require_temporal_relative_rmse": true,
+    "max_temporal_relative_rmse": 1.0,
+    "require_temporal_relative_mae": true,
+    "max_temporal_relative_mae": 1.0,
+    "require_transfer_relative_rmse": true,
+    "max_transfer_relative_rmse": 1.0,
+    "require_transfer_relative_mae": true,
+    "max_transfer_relative_mae": 1.0,
+    "require_direction_skill": false,
+    "min_direction_accuracy_delta_vs_majority": 0.0,
+    "require_probabilistic_direction": false
+  }
 }

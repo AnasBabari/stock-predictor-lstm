@@ -109,8 +109,8 @@ class PersistenceCandidate(Candidate):
         return self
 
     def predict(self, x: np.ndarray) -> CandidatePrediction:
-        zeros = np.zeros(len(x), dtype=float)
-        unif_dir = np.full((len(x), 3), 1.0 / 3.0, dtype=float)
+        zeros: np.ndarray = np.zeros(len(x), dtype=float)
+        unif_dir: np.ndarray = np.full((len(x), 3), 1.0 / 3.0, dtype=float)
         return CandidatePrediction(
             return_point=zeros,
             return_quantiles={"0.1": zeros, "0.5": zeros, "0.9": zeros},
@@ -139,7 +139,7 @@ class RollingMeanCandidate(Candidate):
         return self
 
     def predict(self, x: np.ndarray) -> CandidatePrediction:
-        values = np.full(len(x), self._mean, dtype=float)
+        values: np.ndarray = np.full(len(x), self._mean, dtype=float)
         spread = float(np.std([self._mean])) or 0.01
         return CandidatePrediction(
             return_point=values,

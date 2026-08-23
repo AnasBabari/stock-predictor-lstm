@@ -43,8 +43,10 @@ def analyze_certification_artifact(
         transfer_mae = dec.get("transfer_relative_mae", 1.0)
         dir_acc = dec.get("temporal_direction_acc", 0.5)
         pos_prev = dec.get("positive_prevalence", 0.5)
+        subset_pos_prev = dec.get("subset_positive_prevalence", pos_prev)
         maj_acc = dec.get("majority_class_accuracy", 0.5)
         dir_delta = dec.get("direction_accuracy_delta_vs_majority", 0.0)
+        dir_cov = dec.get("direction_coverage", 1.0)
         bal_acc = dec.get("balanced_accuracy", 0.5)
 
         analysis["horizon_breakdown"][h] = {
@@ -61,8 +63,10 @@ def analyze_certification_artifact(
             "directional_diagnostics": {
                 "temporal_direction_acc": dir_acc,
                 "positive_prevalence": pos_prev,
+                "subset_positive_prevalence": subset_pos_prev,
                 "majority_class_accuracy": maj_acc,
                 "direction_delta_vs_majority": dir_delta,
+                "direction_coverage": dir_cov,
                 "balanced_accuracy": bal_acc,
                 "prevalence_note": (
                     "Constant positive drift predictions match positive prevalence and "
@@ -72,6 +76,7 @@ def analyze_certification_artifact(
             "probabilistic_diagnostics": {
                 "brier_score": dec.get("temporal_brier"),
                 "status": dec.get("direction_probability_status", "not_available"),
+                "coverage": dec.get("direction_probability_coverage", 0.0),
             },
             "passed_gates": dec.get("passed_gates", []),
             "failed_gates": dec.get("failed_gates", []),

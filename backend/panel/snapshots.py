@@ -280,15 +280,15 @@ def load_panel_from_directory(panel_dir: Path) -> dict[str, pd.DataFrame]:
 
     manifest_file = panel_dir / "manifest.json"
     if manifest_file.exists():
-        _, frames = load_snapshot(panel_dir)
-        return frames
+        _, s_frames = load_snapshot(panel_dir)
+        return s_frames
 
     child_snapshots = [
         d for d in panel_dir.iterdir() if d.is_dir() and (d / "manifest.json").exists()
     ]
     if child_snapshots:
-        _, frames = load_snapshot(child_snapshots[0])
-        return frames
+        _, c_frames = load_snapshot(child_snapshots[0])
+        return c_frames
 
     raw_dir = panel_dir / "raw" if (panel_dir / "raw").is_dir() else panel_dir
     csv_files = list(raw_dir.glob("*.csv"))

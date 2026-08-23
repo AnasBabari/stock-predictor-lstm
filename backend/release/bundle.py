@@ -143,8 +143,10 @@ def validate_certification_manifest(cert_manifest: dict) -> bool:
 
     Fail-closed:
     - V1: Requires temporal_relative_rmse <= 1.0 and temporal_relative_mae <= 1.0
-    - V2: Requires valid gate_config, and that all declared mandatory gates have no failures.
-    - Unsupported protocol versions raise ValueError.
+    - V2: Independently re-evaluates all mandatory gates declared in gate_config against
+      the serialized metrics, asserts agreement between top-level and decision-level metadata,
+      and verifies coverage requirements.
+    - Missing required fields, unknown protocol, or any violated gate raises ValueError or returns False.
     """
     if not isinstance(cert_manifest, dict):
         raise ValueError("Certification manifest must be a dictionary.")
@@ -155,16 +157,20 @@ def validate_certification_manifest(cert_manifest: dict) -> bool:
 
     protocol = cert_manifest.get("certification_protocol_version", "global-cert-v1")
     decisions = cert_manifest.get("decisions", {})
-    if not decisions:
+    if not isinstance(decisions, dict) or not decisions:
         raise ValueError("Certification manifest contains no horizon decisions.")
 
     if protocol == "global-cert-v1":
         for _h, dec in decisions.items():
+            if not isinstance(dec, dict):
+                return False
             if dec.get("decision") != "pass":
                 return False
-            if dec.get("temporal_relative_rmse", 1.0) > 1.000001:
+            if "temporal_relative_rmse" not in dec or "temporal_relative_mae" not in dec:
                 return False
-            if dec.get("temporal_relative_mae", 1.0) > 1.000001:
+            if float(dec["temporal_relative_rmse"]) > 1.000001:
+                return False
+            if float(dec["temporal_relative_mae"]) > 1.000001:
                 return False
         return True
 
@@ -172,11 +178,82 @@ def validate_certification_manifest(cert_manifest: dict) -> bool:
         gate_config = cert_manifest.get("gate_config")
         if not isinstance(gate_config, dict):
             raise ValueError("V2 certification manifest missing required 'gate_config' dict.")
+
         for _h, dec in decisions.items():
+            if not isinstance(dec, dict):
+                return False
             if dec.get("decision") != "pass":
                 return False
             if dec.get("failed_gates"):
                 return False
+
+            # Verify consistency between top-level and decision-level metadata
+            dec_gate_cfg = dec.get("gate_config")
+            if dec_gate_cfg is not None and dec_gate_cfg != gate_config:
+                return False
+            if (
+                dec.get("certification_protocol_version")
+                and dec.get("certification_protocol_version") != protocol
+            ):
+                return False
+
+            # Independently evaluate every declared mandatory gate:
+            # 1. Temporal Relative RMSE
+            if gate_config.get("require_temporal_relative_rmse", True):
+                if "temporal_relative_rmse" not in dec:
+                    raise ValueError("Decision missing required 'temporal_relative_rmse' metric.")
+                max_rmse = float(gate_config.get("max_temporal_relative_rmse", 1.00))
+                if float(dec["temporal_relative_rmse"]) > max_rmse + 1e-9:
+                    return False
+
+            # 2. Temporal Relative MAE
+            if gate_config.get("require_temporal_relative_mae", True):
+                if "temporal_relative_mae" not in dec:
+                    raise ValueError("Decision missing required 'temporal_relative_mae' metric.")
+                max_mae = float(gate_config.get("max_temporal_relative_mae", 1.00))
+                if float(dec["temporal_relative_mae"]) > max_mae + 1e-9:
+                    return False
+
+            # 3. Asset-Transfer Relative RMSE
+            if gate_config.get("require_transfer_relative_rmse", False):
+                if "transfer_relative_rmse" not in dec:
+                    raise ValueError("Decision missing required 'transfer_relative_rmse' metric.")
+                max_trans_rmse = float(gate_config.get("max_transfer_relative_rmse", 1.00))
+                if float(dec["transfer_relative_rmse"]) > max_trans_rmse + 1e-9:
+                    return False
+
+            # 4. Asset-Transfer Relative MAE
+            if gate_config.get("require_transfer_relative_mae", False):
+                if "transfer_relative_mae" not in dec:
+                    raise ValueError("Decision missing required 'transfer_relative_mae' metric.")
+                max_trans_mae = float(gate_config.get("max_transfer_relative_mae", 1.00))
+                if float(dec["transfer_relative_mae"]) > max_trans_mae + 1e-9:
+                    return False
+
+            # 5. Direction skill vs majority on non-neutral subset
+            if gate_config.get("require_direction_skill", False):
+                if "direction_accuracy_delta_vs_majority" not in dec:
+                    raise ValueError(
+                        "Decision missing required 'direction_accuracy_delta_vs_majority' metric."
+                    )
+                min_delta = float(gate_config.get("min_direction_accuracy_delta_vs_majority", 0.00))
+                if float(dec["direction_accuracy_delta_vs_majority"]) < min_delta - 1e-9:
+                    return False
+
+            # 6. Probabilistic direction
+            if gate_config.get("require_probabilistic_direction", False):
+                prob_status = dec.get("direction_probability_status")
+                if prob_status != "evaluated":
+                    return False
+                if "temporal_brier" not in dec or dec["temporal_brier"] is None:
+                    raise ValueError("Decision missing required 'temporal_brier' metric.")
+                max_brier = gate_config.get("max_direction_brier")
+                if max_brier is not None and float(dec["temporal_brier"]) > float(max_brier) + 1e-9:
+                    return False
+                prob_cov = float(dec.get("direction_probability_coverage", 0.0))
+                if prob_cov < 0.999:
+                    return False
+
         return True
 
     else:
