@@ -186,7 +186,7 @@ class RidgeCandidate(Candidate):
         self._scaler_mean = flat.mean(axis=0)
         self._scaler_scale = flat.std(axis=0) + 1e-12
         scaled = (flat - self._scaler_mean) / self._scaler_scale
-        self._model = Ridge(alpha=self.alpha, random_state=self.seed).fit(scaled, y)
+        self._model = Ridge(alpha=self.alpha, solver="lsqr", random_state=self.seed).fit(scaled, y)
         return self
 
     def predict(self, x: np.ndarray) -> CandidatePrediction:
@@ -221,7 +221,11 @@ class ElasticNetCandidate(Candidate):
         self._scale = flat.std(axis=0) + 1e-12
         scaled = (flat - self._mean) / self._scale
         self._model = ElasticNet(
-            alpha=self.alpha, l1_ratio=self.l1_ratio, max_iter=5000, random_state=self.seed
+            alpha=self.alpha,
+            l1_ratio=self.l1_ratio,
+            max_iter=1000,
+            tol=1e-3,
+            random_state=self.seed,
         )
         self._model.fit(scaled, y)
         return self
@@ -263,8 +267,12 @@ class DLinearGlobalCandidate(Candidate):
         y = tgt.cumulative_returns
         trend = self._moving_average(x, self.kernel).reshape(len(x), -1)
         seasonal = x.reshape(len(x), -1) - trend
-        self._trend_model = Ridge(alpha=self.ridge_alpha, random_state=self.seed).fit(trend, y)
-        self._model = Ridge(alpha=self.ridge_alpha, random_state=self.seed).fit(seasonal, y)
+        self._trend_model = Ridge(
+            alpha=self.ridge_alpha, solver="lsqr", random_state=self.seed
+        ).fit(trend, y)
+        self._model = Ridge(alpha=self.ridge_alpha, solver="lsqr", random_state=self.seed).fit(
+            seasonal, y
+        )
         return self
 
     def predict(self, x: np.ndarray) -> CandidatePrediction:
@@ -273,6 +281,171 @@ class DLinearGlobalCandidate(Candidate):
         trend = self._moving_average(x, self.kernel).reshape(len(x), -1)
         seasonal = x.reshape(len(x), -1) - trend
         point = self._trend_model.predict(trend) + self._model.predict(seasonal)
+        return CandidatePrediction(return_point=point)
+
+
+class MomentumMeanReversionCandidate(Candidate):
+    """Multi-horizon momentum (20d/60d) blended with short-term mean-reversion (1d)."""
+
+    name = "momentum_mean_reversion"
+    supported_tasks = ("returns",)
+
+    def __init__(
+        self, mom_weight: float = 0.02, rev_weight: float = -0.01, seed: int | None = None
+    ):
+        self.mom_weight = mom_weight
+        self.rev_weight = rev_weight
+        self.seed = seed
+        self._scale: float = 1.0
+
+    def fit(
+        self, x: np.ndarray, targets: CandidateTargets | np.ndarray
+    ) -> MomentumMeanReversionCandidate:
+        tgt = _ensure_targets(targets)
+        if tgt.cumulative_returns is None:
+            raise ValueError(f"{self.name} requires cumulative_returns in targets.")
+        ret_1d = x[:, -1, 0]
+        ret_20d = x[:, -20:, 0].sum(axis=1) if x.shape[1] >= 20 else ret_1d
+        raw_pred = self.mom_weight * ret_20d + self.rev_weight * ret_1d
+
+        y = tgt.cumulative_returns
+        cov = float(np.mean(raw_pred * y))
+        var = float(np.mean(raw_pred**2) + 1e-12)
+        self._scale = float(np.clip(cov / var, -0.5, 0.5))
+        return self
+
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
+        ret_1d = x[:, -1, 0]
+        ret_20d = x[:, -20:, 0].sum(axis=1) if x.shape[1] >= 20 else ret_1d
+        raw_pred = self.mom_weight * ret_20d + self.rev_weight * ret_1d
+        point = raw_pred * self._scale
+        return CandidatePrediction(return_point=point)
+
+
+class VolatilityScaledDriftCandidate(Candidate):
+    """Market drift scaled dynamically by trailing realized Garman-Klass volatility."""
+
+    name = "volatility_scaled_drift"
+    supported_tasks = ("returns",)
+
+    def __init__(self, target_vol: float = 0.15, seed: int | None = None):
+        self.target_vol = target_vol
+        self.seed = seed
+        self._mean_drift: float = 0.0
+        self._shrinkage: float = 0.1
+
+    def fit(
+        self, x: np.ndarray, targets: CandidateTargets | np.ndarray
+    ) -> VolatilityScaledDriftCandidate:
+        tgt = _ensure_targets(targets)
+        if tgt.cumulative_returns is None:
+            raise ValueError(f"{self.name} requires cumulative_returns in targets.")
+        y = tgt.cumulative_returns
+        self._mean_drift = float(np.mean(y))
+        var = float(np.var(y))
+        self._shrinkage = float(var / (var + 1.0 / max(1, len(y))))
+        return self
+
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
+        ret_vol = np.std(x[:, -20:, 0], axis=1) * np.sqrt(252.0) + 1e-6
+        vol_scalar = np.clip(self.target_vol / ret_vol, 0.2, 2.0)
+        point = np.full(len(x), self._mean_drift * self._shrinkage) * vol_scalar
+        return CandidatePrediction(return_point=point)
+
+
+class HistGradientBoostCandidate(Candidate):
+    """Fast histogram gradient boosting regressor for tabular non-linear interactions."""
+
+    name = "hist_gradient_boost_global"
+    supported_tasks = ("returns",)
+
+    def __init__(
+        self,
+        max_iter: int = 40,
+        max_leaf_nodes: int = 15,
+        min_samples_leaf: int = 50,
+        l2_regularization: float = 10.0,
+        seed: int | None = None,
+    ):
+        self.max_iter = max_iter
+        self.max_leaf_nodes = max_leaf_nodes
+        self.min_samples_leaf = min_samples_leaf
+        self.l2_regularization = l2_regularization
+        self.seed = seed
+        self._model: Any | None = None
+        self._scaler_mean: Any | None = None
+        self._scaler_scale: Any | None = None
+
+    def fit(
+        self, x: np.ndarray, targets: CandidateTargets | np.ndarray
+    ) -> HistGradientBoostCandidate:
+        from sklearn.ensemble import HistGradientBoostingRegressor
+
+        tgt = _ensure_targets(targets)
+        if tgt.cumulative_returns is None:
+            raise ValueError(f"{self.name} requires cumulative_returns in targets.")
+        y = tgt.cumulative_returns
+        flat = _flatten(x)
+        self._scaler_mean = flat.mean(axis=0)
+        self._scaler_scale = flat.std(axis=0) + 1e-12
+        scaled = (flat - self._scaler_mean) / self._scaler_scale
+
+        if len(scaled) > 40000:
+            rng = np.random.default_rng(self.seed or 42)
+            sub_idx = rng.choice(len(scaled), size=40000, replace=False)
+            scaled_sub, y_sub = scaled[sub_idx], y[sub_idx]
+        else:
+            scaled_sub, y_sub = scaled, y
+
+        self._model = HistGradientBoostingRegressor(
+            max_iter=self.max_iter,
+            max_leaf_nodes=self.max_leaf_nodes,
+            min_samples_leaf=self.min_samples_leaf,
+            l2_regularization=self.l2_regularization,
+            random_state=self.seed,
+        )
+        self._model.fit(scaled_sub, y_sub)
+        return self
+
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
+        if self._model is None or self._scaler_mean is None or self._scaler_scale is None:
+            raise RuntimeError("HistGradientBoostCandidate used before fit().")
+        flat = (_flatten(x) - self._scaler_mean) / self._scaler_scale
+        point = self._model.predict(flat)
+        return CandidatePrediction(return_point=point)
+
+
+class CrossSectionalMomentumCandidate(Candidate):
+    """Multi-factor momentum and risk-adjusted ranking candidate."""
+
+    name = "cross_sectional_momentum"
+    supported_tasks = ("returns",)
+
+    def __init__(self, seed: int | None = None):
+        self.seed = seed
+        self._scale: float = 0.05
+
+    def fit(
+        self, x: np.ndarray, targets: CandidateTargets | np.ndarray
+    ) -> CrossSectionalMomentumCandidate:
+        tgt = _ensure_targets(targets)
+        if tgt.cumulative_returns is None:
+            raise ValueError(f"{self.name} requires cumulative_returns in targets.")
+        y = tgt.cumulative_returns
+        mom_20 = x[:, -20:, 0].sum(axis=1) if x.shape[1] >= 20 else x[:, -1, 0]
+        vol_20 = np.std(x[:, -20:, 0], axis=1) + 1e-6
+        sharpe_signal = np.clip(mom_20 / vol_20, -3.0, 3.0)
+
+        cov = float(np.mean(sharpe_signal * y))
+        var = float(np.mean(sharpe_signal**2) + 1e-12)
+        self._scale = float(np.clip(cov / var, -0.1, 0.1))
+        return self
+
+    def predict(self, x: np.ndarray) -> CandidatePrediction:
+        mom_20 = x[:, -20:, 0].sum(axis=1) if x.shape[1] >= 20 else x[:, -1, 0]
+        vol_20 = np.std(x[:, -20:, 0], axis=1) + 1e-6
+        sharpe_signal = np.clip(mom_20 / vol_20, -3.0, 3.0)
+        point = sharpe_signal * self._scale
         return CandidatePrediction(return_point=point)
 
 
@@ -621,6 +794,18 @@ REGISTRY: dict[str, Callable[[int], Candidate]] = {
     RidgeCandidate.name: lambda seed: RidgeCandidate(seed=seed),
     ElasticNetCandidate.name: lambda seed: ElasticNetCandidate(seed=seed),
     DLinearGlobalCandidate.name: lambda seed: DLinearGlobalCandidate(seed=seed),
+    MomentumMeanReversionCandidate.name: lambda seed: MomentumMeanReversionCandidate(seed=seed),
+    VolatilityScaledDriftCandidate.name: lambda seed: VolatilityScaledDriftCandidate(seed=seed),
+    HistGradientBoostCandidate.name: lambda seed: HistGradientBoostCandidate(seed=seed),
+    CrossSectionalMomentumCandidate.name: lambda seed: CrossSectionalMomentumCandidate(seed=seed),
+}
+
+
+NEURAL_CANDIDATE_NAMES: set[str] = {
+    "global_lstm",
+    "global_gru",
+    "global_tcn",
+    "global_garch_lstm",
 }
 
 

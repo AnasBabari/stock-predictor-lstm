@@ -228,6 +228,7 @@ def fetch_panel_universe(
     *,
     years: int = 8,
     max_tickers: int | None = None,
+    allow_missing: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """Batch-download OHLCV for the universe (provider-backed entry point).
 
@@ -235,6 +236,8 @@ def fetch_panel_universe(
     only function in this module that touches the network.
     """
     require_license_acknowledged()
+    import logging
+
     import yfinance as yf  # type: ignore[import-untyped]
 
     universe = list(dict.fromkeys(t.upper() for t in tickers))
@@ -252,9 +255,68 @@ def fetch_panel_universe(
     for ticker in universe:
         block = batch[ticker] if isinstance(batch.columns, pd.MultiIndex) else batch
         block = block.dropna(subset=["Close"])
-        if not block.empty:
+        if not block.empty and len(block) >= 60:
             frames[ticker] = block
     missing = sorted(set(universe) - set(frames))
     if missing:
-        raise PanelValidationError(f"No data returned for: {', '.join(missing)}")
+        if not allow_missing:
+            raise PanelValidationError(f"No data returned for: {', '.join(missing)}")
+        logging.getLogger("panel.snapshots").warning(
+            f"Omitted {len(missing)} missing/delisted tickers from panel: {', '.join(missing)}"
+        )
+    if not frames:
+        raise PanelValidationError("No data returned for any requested ticker.")
+    return frames
+
+
+def load_panel_from_directory(panel_dir: Path) -> dict[str, pd.DataFrame]:
+    """Load universe panel from a snapshot directory or directory of CSV/Parquet files.
+
+    Raises FileNotFoundError if directory does not exist.
+    Raises PanelValidationError if no valid ticker data is found.
+    """
+    if not panel_dir.exists() or not panel_dir.is_dir():
+        raise FileNotFoundError(f"Panel directory does not exist: {panel_dir}")
+
+    manifest_file = panel_dir / "manifest.json"
+    if manifest_file.exists():
+        _, frames = load_snapshot(panel_dir)
+        return frames
+
+    child_snapshots = [
+        d for d in panel_dir.iterdir() if d.is_dir() and (d / "manifest.json").exists()
+    ]
+    if child_snapshots:
+        _, frames = load_snapshot(child_snapshots[0])
+        return frames
+
+    raw_dir = panel_dir / "raw" if (panel_dir / "raw").is_dir() else panel_dir
+    csv_files = list(raw_dir.glob("*.csv"))
+    parquet_files = list(raw_dir.glob("*.parquet"))
+
+    if not csv_files and not parquet_files:
+        raise PanelValidationError(f"No CSV or Parquet ticker files found in {panel_dir}")
+
+    frames: dict[str, pd.DataFrame] = {}
+    for p in sorted(csv_files):
+        ticker = p.stem.upper()
+        frame = pd.read_csv(p, index_col=0, parse_dates=True)
+        frame.index.name = None
+        validate_ohlcv(ticker, frame)
+        frames[ticker] = frame
+
+    for p in sorted(parquet_files):
+        ticker = p.stem.upper()
+        if ticker in frames:
+            continue
+        frame = pd.read_parquet(p)
+        if not isinstance(frame.index, pd.DatetimeIndex) and "Date" in frame.columns:
+            frame["Date"] = pd.to_datetime(frame["Date"])
+            frame = frame.set_index("Date")
+        frame.index.name = None
+        validate_ohlcv(ticker, frame)
+        frames[ticker] = frame
+
+    if not frames:
+        raise PanelValidationError(f"No valid ticker data parsed from {panel_dir}")
     return frames

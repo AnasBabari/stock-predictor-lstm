@@ -255,3 +255,23 @@ def assert_no_time_leakage(
         )
     if not (fold.validation_end - fold.validation_start >= 0):
         raise AssertionError(f"fold {fold.fold}: empty validation block")
+
+
+def reserve_temporal_holdout(
+    master_cal: pd.DatetimeIndex,
+    holdout_sessions: int = 252,
+) -> tuple[pd.DatetimeIndex, pd.DatetimeIndex]:
+    """Split master calendar into development sessions and locked temporal certification holdout.
+
+    The temporal holdout occupies the most recent `holdout_sessions` dates.
+    Returns (dev_calendar, holdout_calendar).
+    """
+    if holdout_sessions <= 0:
+        return master_cal, pd.DatetimeIndex([])
+    if len(master_cal) <= holdout_sessions:
+        raise ValueError(
+            f"Calendar length ({len(master_cal)}) must exceed holdout sessions ({holdout_sessions})"
+        )
+    dev_cal = master_cal[:-holdout_sessions]
+    holdout_cal = master_cal[-holdout_sessions:]
+    return dev_cal, holdout_cal

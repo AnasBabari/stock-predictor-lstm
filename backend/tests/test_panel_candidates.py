@@ -36,8 +36,48 @@ def test_registry_contains_statistical_families() -> None:
         "ridge_global",
         "elastic_net_global",
         "dlinear_global",
+        "momentum_mean_reversion",
+        "volatility_scaled_drift",
+        "hist_gradient_boost_global",
+        "cross_sectional_momentum",
     ):
         assert name in REGISTRY
+
+
+def test_new_candidate_models_train_and_predict() -> None:
+    from panel.candidates import (
+        CrossSectionalMomentumCandidate,
+        HistGradientBoostCandidate,
+        MomentumMeanReversionCandidate,
+        VolatilityScaledDriftCandidate,
+    )
+
+    x, y = make_pooled(n_tickers=4, rows=50, window=20, features=4)
+    split = int(len(y) * 0.8)
+
+    # Momentum & Mean-Reversion
+    mmr = MomentumMeanReversionCandidate().fit(x[:split], y[:split])
+    p_mmr = mmr.predict(x[split:])
+    assert p_mmr.return_point is not None
+    assert np.isfinite(p_mmr.return_point).all()
+
+    # Volatility Scaled Drift
+    vsd = VolatilityScaledDriftCandidate().fit(x[:split], y[:split])
+    p_vsd = vsd.predict(x[split:])
+    assert p_vsd.return_point is not None
+    assert np.isfinite(p_vsd.return_point).all()
+
+    # Hist Gradient Boost
+    hgb = HistGradientBoostCandidate(max_iter=10).fit(x[:split], y[:split])
+    p_hgb = hgb.predict(x[split:])
+    assert p_hgb.return_point is not None
+    assert np.isfinite(p_hgb.return_point).all()
+
+    # Cross-Sectional Momentum
+    csm = CrossSectionalMomentumCandidate().fit(x[:split], y[:split])
+    p_csm = csm.predict(x[split:])
+    assert p_csm.return_point is not None
+    assert np.isfinite(p_csm.return_point).all()
 
 
 def test_ridge_beats_persistence_on_learnable_panel() -> None:
