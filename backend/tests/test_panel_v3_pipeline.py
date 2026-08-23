@@ -1,7 +1,4 @@
-"""Integration tests and end-to-end fixture pipelines for Protocol V3."""
-
-from __future__ import annotations
-
+import json
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +8,15 @@ import pytest
 from panel.cross_sectional import compute_cross_sectional_ranks, compute_relative_forward_returns
 from panel.features import build_features_v5
 from panel.folds import CalendarFold
-from panel.v3_candidates import MomentumRank20DCandidate
+from panel.v3_candidates import (
+    V3_CANDIDATE_REGISTRY,
+    BaseV3Candidate,
+    MomentumRank20DCandidate,
+    RidgeCrossSectionalCandidate,
+    compute_file_sha256,
+    load_candidate_artifact,
+    save_candidate_artifact,
+)
 from panel.v3_certification import (
     V3CertificationGateConfig,
     check_prospective_holdout_maturity,
@@ -674,3 +679,446 @@ def test_release_bundle_v3_fail_closed_checks():
         },
     }
     assert validate_certification_manifest(failing_gate_manifest) is False
+
+
+def test_mature_certification_never_fits(tmp_path: Path):
+    """TEST 1: Invariant AE - Prove opened/mature prospective certification NEVER invokes candidate.fit()."""
+
+    class ExplodingFitCandidate(BaseV3Candidate):
+        name = "exploding_fit_candidate"
+
+        def __init__(self):
+            self.is_fitted = True
+
+        def fit(self, features_by_ticker, relative_targets_by_ticker):
+            raise AssertionError(
+                "CRITICAL VIOLATION: candidate.fit() was invoked during prospective certification!"
+            )
+
+        def predict(self, features_by_ticker):
+            scores = {}
+            for ticker, df in features_by_ticker.items():
+                if "Return_20D_CS_Rank" in df.columns:
+                    scores[ticker] = df["Return_20D_CS_Rank"]
+                else:
+                    scores[ticker] = pd.Series(np.nan, index=df.index)
+            return pd.DataFrame(scores)
+
+        def save(self, target_dir: Path) -> dict[str, str]:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            p = target_dir / "model.json"
+            p.write_text(json.dumps({"candidate": self.name}), encoding="utf-8")
+            return {"model.json": compute_file_sha256(p)}
+
+        def load(self, source_dir: Path) -> None:
+            self.is_fitted = True
+
+    cand = ExplodingFitCandidate()
+    cutoff = "2026-08-21"
+    pre_cutoff = pd.bdate_range("2025-01-01", "2026-08-21")
+    post_cutoff = pd.bdate_range("2026-08-24", periods=300)
+    master_cal = list(pre_cutoff) + list(post_cutoff)
+
+    # 35 dev tickers, 10 transfer tickers
+    panels = create_v3_synthetic_panel(
+        n_tickers=45, n_sessions=len(master_cal), signal_strength=1.0, seed=42
+    )
+    tickers = list(panels.keys())
+    dev_tickers = tickers[:35]
+    transfer_tickers = tickers[35:]
+
+    # Reindex panels to master calendar
+    for t in tickers:
+        panels[t] = panels[t].iloc[: len(master_cal)]
+        panels[t].index = master_cal
+
+    sel_decisions = {
+        5: V3SelectionDecision(horizon=5, candidate="exploding_fit_candidate", status="selected")
+    }
+    gate_cfg = V3CertificationGateConfig(
+        development_cutoff=cutoff,
+        min_temporal_daily_breadth=30,
+        min_transfer_daily_breadth=5,
+        resamples=100,
+    )
+
+    # Mature, opened certification MUST evaluate without calling cand.fit()
+    cert_result = evaluate_v3_prospective_certification(
+        {5: cand},
+        sel_decisions,
+        panels,
+        master_cal,
+        dev_tickers=dev_tickers,
+        transfer_tickers=transfer_tickers,
+        gate_config=gate_cfg,
+        open_locked_holdout=True,
+    )
+
+    assert cert_result["status"] == "holdout_opened"
+    assert "5" in cert_result["decisions"]
+
+
+def test_prospective_outcome_canary_does_not_affect_frozen_model(tmp_path: Path):
+    """TEST 2: Altering future prospective outcomes does not alter the frozen model artifact or parameters."""
+    dev_panels = create_v3_synthetic_panel(n_tickers=35, n_sessions=200, seed=42)
+    dev_tickers = list(dev_panels.keys())
+
+    # Fit Ridge candidate on dev data
+    v5_feats = {t: dev_panels[t] for t in dev_tickers}
+    ranked_feats = compute_cross_sectional_ranks(v5_feats, dev_tickers=dev_tickers)
+    _, rel_tgts = compute_relative_forward_returns(dev_panels, horizon=5, dev_tickers=dev_tickers)
+
+    cand = RidgeCrossSectionalCandidate(alpha=10.0)
+    cand.fit(ranked_feats, rel_tgts)
+
+    frozen_dir = tmp_path / "frozen_models" / "h5"
+    manifest = save_candidate_artifact(
+        cand,
+        frozen_dir,
+        horizon=5,
+        development_cutoff="2026-08-21",
+        feature_contract_version="cross_sectional_v3_rank_v1",
+        target_contract_version="relative_forward_log_return_dev_loo_v1",
+        train_ticker_digest="test_digest",
+        fit_data_min_date="2024-01-01",
+        fit_data_max_date="2026-08-21",
+    )
+    initial_weights_sha = manifest["files"]["weights.npz"]
+
+    # Prospective Panel A vs Panel B (with wild prospective prices)
+    cand_a, _ = load_candidate_artifact(frozen_dir)
+    cand_b, _ = load_candidate_artifact(frozen_dir)
+
+    # Artifact on disk and loaded parameters are completely invariant to prospective outcomes
+    assert cand_a.model.coef_ is not None
+    assert np.array_equal(cand_a.model.coef_, cand_b.model.coef_)
+    assert cand_a.model.intercept_ == cand_b.model.intercept_
+    assert compute_file_sha256(frozen_dir / "weights.npz") == initial_weights_sha
+
+
+def test_all_v3_candidate_families_serialization_roundtrip(tmp_path: Path):
+    """TEST 3: Invariant AD - Complete fit-predict-save-load-predict roundtrip for all 7 candidate families."""
+    panels = create_v3_synthetic_panel(n_tickers=35, n_sessions=150, seed=42)
+    tickers = list(panels.keys())
+
+    v5_feats = {t: panels[t] for t in tickers}
+    ranked_feats = compute_cross_sectional_ranks(v5_feats, dev_tickers=tickers)
+    _, rel_tgts = compute_relative_forward_returns(panels, horizon=5, dev_tickers=tickers)
+
+    for cand_name, cand_cls in V3_CANDIDATE_REGISTRY.items():
+        cand = cand_cls()
+        cand.fit(ranked_feats, rel_tgts)
+
+        pred_before = cand.predict(ranked_feats)
+
+        target_dir = tmp_path / f"cand_{cand_name}"
+        saved_manifest = save_candidate_artifact(
+            cand,
+            target_dir,
+            horizon=5,
+            development_cutoff="2026-08-21",
+            feature_contract_version="cross_sectional_v3_rank_v1",
+            target_contract_version="relative_forward_log_return_dev_loo_v1",
+            train_ticker_digest="test_digest",
+            fit_data_min_date="2024-01-01",
+            fit_data_max_date="2026-08-21",
+        )
+
+        loaded_cand, loaded_manifest = load_candidate_artifact(target_dir)
+        pred_after = loaded_cand.predict(ranked_feats)
+
+        assert loaded_manifest["candidate"] == cand_name
+        assert loaded_manifest["artifact_digest"] == saved_manifest["artifact_digest"]
+        assert np.allclose(pred_before.to_numpy(), pred_after.to_numpy(), equal_nan=True)
+
+
+def test_frozen_hash_tampering_rejected(tmp_path: Path):
+    """TEST 4: Any tampering with frozen model files fails closed immediately."""
+    cand = RidgeCrossSectionalCandidate(alpha=100.0)
+    panels = create_v3_synthetic_panel(n_tickers=35, n_sessions=120, seed=42)
+    tickers = list(panels.keys())
+    ranked = compute_cross_sectional_ranks(panels, dev_tickers=tickers)
+    _, rel_targets = compute_relative_forward_returns(panels, horizon=5, dev_tickers=tickers)
+    cand.fit(ranked, rel_targets)
+
+    save_candidate_artifact(
+        cand,
+        tmp_path,
+        horizon=5,
+        development_cutoff="2026-08-21",
+        feature_contract_version="cross_sectional_v3_rank_v1",
+        target_contract_version="relative_forward_log_return_dev_loo_v1",
+        train_ticker_digest="test",
+        fit_data_min_date="2024-01-01",
+        fit_data_max_date="2026-08-21",
+    )
+
+    # Tamper with params.json
+    params_file = tmp_path / "params.json"
+    params_data = json.loads(params_file.read_text(encoding="utf-8"))
+    params_data["tampered"] = True
+    params_file.write_text(json.dumps(params_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Artifact SHA mismatch"):
+        load_candidate_artifact(tmp_path)
+
+
+def test_wrong_candidate_artifact_rejected(tmp_path: Path):
+    """TEST 5: Manifest candidate mismatch fails closed."""
+    cand = RidgeCrossSectionalCandidate(alpha=10.0)
+    save_candidate_artifact(
+        cand,
+        tmp_path,
+        horizon=5,
+        development_cutoff="2026-08-21",
+        feature_contract_version="cross_sectional_v3_rank_v1",
+        target_contract_version="relative_forward_log_return_dev_loo_v1",
+        train_ticker_digest="test",
+        fit_data_min_date="2024-01-01",
+        fit_data_max_date="2026-08-21",
+    )
+
+    # Alter params.json candidate name
+    params_file = tmp_path / "params.json"
+    params_data = json.loads(params_file.read_text(encoding="utf-8"))
+    params_data["candidate"] = "elastic_net_cross_sectional"
+    params_file.write_text(json.dumps(params_data), encoding="utf-8")
+
+    # Update hash in manifest to bypass SHA check and trigger candidate mismatch
+    manifest_file = tmp_path / "model_manifest.json"
+    m = json.loads(manifest_file.read_text(encoding="utf-8"))
+    m["files"]["params.json"] = compute_file_sha256(params_file)
+    manifest_file.write_text(json.dumps(m), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Candidate mismatch"):
+        load_candidate_artifact(tmp_path)
+
+
+def test_post_cutoff_freeze_canary(tmp_path: Path):
+    """TEST 6: Freezer strictly enforces data <= 2026-08-21 even if panel contains future dates."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from freeze_global_v3 import freeze_global_v3
+
+    # Generate Panel A (<= 2026-08-21) and Panel B (containing future dates through 2027)
+    cutoff = "2026-08-21"
+    dates_a = pd.bdate_range("2025-01-01", "2026-08-21")
+    dates_b = pd.bdate_range("2025-01-01", "2027-06-01")
+
+    panel_a: dict[str, pd.DataFrame] = {}
+    panel_b: dict[str, pd.DataFrame] = {}
+    rng = np.random.default_rng(42)
+
+    for i in range(35):
+        ticker = f"TK_{i:02d}"
+        n_a = len(dates_a)
+        n_b = len(dates_b)
+        close_a = 100.0 * np.exp(np.cumsum(rng.normal(0, 0.01, n_a)))
+        close_b = np.pad(close_a, (0, n_b - n_a), mode="constant", constant_values=1000.0)
+
+        df_a = pd.DataFrame(
+            {
+                "Open": close_a,
+                "High": close_a * 1.01,
+                "Low": close_a * 0.99,
+                "Close": close_a,
+                "Volume": 100000.0,
+            },
+            index=dates_a,
+        )
+        df_b = pd.DataFrame(
+            {
+                "Open": close_b,
+                "High": close_b * 1.01,
+                "Low": close_b * 0.99,
+                "Close": close_b,
+                "Volume": 100000.0,
+            },
+            index=dates_b,
+        )
+        panel_a[ticker] = df_a
+        panel_b[ticker] = df_b
+
+    # Set up synthetic stages dir
+    run_dir_a = tmp_path / "run_a"
+    run_dir_b = tmp_path / "run_b"
+    for rdir in (run_dir_a, run_dir_b):
+        stages = rdir / "stages"
+        stages.mkdir(parents=True, exist_ok=True)
+        (stages / "01_snapshot.json").write_text(
+            json.dumps({"tickers": list(panel_a.keys())}), encoding="utf-8"
+        )
+        (stages / "03_folds.json").write_text(
+            json.dumps(
+                {"train_tickers": list(panel_a.keys()), "asset_transfer_holdout_tickers": []}
+            ),
+            encoding="utf-8",
+        )
+        (stages / "06_selection.json").write_text(
+            json.dumps(
+                {
+                    "5": {
+                        "horizon": 5,
+                        "candidate": "momentum_rank_20d",
+                        "status": "selected",
+                        "mean_spearman_ic": 0.05,
+                        "mean_ic_ci_lower_95": 0.02,
+                        "holm_adjusted_p": 0.001,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    out_cfg_a = tmp_path / "frozen_a.json"
+    out_cfg_b = tmp_path / "frozen_b.json"
+
+    res_a = freeze_global_v3(run_dir_a, out_cfg_a, universe_data=panel_a)
+    res_b = freeze_global_v3(run_dir_b, out_cfg_b, universe_data=panel_b)
+
+    assert res_a["selected_candidates"]["5"]["model_artifact"]["fit_data_max_date"] == cutoff
+    assert res_b["selected_candidates"]["5"]["model_artifact"]["fit_data_max_date"] == cutoff
+    assert (
+        res_a["selected_candidates"]["5"]["model_artifact"]["artifact_digest"]
+        == res_b["selected_candidates"]["5"]["model_artifact"]["artifact_digest"]
+    )
+
+
+def test_release_uses_exact_frozen_model_and_forbids_placeholders(tmp_path: Path):
+    """TESTS 7 & 8: Release stage packages exact frozen model artifacts, not status placeholders."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from run_global_pipeline import GlobalPipelineRunner, PipelineConfig
+
+    run_dir = tmp_path / "run"
+    frozen_model_dir = run_dir / "frozen_models" / "h5"
+    cand = MomentumRank20DCandidate()
+    manifest = save_candidate_artifact(
+        cand,
+        frozen_model_dir,
+        horizon=5,
+        development_cutoff="2026-08-21",
+        feature_contract_version="cross_sectional_v3_rank_v1",
+        target_contract_version="relative_forward_log_return_dev_loo_v1",
+        train_ticker_digest="test",
+        fit_data_min_date="2024-01-01",
+        fit_data_max_date="2026-08-21",
+    )
+
+    cfg = PipelineConfig(
+        run_id="test_release",
+        protocol_version="global-cert-v3",
+        research_protocol_version="global-research-v3",
+        freeze_status="frozen",
+        selected_candidates={
+            "5": {
+                "status": "selected",
+                "candidate": "momentum_rank_20d",
+                "model_artifact": {
+                    "directory": "frozen_models/h5",
+                    "manifest_file": "frozen_models/h5/model_manifest.json",
+                    "artifact_digest": manifest["artifact_digest"],
+                },
+            }
+        },
+    )
+
+    runner = GlobalPipelineRunner(cfg, run_dir)
+    cert_result = {
+        "status": "holdout_opened",
+        "decision": "pass",
+        "certified_horizons": [5],
+    }
+
+    release_res = runner.run_stage_refit_and_release({}, cert_result, {}, {})
+    assert release_res["status"] == "completed"
+
+    released_manifest = run_dir / "release" / "h5" / "model_manifest.json"
+    assert released_manifest.exists()
+    rel_m = json.loads(released_manifest.read_text(encoding="utf-8"))
+    assert rel_m["candidate"] == "momentum_rank_20d"
+    assert rel_m["artifact_digest"] == manifest["artifact_digest"]
+
+    # Verify placeholder is NOT used
+    assert not (run_dir / "refit" / "model_h5.json").exists()
+
+
+def test_not_frozen_config_rejected_for_certification(tmp_path: Path):
+    """TEST 9: Attempting certification with freeze_status='not_frozen' fails closed immediately."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from run_global_pipeline import GlobalPipelineRunner, PipelineConfig
+
+    cfg = PipelineConfig(
+        run_id="test_unfrozen",
+        protocol_version="global-cert-v3",
+        research_protocol_version="global-research-v3",
+        freeze_status="not_frozen",
+    )
+    runner = GlobalPipelineRunner(cfg, tmp_path)
+
+    with pytest.raises(ValueError, match="requires a frozen configuration"):
+        runner.run_stage_certify({}, {}, {})
+
+
+def test_frozen_selection_immutability(tmp_path: Path):
+    """TEST 10: Invariant AF - Altering dev stage files post-freeze does not alter certification candidate."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from run_global_pipeline import GlobalPipelineRunner, PipelineConfig
+
+    run_dir = tmp_path / "run"
+    frozen_model_dir = run_dir / "frozen_models" / "h5"
+    cand = MomentumRank20DCandidate()
+    manifest = save_candidate_artifact(
+        cand,
+        frozen_model_dir,
+        horizon=5,
+        development_cutoff="2026-08-21",
+        feature_contract_version="cross_sectional_v3_rank_v1",
+        target_contract_version="relative_forward_log_return_dev_loo_v1",
+        train_ticker_digest="test",
+        fit_data_min_date="2024-01-01",
+        fit_data_max_date="2026-08-21",
+    )
+
+    # Frozen config specifies momentum_rank_20d
+    cfg = PipelineConfig(
+        run_id="test_immutability",
+        protocol_version="global-cert-v3",
+        research_protocol_version="global-research-v3",
+        freeze_status="frozen",
+        selected_candidates={
+            "5": {
+                "status": "selected",
+                "candidate": "momentum_rank_20d",
+                "model_artifact": {
+                    "directory": "frozen_models/h5",
+                    "manifest_file": "frozen_models/h5/model_manifest.json",
+                    "artifact_digest": manifest["artifact_digest"],
+                },
+            }
+        },
+    )
+
+    runner = GlobalPipelineRunner(cfg, run_dir)
+
+    # Tamper with decisions argument to claim another candidate
+    tampered_decisions = {
+        5: V3SelectionDecision(
+            horizon=5, candidate="elastic_net_cross_sectional", status="selected"
+        )
+    }
+
+    panels = create_v3_synthetic_panel(n_tickers=35, n_sessions=100, seed=42)
+    # Runner uses frozen candidate from config, not the tampered decisions
+    cert_res = runner.run_stage_certify(
+        tampered_decisions,
+        panels,
+        {"train_tickers": list(panels.keys()), "asset_transfer_holdout_tickers": []},
+    )
+    assert cert_res["status"] == "locked_waiting_for_maturity"

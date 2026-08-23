@@ -26,7 +26,7 @@ import logging
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +87,8 @@ from panel.snapshots import (  # noqa: E402
 from panel.v3_candidates import (  # noqa: E402
     V3_CANDIDATE_REGISTRY,
     BaseV3Candidate,
+    compute_file_sha256,
+    load_candidate_artifact,
 )
 from panel.v3_certification import (  # noqa: E402
     V3CertificationGateConfig,
@@ -142,6 +144,25 @@ class PipelineConfig:
     inference: dict[str, Any] = field(default_factory=dict)
     selection: dict[str, Any] = field(default_factory=dict)
     certification_gate: dict[str, Any] = field(default_factory=dict)
+
+    # V3 Frozen Metadata
+    freeze_status: str = "not_frozen"
+    frozen_at_utc: str | None = None
+    git_commit_sha: str | None = None
+    development_config_sha256: str | None = None
+    development_snapshot_digest: str | None = None
+    development_selection_digest: str | None = None
+    development_folds_digest: str | None = None
+    selected_candidates: dict[str, Any] = field(default_factory=dict)
+    train_tickers: list[str] = field(default_factory=list)
+    asset_transfer_holdout_tickers: list[str] = field(default_factory=list)
+    note: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PipelineConfig:
+        known_fields = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        filtered = {k: v for k, v in data.items() if k in known_fields}
+        return cls(**filtered)
 
     def is_v3(self) -> bool:
         return (
@@ -720,42 +741,65 @@ class GlobalPipelineRunner:
         if self.config.is_v3():
             v3_gate_cfg = self.config.get_v3_gate_config()
 
-            # Build frozen candidate objects fit on full dev data <= development_cutoff
+            if getattr(self.config, "freeze_status", "not_frozen") != "frozen":
+                raise ValueError(
+                    f"Protocol V3 prospective certification requires a frozen configuration "
+                    f"(freeze_status='frozen'). Found: '{getattr(self.config, 'freeze_status', 'not_frozen')}'. "
+                    "Run scripts/freeze_global_v3.py before running certification."
+                )
+
+            train_tickers = list(self.config.train_tickers or folds_meta.get("train_tickers", []))
+            transfer_tickers = list(self.config.asset_transfer_holdout_tickers or folds_meta.get("asset_transfer_holdout_tickers", []))
+
+            # Build selection decisions strictly from frozen configuration
+            v3_selection_decisions: dict[int, V3SelectionDecision] = {}
+            for h_str, h_data in self.config.selected_candidates.items():
+                h_int = int(h_str)
+                v3_selection_decisions[h_int] = V3SelectionDecision(
+                    horizon=h_int,
+                    status=h_data.get("status", "abstain"),
+                    candidate=h_data.get("candidate"),
+                    mean_spearman_ic=float(h_data.get("mean_spearman_ic", 0.0)),
+                    mean_ic_ci_lower_95=float(h_data.get("mean_ic_ci_lower_95", 0.0)),
+                    holm_adjusted_p=float(h_data.get("holm_adjusted_p", 1.0)),
+                    candidate_hyperparameters=h_data.get("candidate_hyperparameters", {}),
+                )
+
+            # Load and verify exact frozen model artifacts (ZERO fit / parameter update calls)
             frozen_candidates: dict[int, BaseV3Candidate] = {}
-            train_tickers = set(folds_meta["train_tickers"])
+            for h, sel_dec in v3_selection_decisions.items():
+                if sel_dec.status == "selected" and sel_dec.candidate:
+                    h_cfg = self.config.selected_candidates.get(str(h), {})
+                    artifact_meta = h_cfg.get("model_artifact")
+                    if not artifact_meta:
+                        raise ValueError(f"Selected horizon {h} is missing 'model_artifact' in frozen config.")
 
-            dev_features_all = {
-                t: build_features_v5(universe_data[t]) for t in folds_meta["train_tickers"] if t in universe_data
-            }
-            dev_ranked = compute_cross_sectional_ranks(
-                dev_features_all,
-                dev_tickers=train_tickers,
-                min_reference_assets=v3_gate_cfg.min_temporal_daily_breadth,
-            )
+                    artifact_rel_dir = artifact_meta.get("directory", f"frozen_models/h{h}")
+                    artifact_dir = self.run_dir / artifact_rel_dir
+                    cand_obj, manifest = load_candidate_artifact(artifact_dir)
 
-            # Fit candidates for selected horizons
-            for h, sel_dec in decisions.items():
-                if isinstance(sel_dec, V3SelectionDecision) and sel_dec.status == "selected" and sel_dec.candidate:
-                    cand_cls = V3_CANDIDATE_REGISTRY[sel_dec.candidate]
-                    cand = cand_cls()
-                    _, dev_rel_targets = compute_relative_forward_returns(
-                        universe_data,
-                        h,
-                        dev_tickers=train_tickers,
-                        min_reference_assets=v3_gate_cfg.min_temporal_daily_breadth,
-                    )
-                    cand.fit(dev_ranked, dev_rel_targets)
-                    frozen_candidates[h] = cand
+                    if manifest.get("candidate") != sel_dec.candidate:
+                        raise ValueError(
+                            f"Frozen artifact candidate mismatch for horizon {h}: "
+                            f"expected '{sel_dec.candidate}', got '{manifest.get('candidate')}'"
+                        )
+                    if manifest.get("artifact_digest") != artifact_meta.get("artifact_digest"):
+                        raise ValueError(
+                            f"Frozen artifact digest mismatch for horizon {h}: "
+                            f"expected '{artifact_meta.get('artifact_digest')}', got '{manifest.get('artifact_digest')}'"
+                        )
+
+                    frozen_candidates[h] = cand_obj
 
             master_cal_v3 = master_session_calendar(universe_data, union=True)
 
             v3_cert_result = evaluate_v3_prospective_certification(
                 frozen_candidates,
-                decisions,  # type: ignore[arg-type]
+                v3_selection_decisions,
                 universe_data,
                 master_cal_v3,
-                dev_tickers=folds_meta["train_tickers"],
-                transfer_tickers=folds_meta["asset_transfer_holdout_tickers"],
+                dev_tickers=train_tickers,
+                transfer_tickers=transfer_tickers,
                 gate_config=v3_gate_cfg,
                 open_locked_holdout=self.open_locked_certification_holdout,
             )
@@ -822,18 +866,50 @@ class GlobalPipelineRunner:
         out_file = self.stages_dir / "08_release.json"
 
         if self.config.is_v3():
-            refit_dir = self.run_dir / "refit"
-            refit_dir.mkdir(parents=True, exist_ok=True)
-            certified_h = cert_result.get("certified_horizons", [])
-            for h in certified_h:
-                model_json = refit_dir / f"model_h{h}.json"
-                model_json.write_text(json.dumps({"horizon": h, "status": "certified"}, indent=2), encoding="utf-8")
+            if cert_result.get("status") != "holdout_opened" or cert_result.get("decision") != "pass":
+                unreleased_summary = {
+                    "status": "not_released",
+                    "protocol_version": self.config.protocol_version,
+                    "reason": "Prospective certification did not pass or holdout was not opened",
+                    "certified_horizons": cert_result.get("certified_horizons", []),
+                    "cert_decision": cert_result.get("decision", "fail"),
+                }
+                out_file.write_text(json.dumps(unreleased_summary, indent=2, sort_keys=True), encoding="utf-8")
+                return unreleased_summary
 
+            release_dir = self.run_dir / "release"
+            release_dir.mkdir(parents=True, exist_ok=True)
+            certified_h = cert_result.get("certified_horizons", [])
+            released_artifacts: list[str] = []
+
+            for h in certified_h:
+                src_model_dir = self.run_dir / "frozen_models" / f"h{h}"
+                cand_obj, frozen_manifest = load_candidate_artifact(src_model_dir)
+
+                dst_model_dir = release_dir / f"h{h}"
+                dst_model_dir.mkdir(parents=True, exist_ok=True)
+
+                # Copy verified exact frozen model files to release
+                for filename in frozen_manifest.get("files", {}):
+                    src_file = src_model_dir / filename
+                    dst_file = dst_model_dir / filename
+                    dst_file.write_bytes(src_file.read_bytes())
+
+                # Copy manifest
+                (dst_model_dir / "model_manifest.json").write_text(
+                    (src_model_dir / "model_manifest.json").read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+                released_artifacts.append(f"release/h{h}")
+
+            cert_file = self.stages_dir / "07_certification.json"
             release_summary_v3 = {
-                "status": "completed" if certified_h else "no_certified_horizons",
+                "status": "completed",
                 "protocol_version": self.config.protocol_version,
                 "certified_horizons": certified_h,
-                "refit_models": [f"model_h{h}.json" for h in certified_h],
+                "released_artifacts": released_artifacts,
+                "certification_digest": compute_file_sha256(cert_file) if cert_file.exists() else None,
+                "released_at_utc": datetime.now(UTC).isoformat(),
             }
             out_file.write_text(json.dumps(release_summary_v3, indent=2, sort_keys=True), encoding="utf-8")
             return release_summary_v3
@@ -1104,7 +1180,7 @@ def main() -> int:
     cfg = PipelineConfig()
     if args.config and args.config.exists():
         data = json.loads(args.config.read_text(encoding="utf-8"))
-        cfg = PipelineConfig(**data)
+        cfg = PipelineConfig.from_dict(data)
 
     if args.mode:
         cfg.mode = args.mode
