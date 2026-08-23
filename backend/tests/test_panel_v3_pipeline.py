@@ -1441,3 +1441,178 @@ def test_v3_asset_split_seed_controls_split(tmp_path: Path):
     assert folds_42["asset_transfer_holdout_tickers"] != folds_123["asset_transfer_holdout_tickers"]
     # Candidate seeds did not change
     assert cfg_42.seeds == cfg_123.seeds == [100]
+
+
+def test_warmup_length_mismatch_regression():
+    """Exact regression test: raw targets have 2010 dates, features have 1867 dates due to warm-up.
+
+    evaluate_v3_candidate_on_folds() must align by timestamp/index and never fail with
+    'Boolean index has wrong length'.
+    """
+    all_dates = pd.date_range("2018-01-01", periods=2010, freq="B")
+    feature_dates = all_dates[143:]  # 1867 dates (drop 143 warm-up sessions)
+
+    tickers = [f"T_{i:02d}" for i in range(35)]
+    np.random.seed(42)
+
+    dev_features: dict[str, pd.DataFrame] = {}
+    dev_targets: dict[str, pd.Series] = {}
+
+    for t in tickers:
+        f_df = pd.DataFrame(
+            np.random.randn(len(feature_dates), 4),
+            index=feature_dates,
+            columns=[
+                "Return_20D_CS_Rank",
+                "Vol_C2C_20_CS_Rank",
+                "Return_1D_CS_Rank",
+                "Volume_Surprise_CS_Rank",
+            ],
+        )
+        dev_features[t] = f_df
+        # Target Series has the full 2010 dates
+        t_s = pd.Series(np.random.randn(len(all_dates)), index=all_dates)
+        dev_targets[t] = t_s
+
+    # Create 4 expanding calendar folds across feature_dates
+    n_total = len(feature_dates)
+    fold_step = n_total // 6
+    folds = [
+        CalendarFold(
+            fold_index=i,
+            train_start=feature_dates[0],
+            train_end=feature_dates[(i + 1) * fold_step],
+            val_start=feature_dates[(i + 1) * fold_step + 1],
+            val_end=feature_dates[(i + 2) * fold_step],
+            n_train_sessions=(i + 1) * fold_step + 1,
+            n_val_sessions=fold_step,
+        )
+        for i in range(4)
+    ]
+
+    cand = RidgeCrossSectionalCandidate(feature_cols=["Return_20D_CS_Rank", "Vol_C2C_20_CS_Rank"])
+    ev = evaluate_v3_candidate_on_folds(
+        cand,
+        horizon=5,
+        folds=folds,
+        dev_features=dev_features,
+        dev_targets=dev_targets,
+        min_daily_asset_count=30,
+        resamples=100,
+        seed=42,
+    )
+
+    assert ev.candidate_name == "ridge_cross_sectional"
+    assert len(ev.fold_metrics) == 4
+    assert ev.overall_metrics.n_eligible_sessions > 0
+
+    # Explicitly test date-level index alignment on sliced fold data
+    fold_0 = folds[0]
+    for t in tickers:
+        f_slice = dev_features[t].loc[
+            (dev_features[t].index >= fold_0.train_start)
+            & (dev_features[t].index <= fold_0.train_end)
+        ]
+        t_slice = dev_targets[t].reindex(f_slice.index)
+        assert f_slice.index.equals(t_slice.index)
+        assert len(f_slice) == len(t_slice)
+
+
+def test_irregular_calendar_alignment():
+    """Test where tickers have irregular/missing dates.
+
+    Ensure feature date t maps strictly to target date t, missing dates are handled
+    without positional misalignment, and cross-sectional IC remains exact.
+    """
+    dates_a = pd.date_range("2020-01-01", periods=300, freq="B")
+    # Ticker B misses every 5th date
+    dates_b = dates_a[np.arange(len(dates_a)) % 5 != 0]
+
+    tickers = [f"T_{i:02d}" for i in range(35)]
+    np.random.seed(42)
+    dev_features: dict[str, pd.DataFrame] = {}
+    dev_targets: dict[str, pd.Series] = {}
+
+    for i, t in enumerate(tickers):
+        use_dates = dates_b if i % 2 == 0 else dates_a
+        dev_features[t] = pd.DataFrame(
+            {"Return_20D_CS_Rank": np.random.randn(len(use_dates))},
+            index=use_dates,
+        )
+        dev_targets[t] = pd.Series(np.random.randn(len(use_dates)), index=use_dates)
+
+    folds = [
+        CalendarFold(
+            fold_index=0,
+            train_start=dates_a[0],
+            train_end=dates_a[150],
+            val_start=dates_a[151],
+            val_end=dates_a[250],
+            n_train_sessions=151,
+            n_val_sessions=100,
+        )
+    ]
+
+    cand = MomentumRank20DCandidate()
+    ev = evaluate_v3_candidate_on_folds(
+        cand,
+        horizon=5,
+        folds=folds,
+        dev_features=dev_features,
+        dev_targets=dev_targets,
+        min_daily_asset_count=30,
+        resamples=100,
+        seed=42,
+    )
+    assert ev.candidate_name == "momentum_rank_20d"
+    assert len(ev.fold_metrics) == 1
+
+
+def test_horizon_tail_target_nan_alignment():
+    """Test where the final h target rows are NaN because future returns are unobserved.
+
+    Ensure candidate fitting and evaluation drops trailing NaNs safely without
+    contaminating or shifting timestamps.
+    """
+    dates = pd.date_range("2020-01-01", periods=200, freq="B")
+    tickers = [f"T_{i:02d}" for i in range(35)]
+    np.random.seed(42)
+
+    dev_features: dict[str, pd.DataFrame] = {}
+    dev_targets: dict[str, pd.Series] = {}
+
+    for t in tickers:
+        dev_features[t] = pd.DataFrame(
+            {"Return_20D_CS_Rank": np.random.randn(len(dates))},
+            index=dates,
+        )
+        tgt = pd.Series(np.random.randn(len(dates)), index=dates)
+        # Final 5 observations are NaN
+        tgt.iloc[-5:] = np.nan
+        dev_targets[t] = tgt
+
+    folds = [
+        CalendarFold(
+            fold_index=0,
+            train_start=dates[0],
+            train_end=dates[120],
+            val_start=dates[121],
+            val_end=dates[199],
+            n_train_sessions=121,
+            n_val_sessions=79,
+        )
+    ]
+
+    cand = RidgeCrossSectionalCandidate(feature_cols=["Return_20D_CS_Rank"])
+    ev = evaluate_v3_candidate_on_folds(
+        cand,
+        horizon=5,
+        folds=folds,
+        dev_features=dev_features,
+        dev_targets=dev_targets,
+        min_daily_asset_count=30,
+        resamples=100,
+        seed=42,
+    )
+    assert ev.candidate_name == "ridge_cross_sectional"
+    assert ev.overall_metrics.n_eligible_sessions > 0

@@ -122,15 +122,18 @@ def evaluate_v3_candidate_on_folds(
     fold_results: list[V3CandidateFoldResult] = []
 
     for fold in folds:
-        # Slice train features and targets
+        # Slice train features and targets with explicit date/index-based alignment
         train_features: dict[str, pd.DataFrame] = {}
         train_targets: dict[str, pd.Series] = {}
         for t, df in dev_features.items():
-            train_mask = (df.index >= fold.train_start) & (df.index <= fold.train_end)
-            if np.any(train_mask):
-                train_features[t] = df.loc[train_mask]
+            feat_mask = (df.index >= fold.train_start) & (df.index <= fold.train_end)
+            if np.any(feat_mask):
+                feat_slice = df.loc[feat_mask]
+                train_features[t] = feat_slice
                 if t in dev_targets:
-                    train_targets[t] = dev_targets[t].loc[train_mask]
+                    tgt_series = dev_targets[t]
+                    # Date/index-based alignment: strictly align target on feature timestamps
+                    train_targets[t] = tgt_series.reindex(feat_slice.index)
 
         # Fit candidate on train data
         candidate.fit(train_features, train_targets)
@@ -146,16 +149,14 @@ def evaluate_v3_candidate_on_folds(
         val_scores = candidate.predict(val_features)
         oof_scores_list.append(val_scores)
 
-        # Compute fold-specific IC
-        val_targets_df = pd.DataFrame(
-            {
-                t: dev_targets[t].loc[
-                    (dev_targets[t].index >= fold.val_start)
-                    & (dev_targets[t].index <= fold.val_end)
-                ]
-                for t in dev_targets
-            }
-        )
+        # Compute fold-specific IC with explicit date alignment
+        val_targets_dict: dict[str, pd.Series] = {}
+        for t in dev_targets:
+            tgt_series = dev_targets[t]
+            val_t_mask = (tgt_series.index >= fold.val_start) & (tgt_series.index <= fold.val_end)
+            if np.any(val_t_mask):
+                val_targets_dict[t] = tgt_series.loc[val_t_mask]
+        val_targets_df = pd.DataFrame(val_targets_dict).reindex(val_scores.index)
         fold_ic, _ = compute_session_rank_ic(
             val_scores, val_targets_df, min_daily_asset_count=min_daily_asset_count
         )
