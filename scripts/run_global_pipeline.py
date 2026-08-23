@@ -756,15 +756,9 @@ class GlobalPipelineRunner:
             v3_selection_decisions: dict[int, V3SelectionDecision] = {}
             for h_str, h_data in self.config.selected_candidates.items():
                 h_int = int(h_str)
-                v3_selection_decisions[h_int] = V3SelectionDecision(
-                    horizon=h_int,
-                    status=h_data.get("status", "abstain"),
-                    candidate=h_data.get("candidate"),
-                    mean_spearman_ic=float(h_data.get("mean_spearman_ic", 0.0)),
-                    mean_ic_ci_lower_95=float(h_data.get("mean_ic_ci_lower_95", 0.0)),
-                    holm_adjusted_p=float(h_data.get("holm_adjusted_p", 1.0)),
-                    candidate_hyperparameters=h_data.get("candidate_hyperparameters", {}),
-                )
+                d_copy = dict(h_data)
+                d_copy["horizon"] = h_int
+                v3_selection_decisions[h_int] = V3SelectionDecision.from_dict(d_copy)
 
             # Load and verify exact frozen model artifacts (ZERO fit / parameter update calls)
             frozen_candidates: dict[int, BaseV3Candidate] = {}
