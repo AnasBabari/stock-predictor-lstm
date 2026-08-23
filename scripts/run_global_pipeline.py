@@ -23,11 +23,10 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -78,7 +77,6 @@ from panel.selection import (  # noqa: E402
 from panel.snapshots import (  # noqa: E402
     build_snapshot,
     load_panel_from_directory,
-    write_snapshot,
 )
 from release.bundle import (  # noqa: E402
     build_release,
@@ -280,7 +278,7 @@ class GlobalPipelineRunner:
     ) -> tuple[dict[int, list[HorizonEvidence]], dict[int, tuple[np.ndarray, np.ndarray]]]:
         """Stage: evaluate - full multi-seed candidate evaluation across folds."""
         out_file = self.stages_dir / "05_evaluate.json"
-        
+
         # Build features in memory
         features_by_ticker = {t: build_features_v5(f) for t, f in universe_data.items()}
         master_cal = master_session_calendar(universe_data, union=True)
@@ -438,7 +436,7 @@ class GlobalPipelineRunner:
             h: [asdict(ev) for ev in ev_list] for h, ev_list in evidence_by_horizon.items()
         }
         out_file.write_text(json.dumps(evidence_json, indent=2, sort_keys=True), encoding="utf-8")
-        
+
         # Save loss arrays for downstream selection stages
         loss_dict = {}
         for h, (c_l, b_l) in validation_losses_by_horizon.items():
@@ -499,7 +497,7 @@ class GlobalPipelineRunner:
     ) -> dict[str, Any]:
         """Stage: certify - locked temporal & asset-transfer holdout evaluation."""
         out_file = self.stages_dir / "07_certification.json"
-        
+
         if not self.open_locked_certification_holdout:
             result = {
                 "status": "locked_untouched",
@@ -530,10 +528,17 @@ class GlobalPipelineRunner:
             cert_decisions[horizon] = cert_dec
 
         passed_horizons = [h for h, cd in cert_decisions.items() if cd.decision == "pass"]
+        gate_cfg = CertificationGateConfig()
         result = {
+            "certification_protocol_version": gate_cfg.protocol_version,
             "status": "holdout_opened",
-            "decision": "pass" if len(passed_horizons) == len(decisions) and len(decisions) > 0 else "fail",
+            "decision": (
+                "pass"
+                if len(passed_horizons) == len(decisions) and len(decisions) > 0
+                else "fail"
+            ),
             "certified_horizons": passed_horizons,
+            "gate_config": gate_cfg.to_dict(),
             "decisions": {h: cd.to_dict() for h, cd in cert_decisions.items()},
         }
         out_file.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
@@ -548,11 +553,13 @@ class GlobalPipelineRunner:
     ) -> dict[str, Any]:
         """Stage: refit & release - refits certified champions and signs release bundle."""
         out_file = self.stages_dir / "08_release.json"
-        
+
         features_by_ticker = {t: build_features_v5(f) for t, f in universe_data.items()}
         master_cal = master_session_calendar(universe_data, union=True)
         holdout_sessions = folds_meta["temporal_holdout_sessions"]
-        _, temporal_holdout_cal = reserve_temporal_holdout(master_cal, holdout_sessions=holdout_sessions)
+        _, temporal_holdout_cal = reserve_temporal_holdout(
+            master_cal, holdout_sessions=holdout_sessions
+        )
 
         refit_dir = self.run_dir / "refit"
         all_model_files: dict[str, bytes] = {}
@@ -560,20 +567,12 @@ class GlobalPipelineRunner:
 
         for horizon, champ_dec in decisions.items():
             cert_dec_dict = cert_result.get("decisions", {}).get(horizon, {})
-            cert_dec = CertificationDecision(
-                horizon=horizon,
-                candidate_name=champ_dec.candidate_name,
-                decision=cert_dec_dict.get("decision", "abstain"),
-                temporal_relative_rmse=cert_dec_dict.get("temporal_relative_rmse", 1.0),
-                temporal_relative_mae=cert_dec_dict.get("temporal_relative_mae", 1.0),
-                temporal_direction_acc=cert_dec_dict.get("temporal_direction_acc", 0.5),
-                temporal_brier=cert_dec_dict.get("temporal_brier", 0.25),
-                transfer_relative_rmse=cert_dec_dict.get("transfer_relative_rmse", 1.0),
-                transfer_relative_mae=cert_dec_dict.get("transfer_relative_mae", 1.0),
-                passed_gates=cert_dec_dict.get("passed_gates", []),
-                failed_gates=cert_dec_dict.get("failed_gates", []),
-                temporal_sessions=len(temporal_holdout_cal),
-                transfer_ticker_count=len(folds_meta["asset_transfer_holdout_tickers"]),
+            cert_dec = CertificationDecision.from_dict(
+                {
+                    "horizon": horizon,
+                    "candidate_name": champ_dec.candidate_name,
+                    **cert_dec_dict,
+                }
             )
 
             manifest, files = refit_certified_champion(

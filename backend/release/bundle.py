@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 RELEASE_SCHEMA_VERSION = 1
 
@@ -118,7 +119,7 @@ def verify_release(release_dir: Path, *, public_key_path: Path) -> dict:
     if not public_key_path.exists():
         raise FileNotFoundError(f"Missing public key at {public_key_path}")
 
-    key = serialization.load_pem_public_key(public_key_path.read_bytes())
+    key: Any = serialization.load_pem_public_key(public_key_path.read_bytes())
     canonical = json.dumps(manifest, indent=2, sort_keys=True).encode("utf-8")
     try:
         key.verify(base64.b64decode(signature_b64), canonical)
@@ -135,3 +136,48 @@ def verify_release(release_dir: Path, *, public_key_path: Path) -> dict:
 
     manifest["signature"] = signature_b64
     return manifest
+
+
+def validate_certification_manifest(cert_manifest: dict) -> bool:
+    """Validates certification manifest according to declared protocol version.
+
+    Fail-closed:
+    - V1: Requires temporal_relative_rmse <= 1.0 and temporal_relative_mae <= 1.0
+    - V2: Requires valid gate_config, and that all declared mandatory gates have no failures.
+    - Unsupported protocol versions raise ValueError.
+    """
+    if not isinstance(cert_manifest, dict):
+        raise ValueError("Certification manifest must be a dictionary.")
+
+    status = cert_manifest.get("status")
+    if status != "holdout_opened":
+        raise ValueError(f"Holdout status must be 'holdout_opened', got '{status}'")
+
+    protocol = cert_manifest.get("certification_protocol_version", "global-cert-v1")
+    decisions = cert_manifest.get("decisions", {})
+    if not decisions:
+        raise ValueError("Certification manifest contains no horizon decisions.")
+
+    if protocol == "global-cert-v1":
+        for _h, dec in decisions.items():
+            if dec.get("decision") != "pass":
+                return False
+            if dec.get("temporal_relative_rmse", 1.0) > 1.000001:
+                return False
+            if dec.get("temporal_relative_mae", 1.0) > 1.000001:
+                return False
+        return True
+
+    elif protocol == "global-cert-v2":
+        gate_config = cert_manifest.get("gate_config")
+        if not isinstance(gate_config, dict):
+            raise ValueError("V2 certification manifest missing required 'gate_config' dict.")
+        for _h, dec in decisions.items():
+            if dec.get("decision") != "pass":
+                return False
+            if dec.get("failed_gates"):
+                return False
+        return True
+
+    else:
+        raise ValueError(f"Unknown or unsupported certification protocol: '{protocol}'")
