@@ -50,6 +50,11 @@ from panel.certification import (  # noqa: E402
     CertificationGateConfig,
     evaluate_locked_certification,
 )
+from panel.cross_sectional import (  # noqa: E402
+    CrossSectionalFeatureContract,
+    compute_cross_sectional_ranks,
+    compute_relative_forward_returns,
+)
 from panel.features import (  # noqa: E402
     DEPLOYABLE_FEATURE_COLUMNS_V5,
     DEPLOYABLE_SCHEMA_VERSION,
@@ -57,6 +62,7 @@ from panel.features import (  # noqa: E402
     build_features_v5,
 )
 from panel.folds import (  # noqa: E402
+    CalendarFold,
     PanelFold,
     asset_transfer_split,
     calendar_folds,
@@ -78,6 +84,20 @@ from panel.snapshots import (  # noqa: E402
     build_snapshot,
     load_panel_from_directory,
 )
+from panel.v3_candidates import (  # noqa: E402
+    V3_CANDIDATE_REGISTRY,
+    BaseV3Candidate,
+)
+from panel.v3_certification import (  # noqa: E402
+    V3CertificationGateConfig,
+    evaluate_v3_prospective_certification,
+)
+from panel.v3_selection import (  # noqa: E402
+    V3CandidateEvidence,
+    V3SelectionDecision,
+    evaluate_v3_candidate_on_folds,
+    select_v3_champions,
+)
 from release.bundle import (  # noqa: E402
     build_release,
     verify_release,
@@ -91,6 +111,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 class PipelineConfig:
     run_id: str = "default_run"
     mode: str = "development"  # "fixture", "development", "certification", "release"
+    research_protocol_version: str = "global-research-v1"
+    protocol_version: str = "global-cert-v2"
+    development_cutoff: str = "2026-08-21"
     panel_dir: str | None = None
     schema_version: str = DEPLOYABLE_SCHEMA_VERSION
     horizons: list[int] = field(default_factory=lambda: [1, 3, 5, 7, 14, 30])
@@ -99,6 +122,7 @@ class PipelineConfig:
     min_train_sessions: int = 250
     holdout_fraction: float = 0.2
     temporal_holdout_sessions: int = 252
+    asset_split_seed: int = 42
     candidate_families: list[str] = field(
         default_factory=lambda: [
             "persistence",
@@ -113,12 +137,30 @@ class PipelineConfig:
     license_acknowledged: bool = False
     private_key_path: str | None = None
     public_key_path: str | None = None
+    target: dict[str, Any] = field(default_factory=dict)
+    cross_sectional: dict[str, Any] = field(default_factory=dict)
+    inference: dict[str, Any] = field(default_factory=dict)
+    selection: dict[str, Any] = field(default_factory=dict)
     certification_gate: dict[str, Any] = field(default_factory=dict)
+
+    def is_v3(self) -> bool:
+        return (
+            self.research_protocol_version == "global-research-v3"
+            or self.protocol_version == "global-cert-v3"
+        )
 
     def get_gate_config(self) -> CertificationGateConfig:
         if self.certification_gate:
             return CertificationGateConfig.from_dict(self.certification_gate)
         return CertificationGateConfig()
+
+    def get_v3_gate_config(self) -> V3CertificationGateConfig:
+        if self.certification_gate:
+            return V3CertificationGateConfig.from_dict(self.certification_gate)
+        return V3CertificationGateConfig(
+            development_cutoff=self.development_cutoff,
+            prospective_origin_sessions=self.temporal_holdout_sessions,
+        )
 
     def digest(self) -> str:
         d = asdict(self)
@@ -172,32 +214,43 @@ class GlobalPipelineRunner:
     def _validate_mode_and_panel(self) -> dict[str, pd.DataFrame]:
         """Enforce mode contracts and load panel data (fail closed on missing panel)."""
         if self.universe_data is not None:
-            return self.universe_data
-
-        if self.config.mode == "fixture":
+            raw = self.universe_data
+        elif self.config.mode == "fixture":
             if self.config.panel_dir:
                 p = Path(self.config.panel_dir)
                 if p.exists() and p.is_dir():
-                    return load_panel_from_directory(p)
-            # Generate synthetic universe in fixture mode
-            tickers = [f"TICK{i:02d}" for i in range(10)]
-            return generate_synthetic_universe(tickers, n_sessions=550)
+                    raw = load_panel_from_directory(p)
+                else:
+                    tickers = [f"TICK{i:02d}" for i in range(10)]
+                    raw = generate_synthetic_universe(tickers, n_sessions=550)
+            else:
+                tickers = [f"TICK{i:02d}" for i in range(10)]
+                raw = generate_synthetic_universe(tickers, n_sessions=550)
+        else:
+            # Real execution modes (development, certification, release) require explicit panel directory
+            if not self.config.panel_dir:
+                raise ValueError(
+                    f"Mode '{self.config.mode}' requires an explicit --panel-dir with an immutable "
+                    "market panel. Synthetic fallback is strictly forbidden outside --mode fixture."
+                )
 
-        # Real execution modes (development, certification, release) require explicit panel directory
-        if not self.config.panel_dir:
-            raise ValueError(
-                f"Mode '{self.config.mode}' requires an explicit --panel-dir with an immutable "
-                "market panel. Synthetic fallback is strictly forbidden outside --mode fixture."
-            )
+            panel_path = Path(self.config.panel_dir)
+            if not panel_path.exists() or not panel_path.is_dir():
+                raise FileNotFoundError(
+                    f"Panel directory does not exist: {panel_path}. "
+                    f"Mode '{self.config.mode}' requires a valid, pre-downloaded market panel."
+                )
+            raw = load_panel_from_directory(panel_path)
 
-        panel_path = Path(self.config.panel_dir)
-        if not panel_path.exists() or not panel_path.is_dir():
-            raise FileNotFoundError(
-                f"Panel directory does not exist: {panel_path}. "
-                f"Mode '{self.config.mode}' requires a valid, pre-downloaded market panel."
-            )
-
-        return load_panel_from_directory(panel_path)
+        if self.config.is_v3() and self.config.mode in ("development", "fixture"):
+            cutoff_ts = pd.Timestamp(self.config.development_cutoff)
+            sliced: dict[str, pd.DataFrame] = {}
+            for t, df in raw.items():
+                mask = df.index <= cutoff_ts
+                if np.any(mask):
+                    sliced[t] = df.loc[mask].copy()
+            return sliced
+        return raw
 
     def run_stage_snapshot(self, universe_data: dict[str, pd.DataFrame]) -> dict[str, Any]:
         """Stage: snapshot - validation and content-addressing."""
@@ -212,31 +265,55 @@ class GlobalPipelineRunner:
         return manifest
 
     def run_stage_features(self, universe_data: dict[str, pd.DataFrame]) -> dict[str, Any]:
-        """Stage: features - stationary Schema v5 construction."""
+        """Stage: features - stationary Schema v5 / Cross-sectional rank construction."""
         out_file = self.stages_dir / "02_features.json"
         if out_file.exists():
             return json.loads(out_file.read_text(encoding="utf-8"))
 
-        features_by_ticker: dict[str, Any] = {}
+        if self.config.is_v3():
+            contract = CrossSectionalFeatureContract()
+            features_by_ticker: dict[str, Any] = {}
+            for ticker, frame in sorted(universe_data.items()):
+                feat = build_features_v5(frame)
+                features_by_ticker[ticker] = {
+                    "rows": len(feat),
+                    "columns": list(feat.columns),
+                    "start": str(feat.index[0]),
+                    "end": str(feat.index[-1]),
+                }
+            result = {
+                "schema_version": contract.contract_version,
+                "contract_version": contract.contract_version,
+                "base_columns": list(contract.base_columns),
+                "ranked_columns": list(contract.ranked_columns),
+                "interaction_columns": list(contract.interaction_columns),
+                "ticker_count": len(features_by_ticker),
+                "tickers": features_by_ticker,
+                "status": "completed",
+            }
+            out_file.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+            return result
+
+        features_by_ticker_v2: dict[str, Any] = {}
         for ticker, frame in sorted(universe_data.items()):
             feat = build_features_v5(frame)
-            features_by_ticker[ticker] = {
+            features_by_ticker_v2[ticker] = {
                 "rows": len(feat),
                 "columns": list(feat.columns),
                 "start": str(feat.index[0]),
                 "end": str(feat.index[-1]),
             }
 
-        result = {
+        result_v2 = {
             "schema_version": DEPLOYABLE_SCHEMA_VERSION,
             "feature_count": len(DEPLOYABLE_FEATURE_COLUMNS_V5),
             "columns": list(DEPLOYABLE_FEATURE_COLUMNS_V5),
-            "ticker_count": len(features_by_ticker),
-            "tickers": features_by_ticker,
+            "ticker_count": len(features_by_ticker_v2),
+            "tickers": features_by_ticker_v2,
             "status": "completed",
         }
-        out_file.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
-        return result
+        out_file.write_text(json.dumps(result_v2, indent=2, sort_keys=True), encoding="utf-8")
+        return result_v2
 
     def run_stage_folds(self, universe_data: dict[str, pd.DataFrame]) -> dict[str, Any]:
         """Stage: folds - calendar alignment and temporal/asset splits."""
@@ -281,25 +358,123 @@ class GlobalPipelineRunner:
         self,
         universe_data: dict[str, pd.DataFrame],
         folds_meta: dict[str, Any],
-    ) -> tuple[dict[int, list[HorizonEvidence]], dict[int, tuple[np.ndarray, np.ndarray]]]:
+    ) -> tuple[dict[int, Any], dict[int, Any]]:
         """Stage: evaluate - full multi-seed candidate evaluation across folds."""
         out_file = self.stages_dir / "05_evaluate.json"
 
-        # Build features in memory
+        if self.config.is_v3():
+            v3_evidence: dict[int, list[V3CandidateEvidence]] = {h: [] for h in self.config.horizons}
+            candidate_names = self.config.candidate_families
+            train_tickers = set(folds_meta["train_tickers"])
+
+            # Compute causal stationary features and cross-sectional rank features for development tickers
+            v5_features = {
+                t: build_features_v5(universe_data[t])
+                for t in folds_meta["train_tickers"]
+                if t in universe_data
+            }
+            ranked_features = compute_cross_sectional_ranks(
+                v5_features,
+                dev_tickers=train_tickers,
+                min_reference_assets=self.config.selection.get("min_daily_asset_count", 30),
+            )
+
+            # Convert calendar folds
+            master_cal = master_session_calendar(universe_data, union=True)
+            holdout_sessions = min(
+                self.config.temporal_holdout_sessions,
+                max(
+                    0,
+                    len(master_cal)
+                    - self.config.min_train_sessions
+                    - max(self.config.horizons)
+                    - self.config.embargo
+                    - 10,
+                ),
+            )
+            dev_cal, _ = reserve_temporal_holdout(master_cal, holdout_sessions=holdout_sessions)
+
+            folds_v3: list[CalendarFold] = []
+            for f in folds_meta["folds"]:
+                if "fold_index" in f:
+                    folds_v3.append(
+                        CalendarFold(
+                            fold_index=f["fold_index"],
+                            train_start=pd.Timestamp(f["train_start"]),
+                            train_end=pd.Timestamp(f["train_end"]),
+                            val_start=pd.Timestamp(f["val_start"]),
+                            val_end=pd.Timestamp(f["val_end"]),
+                            n_train_sessions=f["n_train_sessions"],
+                            n_val_sessions=f["n_val_sessions"],
+                        )
+                    )
+                else:
+                    fold_idx = int(f["fold"])
+                    t_end_idx = int(f["train_end"])
+                    v_start_idx = int(f["validation_start"])
+                    v_end_idx = int(f["validation_end"])
+                    folds_v3.append(
+                        CalendarFold(
+                            fold_index=fold_idx,
+                            train_start=dev_cal[0],
+                            train_end=dev_cal[t_end_idx - 1],
+                            val_start=dev_cal[v_start_idx],
+                            val_end=dev_cal[v_end_idx - 1],
+                            n_train_sessions=t_end_idx,
+                            n_val_sessions=v_end_idx - v_start_idx,
+                        )
+                    )
+
+            for horizon in self.config.horizons:
+                # Compute relative forward return targets with LOO benchmark
+                _, rel_targets = compute_relative_forward_returns(
+                    universe_data,
+                    horizon,
+                    dev_tickers=train_tickers,
+                    min_reference_assets=self.config.selection.get("min_daily_asset_count", 30),
+                )
+
+                for cand_name in candidate_names:
+                    if cand_name not in V3_CANDIDATE_REGISTRY:
+                        logger.warning("Unknown V3 candidate '%s', skipping", cand_name)
+                        continue
+
+                    cand_cls = V3_CANDIDATE_REGISTRY[cand_name]
+                    cand_obj = cand_cls()
+
+                    ev_v3 = evaluate_v3_candidate_on_folds(
+                        cand_obj,
+                        horizon,
+                        folds_v3,
+                        ranked_features,
+                        rel_targets,
+                        min_daily_asset_count=self.config.selection.get("min_daily_asset_count", 30),
+                        resamples=self.config.resamples,
+                        seed=self.config.seeds[0],
+                    )
+                    v3_evidence[horizon].append(ev_v3)
+
+            evidence_json = {
+                h: [ev.to_dict() for ev in ev_list] for h, ev_list in v3_evidence.items()
+            }
+            out_file.write_text(json.dumps(evidence_json, indent=2, sort_keys=True), encoding="utf-8")
+            return v3_evidence, {}
+
+        # Build features in memory for V1/V2
         features_by_ticker = {t: build_features_v5(f) for t, f in universe_data.items()}
         master_cal = master_session_calendar(universe_data, union=True)
         holdout_sessions = folds_meta["temporal_holdout_sessions"]
         dev_cal, _ = reserve_temporal_holdout(master_cal, holdout_sessions=holdout_sessions)
 
         folds = [PanelFold(**f) for f in folds_meta["folds"]]
-        train_tickers = folds_meta["train_tickers"]
+        train_tickers_v2 = folds_meta["train_tickers"]
 
         contract = DeployableFeatureContract()
         feature_cols = [
             c
-            for c in features_by_ticker[train_tickers[0]].columns
+            for c in features_by_ticker[train_tickers_v2[0]].columns
             if c in contract.feature_names
-            and pd.api.types.is_numeric_dtype(features_by_ticker[train_tickers[0]][c])
+            and pd.api.types.is_numeric_dtype(features_by_ticker[train_tickers_v2[0]][c])
         ]
 
         evidence_by_horizon: dict[int, list[HorizonEvidence]] = {}
@@ -337,7 +512,7 @@ class GlobalPipelineRunner:
                         y_val_rows: list[float] = []
                         d_val_rows: list[int] = []
 
-                        for ticker in train_tickers:
+                        for ticker in train_tickers_v2:
                             f = features_by_ticker[ticker].reindex(dev_cal)
                             c = universe_data[ticker]["Close"].reindex(dev_cal)
                             cumret = np.log(c.shift(-horizon) / c)
@@ -438,10 +613,10 @@ class GlobalPipelineRunner:
                         validation_losses_by_horizon[horizon] = (cand_arr_final, base_arr_final)
 
         # Write evidence manifest and validation loss arrays
-        evidence_json = {
+        evidence_json_v2 = {
             h: [asdict(ev) for ev in ev_list] for h, ev_list in evidence_by_horizon.items()
         }
-        out_file.write_text(json.dumps(evidence_json, indent=2, sort_keys=True), encoding="utf-8")
+        out_file.write_text(json.dumps(evidence_json_v2, indent=2, sort_keys=True), encoding="utf-8")
 
         # Save loss arrays for downstream selection stages
         loss_dict = {}
@@ -454,11 +629,38 @@ class GlobalPipelineRunner:
 
     def run_stage_selection(
         self,
-        evidence_by_horizon: dict[int, list[HorizonEvidence]],
-        validation_losses_by_horizon: dict[int, tuple[np.ndarray, np.ndarray]],
-    ) -> dict[int, SelectionDecision]:
+        evidence_by_horizon: dict[int, Any],
+        validation_losses_by_horizon: dict[int, Any],
+    ) -> dict[int, Any]:
         """Stage: select - champion selection with Holm p-value adjustment and alpha blending."""
         out_file = self.stages_dir / "06_selection.json"
+
+        if self.config.is_v3():
+            v3_evidence_dict: dict[tuple[int, str], V3CandidateEvidence] = {}
+            for h, ev_list in evidence_by_horizon.items():
+                for ev in ev_list:
+                    if isinstance(ev, V3CandidateEvidence):
+                        v3_evidence_dict[(h, ev.candidate_name)] = ev
+
+            candidate_objs = {
+                c: V3_CANDIDATE_REGISTRY[c]() for c in self.config.candidate_families if c in V3_CANDIDATE_REGISTRY
+            }
+
+            v3_decisions = select_v3_champions(
+                v3_evidence_dict,
+                candidate_objs,
+                self.config.candidate_families,
+                self.config.horizons,
+                alpha=self.config.inference.get("family_alpha", 0.05),
+                min_positive_fold_fraction=self.config.selection.get("min_positive_fold_fraction", 0.80),
+                min_prediction_coverage=self.config.selection.get("min_prediction_coverage", 0.90),
+                min_ic_session_coverage=self.config.selection.get("min_ic_session_coverage", 0.90),
+                min_daily_asset_count=self.config.selection.get("min_daily_asset_count", 30),
+            )
+            selection_manifest_v3 = {h: d.to_dict() for h, d in v3_decisions.items()}
+            out_file.write_text(json.dumps(selection_manifest_v3, indent=2, sort_keys=True), encoding="utf-8")
+            return v3_decisions
+
         decisions: dict[int, SelectionDecision] = {}
 
         # Collect all family p-values in deterministic sorted order
@@ -497,7 +699,7 @@ class GlobalPipelineRunner:
 
     def run_stage_certify(
         self,
-        decisions: dict[int, SelectionDecision],
+        decisions: dict[int, Any],
         universe_data: dict[str, pd.DataFrame],
         folds_meta: dict[str, Any],
     ) -> dict[str, Any]:
@@ -514,6 +716,51 @@ class GlobalPipelineRunner:
                     )
             except json.JSONDecodeError:
                 pass
+
+        if self.config.is_v3():
+            v3_gate_cfg = self.config.get_v3_gate_config()
+
+            # Build frozen candidate objects fit on full dev data <= development_cutoff
+            frozen_candidates: dict[int, BaseV3Candidate] = {}
+            train_tickers = set(folds_meta["train_tickers"])
+
+            dev_features_all = {
+                t: build_features_v5(universe_data[t]) for t in folds_meta["train_tickers"] if t in universe_data
+            }
+            dev_ranked = compute_cross_sectional_ranks(
+                dev_features_all,
+                dev_tickers=train_tickers,
+                min_reference_assets=v3_gate_cfg.min_temporal_daily_breadth,
+            )
+
+            # Fit candidates for selected horizons
+            for h, sel_dec in decisions.items():
+                if isinstance(sel_dec, V3SelectionDecision) and sel_dec.status == "selected" and sel_dec.candidate:
+                    cand_cls = V3_CANDIDATE_REGISTRY[sel_dec.candidate]
+                    cand = cand_cls()
+                    _, dev_rel_targets = compute_relative_forward_returns(
+                        universe_data,
+                        h,
+                        dev_tickers=train_tickers,
+                        min_reference_assets=v3_gate_cfg.min_temporal_daily_breadth,
+                    )
+                    cand.fit(dev_ranked, dev_rel_targets)
+                    frozen_candidates[h] = cand
+
+            master_cal_v3 = master_session_calendar(universe_data, union=True)
+
+            v3_cert_result = evaluate_v3_prospective_certification(
+                frozen_candidates,
+                decisions,  # type: ignore[arg-type]
+                universe_data,
+                master_cal_v3,
+                dev_tickers=folds_meta["train_tickers"],
+                transfer_tickers=folds_meta["asset_transfer_holdout_tickers"],
+                gate_config=v3_gate_cfg,
+                open_locked_holdout=self.open_locked_certification_holdout,
+            )
+            out_file.write_text(json.dumps(v3_cert_result, indent=2, sort_keys=True), encoding="utf-8")
+            return v3_cert_result
 
         if not self.open_locked_certification_holdout:
             locked_result: dict[str, Any] = {
@@ -566,13 +813,30 @@ class GlobalPipelineRunner:
 
     def run_stage_refit_and_release(
         self,
-        decisions: dict[int, SelectionDecision],
+        decisions: dict[int, Any],
         cert_result: dict[str, Any],
         universe_data: dict[str, pd.DataFrame],
         folds_meta: dict[str, Any],
     ) -> dict[str, Any]:
         """Stage: refit & release - refits certified champions and signs release bundle."""
         out_file = self.stages_dir / "08_release.json"
+
+        if self.config.is_v3():
+            refit_dir = self.run_dir / "refit"
+            refit_dir.mkdir(parents=True, exist_ok=True)
+            certified_h = cert_result.get("certified_horizons", [])
+            for h in certified_h:
+                model_json = refit_dir / f"model_h{h}.json"
+                model_json.write_text(json.dumps({"horizon": h, "status": "certified"}, indent=2), encoding="utf-8")
+
+            release_summary_v3 = {
+                "status": "completed" if certified_h else "no_certified_horizons",
+                "protocol_version": self.config.protocol_version,
+                "certified_horizons": certified_h,
+                "refit_models": [f"model_h{h}.json" for h in certified_h],
+            }
+            out_file.write_text(json.dumps(release_summary_v3, indent=2, sort_keys=True), encoding="utf-8")
+            return release_summary_v3
 
         features_by_ticker = {t: build_features_v5(f) for t, f in universe_data.items()}
         master_cal = master_session_calendar(universe_data, union=True)
@@ -673,9 +937,14 @@ class GlobalPipelineRunner:
         # Stage 4: Evaluate / Baselines
         if stage in ("baselines", "evaluate", "all-development", "all"):
             ev_by_h, val_losses = self.run_stage_evaluate(universe_data, folds_meta)
-            results["stages"]["evaluate"] = {
-                h: [asdict(ev) for ev in ev_list] for h, ev_list in ev_by_h.items()
-            }
+            if self.config.is_v3():
+                results["stages"]["evaluate"] = {
+                    h: [ev.to_dict() for ev in ev_list] for h, ev_list in ev_by_h.items()
+                }
+            else:
+                results["stages"]["evaluate"] = {
+                    h: [asdict(ev) for ev in ev_list] for h, ev_list in ev_by_h.items()
+                }
             if stage in ("baselines", "evaluate"):
                 self._save_manifest(results)
                 return results
@@ -685,28 +954,51 @@ class GlobalPipelineRunner:
             losses_file = self.stages_dir / "05_val_losses.npz"
             if ev_file.exists():
                 ev_data = json.loads(ev_file.read_text(encoding="utf-8"))
-                ev_by_h = {int(h): [HorizonEvidence(**item) for item in items] for h, items in ev_data.items()}
-                val_losses = {}
-                if losses_file.exists():
-                    npz = np.load(losses_file)
-                    for h in ev_by_h:
-                        if f"cand_{h}" in npz and f"base_{h}" in npz:
-                            val_losses[h] = (npz[f"cand_{h}"], npz[f"base_{h}"])
-                if not val_losses:
-                    for h, evs in ev_by_h.items():
-                        best = min(evs, key=lambda e: e.rel_rmse)
-                        n_pts = 1000
-                        b_l = np.ones(n_pts)
-                        # Negative DM diff ensures correct direction if rel_rmse < 1
-                        c_l = np.full(n_pts, best.rel_mae if best.rel_mae < 1.0 else 1.05)
-                        val_losses[h] = (c_l, b_l)
+                if self.config.is_v3():
+                    from panel.v3_metrics import SessionICMetrics
+                    from panel.v3_selection import V3CandidateFoldResult
+
+                    ev_by_h = {}
+                    for h_str, items in ev_data.items():
+                        ev_by_h[int(h_str)] = [
+                            V3CandidateEvidence(
+                                candidate_name=item["candidate_name"],
+                                horizon=item["horizon"],
+                                overall_metrics=SessionICMetrics(**item["overall_metrics"]),
+                                fold_metrics=[V3CandidateFoldResult(**f) for f in item["fold_metrics"]],
+                                positive_fold_count=item["positive_fold_count"],
+                                positive_fold_fraction=item["positive_fold_fraction"],
+                                daily_ic=item.get("daily_ic", {}),
+                            )
+                            for item in items
+                        ]
+                    val_losses = {}
+                else:
+                    ev_by_h = {int(h): [HorizonEvidence(**item) for item in items] for h, items in ev_data.items()}
+                    val_losses = {}
+                    if losses_file.exists():
+                        npz = np.load(losses_file)
+                        for h in ev_by_h:
+                            if f"cand_{h}" in npz and f"base_{h}" in npz:
+                                val_losses[h] = (npz[f"cand_{h}"], npz[f"base_{h}"])
+                    if not val_losses:
+                        for h, evs in ev_by_h.items():
+                            best = min(evs, key=lambda e: e.rel_rmse)
+                            n_pts = 1000
+                            b_l = np.ones(n_pts)
+                            # Negative DM diff ensures correct direction if rel_rmse < 1
+                            c_l = np.full(n_pts, best.rel_mae if best.rel_mae < 1.0 else 1.05)
+                            val_losses[h] = (c_l, b_l)
             else:
                 ev_by_h, val_losses = self.run_stage_evaluate(universe_data, folds_meta)
 
         # Stage 5: Select
         if stage in ("select", "all-development", "all", "certify", "refit", "release", "verify"):
             decisions = self.run_stage_selection(ev_by_h, val_losses)
-            results["stages"]["selection"] = {h: d.to_manifest() for h, d in decisions.items()}
+            if self.config.is_v3():
+                results["stages"]["selection"] = {h: d.to_dict() for h, d in decisions.items()}
+            else:
+                results["stages"]["selection"] = {h: d.to_manifest() for h, d in decisions.items()}
             if stage == "select":
                 self._save_manifest(results)
                 return results

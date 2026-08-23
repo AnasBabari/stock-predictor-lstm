@@ -28,6 +28,17 @@ class PanelFold:
 
 
 @dataclass(frozen=True)
+class CalendarFold:
+    fold_index: int
+    train_start: pd.Timestamp
+    train_end: pd.Timestamp
+    val_start: pd.Timestamp
+    val_end: pd.Timestamp
+    n_train_sessions: int
+    n_val_sessions: int
+
+
+@dataclass(frozen=True)
 class AssetCoverage:
     ticker: str
     start_date: pd.Timestamp

@@ -256,5 +256,99 @@ def validate_certification_manifest(cert_manifest: dict) -> bool:
 
         return True
 
+    elif protocol == "global-cert-v3":
+        gate_config = cert_manifest.get("gate_config")
+        if not isinstance(gate_config, dict):
+            raise ValueError("V3 certification manifest missing required 'gate_config' dict.")
+
+        family_alpha = float(gate_config.get("family_alpha", 0.05))
+
+        for _h, dec in decisions.items():
+            if not isinstance(dec, dict):
+                return False
+            if dec.get("decision") != "pass":
+                return False
+            if dec.get("failed_gates"):
+                return False
+
+            # Metadata consistency check
+            dec_gate_cfg = dec.get("gate_config")
+            if dec_gate_cfg is not None and dec_gate_cfg != gate_config:
+                return False
+
+            # Temporal rank IC checks
+            if gate_config.get("require_temporal_mean_ic_positive", True):
+                if "temporal_mean_ic" not in dec or dec["temporal_mean_ic"] is None:
+                    raise ValueError("Decision missing required 'temporal_mean_ic' metric.")
+                if float(dec["temporal_mean_ic"]) <= 0.0:
+                    return False
+
+            if gate_config.get("require_temporal_bootstrap_lower_bound_positive", True):
+                if (
+                    "temporal_mean_ic_ci_lower_95" not in dec
+                    or dec["temporal_mean_ic_ci_lower_95"] is None
+                ):
+                    raise ValueError(
+                        "Decision missing required 'temporal_mean_ic_ci_lower_95' metric."
+                    )
+                if float(dec["temporal_mean_ic_ci_lower_95"]) <= 0.0:
+                    return False
+
+            if gate_config.get("require_temporal_holm_hac_significance", True):
+                if "temporal_holm_hac_p" not in dec or dec["temporal_holm_hac_p"] is None:
+                    raise ValueError("Decision missing required 'temporal_holm_hac_p' metric.")
+                if float(dec["temporal_holm_hac_p"]) > family_alpha + 1e-9:
+                    return False
+
+            min_temp_cov = float(gate_config.get("min_temporal_prediction_coverage", 0.90))
+            if float(dec.get("temporal_prediction_coverage", 0.0)) < min_temp_cov - 1e-9:
+                return False
+
+            min_temp_sess = float(gate_config.get("min_temporal_ic_session_coverage", 0.90))
+            if float(dec.get("temporal_session_coverage", 0.0)) < min_temp_sess - 1e-9:
+                return False
+
+            min_temp_br = int(gate_config.get("min_temporal_daily_breadth", 30))
+            if float(dec.get("temporal_median_breadth", 0.0)) < min_temp_br:
+                return False
+
+            # Transfer rank IC checks
+            if gate_config.get("require_transfer_mean_ic_positive", True):
+                if "transfer_mean_ic" not in dec or dec["transfer_mean_ic"] is None:
+                    raise ValueError("Decision missing required 'transfer_mean_ic' metric.")
+                if float(dec["transfer_mean_ic"]) <= 0.0:
+                    return False
+
+            if gate_config.get("require_transfer_bootstrap_lower_bound_positive", True):
+                if (
+                    "transfer_mean_ic_ci_lower_95" not in dec
+                    or dec["transfer_mean_ic_ci_lower_95"] is None
+                ):
+                    raise ValueError(
+                        "Decision missing required 'transfer_mean_ic_ci_lower_95' metric."
+                    )
+                if float(dec["transfer_mean_ic_ci_lower_95"]) <= 0.0:
+                    return False
+
+            if gate_config.get("require_transfer_holm_hac_significance", True):
+                if "transfer_holm_hac_p" not in dec or dec["transfer_holm_hac_p"] is None:
+                    raise ValueError("Decision missing required 'transfer_holm_hac_p' metric.")
+                if float(dec["transfer_holm_hac_p"]) > family_alpha + 1e-9:
+                    return False
+
+            min_trans_cov = float(gate_config.get("min_transfer_prediction_coverage", 0.90))
+            if float(dec.get("transfer_prediction_coverage", 0.0)) < min_trans_cov - 1e-9:
+                return False
+
+            min_trans_sess = float(gate_config.get("min_transfer_ic_session_coverage", 0.90))
+            if float(dec.get("transfer_session_coverage", 0.0)) < min_trans_sess - 1e-9:
+                return False
+
+            min_trans_br = int(gate_config.get("min_transfer_daily_breadth", 30))
+            if float(dec.get("transfer_median_breadth", 0.0)) < min_trans_br:
+                return False
+
+        return True
+
     else:
         raise ValueError(f"Unknown or unsupported certification protocol: '{protocol}'")
