@@ -91,3 +91,12 @@ Otherwise, the horizon **abstains** (`status = "abstain_no_robust_rank_signal"`)
 1. Evaluation requires exactly 252 prospective origins + 30 subsequent sessions for maturity (282 sessions post-2026-08-21).
 2. Certification evaluation requires explicit `--open-locked-certification-holdout`.
 3. Once opened, `07_certification.json` cannot be rerun or overwritten within the same run directory.
+
+---
+
+## 6. Implementation Notes & Experimental Provenance
+
+### Historical 252-Session Reserve in Fold Generation
+The shared pipeline fold generator (`run_stage_folds`) inherited a 252-session historical reserve from the earlier protocol. Consequently, V3 development selection used 5 expanding out-of-fold validation windows over the first 1,758 trading sessions (the 5 validation folds ending on 15 August 2025; the development calendar containing 1,758 sessions before the historical 252-session reserve beginning 21 August 2025). 
+
+This historical reserve was not inspected or used for candidate selection. Following development selection, the selected 3-day model (`short_term_reversal_rank`) was fit across all 212 development tickers through the full preregistered 21 August 2026 cutoff during Stage 2 model freezing. Prospective certification remains exclusively post-cutoff (evaluating data accumulating after 21 August 2026). The frozen V3 experiment will not be rerun or modified in response to this observation, preserving complete scientific transparency and provenance.

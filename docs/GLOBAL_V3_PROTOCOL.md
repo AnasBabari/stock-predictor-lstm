@@ -121,3 +121,12 @@ When mature and unlocked via `--open-locked-certification-holdout`, frozen model
 
 - **Permitted**: "Protocol V3 evaluates whether causal cross-sectional features provide statistically significant out-of-sample rank correlation against relative returns under expanding folds and unseen asset transfer."
 - **Prohibited**: Claims of market outperformance, profitable trading strategies, guaranteed directional accuracy, or claiming prospective certification before holdout maturity.
+
+---
+
+## 8. Implementation Notes & Experimental Provenance
+
+### Historical 252-Session Reserve in Fold Generation
+The shared pipeline fold generator (`run_stage_folds`) inherited a 252-session historical reserve from the earlier protocol. Consequently, V3 development selection evaluated 5 expanding out-of-fold validation windows over the first 1,758 trading sessions (the 5 validation folds ending on 15 August 2025; the development calendar containing 1,758 sessions before the historical 252-session reserve beginning 21 August 2025). 
+
+This historical reserve was not inspected or used for candidate selection. Following development selection, the selected 3-day model (`short_term_reversal_rank`) was fit across all 212 development tickers through the full preregistered 21 August 2026 cutoff during Stage 2 model freezing. True prospective certification remains exclusively post-cutoff (evaluating data accumulating after 21 August 2026). The frozen V3 experiment will not be rerun or modified in response to this observation, preserving complete scientific transparency and provenance.
