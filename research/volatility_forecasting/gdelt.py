@@ -81,6 +81,45 @@ class GdeltDailyAggregationStats:
 
 
 @dataclass(frozen=True)
+class TickerAliasMatcher:
+    pattern: re.Pattern[str]
+    alias_to_tickers: Mapping[str, tuple[str, ...]]
+
+    def match(self, text: str) -> tuple[str, ...]:
+        matched: set[str] = set()
+        for result in self.pattern.finditer(text):
+            matched.update(self.alias_to_tickers[result.group(0).casefold()])
+        return tuple(sorted(matched))
+
+
+def compile_ticker_aliases(aliases: Mapping[str, tuple[str, ...]]) -> TickerAliasMatcher:
+    alias_to_tickers: dict[str, set[str]] = defaultdict(set)
+    for ticker, names in aliases.items():
+        for name in names:
+            normalized = name.strip().casefold()
+            if len(normalized) < 3:
+                raise NewsValidationError(
+                    "GDELT company aliases must contain at least three characters"
+                )
+            alias_to_tickers[normalized].add(ticker.upper())
+    if not alias_to_tickers:
+        # A never-matching expression preserves the same matcher contract for
+        # market-only event snapshots.
+        return TickerAliasMatcher(re.compile(r"(?!x)x"), {})
+    ordered = sorted(alias_to_tickers, key=lambda value: (-len(value), value))
+    pattern = re.compile(
+        rf"(?<!\w)(?:{'|'.join(re.escape(value) for value in ordered)})(?!\w)",
+        flags=re.IGNORECASE,
+    )
+    return TickerAliasMatcher(
+        pattern=pattern,
+        alias_to_tickers={
+            alias: tuple(sorted(tickers)) for alias, tickers in alias_to_tickers.items()
+        },
+    )
+
+
+@dataclass(frozen=True)
 class GdeltEventRow:
     global_event_id: str
     sql_date: str
@@ -264,21 +303,13 @@ def _topics(row: GdeltEventRow | GdeltV1EventRow) -> tuple[str, ...]:
 
 def _mapped_tickers(
     row: GdeltEventRow | GdeltV1EventRow,
-    aliases: Mapping[str, tuple[str, ...]],
+    aliases: Mapping[str, tuple[str, ...]] | TickerAliasMatcher,
 ) -> tuple[str, ...]:
     haystack = " ".join((row.actor1_name, row.actor2_name, row.source_url)).casefold()
-    matched: list[str] = []
-    for ticker, names in aliases.items():
-        for name in names:
-            normalized = name.strip().casefold()
-            if len(normalized) < 3:
-                raise NewsValidationError(
-                    "GDELT company aliases must contain at least three characters"
-                )
-            if re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", haystack):
-                matched.append(ticker.upper())
-                break
-    return tuple(sorted(set(matched)))
+    matcher = (
+        aliases if isinstance(aliases, TickerAliasMatcher) else compile_ticker_aliases(aliases)
+    )
+    return matcher.match(haystack)
 
 
 def _tone_probabilities(average_tone: float) -> tuple[float, float, float]:
@@ -293,7 +324,7 @@ def _tone_probabilities(average_tone: float) -> tuple[float, float, float]:
 def gdelt_row_to_news_event(
     row: GdeltEventRow,
     *,
-    ticker_aliases: Mapping[str, tuple[str, ...]],
+    ticker_aliases: Mapping[str, tuple[str, ...]] | TickerAliasMatcher,
     source_reliability: Mapping[str, float] | None = None,
 ) -> NewsEvent:
     """Convert a GDELT row without inventing a historical publication time."""
@@ -332,7 +363,7 @@ def gdelt_v1_row_to_news_event(
     row: GdeltV1EventRow,
     *,
     archive: GdeltV1DailyArchive,
-    ticker_aliases: Mapping[str, tuple[str, ...]],
+    ticker_aliases: Mapping[str, tuple[str, ...]] | TickerAliasMatcher,
     source_reliability: Mapping[str, float] | None = None,
 ) -> NewsEvent:
     """Convert a daily row using archive availability, never its event date."""
@@ -371,13 +402,18 @@ def aggregate_gdelt_v1_daily_lines(
     lines: Iterable[str],
     *,
     archive: GdeltV1DailyArchive,
-    ticker_aliases: Mapping[str, tuple[str, ...]],
+    ticker_aliases: Mapping[str, tuple[str, ...]] | TickerAliasMatcher,
     source_reliability: Mapping[str, float] | None = None,
     maximum_invalid_fraction: float = 0.001,
 ) -> tuple[tuple[NewsEvent, ...], GdeltDailyAggregationStats]:
     """Compress one complete daily archive into bounded point-in-time events."""
     if not 0 <= maximum_invalid_fraction < 1:
         raise ValueError("maximum invalid fraction must be in [0, 1)")
+    alias_matcher = (
+        ticker_aliases
+        if isinstance(ticker_aliases, TickerAliasMatcher)
+        else compile_ticker_aliases(ticker_aliases)
+    )
     groups: dict[str, list[NewsEvent]] = defaultdict(list)
     total_rows = 0
     retained_rows = 0
@@ -391,7 +427,7 @@ def aggregate_gdelt_v1_daily_lines(
             event = gdelt_v1_row_to_news_event(
                 row,
                 archive=archive,
-                ticker_aliases=ticker_aliases,
+                ticker_aliases=alias_matcher,
                 source_reliability=source_reliability,
             )
         except NewsValidationError:

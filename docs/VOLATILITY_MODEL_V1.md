@@ -111,6 +111,33 @@ polarity. Licensed headline/article embeddings, including FinBERT, are a
 separate enhancement and cannot be trained only on currently available news
 then claimed as a historical feature.
 
+For the multi-year development panel, the bounded free path uses complete
+GDELT 1.0 daily archives rather than attempting to download the multi-terabyte
+GDELT 2.0 stream. A daily file is conservatively treated as available at noon
+UTC on the following day. The importer streams and deletes one ZIP at a time,
+checks container paths and size/ratio limits, resumes from checksummed daily
+parts, and compresses the retained shock rows into one market aggregate plus
+bounded issuer aggregates. Raw event volume is log-scaled. The build still
+transfers roughly several gigabytes over a full 2018–2026 window, so it is an
+explicit offline research operation, never an API or CI startup task.
+
+Example local snapshot build for the current frozen market panel:
+
+```powershell
+backend/.venv/Scripts/python.exe scripts/build_gdelt_news_snapshot.py `
+  --start 2018-08-14 `
+  --end 2026-08-21 `
+  --ticker-aliases configs/news-ticker-aliases-v1.json `
+  --work-dir C:/tmp/stocklstm-gdelt-work `
+  --output-dir C:/tmp/stocklstm-gdelt-snapshot-v1 `
+  --acknowledge-gdelt-terms
+```
+
+The source terms must be reviewed at execution time. Downloaded archives and
+article text are not committed. The frozen alias map is required to cover the
+entire model universe; a later sector/SIC exposure map remains a separately
+versioned hypothesis and must earn promotion through the paired ablation.
+
 At a close-of-market origin, an article is eligible only when its reliable
 publication/first-seen timestamp precedes the exchange-specific information
 cutoff. Unknown or date-only timestamps are excluded from same-day features.
