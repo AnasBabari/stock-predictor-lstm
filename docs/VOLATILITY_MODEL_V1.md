@@ -237,6 +237,17 @@ to early stopping. Scalers fit only the inner fitting rows. At least 20% of
 tickers are excluded from all fitting for asset-transfer evaluation. A final
 252-session chronological interval is opened once for certification.
 
+The certification implementation accepts predictions only; it cannot train,
+tune, select, or recalibrate a candidate. It requires the exact complete row
+identities reserved by the fold plan for both populations, so callers cannot
+substitute a favorable subset. The temporal population and the completely
+unseen asset-transfer population are decided independently at every horizon.
+All population/horizon QLIKE tests form one Holm-corrected family, moving-block
+confidence bounds operate on equal-weight exchange sessions, and the release
+also fails if either mandatory unseen ticker, NMM or MSFT, exceeds its frozen
+per-ticker degradation guardrail. The report binds the immutable candidate ID
+to the SHA-256 digest of the development evidence that selected it.
+
 Primary evidence:
 
 - QLIKE and QLIKE ratio versus the strongest matched variance baseline;
