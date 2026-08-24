@@ -20,20 +20,26 @@ class DistributionPredictions:
     variance: np.ndarray
     return_location: np.ndarray
     direction_probabilities: np.ndarray
+    return_variance: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         if self.variance.ndim != 2 or self.return_location.shape != self.variance.shape:
             raise ValueError("variance and return location must be [rows, horizons]")
         if self.direction_probabilities.shape != (*self.variance.shape, 3):
             raise ValueError("direction probabilities must be [rows, horizons, 3]")
+        if self.return_variance is None:
+            object.__setattr__(self, "return_variance", self.variance)
+        if self.return_variance.shape != self.variance.shape:
+            raise ValueError("return variance must match realized-variance forecast shape")
         if not (
             np.isfinite(self.variance).all()
             and np.isfinite(self.return_location).all()
             and np.isfinite(self.direction_probabilities).all()
+            and np.isfinite(self.return_variance).all()
         ):
             raise ValueError("predictions contain non-finite values")
-        if (self.variance <= 0).any():
-            raise ValueError("forecast variance must be positive")
+        if (self.variance <= 0).any() or (self.return_variance <= 0).any():
+            raise ValueError("realized and return forecast variances must be positive")
         if not np.allclose(self.direction_probabilities.sum(axis=-1), 1.0, atol=1e-5):
             raise ValueError("direction probabilities must sum to one")
 
@@ -74,6 +80,33 @@ def gaussian_nll(
     return 0.5 * (np.log(2.0 * np.pi * var) + (observed - mean) ** 2 / var)
 
 
+def fit_crps_variance_scale(
+    forecast_variance: np.ndarray,
+    cumulative_returns: np.ndarray,
+    *,
+    minimum_scale: float = 0.25,
+    maximum_scale: float = 4.0,
+    grid_points: int = 81,
+) -> np.ndarray:
+    """Fit one positive CRPS scale per horizon on a pre-evaluation set."""
+    variance = np.asarray(forecast_variance, dtype=np.float64)
+    returns = np.asarray(cumulative_returns, dtype=np.float64)
+    if variance.shape != returns.shape or variance.ndim != 2 or len(variance) == 0:
+        raise ValueError("variance calibration arrays must be matched non-empty matrices")
+    if not 0 < minimum_scale < maximum_scale or grid_points < 3:
+        raise ValueError("invalid variance calibration grid")
+    grid = np.exp(np.linspace(np.log(minimum_scale), np.log(maximum_scale), grid_points))
+    scales = np.empty(variance.shape[1], dtype=np.float64)
+    zero = np.zeros(len(variance), dtype=np.float64)
+    for column in range(variance.shape[1]):
+        scores = [
+            float(np.mean(gaussian_crps(returns[:, column], zero, variance[:, column] * factor)))
+            for factor in grid
+        ]
+        scales[column] = grid[int(np.argmin(scores))]
+    return scales
+
+
 def _safe_ratio(candidate: float, baseline: float) -> float:
     return float(candidate / baseline) if np.isfinite(baseline) and baseline > 0 else float("nan")
 
@@ -111,6 +144,7 @@ def horizon_distribution_metrics(
     *,
     predictions: DistributionPredictions,
     baseline_variance: np.ndarray,
+    baseline_return_variance: np.ndarray | None = None,
     realized_variance: np.ndarray,
     cumulative_returns: np.ndarray,
     direction_classes: np.ndarray,
@@ -118,11 +152,18 @@ def horizon_distribution_metrics(
 ) -> list[dict[str, float | int]]:
     """Calculate candidate and matched-baseline evidence per horizon."""
     baseline = np.asarray(baseline_variance, dtype=np.float64)
+    baseline_distribution = np.asarray(
+        baseline_return_variance if baseline_return_variance is not None else baseline_variance,
+        dtype=np.float64,
+    )
     realized = np.asarray(realized_variance, dtype=np.float64)
     returns = np.asarray(cumulative_returns, dtype=np.float64)
     classes = np.asarray(direction_classes, dtype=np.int64)
     expected_shape = predictions.variance.shape
-    if any(values.shape != expected_shape for values in (baseline, realized, returns, classes)):
+    if any(
+        values.shape != expected_shape
+        for values in (baseline, baseline_distribution, realized, returns, classes)
+    ):
         raise ValueError("target and baseline arrays must match prediction shape")
     if len(horizons) != expected_shape[1]:
         raise ValueError("horizon count does not match prediction columns")
@@ -134,32 +175,32 @@ def horizon_distribution_metrics(
         full_model_crps = gaussian_crps(
             returns[:, column],
             predictions.return_location[:, column],
-            predictions.variance[:, column],
+            predictions.return_variance[:, column],
         )
         variance_only_crps = gaussian_crps(
             returns[:, column],
             np.zeros(len(returns), dtype=np.float64),
-            predictions.variance[:, column],
+            predictions.return_variance[:, column],
         )
         baseline_crps = gaussian_crps(
             returns[:, column],
             np.zeros(len(returns), dtype=np.float64),
-            baseline[:, column],
+            baseline_distribution[:, column],
         )
         full_model_nll = gaussian_nll(
             returns[:, column],
             predictions.return_location[:, column],
-            predictions.variance[:, column],
+            predictions.return_variance[:, column],
         )
         variance_only_nll = gaussian_nll(
             returns[:, column],
             np.zeros(len(returns), dtype=np.float64),
-            predictions.variance[:, column],
+            predictions.return_variance[:, column],
         )
         baseline_nll = gaussian_nll(
             returns[:, column],
             np.zeros(len(returns), dtype=np.float64),
-            baseline[:, column],
+            baseline_distribution[:, column],
         )
         log_variance_error = np.log(predictions.variance[:, column]) - np.log(realized[:, column])
         mean_error = predictions.return_location[:, column] - returns[:, column]
@@ -203,7 +244,7 @@ def horizon_distribution_metrics(
                 float(np.sqrt(np.mean(baseline_mean_error**2))),
             ),
         }
-        standard_deviation = np.sqrt(predictions.variance[:, column])
+        standard_deviation = np.sqrt(predictions.return_variance[:, column])
         for label, z_value in _NORMAL_INTERVAL_Z.items():
             lower = predictions.return_location[:, column] - z_value * standard_deviation
             upper = predictions.return_location[:, column] + z_value * standard_deviation

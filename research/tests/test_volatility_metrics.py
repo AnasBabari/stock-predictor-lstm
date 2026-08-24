@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from volatility_forecasting.metrics import (
     DistributionPredictions,
+    fit_crps_variance_scale,
     gaussian_crps,
     horizon_distribution_metrics,
     qlike_losses,
@@ -20,6 +21,15 @@ def test_gaussian_crps_is_lower_when_location_is_closer() -> None:
     close = gaussian_crps(observation, np.array([0.1]), variance)
     far = gaussian_crps(observation, np.array([1.0]), variance)
     assert close[0] < far[0]
+
+
+def test_return_variance_scale_is_fitted_only_from_supplied_distribution_rows() -> None:
+    rng = np.random.default_rng(91)
+    variance = np.ones((8000, 1))
+    returns = rng.normal(0.0, 2.0, size=(8000, 1))
+    scale = fit_crps_variance_scale(variance, returns)
+    assert scale.shape == (1,)
+    assert 3.4 <= scale[0] <= 4.0
 
 
 def test_horizon_metrics_report_proper_scores_calibration_and_direction() -> None:

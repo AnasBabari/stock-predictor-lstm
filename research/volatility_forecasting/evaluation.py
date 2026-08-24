@@ -15,6 +15,7 @@ from .data import VolatilityPanelExamples
 from .folds import VolatilityFoldPlan, build_inner_training_split
 from .metrics import (
     DistributionPredictions,
+    fit_crps_variance_scale,
     horizon_distribution_metrics,
     qlike_losses,
 )
@@ -41,6 +42,8 @@ class FoldEvidence:
     best_epoch: int
     duration_seconds: float
     parameter_count: int
+    return_variance_scale: tuple[float, ...]
+    baseline_return_variance_scale: tuple[float, ...]
     training_history: tuple[dict[str, float], ...]
     metrics: tuple[dict[str, float | int], ...]
 
@@ -303,6 +306,8 @@ def evaluate_tcn_development(
     oof_variance: list[np.ndarray] = []
     oof_location: list[np.ndarray] = []
     oof_direction: list[np.ndarray] = []
+    oof_return_variance: list[np.ndarray] = []
+    oof_baseline_return_variance: list[np.ndarray] = []
 
     for fold in fold_plan.folds:
         inner = build_inner_training_split(examples, fold.train_indices, protocol)
@@ -326,11 +331,30 @@ def evaluate_tcn_development(
             seed=seed,
             device=device,
         )
-        predictions = predict_distribution(trained, examples, validation)
+        calibration_predictions = predict_distribution(trained, examples, early_stopping)
+        return_variance_scale = fit_crps_variance_scale(
+            calibration_predictions.variance,
+            examples.cumulative_returns[early_stopping],
+        )
+        baseline_return_variance_scale = fit_crps_variance_scale(
+            examples.baseline_variance[early_stopping],
+            examples.cumulative_returns[early_stopping],
+        )
+        raw_predictions = predict_distribution(trained, examples, validation)
+        predictions = DistributionPredictions(
+            variance=raw_predictions.variance,
+            return_location=raw_predictions.return_location,
+            direction_probabilities=raw_predictions.direction_probabilities,
+            return_variance=raw_predictions.variance * return_variance_scale,
+        )
+        baseline_return_variance = (
+            examples.baseline_variance[validation] * baseline_return_variance_scale
+        )
         metrics = tuple(
             horizon_distribution_metrics(
                 predictions=predictions,
                 baseline_variance=examples.baseline_variance[validation],
+                baseline_return_variance=baseline_return_variance,
                 realized_variance=examples.realized_variance[validation],
                 cumulative_returns=examples.cumulative_returns[validation],
                 direction_classes=examples.direction_classes[validation],
@@ -352,6 +376,10 @@ def evaluate_tcn_development(
                 best_epoch=trained.best_epoch,
                 duration_seconds=trained.duration_seconds,
                 parameter_count=trained.parameter_count,
+                return_variance_scale=tuple(float(value) for value in return_variance_scale),
+                baseline_return_variance_scale=tuple(
+                    float(value) for value in baseline_return_variance_scale
+                ),
                 training_history=trained.history,
                 metrics=metrics,
             )
@@ -360,6 +388,8 @@ def evaluate_tcn_development(
         oof_variance.append(predictions.variance)
         oof_location.append(predictions.return_location)
         oof_direction.append(predictions.direction_probabilities)
+        oof_return_variance.append(predictions.return_variance)
+        oof_baseline_return_variance.append(baseline_return_variance)
         del trained
         gc.collect()
         if torch.cuda.is_available():
@@ -372,11 +402,14 @@ def evaluate_tcn_development(
         variance=np.concatenate(oof_variance, axis=0)[order],
         return_location=np.concatenate(oof_location, axis=0)[order],
         direction_probabilities=np.concatenate(oof_direction, axis=0)[order],
+        return_variance=np.concatenate(oof_return_variance, axis=0)[order],
     )
+    pooled_baseline_return_variance = np.concatenate(oof_baseline_return_variance, axis=0)[order]
     pooled_metrics = tuple(
         horizon_distribution_metrics(
             predictions=pooled_predictions,
             baseline_variance=examples.baseline_variance[indices],
+            baseline_return_variance=pooled_baseline_return_variance,
             realized_variance=examples.realized_variance[indices],
             cumulative_returns=examples.cumulative_returns[indices],
             direction_classes=examples.direction_classes[indices],

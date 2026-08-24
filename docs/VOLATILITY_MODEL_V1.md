@@ -82,6 +82,15 @@ For return location, the benchmark is zero cumulative return. A learned return
 mean can be shrunk or rejected independently without suppressing a promoted
 volatility forecast.
 
+The realized-variance proxy and the conditional variance of cumulative close
+returns are related but not numerically interchangeable. Each fold therefore
+fits a bounded, per-horizon return-variance scale on its inner information set
+by minimizing Gaussian CRPS. The candidate and matched baseline receive
+separate calibration using the same pre-evaluation rows. QLIKE continues to
+score the unscaled realized-variance forecast; CRPS and interval coverage use
+the calibrated return-distribution variance. No outer fold or certification
+return participates in calibration.
+
 ## Point-in-time financial-news channel
 
 News is an optional exogenous feature group trained and evaluated separately
