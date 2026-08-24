@@ -101,6 +101,34 @@ def test_unknown_timestamp_is_excluded_and_first_seen_only_is_flagged() -> None:
     assert _feature(matrix, "News_Low_Timestamp_Quality_Fraction_3D") == 1.0
 
 
+def test_date_only_event_cannot_enter_same_day_close() -> None:
+    event = _event("date-only", "2026-01-05T00:00:00Z", quality="date_only")
+    same_day = aggregate_news_features(
+        [event],
+        [NewsOrigin("MSFT", pd.Timestamp("2026-01-05T21:00:00Z"))],
+    )
+    next_day = aggregate_news_features(
+        [event],
+        [NewsOrigin("MSFT", pd.Timestamp("2026-01-06T00:01:00Z"))],
+    )
+    assert _feature(same_day, "News_Ticker_Intensity_1D") == 0.0
+    assert _feature(next_day, "News_Ticker_Intensity_1D") > 0.0
+
+
+def test_shared_cutoff_results_match_independent_aggregation() -> None:
+    events = [
+        _event("a", "2026-01-05T18:00:00Z"),
+        _event("b", "2026-01-05T19:00:00Z", tickers=("AAPL",)),
+    ]
+    origins = [
+        NewsOrigin("MSFT", pd.Timestamp("2026-01-05T21:00:00Z")),
+        NewsOrigin("AAPL", pd.Timestamp("2026-01-05T21:00:00Z")),
+    ]
+    together = aggregate_news_features(events, origins)
+    separately = np.vstack([aggregate_news_features(events, [origin]).values for origin in origins])
+    np.testing.assert_array_equal(together.values, separately)
+
+
 def test_snapshot_digest_is_order_invariant_and_license_gated() -> None:
     first = _event("a", "2026-01-05T18:00:00Z")
     second = _event("b", "2026-01-05T19:00:00Z")

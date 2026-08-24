@@ -122,10 +122,16 @@ class NewsEvent:
         if self.timestamp_quality == "unknown":
             return None
         if self.published_at is None:
-            return self.first_seen_at
-        # A historical publication timestamp does not prove our data feed had
-        # the article then. max(...) prevents revision/ingestion hindsight.
-        return max(self.published_at, self.first_seen_at)
+            eligible = self.first_seen_at
+        else:
+            # A historical publication timestamp does not prove our data feed
+            # had the article then. max(...) prevents revision/ingestion hindsight.
+            eligible = max(self.published_at, self.first_seen_at)
+        if self.timestamp_quality == "date_only":
+            # A date without a trustworthy clock time cannot enter a same-day
+            # close. It becomes eligible at the next UTC day boundary.
+            return eligible.normalize() + pd.Timedelta(days=1)
+        return eligible
 
     @property
     def sentiment(self) -> float:
@@ -191,11 +197,11 @@ def build_news_snapshot(
     }
 
 
-def _deduplicated_as_of(events: Sequence[NewsEvent], cutoff: pd.Timestamp) -> list[NewsEvent]:
+def _deduplicated_timeline(events: Sequence[NewsEvent]) -> list[NewsEvent]:
     by_cluster: dict[str, list[NewsEvent]] = defaultdict(list)
     for event in events:
         eligible = event.eligible_at
-        if eligible is not None and eligible <= cutoff:
+        if eligible is not None:
             by_cluster[event.cluster_id].append(event)
 
     selected: list[NewsEvent] = []
@@ -213,7 +219,11 @@ def _deduplicated_as_of(events: Sequence[NewsEvent], cutoff: pd.Timestamp) -> li
                 ),
             )
         )
-    return selected
+    return sorted(selected, key=lambda item: (item.eligible_at, item.cluster_id))
+
+
+def _deduplicated_as_of(events: Sequence[NewsEvent], cutoff: pd.Timestamp) -> list[NewsEvent]:
+    return [event for event in _deduplicated_timeline(events) if event.eligible_at <= cutoff]
 
 
 def _decay(age_hours: float, half_life_hours: float) -> float:
@@ -288,16 +298,20 @@ def aggregate_news_features(
         ticker.upper(): {topic.lower(): float(weight) for topic, weight in weights.items()}
         for ticker, weights in (exposure_map or {}).items()
     }
+    timeline = _deduplicated_timeline(events)
+    eligible_ns = np.asarray([event.eligible_at.value for event in timeline], dtype=np.int64)
+    recent_by_cutoff: dict[int, list[NewsEvent]] = {}
     rows: list[list[float]] = []
 
     for origin in origins:
-        visible = _deduplicated_as_of(events, origin.cutoff_at)
-        recent = [
-            event
-            for event in visible
-            if event.eligible_at is not None
-            and origin.cutoff_at - event.eligible_at <= pd.Timedelta(days=7)
-        ]
+        cutoff_ns = origin.cutoff_at.value
+        recent = recent_by_cutoff.get(cutoff_ns)
+        if recent is None:
+            lower_ns = (origin.cutoff_at - pd.Timedelta(days=7)).value
+            left = int(np.searchsorted(eligible_ns, lower_ns, side="left"))
+            right = int(np.searchsorted(eligible_ns, cutoff_ns, side="right"))
+            recent = timeline[left:right]
+            recent_by_cutoff[cutoff_ns] = recent
         ticker_events = [(event, 1.0) for event in recent if origin.ticker in event.tickers]
         ticker_exposures = exposures.get(origin.ticker, {})
         exposure_events: list[tuple[NewsEvent, float]] = []
