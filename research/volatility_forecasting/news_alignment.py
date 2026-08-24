@@ -11,6 +11,36 @@ import pandas_market_calendars as mcal
 from .news import NewsEvent, NewsFeatureMatrix, NewsOrigin, aggregate_news_features
 
 
+def validate_news_coverage(
+    manifest: Mapping[str, object],
+    cutoffs: np.ndarray,
+    *,
+    lookback_days: int = 7,
+) -> None:
+    """Prove that zero-valued news features mean no events, not missing data."""
+    if lookback_days < 1:
+        raise ValueError("news lookback must be positive")
+    values = np.asarray(cutoffs, dtype="datetime64[ns]")
+    if values.ndim != 1 or len(values) == 0 or np.isnat(values).any():
+        raise ValueError("news coverage validation requires finite cutoff timestamps")
+    try:
+        coverage_start = pd.Timestamp(manifest["coverage_start"])
+        coverage_end = pd.Timestamp(manifest["coverage_end_exclusive"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("news manifest coverage timestamps are missing or invalid") from error
+    if coverage_start.tzinfo is None or coverage_end.tzinfo is None:
+        raise ValueError("news manifest coverage timestamps must be timezone-aware")
+    coverage_start = coverage_start.tz_convert("UTC")
+    coverage_end = coverage_end.tz_convert("UTC")
+    earliest_cutoff = pd.Timestamp(values.min()).tz_localize("UTC")
+    latest_cutoff = pd.Timestamp(values.max()).tz_localize("UTC")
+    required_start = earliest_cutoff - pd.Timedelta(days=lookback_days)
+    if coverage_start > required_start:
+        raise ValueError("news provider coverage does not include the full initial lookback")
+    if coverage_end <= latest_cutoff:
+        raise ValueError("news provider coverage ends before the final forecast cutoff")
+
+
 def market_close_news_origins(
     tickers: np.ndarray,
     origin_dates: np.ndarray,
