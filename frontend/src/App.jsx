@@ -91,7 +91,7 @@ export default function App() {
       }
       const symbol = selectedSymbol.trim().toUpperCase();
       setTicker(symbol);
-      handlePredict(symbol);
+      handlePredict({ ticker: symbol });
     },
     [addToast, handlePredict, setTicker]
   );
@@ -99,7 +99,7 @@ export default function App() {
   const handleSwitchHorizon = useCallback(
     (newHorizon) => {
       setForecastDays(newHorizon);
-      handlePredict(ticker, forecastType, newHorizon);
+      handlePredict({ ticker, days: Number(newHorizon), type: forecastType });
     },
     [forecastType, handlePredict, setForecastDays, ticker]
   );

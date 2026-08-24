@@ -33,6 +33,7 @@ import {
 import { resolveTrainingProfile } from './trainingProfiles';
 import { buildBrowserModel } from './modelFactory';
 import { isRejectedArtifact, isVersionedKey } from './storageKeys';
+import { rankDevelopmentHorizons, resolveAutoHorizon } from './candidateRegistry';
 
 const DB_NAME = 'stocklstm-browser-models';
 const DB_VERSION = 1;
@@ -559,7 +560,7 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
         ...(evaluated.actualPrices ? { actualPrices: evaluated.actualPrices } : {}),
         ...(evaluated.predictedPrices ? { predictedPrices: evaluated.predictedPrices } : {}),
         ...(evaluated.persistencePrices ? { persistencePrices: evaluated.persistencePrices } : {}),
-        fold_relative_rmse: evaluated.returnMetrics ? evaluated.returnMetrics.pooled.relative_rmse : null,
+        fold_per_horizon: evaluated.returnMetrics?.per_horizon || [],
       });
       await putMetadata({
         key: checkpointKey,
@@ -610,7 +611,8 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
       fold_summaries: records.map((record) => ({
         fold: record.fold,
         best_epoch: record.best_epoch,
-        relative_rmse: record.fold_relative_rmse,
+        relative_rmse: record.metrics?.relative_rmse ?? null,
+        per_horizon: record.fold_per_horizon || [],
         ...(record.metrics ? {
           macro_balanced_accuracy: record.metrics.macro_balanced_accuracy,
           multiclass_brier: record.metrics.multiclass_brier,
@@ -621,7 +623,7 @@ async function trainResearch(id, snapshot, forecastType, profile, startedAt, che
   };
 }
 
-function validCachedModel(model, metadata, snapshot, profile, backend, horizon) {
+function validCachedModel(model, metadata, snapshot, profile, backend, horizon, forecastType) {
   const inputShape = model.inputs?.[0]?.shape || [];
   const outputShape = model.outputs?.[0]?.shape || [];
   return metadata.model_version === MODEL_VERSION &&
@@ -636,7 +638,7 @@ function validCachedModel(model, metadata, snapshot, profile, backend, horizon) 
     Number.isFinite(metadata.selected_epochs) &&
     JSON.stringify(metadata.feature_names) === JSON.stringify(snapshot.feature_names) &&
     inputShape[1] === WINDOW_SIZE && inputShape[2] === snapshot.feature_names.length &&
-    outputShape[outputShape.length - 1] === horizon;
+    outputShape[outputShape.length - 1] === (forecastType === 'direction' ? 3 : horizon);
 }
 
 async function saveModelWithTimeout(model, cacheUrl, timeoutMs = 10_000) {
@@ -653,12 +655,65 @@ async function saveModelWithTimeout(model, cacheUrl, timeoutMs = 10_000) {
     throw error;
   }
 }
-async function trainAndPredict(id, snapshot, rawForecastType, days, profileName) {
+function resolveForecastHorizon(snapshot, forecastType, days, horizonMode) {
+  if (horizonMode !== 'auto') {
+    return { horizon: resolveHorizon(days), developmentSelection: null };
+  }
+  if (forecastType !== 'price') {
+    return {
+      horizon: 7,
+      developmentSelection: {
+        candidate: 'predeclared_direction_horizon',
+        horizon: 7,
+        candidate_scores: [],
+        selection_policy_version: 'development-horizon-v1',
+        reason: 'Direction Auto uses the predeclared 7-day horizon; final-holdout evidence is not consulted.',
+      },
+    };
+  }
+  const wide = preparePriceData(snapshot, undefined, OUTPUT_WIDTH);
+  const validationHorizon = Math.max(20, Math.min(60, Math.floor(wide.trainCount / 6)));
+  const splits = generateResearchSplits(wide.trainCount, {
+    folds: 3,
+    validationHorizon,
+    minTrainSamples: Math.max(100, Math.floor(wide.trainCount / 3)),
+    purge: OUTPUT_WIDTH - 1,
+  });
+  const ranked = rankDevelopmentHorizons({
+    trainInputs: wide.inputs.slice(0, wide.trainCount),
+    trainTargets: wide.targets.slice(0, wide.trainCount),
+    devValidationSplits: splits.map((split) => ({
+      trainEnd: split.trainEnd,
+      valStart: split.validationStart,
+      valEnd: split.validationEnd,
+    })),
+  });
+  const resolved = resolveAutoHorizon(ranked);
+  return {
+    horizon: resolveHorizon(resolved.selectedHorizon),
+    developmentSelection: {
+      // Candidate identity names the generator that is actually fitted and
+      // returned below. Ridge is used only as a cheap, development-only
+      // horizon ranker; it is not presented as the forecast model.
+      candidate: 'balanced_tfjs_lstm',
+      horizon_ranker: 'ridge_regression',
+      horizon: resolved.selectedHorizon,
+      candidate_scores: ranked.developmentRanking,
+      selection_policy_version: 'development-horizon-v1',
+      reason: resolved.reason,
+    },
+  };
+}
+
+async function trainAndPredict(id, snapshot, rawForecastType, days, profileName, horizonMode = 'explicit') {
   validateSnapshot(snapshot);
   const forecastType = (rawForecastType === 'trend' || rawForecastType === 'direction') ? 'direction' : 'price';
   const profile = resolveTrainingProfile(profileName);
-  const horizon = resolveHorizon(days);
-  const requestedDays = Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(days) || 1)));
+  const resolvedRequest = resolveForecastHorizon(snapshot, forecastType, days, horizonMode);
+  const horizon = resolvedRequest.horizon;
+  const requestedDays = horizonMode === 'auto'
+    ? horizon
+    : Math.max(1, Math.min(OUTPUT_WIDTH, Math.round(Number(days) || 1)));
   const startedAt = performance.now();
   checkCancelled(id);
   const backend = await selectBackend();
@@ -690,7 +745,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
   if (cachedMetadata?.kind !== 'checkpoint') {
     try {
       model = await tf.loadLayersModel(cacheUrl);
-      if (!validCachedModel(model, cachedMetadata, snapshot, profile, backend, horizon)) {
+      if (!validCachedModel(model, cachedMetadata, snapshot, profile, backend, horizon, forecastType)) {
         throw new Error('Cached browser model is incompatible.');
       }
       prepared = prepare(snapshot, forecastType, sequencePartition(snapshot, forecastType, horizon).sampleCount, horizon);
@@ -808,6 +863,9 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       targetMode: TARGET_MODE,
       horizon,
       days: requestedDays,
+      requestedHorizonMode: horizonMode,
+      selectedHorizon: horizon,
+      developmentSelection: resolvedRequest.developmentSelection,
       selectedEpochs,
       completedEpochs,
       trainingDurationMs: Math.round(performance.now() - startedAt),
@@ -892,6 +950,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       source: `browser_${profile.id}_lstm`,
       candidate: 'balanced_tfjs_lstm',
       horizon,
+      development_selection: resolvedRequest.developmentSelection,
     };
     const benchmark = {
       type: 'persistence',
@@ -984,7 +1043,7 @@ function categorizeWorkerError(error) {
 }
 
 async function processMessage(event) {
-  const { id, type, snapshot, forecastType, days, profile = 'balanced' } = event.data || {};
+  const { id, type, snapshot, forecastType, days, horizonMode = 'explicit', profile = 'balanced' } = event.data || {};
   if (type === 'clear-cache') {
     try {
       await selectBackend();
@@ -998,7 +1057,7 @@ async function processMessage(event) {
   }
   if (type !== 'forecast' || !id) return;
   try {
-    const result = await trainAndPredict(id, snapshot, forecastType, Number(days), profile);
+    const result = await trainAndPredict(id, snapshot, forecastType, days, profile, horizonMode);
     emit(id, { type: 'complete', result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Browser training failed.';

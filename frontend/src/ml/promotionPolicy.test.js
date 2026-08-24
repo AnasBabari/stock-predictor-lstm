@@ -31,8 +31,11 @@ function noisePrices(start, count, drift, vol) {
   return prices;
 }
 
-function researchEvaluation(relativeRmses) {
-  const foldSummaries = relativeRmses.map((relative_rmse, index) => ({ fold: index + 1, relative_rmse }));
+function researchEvaluation(relativeRmses, horizons = [1, 5, 7]) {
+  const foldSummaries = relativeRmses.map((relative_rmse, index) => ({
+    fold: index + 1,
+    per_horizon: horizons.map((horizon) => ({ horizon, relative_rmse, relative_mae: relative_rmse, rows: 60 })),
+  }));
   return { complete: true, completed_folds: foldSummaries.length, total_folds: foldSummaries.length, fold_summaries: foldSummaries };
 }
 
@@ -124,7 +127,7 @@ test('1-day failure does not automatically reject a winning 5-day or 7-day model
   expect(result5d.promoted).toBe(true);
   expect(result5d.state).toBe('promoted');
   expect(result5d.promoted_horizons).toContain(5);
-  expect(result5d.best_validated_horizon).toBe(5);
+  expect(result5d.best_validated_horizon).toBeNull();
 
   const result7d = evaluatePromotion({
     forecastType: 'price',
@@ -137,7 +140,7 @@ test('1-day failure does not automatically reject a winning 5-day or 7-day model
   expect(result7d.promoted).toBe(false);
   expect(result7d.state).toBe('experimental');
   expect(result7d.promoted_horizons).toEqual([5]);
-  expect(result7d.best_validated_horizon).toBe(5);
+  expect(result7d.best_validated_horizon).toBeNull();
 });
 
 test('describePromotionState always returns decision: model and alpha: 1', () => {
@@ -182,6 +185,33 @@ test('rejects when a research fold exceeds the allowed degradation threshold', (
   });
   expect(result.promoted).toBe(false);
   expect(result.reasons).toContain('A validation fold exceeded the allowed degradation threshold.');
+});
+
+test('uses independent fold stability evidence for each horizon', () => {
+  const foldSummaries = [0.8, 0.82, 0.85, 0.88, 0.9].map((oneDay, index) => ({
+    fold: index + 1,
+    per_horizon: [
+      { horizon: 1, relative_rmse: oneDay, relative_mae: oneDay, rows: 60 },
+      { horizon: 5, relative_rmse: index === 0 ? 0.9 : 1.2, relative_mae: 1, rows: 60 },
+    ],
+  }));
+  const evaluation = { complete: true, completed_folds: 5, total_folds: 5, fold_summaries: foldSummaries };
+  const metrics = metricsFor(0.8, 0.8, [
+    horizonEntry(1, 0.8, 0.8),
+    horizonEntry(5, 0.8, 0.8),
+  ]);
+  const oneDay = evaluatePromotion({
+    forecastType: 'price', metrics, evaluation, horizon: 1,
+    predictedCumulativeReturn: 0.001, closingPrices: quiet,
+  });
+  const fiveDay = evaluatePromotion({
+    forecastType: 'price', metrics, evaluation, horizon: 5,
+    predictedCumulativeReturn: 0.002, closingPrices: quiet,
+  });
+  expect(oneDay.checks.winningFolds).toBe(5);
+  expect(oneDay.promoted).toBe(true);
+  expect(fiveDay.checks.winningFolds).toBe(1);
+  expect(fiveDay.promoted).toBe(false);
 });
 
 test('rejects non-finite metrics', () => {

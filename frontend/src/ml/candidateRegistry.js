@@ -1,21 +1,23 @@
 /**
- * Candidate Registry for browser-side price models.
+ * Development utilities for browser-side price-model research.
  *
- * Implements strict nested selection:
- * 1. Candidates compete ONLY across purged development folds.
- * 2. The champion candidate for each horizon is selected and frozen.
- * 3. The frozen champion is evaluated ONCE on the untouched final holdout
- *    to produce the promotion verdict (PROMOTED | CANDIDATE | EXPERIMENTAL).
- *
- * Persistence is benchmark-only and never participates in candidate selection.
+ * Production currently exposes Balanced TF.js LSTM as its only selectable
+ * generator. The tabular routines below support development-only comparisons
+ * and horizon ranking; they are not silently presented as production models.
  */
 
 export const CANDIDATE_FAMILIES = Object.freeze({
   ROLLING_MEAN: 'rolling_mean',
   RIDGE: 'ridge_regression',
-  ELASTIC_NET: 'elastic_net',
   BALANCED_LSTM: 'balanced_tfjs_lstm',
 });
+
+// Only this candidate currently owns the full train/evaluate/final-forecast
+// lifecycle in the production worker. Ridge and rolling mean remain explicit
+// development utilities and must not be reported as selectable generators.
+export const PRODUCTION_SELECTABLE_CANDIDATES = Object.freeze([
+  CANDIDATE_FAMILIES.BALANCED_LSTM,
+]);
 
 /**
  * Solve Ridge Regression (L2 regularization) with exact feature centering:
@@ -130,15 +132,17 @@ export function fitRollingMean(y) {
 }
 
 /**
- * Fast development competition across candidates on development folds.
+ * Fast development comparison for tabular research candidates.
  *
- * Returns the winning candidate name for each horizon strictly from development CV.
+ * This helper does not make a production-model selection. Production callers
+ * must not claim these candidates generated a forecast unless they also fit
+ * and infer with that exact candidate.
  */
 export function selectDevelopmentChampions({
   trainInputs, // 3D array [sample, window, features] or 2D [sample, flattened]
   trainTargets, // 2D array [sample, horizon]
   devValidationSplits, // Array of { trainEnd, valStart, valEnd }
-  horizons = [1, 2, 3, 4, 5, 6, 7],
+  horizons = [1, 3, 5, 7, 14, 30],
 }) {
   const numSamples = trainInputs.length;
   if (!numSamples) throw new Error('Development competition requires non-empty training inputs.');
@@ -261,34 +265,20 @@ export function rankDevelopmentHorizons({
  * Candidate and horizon priorities are established STRICTLY on development folds.
  * The final holdout evaluates promotion for each horizon independently.
  *
- * If any horizons are PROMOTED on the holdout:
- *   Returns the top development-ranked horizon that achieved PROMOTED status.
- * If NO horizons are PROMOTED:
- *   Returns the top development-ranked horizon with validation state EXPERIMENTAL.
+ * The final holdout is deliberately absent from this interface. It may label
+ * the frozen choice promoted or experimental, but it cannot change the choice.
  */
 export function resolveAutoHorizon({
   developmentChampionHorizon,
   developmentRanking = [],
-  promotedHorizons = [],
 }) {
-  const promotedSet = new Set(promotedHorizons.map(Number));
-
-  // Find the top development-selected horizon that cleared holdout promotion
-  for (const item of developmentRanking) {
-    if (promotedSet.has(Number(item.horizon))) {
-      return {
-        selectedHorizon: item.horizon,
-        validated: true,
-        reason: `Selected top development-ranked horizon (${item.horizon}d) that cleared holdout promotion.`,
-      };
-    }
+  const selected = Number(developmentChampionHorizon ?? developmentRanking[0]?.horizon);
+  if (!Number.isFinite(selected)) {
+    throw new Error('Auto horizon requires a development-selected champion.');
   }
-
-  // No horizon cleared holdout promotion -> retain development champion as experimental
   return {
-    selectedHorizon: developmentChampionHorizon,
-    validated: false,
-    reason: `Retained top development-ranked horizon (${developmentChampionHorizon}d) for research; no horizons passed holdout promotion.`,
+    selectedHorizon: selected,
+    validated: null,
+    reason: `Frozen from development evidence at ${selected}d before final-holdout evaluation.`,
   };
 }
-

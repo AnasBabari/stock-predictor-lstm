@@ -11,6 +11,8 @@ export default defineConfig({
     exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
   },
   server: {
+    // Local-development convenience only. Vercel's static production build
+    // uses VITE_API_URL and does not inherit this proxy.
     port: 5500,
     host: true,
     proxy: {

@@ -89,20 +89,21 @@ function subscribe(request, signal, onProgress) {
   });
 }
 
-export function trainBrowserForecast({ snapshot, forecastType, days, profile = 'balanced', signal, onProgress }) {
+export function trainBrowserForecast({ snapshot, forecastType, days, horizonMode = 'explicit', profile = 'balanced', signal, onProgress }) {
   if (!browserTrainingSupported()) {
     return Promise.reject(new Error('Browser training is unavailable on this device.'));
   }
   validateSnapshot(snapshot);
   resolveTrainingProfile(profile);
-  const identity = `${snapshot.snapshot_id}/${snapshot.ticker}/${forecastType}/${profile}/${Number(days)}`;
+  const horizonIdentity = horizonMode === 'auto' ? 'auto' : Number(days);
+  const identity = `${snapshot.snapshot_id}/${snapshot.ticker}/${forecastType}/${profile}/${horizonIdentity}`;
   let request = activeForecasts.get(identity);
   if (!request) {
     const id = `browser-${Date.now()}-${sequence++}`;
     request = { id, identity, subscribers: new Set() };
     pending.set(id, request);
     activeForecasts.set(identity, request);
-    getWorker().postMessage({ id, type: 'forecast', snapshot, forecastType, days, profile });
+    getWorker().postMessage({ id, type: 'forecast', snapshot, forecastType, days, horizonMode, profile });
   }
   return subscribe(request, signal, onProgress);
 }

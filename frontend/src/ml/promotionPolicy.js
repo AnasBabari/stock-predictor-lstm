@@ -143,16 +143,15 @@ export function evaluateHorizonPromotion({
   let foldCheckPassed = true;
 
   if (totalFolds > 1) {
-    const validFolds = foldSummaries.every(
-      (summary) => summary && finite(summary.relative_rmse ?? summary.metrics?.relative_rmse)
+    const horizonFoldMetrics = foldSummaries.map((summary) =>
+      summary?.per_horizon?.find((entry) => Number(entry?.horizon) === h)
     );
+    const validFolds = horizonFoldMetrics.every((entry) => entry && finite(entry.relative_rmse));
     if (!validFolds || foldSummaries.length !== totalFolds) {
-      reasons.push('Fold evaluation is incomplete.');
+      reasons.push(`Per-horizon fold evaluation is incomplete for ${h}d.`);
       foldCheckPassed = false;
     } else {
-      const foldRmses = foldSummaries.map(
-        (summary) => Number(summary.relative_rmse ?? summary.metrics?.relative_rmse)
-      );
+      const foldRmses = horizonFoldMetrics.map((entry) => Number(entry.relative_rmse));
       const winningFolds = foldRmses.filter((val) => val < 1.0).length;
       const maxFoldRelativeRmse = Math.max(...foldRmses);
       checks.winningFolds = winningFolds;
@@ -272,20 +271,6 @@ export function evaluatePromotion({
     .filter((d) => d.passed)
     .map((d) => d.horizon);
 
-  // Auto champion ranking across promoted horizons:
-  // 1. Lowest relative RMSE
-  // 2. Lowest relative MAE
-  // 3. Horizon order
-  const bestValidatedHorizon = promotedHorizons.length > 0
-    ? [...perHorizon]
-        .filter((entry) => promotedHorizons.includes(Number(entry.horizon)))
-        .sort((a, b) => {
-          const rmseDiff = Number(a.relative_rmse) - Number(b.relative_rmse);
-          if (Math.abs(rmseDiff) > 1e-6) return rmseDiff;
-          return Number(a.relative_mae) - Number(b.relative_mae);
-        })[0]?.horizon ?? promotedHorizons[0]
-    : null;
-
   // Evaluate requested horizon independently
   const selectedMetric = perHorizon.find((entry) => Number(entry.horizon) === h) || metrics;
   const requestedDecision = evaluateHorizonPromotion({
@@ -305,7 +290,9 @@ export function evaluatePromotion({
     checks: { ...checks, ...requestedDecision.checks },
     per_horizon_decisions: perHorizonDecisions,
     promoted_horizons: promotedHorizons,
-    best_validated_horizon: bestValidatedHorizon,
+    // Descriptive only. The final holdout must never choose or redirect a
+    // forecast horizon; Auto is frozen from development evidence upstream.
+    best_validated_horizon: null,
     requested_horizon: h,
   };
 }

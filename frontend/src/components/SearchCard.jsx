@@ -77,7 +77,7 @@ export default function SearchCard({
     if (!dropdownOpen || suggestions.length === 0) {
       if (e.key === 'Enter') {
         e.preventDefault();
-        onPredict(ticker, forecastType);
+        onPredict({ ticker, days: forecastDays, type: forecastType });
       }
       return;
     }
@@ -97,9 +97,9 @@ export default function SearchCard({
         setTicker(item.ticker);
         setDropdownOpen(false);
         setSuggestions([]);
-        onPredict(item.ticker, forecastType);
+        onPredict({ ticker: item.ticker, days: forecastDays, type: forecastType });
       } else {
-        onPredict(ticker, forecastType);
+        onPredict({ ticker, days: forecastDays, type: forecastType });
       }
     } else if (e.key === 'Escape') {
       setDropdownOpen(false);
@@ -113,7 +113,7 @@ export default function SearchCard({
     setTicker(item.ticker);
     setDropdownOpen(false);
     setSuggestions([]);
-    onPredict(item.ticker, forecastType);
+    onPredict({ ticker: item.ticker, days: forecastDays, type: forecastType });
   };
 
   useEffect(() => {
@@ -205,7 +205,7 @@ export default function SearchCard({
             value={forecastDays}
             onChange={(e) => setForecastDays(e.target.value === 'auto' ? 'auto' : Number(e.target.value))}
           >
-            <option value="auto">Auto · champion</option>
+            <option value="auto">Auto · development-ranked</option>
             <option value={1}>1 day</option>
             <option value={3}>3 days</option>
             <option value={5}>5 days</option>
@@ -236,7 +236,7 @@ export default function SearchCard({
           type="button"
           id="predictBtn"
           className="predict-btn"
-          onClick={() => onPredict(ticker, forecastType)}
+          onClick={() => onPredict({ ticker, days: forecastDays, type: forecastType })}
           disabled={isLoading}
         >
           <span className="btn-text">Predict</span>

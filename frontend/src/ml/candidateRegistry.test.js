@@ -197,7 +197,7 @@ describe('selectDevelopmentChampions and nested selection', () => {
 });
 
 describe('resolveAutoHorizon', () => {
-  it('recommends top development-ranked horizon that cleared holdout promotion', () => {
+  it('keeps the development champion even when another horizon clears holdout promotion', () => {
     const autoResult = resolveAutoHorizon({
       developmentChampionHorizon: 3,
       developmentRanking: [
@@ -208,10 +208,9 @@ describe('resolveAutoHorizon', () => {
       promotedHorizons: [5, 7],
     });
 
-    // Horizon 3 was not promoted on holdout; top development-ranked promoted horizon is 5
-    expect(autoResult.selectedHorizon).toBe(5);
-    expect(autoResult.validated).toBe(true);
-    expect(autoResult.reason).toContain('5d');
+    expect(autoResult.selectedHorizon).toBe(3);
+    expect(autoResult.validated).toBeNull();
+    expect(autoResult.reason).toContain('3d');
   });
 
   it('retains development champion horizon as experimental when no horizon passed holdout promotion', () => {
@@ -227,8 +226,7 @@ describe('resolveAutoHorizon', () => {
 
     // Retains development champion (3) as experimental
     expect(autoResult.selectedHorizon).toBe(3);
-    expect(autoResult.validated).toBe(false);
+    expect(autoResult.validated).toBeNull();
     expect(autoResult.reason).toContain('3d');
   });
 });
-

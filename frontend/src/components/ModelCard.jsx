@@ -39,6 +39,16 @@ export default function ModelCard({ data: stockData }) {
           'Model',
           `${metadata.engine?.family ?? 'baseline'} (${engineRole})`
         )}
+        {row(
+          'Local model state',
+          metadata.engine?.execution_mode === 'browser_artifact_loaded'
+            ? 'Cached on this device'
+            : metadata.engine?.execution_mode === 'browser_trained'
+              ? 'Trained in this browser'
+              : metadata.engine?.execution_mode === 'rejected_evidence_cache'
+                ? 'Rejected evidence cache (diagnostics only)'
+                : metadata.engine?.cache_status || 'Not reported'
+        )}
         {row('Feature count', String(metadata.feature_count ?? '?'))}
         {row('Schema version', `v${metadata.schema_version ?? '?'}`)}
         {row('Scaling', 'Robust median/IQR, fit on the training partition only')}

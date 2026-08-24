@@ -87,32 +87,52 @@ export function predictionErrorMessage(error) {
   return 'Prediction could not be completed. Please try again.';
 }
 
-export const forecastIdentity = (ticker, days, type, profile) =>
-  `${ticker.trim().toUpperCase()}::${Number(days)}::${type}::${profile}`;
+export function normalizeHorizonRequest(value) {
+  if (value === 'auto' || value?.horizon_mode === 'auto') {
+    return { horizon_mode: 'auto', requested_horizon: null };
+  }
+  const numeric = Number(value?.requested_horizon ?? value);
+  if (![1, 3, 5, 7, 14, 30].includes(numeric)) {
+    throw new Error('Forecast horizon must be Auto or one of 1, 3, 5, 7, 14, or 30 days.');
+  }
+  return { horizon_mode: 'explicit', requested_horizon: numeric };
+}
+
+export const forecastIdentity = (ticker, days, type, profile) => {
+  const request = normalizeHorizonRequest(days);
+  const horizon = request.horizon_mode === 'auto' ? 'auto' : request.requested_horizon;
+  return `${ticker.trim().toUpperCase()}::${horizon}::${type}::${profile}`;
+};
 
 export function assertForecastIdentity(data, ticker, days, type) {
   const symbol = ticker.trim().toUpperCase();
-  if (!data || data.ticker !== symbol || Number(data.forecast_days) !== Number(days)) {
+  const request = normalizeHorizonRequest(days);
+  const selectedDays = Number(data?.forecast_days);
+  const horizonMatches = request.horizon_mode === 'auto'
+    ? data?.requested_horizon_mode === 'auto' && Number.isFinite(selectedDays)
+    : selectedDays === request.requested_horizon;
+  if (!data || data.ticker !== symbol || !horizonMatches) {
     throw new Error('The forecast response does not match the selected ticker and horizon.');
   }
   const hasExpectedPayload =
     type === FORECAST_TYPES.PRICE
-      ? data.predicted_prices?.length === Number(days)
+      ? data.predicted_prices?.length === selectedDays
       : data.direction_probabilities != null &&
-        Number(data.direction_horizon_days) === Number(days);
-  if (!hasExpectedPayload || data.future_dates?.length !== Number(days)) {
+        Number(data.direction_horizon_days) === selectedDays;
+  if (!hasExpectedPayload || data.future_dates?.length !== selectedDays) {
     throw new Error('The forecast response is incomplete for the selected forecast type.');
   }
   return data;
 }
 
 export function browserResponse(snapshot, result, forecastType, days) {
+  const resolvedDays = Number(result.selectedHorizon || result.days || days);
   const promotion = result.promotion || {};
   const validation = result.validation || {
     state: promotion.state || (promotion.promoted ? 'promoted' : 'experimental'),
     promoted: promotion.promoted === true,
     reasons: promotion.reasons || [],
-    selected_horizon: result.horizon || days,
+    selected_horizon: resolvedDays,
     promoted_horizons: promotion.promoted_horizons || [],
     best_validated_horizon: promotion.best_validated_horizon || null,
   };
@@ -145,6 +165,8 @@ export function browserResponse(snapshot, result, forecastType, days) {
     metric_source: result.metrics?.metric_source || 'browser_purged_holdout',
     data_snapshot: snapshot.data_snapshot,
     snapshot_id: snapshot.snapshot_id,
+    requested_horizon_mode: result.requestedHorizonMode || 'explicit',
+    development_selection: result.developmentSelection || null,
     browser_training: true,
     engine,
     execution: {
@@ -157,8 +179,11 @@ export function browserResponse(snapshot, result, forecastType, days) {
   if (forecastType === FORECAST_TYPES.TREND) {
     return {
       ticker: snapshot.ticker,
-      forecast_days: days,
-      future_dates: snapshot.future_dates.slice(0, days),
+      forecast_days: resolvedDays,
+      requested_horizon_mode: result.requestedHorizonMode || 'explicit',
+      selected_horizon: resolvedDays,
+      development_selection: result.developmentSelection || null,
+      future_dates: snapshot.future_dates.slice(0, resolvedDays),
       // Direction v2 contract: one three-way call per origin.
       direction_horizon_days: result.direction_horizon_days,
       direction: result.direction,
@@ -175,10 +200,13 @@ export function browserResponse(snapshot, result, forecastType, days) {
   }
   return {
     ticker: snapshot.ticker,
-    forecast_days: days,
+    forecast_days: resolvedDays,
+    requested_horizon_mode: result.requestedHorizonMode || 'explicit',
+    selected_horizon: resolvedDays,
+    development_selection: result.developmentSelection || null,
     historical_dates: snapshot.dates,
     historical_prices: snapshot.historical_prices,
-    future_dates: snapshot.future_dates.slice(0, days),
+    future_dates: snapshot.future_dates.slice(0, resolvedDays),
     predicted_prices: result.predictedPrices,
     learned_prices: result.learnedPrices,
     model_forecast: result.model_forecast || {
@@ -265,10 +293,12 @@ export function useForecast({ addToast, onNewTickerSearched }) {
 
   const fetchPredictionData = useCallback(
     async (symbol, days, type, signal, onProgress) => {
+      const horizonRequest = normalizeHorizonRequest(days);
+      const explicitDays = horizonRequest.requested_horizon;
       let serverPrediction = null;
-      if (DEPLOYMENT_TRAINING_MODE !== 'browser_only') {
+      if (horizonRequest.horizon_mode === 'explicit' && DEPLOYMENT_TRAINING_MODE !== 'browser_only') {
         onProgress?.({ stage: 'checking_server', message: 'Checking for server-pretrained models...' });
-        serverPrediction = await fetchServerPrediction(symbol, days, type, signal, {
+        serverPrediction = await fetchServerPrediction(symbol, explicitDays, type, signal, {
           mode: DEPLOYMENT_TRAINING_MODE,
         });
       }
@@ -277,12 +307,12 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         return serverPrediction;
       }
 
-      if (isGlobalModelEnabled()) {
+      if (horizonRequest.horizon_mode === 'explicit' && isGlobalModelEnabled()) {
         try {
           onProgress?.({ stage: 'checking_global', message: 'Checking verified global models…' });
           const tf = await import('@tensorflow/tfjs').catch(() => null);
           if (tf) {
-            const globalResult = await loadGlobalModel(days, tf);
+            const globalResult = await loadGlobalModel(explicitDays, tf);
             if (globalResult) {
               onProgress?.({ stage: 'global_model_loaded', message: 'Executing certified global model…' });
               const snapshot = await snapshotClientRef.current.fetchTrainingSnapshot(symbol, signal);
@@ -298,7 +328,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
                 if (Array.isArray(rawOutput)) rawOutput.forEach((t) => t.dispose());
                 else rawOutput.dispose();
 
-                const h = Math.min(days, outputArray.length || days);
+                const h = Math.min(explicitDays, outputArray.length || explicitDays);
                 const predictedPrices = [];
                 const futureDates = snapshot.future_dates.slice(0, h);
                 for (let i = 0; i < h; i += 1) {
@@ -308,7 +338,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
                 const alpha = Number(globalResult.artifact?.alpha ?? 1.0);
                 return {
                   ticker: symbol,
-                  forecast_days: days,
+                  forecast_days: explicitDays,
                   forecast_type: type,
                   current_price: lastPrice,
                   predicted_prices: predictedPrices,
@@ -345,7 +375,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
       }
 
       if (!BROWSER_TRAINING_ENABLED) {
-        return fetchServerBaseline(symbol, days, type, signal, new Error('Browser training is disabled by the deployment flag.'));
+        return fetchServerBaseline(symbol, explicitDays || 7, type, signal, new Error('Browser training is disabled by the deployment flag.'));
       }
       
       let snapshot;
@@ -353,7 +383,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         snapshot = await snapshotClientRef.current.fetchTrainingSnapshot(symbol, signal);
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
-        return fetchServerBaseline(symbol, days, type, signal, error);
+        return fetchServerBaseline(symbol, explicitDays || 7, type, signal, error);
       }
 
       try {
@@ -361,6 +391,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
           snapshot,
           forecastType: type,
           days,
+          horizonMode: horizonRequest.horizon_mode,
           profile: trainingProfile,
           signal,
           onProgress,
@@ -368,7 +399,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         return browserResponse(snapshot, result, type, days);
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
-        return fetchServerBaseline(symbol, days, type, signal, error);
+        return fetchServerBaseline(symbol, explicitDays || 7, type, signal, error);
       }
 
     },
@@ -393,7 +424,8 @@ export function useForecast({ addToast, onNewTickerSearched }) {
   );
 
   const handlePredict = useCallback(
-    async (overrideTicker, overrideDays, overrideType) => {
+    async (request = {}) => {
+      const overrideTicker = typeof request === 'string' ? request : request.ticker;
       if (
         overrideTicker !== undefined &&
         !(typeof overrideTicker === 'string' && overrideTicker.trim())
@@ -406,18 +438,12 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         return;
       }
       const activeTicker = (typeof overrideTicker === 'string' && overrideTicker.trim() ? overrideTicker : ticker).toUpperCase().trim();
-      let activeDays = forecastDays;
-      let activeType = forecastType;
-
-      if (typeof overrideDays === 'number') {
-        activeDays = overrideDays;
-      } else if (typeof overrideDays === 'string' && (overrideDays === 'price' || overrideDays === 'trend')) {
-        activeType = overrideDays;
-      }
-
-      if (typeof overrideType === 'string') {
-        activeType = overrideType;
-      }
+      const activeDays = request && typeof request === 'object' && request.days !== undefined
+        ? request.days
+        : forecastDays;
+      const activeType = request && typeof request === 'object' && request.type
+        ? request.type
+        : forecastType;
 
       if (!activeTicker) {
         setErrorMsg('Please enter a stock ticker symbol.');

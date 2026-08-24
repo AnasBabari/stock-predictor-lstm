@@ -35,7 +35,8 @@ test('trains a real price model in the browser and reloads it from IndexedDB', a
   await page.reload();
   await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
-  await expect(page.getByText(/Cached on this device|Local cache hit/i)).toBeVisible({ timeout: 30_000 });
+  await page.getByText('Model card & methodology').click();
+  await expect(page.getByText('Cached on this device')).toBeVisible({ timeout: 30_000 });
 });
 
 test('trains a real direction v2 model and falls back to the base-rate baseline', async ({ page }) => {
