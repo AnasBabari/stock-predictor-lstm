@@ -211,6 +211,12 @@ def main() -> int:
         help="Optional JSON ticker-to-topic exposure map used by the news ablation",
     )
     parser.add_argument("--news-channels", type=int, default=24)
+    parser.add_argument(
+        "--encoder",
+        choices=("tcn", "patch_transformer"),
+        default="tcn",
+        help="Sequence encoder candidate evaluated under the identical protocol",
+    )
     args = parser.parse_args()
 
     if args.news_exposure_map is not None and args.news_snapshot_dir is None:
@@ -302,11 +308,15 @@ def main() -> int:
     architecture = BaselineResidualTCNConfig(
         feature_count=examples.features.shape[-1],
         horizon_count=len(protocol.horizons),
+        encoder_family=args.encoder,
+        window_size=protocol.window_size,
     )
     news_architecture = (
         BaselineResidualTCNConfig(
             feature_count=examples.features.shape[-1],
             horizon_count=len(protocol.horizons),
+            encoder_family=args.encoder,
+            window_size=protocol.window_size,
             news_feature_count=len(NEWS_FEATURE_NAMES_V2),
             news_channels=args.news_channels,
         )

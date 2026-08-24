@@ -10,6 +10,7 @@ import copy
 import math
 import time
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import torch
@@ -22,6 +23,8 @@ from torch.utils.data import DataLoader, TensorDataset
 class BaselineResidualTCNConfig:
     feature_count: int
     horizon_count: int
+    encoder_family: Literal["tcn", "patch_transformer"] = "tcn"
+    window_size: int = 60
     news_feature_count: int = 0
     news_channels: int = 24
     channels: int = 48
@@ -30,10 +33,20 @@ class BaselineResidualTCNConfig:
     dropout: float = 0.15
     maximum_log_variance_correction: float = 1.5
     maximum_mean_standard_deviations: float = 0.50
+    transformer_d_model: int = 64
+    transformer_heads: int = 4
+    transformer_layers: int = 2
+    transformer_feedforward: int = 128
+    patch_length: int = 10
+    patch_stride: int = 5
 
     def __post_init__(self) -> None:
         if self.feature_count < 1 or self.horizon_count < 1:
             raise ValueError("feature_count and horizon_count must be positive")
+        if self.encoder_family not in {"tcn", "patch_transformer"}:
+            raise ValueError("encoder family must be tcn or patch_transformer")
+        if self.window_size < 2:
+            raise ValueError("window size must be at least two")
         if self.news_feature_count < 0 or self.news_channels < 1:
             raise ValueError("news feature count cannot be negative and channels must be positive")
         if self.channels < 4:
@@ -44,6 +57,20 @@ class BaselineResidualTCNConfig:
             raise ValueError("kernel_size must be at least two")
         if not 0 <= self.dropout < 1:
             raise ValueError("dropout must be in [0, 1)")
+        if self.transformer_d_model < 8 or self.transformer_heads < 1:
+            raise ValueError("transformer dimensions must be positive and non-trivial")
+        if self.transformer_d_model % self.transformer_heads:
+            raise ValueError("transformer model dimension must divide evenly by attention heads")
+        if self.transformer_layers < 1 or self.transformer_feedforward < 8:
+            raise ValueError("transformer depth and feedforward width are invalid")
+        if not 2 <= self.patch_length <= self.window_size:
+            raise ValueError("patch length must be in [2, window_size]")
+        if not 1 <= self.patch_stride <= self.patch_length:
+            raise ValueError("patch stride must be in [1, patch_length]")
+
+    @property
+    def patch_count(self) -> int:
+        return 1 + (self.window_size - self.patch_length) // self.patch_stride
 
 
 @dataclass(frozen=True)
@@ -164,23 +191,62 @@ class ResidualTemporalBlock(nn.Module):
 
 
 class BaselineResidualTCN(nn.Module):
-    """Shared causal encoder with variance, return, and direction heads."""
+    """Shared residual forecaster with a TCN or patch-transformer encoder."""
 
     def __init__(self, config: BaselineResidualTCNConfig) -> None:
         super().__init__()
         self.config = config
-        self.input_projection = nn.Conv1d(config.feature_count, config.channels, kernel_size=1)
-        self.blocks = nn.ModuleList(
-            [
-                ResidualTemporalBlock(
-                    config.channels,
-                    config.kernel_size,
-                    dilation,
-                    config.dropout,
-                )
-                for dilation in config.dilations
-            ]
-        )
+        if config.encoder_family == "tcn":
+            self.input_projection: nn.Module | None = nn.Conv1d(
+                config.feature_count,
+                config.channels,
+                kernel_size=1,
+            )
+            self.blocks: nn.ModuleList | None = nn.ModuleList(
+                [
+                    ResidualTemporalBlock(
+                        config.channels,
+                        config.kernel_size,
+                        dilation,
+                        config.dropout,
+                    )
+                    for dilation in config.dilations
+                ]
+            )
+            self.patch_projection: nn.Module | None = None
+            self.patch_encoder: nn.Module | None = None
+            self.patch_pool: nn.Module | None = None
+            self.positional_embedding: nn.Parameter | None = None
+        else:
+            self.input_projection = None
+            self.blocks = None
+            self.patch_projection = nn.Linear(
+                config.patch_length * config.feature_count,
+                config.transformer_d_model,
+            )
+            layer = nn.TransformerEncoderLayer(
+                d_model=config.transformer_d_model,
+                nhead=config.transformer_heads,
+                dim_feedforward=config.transformer_feedforward,
+                dropout=config.dropout,
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,
+            )
+            self.patch_encoder = nn.TransformerEncoder(
+                layer,
+                num_layers=config.transformer_layers,
+                enable_nested_tensor=False,
+            )
+            self.patch_pool = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(config.patch_count * config.transformer_d_model, config.channels),
+                nn.SiLU(),
+            )
+            self.positional_embedding = nn.Parameter(
+                torch.zeros(1, config.patch_count, config.transformer_d_model)
+            )
+            nn.init.normal_(self.positional_embedding, mean=0.0, std=0.02)
         self.final_norm = nn.LayerNorm(config.channels)
         if config.news_feature_count:
             self.news_projection: nn.Module | None = nn.Sequential(
@@ -202,6 +268,36 @@ class BaselineResidualTCN(nn.Module):
         self.direction_head = nn.Linear(config.channels, config.horizon_count * 3)
         self._initialize_baseline_heads()
 
+    def _encode_market(self, features: torch.Tensor) -> torch.Tensor:
+        if self.config.encoder_family == "tcn":
+            if self.input_projection is None or self.blocks is None:
+                raise RuntimeError("TCN encoder was not initialized")
+            values = self.input_projection(features.transpose(1, 2))
+            for block in self.blocks:
+                values = block(values)
+            return values[:, :, -1]
+
+        if features.shape[1] != self.config.window_size:
+            raise ValueError(
+                f"patch transformer requires window {self.config.window_size}, "
+                f"got {features.shape[1]}"
+            )
+        if (
+            self.patch_projection is None
+            or self.patch_encoder is None
+            or self.patch_pool is None
+            or self.positional_embedding is None
+        ):
+            raise RuntimeError("patch transformer encoder was not initialized")
+        patches = features.unfold(1, self.config.patch_length, self.config.patch_stride)
+        patches = patches.permute(0, 1, 3, 2).reshape(
+            len(features),
+            self.config.patch_count,
+            self.config.patch_length * self.config.feature_count,
+        )
+        tokens = self.patch_projection(patches) + self.positional_embedding
+        return self.patch_pool(self.patch_encoder(tokens))
+
     def _initialize_baseline_heads(self) -> None:
         # Zero variance/mean heads make the initial model exactly match the
         # HAR variance and zero-return baselines, avoiding destructive random
@@ -222,10 +318,7 @@ class BaselineResidualTCN(nn.Module):
             raise ValueError("features must have shape [batch, window, features]")
         if baseline_variance.ndim != 2:
             raise ValueError("baseline_variance must have shape [batch, horizons]")
-        values = self.input_projection(features.transpose(1, 2))
-        for block in self.blocks:
-            values = block(values)
-        encoded = self.final_norm(values[:, :, -1])
+        encoded = self.final_norm(self._encode_market(features))
         if self.news_projection is not None and self.news_fusion is not None:
             if news_features is None or news_features.shape != (
                 len(features),

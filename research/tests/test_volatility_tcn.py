@@ -44,6 +44,93 @@ def test_zero_initialized_heads_begin_at_matched_baselines() -> None:
     assert logits.shape == (len(x), baseline.shape[1], 3)
 
 
+def test_patch_transformer_has_identical_bounded_output_contract() -> None:
+    x, baseline, *_ = _batch(rows=8, window=20)
+    model = BaselineResidualTCN(
+        BaselineResidualTCNConfig(
+            feature_count=x.shape[-1],
+            horizon_count=baseline.shape[-1],
+            encoder_family="patch_transformer",
+            window_size=20,
+            patch_length=5,
+            patch_stride=5,
+            transformer_d_model=16,
+            transformer_heads=4,
+            transformer_feedforward=32,
+            channels=12,
+            dropout=0.0,
+        )
+    ).eval()
+    with torch.no_grad():
+        variance, location, logits, residual = model(
+            torch.from_numpy(x),
+            torch.from_numpy(baseline),
+        )
+    np.testing.assert_allclose(variance.numpy(), baseline, rtol=1e-6)
+    np.testing.assert_array_equal(location.numpy(), np.zeros_like(location.numpy()))
+    np.testing.assert_array_equal(residual.numpy(), np.zeros_like(residual.numpy()))
+    assert logits.shape == (len(x), baseline.shape[1], 3)
+
+
+def test_patch_transformer_rejects_window_contract_drift() -> None:
+    x, baseline, *_ = _batch(rows=4, window=20)
+    model = BaselineResidualTCN(
+        BaselineResidualTCNConfig(
+            feature_count=x.shape[-1],
+            horizon_count=baseline.shape[-1],
+            encoder_family="patch_transformer",
+            window_size=20,
+            patch_length=5,
+            patch_stride=5,
+            transformer_d_model=16,
+            transformer_heads=4,
+            transformer_feedforward=32,
+        )
+    )
+    with pytest.raises(ValueError, match="requires window"):
+        model(torch.from_numpy(x[:, :-1]), torch.from_numpy(baseline))
+
+
+def test_patch_transformer_completes_one_cpu_training_epoch() -> None:
+    x, baseline, target_var, returns, direction = _batch(rows=20, window=20, features=4)
+    result = train_baseline_residual_tcn(
+        train_features=x[:15],
+        train_baseline_variance=baseline[:15],
+        train_realized_variance=target_var[:15],
+        train_cumulative_returns=returns[:15],
+        train_direction_classes=direction[:15],
+        validation_features=x[15:],
+        validation_baseline_variance=baseline[15:],
+        validation_realized_variance=target_var[15:],
+        validation_cumulative_returns=returns[15:],
+        validation_direction_classes=direction[15:],
+        model_config=BaselineResidualTCNConfig(
+            feature_count=4,
+            horizon_count=3,
+            encoder_family="patch_transformer",
+            window_size=20,
+            patch_length=5,
+            patch_stride=5,
+            transformer_d_model=16,
+            transformer_heads=4,
+            transformer_feedforward=32,
+            channels=12,
+            dropout=0.0,
+        ),
+        training_config=TorchTrainingConfig(
+            maximum_epochs=1,
+            patience=1,
+            batch_size=5,
+            use_amp=False,
+        ),
+        seed=8,
+        device="cpu",
+    )
+    assert result.best_epoch == 1
+    assert result.parameter_count > 0
+    assert np.isfinite(result.history[0]["volatility_selection"])
+
+
 def test_causal_convolution_output_before_perturbation_is_unchanged() -> None:
     torch.manual_seed(1)
     layer = CausalConv1d(2, 3, kernel_size=3, dilation=2).eval()

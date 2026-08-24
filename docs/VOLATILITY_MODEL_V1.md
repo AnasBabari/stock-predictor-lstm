@@ -200,6 +200,15 @@ RTX 2060 and CPU deployment:
 - dropout, weight decay, gradient clipping, mixed precision, early stopping,
   and deterministic recorded seeds.
 
+A compact patch-transformer is the frozen neural challenger. It receives the
+same 60-session inputs, HAR residual anchor, targets, loss, inner calibration,
+outer folds, seeds, and promotion gates; it cannot win by changing the task or
+information set. Ten-session patches with five-session stride feed a
+two-layer, four-head encoder and bounded versions of the same output heads. It
+is screened with a non-certifiable one-seed run first. Only if that screen
+beats the TCN is it eligible for the full three-seed battery, and only one
+certified winner is exported to production.
+
 The variance path is optimized with QLIKE plus zero-centred Gaussian CRPS,
 both proper distribution scores, and a bounded residual penalty. The return
 location uses a separate volatility-standardized robust loss, while direction
