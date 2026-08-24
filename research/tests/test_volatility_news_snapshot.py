@@ -35,14 +35,20 @@ def _event(event_id: str = "event-1") -> NewsEvent:
     )
 
 
-def test_news_snapshot_round_trip_is_canonical_and_text_free(tmp_path: Path) -> None:
-    directory = tmp_path / "snapshot"
-    manifest = save_news_snapshot(
+def _save(directory: Path, events: list[NewsEvent]) -> dict[str, object]:
+    return save_news_snapshot(
         directory,
-        [_event("event-2"), _event("event-1")],
+        events,
         provider="fixture",
         license_acknowledged=True,
+        coverage_start="2025-01-01T00:00:00Z",
+        coverage_end_exclusive="2025-02-01T00:00:00Z",
     )
+
+
+def test_news_snapshot_round_trip_is_canonical_and_text_free(tmp_path: Path) -> None:
+    directory = tmp_path / "snapshot"
+    manifest = _save(directory, [_event("event-2"), _event("event-1")])
     loaded, verified = load_news_snapshot(directory)
     assert [event.event_id for event in loaded] == ["event-1", "event-2"]
     assert verified == manifest
@@ -56,12 +62,7 @@ def test_news_snapshot_round_trip_is_canonical_and_text_free(tmp_path: Path) -> 
 
 def test_news_snapshot_rejects_tampered_event_bytes(tmp_path: Path) -> None:
     directory = tmp_path / "snapshot"
-    save_news_snapshot(
-        directory,
-        [_event()],
-        provider="fixture",
-        license_acknowledged=True,
-    )
+    _save(directory, [_event()])
     path = directory / "events.jsonl"
     path.write_text(path.read_text(encoding="utf-8").replace("0.4", "0.9"), encoding="utf-8")
     with pytest.raises(NewsSnapshotError, match="checksum"):
@@ -70,12 +71,7 @@ def test_news_snapshot_rejects_tampered_event_bytes(tmp_path: Path) -> None:
 
 def test_news_snapshot_rejects_manifest_path_substitution(tmp_path: Path) -> None:
     directory = tmp_path / "snapshot"
-    save_news_snapshot(
-        directory,
-        [_event()],
-        provider="fixture",
-        license_acknowledged=True,
-    )
+    _save(directory, [_event()])
     manifest_path = directory / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["events_file"] = "../outside.jsonl"
@@ -91,6 +87,8 @@ def test_news_snapshot_requires_license_acknowledgement(tmp_path: Path) -> None:
             [_event()],
             provider="fixture",
             license_acknowledged=False,
+            coverage_start="2025-01-01T00:00:00Z",
+            coverage_end_exclusive="2025-02-01T00:00:00Z",
         )
 
 
@@ -101,4 +99,18 @@ def test_news_snapshot_rejects_duplicate_event_ids(tmp_path: Path) -> None:
             [_event(), _event()],
             provider="fixture",
             license_acknowledged=True,
+            coverage_start="2025-01-01T00:00:00Z",
+            coverage_end_exclusive="2025-02-01T00:00:00Z",
+        )
+
+
+def test_news_snapshot_rejects_events_outside_declared_coverage(tmp_path: Path) -> None:
+    with pytest.raises(NewsSnapshotError, match="outside declared"):
+        save_news_snapshot(
+            tmp_path / "snapshot",
+            [_event()],
+            provider="fixture",
+            license_acknowledged=True,
+            coverage_start="2025-02-01T00:00:00Z",
+            coverage_end_exclusive="2025-03-01T00:00:00Z",
         )

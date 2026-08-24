@@ -102,6 +102,16 @@ def _canonical_events(events: Sequence[NewsEvent]) -> tuple[NewsEvent, ...]:
     return ordered
 
 
+def _coverage_timestamp(value: pd.Timestamp | str, *, field: str) -> pd.Timestamp:
+    try:
+        parsed = pd.Timestamp(value)
+    except (TypeError, ValueError) as error:
+        raise NewsSnapshotError(f"{field} is not a valid timestamp") from error
+    if parsed.tzinfo is None:
+        raise NewsSnapshotError(f"{field} must be timezone-aware")
+    return parsed.tz_convert("UTC")
+
+
 def _events_bytes(events: Sequence[NewsEvent]) -> bytes:
     rows = [
         json.dumps(_event_payload(event), sort_keys=True, separators=(",", ":"))
@@ -116,6 +126,8 @@ def save_news_snapshot(
     *,
     provider: str,
     license_acknowledged: bool,
+    coverage_start: pd.Timestamp | str,
+    coverage_end_exclusive: pd.Timestamp | str,
 ) -> dict[str, object]:
     """Write an immutable metadata-only snapshot and return its manifest."""
     if not license_acknowledged:
@@ -128,6 +140,21 @@ def save_news_snapshot(
     target.mkdir(parents=True, exist_ok=True)
 
     ordered = _canonical_events(events)
+    coverage_start_utc = _coverage_timestamp(coverage_start, field="coverage_start")
+    coverage_end_utc = _coverage_timestamp(
+        coverage_end_exclusive,
+        field="coverage_end_exclusive",
+    )
+    if coverage_end_utc <= coverage_start_utc:
+        raise NewsSnapshotError("news snapshot coverage end must follow its start")
+    outside_coverage = [
+        event.event_id
+        for event in ordered
+        if event.eligible_at is not None
+        and not coverage_start_utc <= event.eligible_at < coverage_end_utc
+    ]
+    if outside_coverage:
+        raise NewsSnapshotError("news event eligibility falls outside declared provider coverage")
     encoded = _events_bytes(ordered)
     event_digest = hashlib.sha256(encoded).hexdigest()
     base = build_news_snapshot(
@@ -143,6 +170,8 @@ def save_news_snapshot(
         "events_sha256": event_digest,
         "eligible_start": min(eligible).isoformat() if eligible else None,
         "eligible_end": max(eligible).isoformat() if eligible else None,
+        "coverage_start": coverage_start_utc.isoformat(),
+        "coverage_end_exclusive": coverage_end_utc.isoformat(),
         "contains_article_text": False,
     }
     events_tmp = target / f".{NEWS_EVENTS_FILENAME}.tmp"
@@ -187,6 +216,8 @@ def load_news_snapshot(
         "events_sha256",
         "eligible_start",
         "eligible_end",
+        "coverage_start",
+        "coverage_end_exclusive",
         "contains_article_text",
     }
     if not required.issubset(manifest):
@@ -203,6 +234,13 @@ def load_news_snapshot(
         raise NewsSnapshotError("news snapshot must not contain article text")
     if not isinstance(manifest["provider"], str) or not manifest["provider"].strip():
         raise NewsSnapshotError("news snapshot provider is invalid")
+    coverage_start = _coverage_timestamp(manifest["coverage_start"], field="coverage_start")
+    coverage_end = _coverage_timestamp(
+        manifest["coverage_end_exclusive"],
+        field="coverage_end_exclusive",
+    )
+    if coverage_end <= coverage_start:
+        raise NewsSnapshotError("news snapshot coverage end must follow its start")
 
     try:
         size = events_path.stat().st_size
@@ -245,4 +283,9 @@ def load_news_snapshot(
     expected_end = max(eligible).isoformat() if eligible else None
     if manifest["eligible_start"] != expected_start or manifest["eligible_end"] != expected_end:
         raise NewsSnapshotError("news snapshot eligibility bounds do not match its events")
+    if any(
+        event.eligible_at is not None and not coverage_start <= event.eligible_at < coverage_end
+        for event in ordered
+    ):
+        raise NewsSnapshotError("news event eligibility falls outside declared provider coverage")
     return ordered, manifest
