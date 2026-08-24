@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 NEWS_SCHEMA_VERSION = "point_in_time_news_v1"
+NEWS_FEATURE_SCHEMA_VERSION = "point_in_time_news_features_v2"
 TimestampQuality = Literal["precise", "first_seen_only", "date_only", "unknown"]
 
 CONFLICT_TOPICS = frozenset({"military_conflict", "war", "sanctions", "terrorism"})
@@ -26,7 +27,7 @@ COMMODITY_TOPICS = frozenset(
 )
 MACRO_POLICY_TOPICS = frozenset({"monetary_policy", "inflation", "regulation", "fiscal_policy"})
 
-NEWS_FEATURE_NAMES_V1 = (
+NEWS_FEATURE_NAMES_V2 = (
     "News_Ticker_Intensity_1H",
     "News_Ticker_Intensity_1D",
     "News_Ticker_Intensity_3D",
@@ -40,6 +41,8 @@ NEWS_FEATURE_NAMES_V1 = (
     "News_Exposure_Commodity_Severity_3D",
     "News_Market_Intensity_1D",
     "News_Market_Negative_1D",
+    "News_Market_Conflict_Severity_3D",
+    "News_Market_Commodity_Severity_3D",
     "News_Macro_Policy_Severity_3D",
     "News_Low_Timestamp_Quality_Fraction_3D",
     "News_Ticker_Missing_1D",
@@ -155,7 +158,7 @@ class NewsFeatureMatrix:
     values: np.ndarray
     tickers: np.ndarray
     cutoffs: np.ndarray
-    feature_names: tuple[str, ...] = NEWS_FEATURE_NAMES_V1
+    feature_names: tuple[str, ...] = NEWS_FEATURE_NAMES_V2
 
     def __post_init__(self) -> None:
         if self.values.shape != (len(self.tickers), len(self.feature_names)):
@@ -426,6 +429,20 @@ def aggregate_news_features(
                     maximum_age_hours=24,
                     half_life_hours=12,
                     value=_negative,
+                ),
+                _weighted_sum(
+                    market_events,
+                    origin.cutoff_at,
+                    maximum_age_hours=72,
+                    half_life_hours=36,
+                    value=_conflict_severity,
+                ),
+                _weighted_sum(
+                    market_events,
+                    origin.cutoff_at,
+                    maximum_age_hours=72,
+                    half_life_hours=36,
+                    value=_commodity_severity,
                 ),
                 _weighted_sum(
                     market_events,

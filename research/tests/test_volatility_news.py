@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from volatility_forecasting.news import (
-    NEWS_FEATURE_NAMES_V1,
+    NEWS_FEATURE_NAMES_V2,
     NewsEvent,
     NewsLicenseNotAcknowledged,
     NewsOrigin,
@@ -45,7 +45,7 @@ def _event(
 
 
 def _feature(matrix, name: str) -> float:
-    return float(matrix.values[0, NEWS_FEATURE_NAMES_V1.index(name)])
+    return float(matrix.values[0, NEWS_FEATURE_NAMES_V2.index(name)])
 
 
 def test_post_cutoff_article_cannot_change_origin_features() -> None:
@@ -89,6 +89,8 @@ def test_frozen_exposure_map_propagates_oil_disruption_without_fake_ticker_link(
     assert _feature(matrix, "News_Exposure_Intensity_1D") > 0.0
     assert _feature(matrix, "News_Exposure_Conflict_Severity_3D") > 0.0
     assert _feature(matrix, "News_Exposure_Commodity_Severity_3D") > 0.0
+    assert _feature(matrix, "News_Market_Conflict_Severity_3D") > 0.0
+    assert _feature(matrix, "News_Market_Commodity_Severity_3D") > 0.0
 
 
 def test_unknown_timestamp_is_excluded_and_first_seen_only_is_flagged() -> None:

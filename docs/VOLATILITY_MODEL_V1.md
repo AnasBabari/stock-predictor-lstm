@@ -125,6 +125,9 @@ Candidate news features include:
 - event taxonomy and severity for conflict, sanctions, regulation, monetary
   policy, earnings, guidance, litigation, supply disruption, accidents, and
   mergers;
+- global conflict and commodity-shock severity, retained even when an event
+  has no defensible issuer link, with separate frozen per-ticker exposure
+  weights for differential transmission;
 - novelty/surprise versus trailing topic and entity coverage;
 - source diversity, source reliability, event confidence, and lead prominence;
 - exponentially decayed 1-hour, same-session, 1-day, 3-day, and 7-day counts;
