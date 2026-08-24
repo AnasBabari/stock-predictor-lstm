@@ -90,6 +90,37 @@ def test_locked_certification_passes_strong_candidate_on_complete_reserves() -> 
     }
 
 
+def test_locked_certification_opens_only_development_eligible_horizons() -> None:
+    examples, plan, temporal, transfer = _fixture()
+    report = certify_locked_predictions(
+        examples=examples,
+        fold_plan=plan,
+        temporal=temporal,
+        asset_transfer=transfer,
+        model_identity="tcn-v6-seed-ensemble",
+        development_evidence_sha256="d" * 64,
+        gate=LockedCertificationGate(minimum_sessions=100),
+        eligible_horizons=(7,),
+        resamples=200,
+    )
+    assert report.status == "passed"
+    assert report.eligible_horizons == (7,)
+    assert report.certified_horizons == (7,)
+    assert {row.horizon for row in report.decisions} == {7}
+    with pytest.raises(ValueError, match="ordered protocol subset"):
+        certify_locked_predictions(
+            examples=examples,
+            fold_plan=plan,
+            temporal=temporal,
+            asset_transfer=transfer,
+            model_identity="candidate",
+            development_evidence_sha256="e" * 64,
+            gate=LockedCertificationGate(minimum_sessions=100),
+            eligible_horizons=(30,),
+            resamples=200,
+        )
+
+
 def test_locked_certification_rejects_reserve_slicing_and_missing_required_ticker() -> None:
     examples, plan, temporal, transfer = _fixture()
     sliced = LockedPopulationInput(

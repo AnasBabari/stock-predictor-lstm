@@ -86,6 +86,7 @@ class LockedCertificationReport:
     certification_start: str
     required_asset_holdouts: tuple[str, ...]
     gate: dict[str, float | int]
+    eligible_horizons: tuple[int, ...]
     decisions: tuple[LockedHorizonDecision, ...]
     certified_horizons: tuple[int, ...]
 
@@ -136,6 +137,7 @@ def certify_locked_predictions(
     development_evidence_sha256: str,
     gate: LockedCertificationGate | None = None,
     required_asset_holdouts: tuple[str, ...] = ("NMM", "MSFT"),
+    eligible_horizons: tuple[int, ...] | None = None,
     resamples: int = 2000,
     seed: int = 42,
 ) -> LockedCertificationReport:
@@ -156,6 +158,13 @@ def certify_locked_predictions(
         raise ValueError("development evidence must be a lowercase SHA-256 digest")
     if temporal.population != "temporal" or asset_transfer.population != "asset_transfer":
         raise ValueError("certification population labels are incorrect")
+    selected_horizons = eligible_horizons or examples.horizons
+    if (
+        not selected_horizons
+        or tuple(sorted(set(selected_horizons))) != selected_horizons
+        or not set(selected_horizons).issubset(examples.horizons)
+    ):
+        raise ValueError("eligible certification horizons must be an ordered protocol subset")
     _validate_population(
         temporal,
         expected_indices=fold_plan.temporal_certification_indices,
@@ -206,6 +215,8 @@ def certify_locked_predictions(
         if not np.array_equal(session_dates, baseline_dates):
             raise RuntimeError("certification loss sessions do not align")
         for column, horizon in enumerate(examples.horizons):
+            if horizon not in selected_horizons:
+                continue
             dm_stat, dm_p = diebold_mariano_hac(
                 candidate_sessions[:, column],
                 baseline_sessions[:, column],
@@ -281,17 +292,18 @@ def certify_locked_predictions(
 
     certified = tuple(
         horizon
-        for horizon in examples.horizons
+        for horizon in selected_horizons
         if all(decision.decision == "pass" for decision in decisions if decision.horizon == horizon)
     )
     return LockedCertificationReport(
         certification_protocol_version=CERTIFICATION_PROTOCOL_VERSION,
         model_identity=model_identity,
         development_evidence_sha256=development_evidence_sha256,
-        status="passed" if certified == examples.horizons else "failed",
+        status="passed" if certified == selected_horizons else "failed",
         certification_start=str(fold_plan.certification_start),
         required_asset_holdouts=required_asset_holdouts,
         gate=asdict(settings),
+        eligible_horizons=selected_horizons,
         decisions=tuple(decisions),
         certified_horizons=certified,
     )
