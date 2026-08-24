@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
+import pandas as pd
 import pytest
 from volatility_forecasting.gdelt import (
     gdelt_row_to_news_event,
+    gdelt_v1_row_to_news_event,
+    iter_gdelt_v1_daily_archives,
     iter_gdelt_v2_archives,
+    parse_gdelt_v1_export_line,
     parse_gdelt_v2_export_line,
 )
 from volatility_forecasting.news import NewsValidationError
@@ -28,6 +32,26 @@ def _line() -> str:
     fields[34] = "-6.5"
     fields[59] = "20200101001500"
     fields[60] = "https://example.com/news/microsoft-iran"
+    return "\t".join(fields)
+
+
+def _v1_line() -> str:
+    fields = [""] * 58
+    fields[0] = "123456"
+    fields[1] = "20250104"
+    fields[6] = "MICROSOFT"
+    fields[16] = "IRAN"
+    fields[26] = "190"
+    fields[27] = "190"
+    fields[28] = "19"
+    fields[29] = "4"
+    fields[30] = "-9.0"
+    fields[31] = "20"
+    fields[32] = "5"
+    fields[33] = "20"
+    fields[34] = "-6.5"
+    fields[56] = "20250105"
+    fields[57] = "https://example.com/news/microsoft-iran"
     return "\t".join(fields)
 
 
@@ -65,9 +89,32 @@ def test_gdelt_archive_plan_is_utc_aligned_and_half_open() -> None:
         iter_gdelt_v2_archives(datetime(2025, 1, 1), datetime(2025, 1, 2))
 
 
+def test_daily_archive_uses_next_day_noon_as_conservative_availability() -> None:
+    archives = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 7))
+    assert len(archives) == 2
+    assert archives[0].available_at == datetime(2025, 1, 6, 12, tzinfo=UTC)
+    assert archives[0].url.endswith("20250105.export.CSV.zip")
+
+
+def test_daily_event_never_uses_event_date_as_information_time() -> None:
+    row = parse_gdelt_v1_export_line(_v1_line())
+    archive = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 6))[0]
+    event = gdelt_v1_row_to_news_event(
+        row,
+        archive=archive,
+        ticker_aliases={"MSFT": ("Microsoft",)},
+    )
+    assert event.first_seen_at == pd.Timestamp("2025-01-06T12:00:00Z")
+    assert event.eligible_at == event.first_seen_at
+    assert event.tickers == ("MSFT",)
+    assert "military_conflict" in event.topics
+
+
 def test_gdelt_parser_rejects_schema_drift_and_short_aliases() -> None:
     with pytest.raises(NewsValidationError, match="61 columns"):
         parse_gdelt_v2_export_line("too\tshort")
     row = parse_gdelt_v2_export_line(_line())
     with pytest.raises(NewsValidationError, match="at least three"):
         gdelt_row_to_news_event(row, ticker_aliases={"C": ("C",)})
+    with pytest.raises(NewsValidationError, match="58 columns"):
+        parse_gdelt_v1_export_line("too\tshort")
