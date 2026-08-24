@@ -85,27 +85,6 @@ def _har_row(history: np.ndarray) -> np.ndarray:
     )
 
 
-def _fit_log_har(rv: np.ndarray, origin: int, ridge: float) -> np.ndarray:
-    """Fit through ``origin``; every response is known by that origin."""
-    rows: list[np.ndarray] = []
-    targets: list[float] = []
-    # Row s forecasts s+1. At origin t, responses through rv[t] are known,
-    # therefore the latest admissible training row is s=t-1.
-    for s in range(21, origin):
-        window = rv[: s + 1]
-        if not np.isfinite(window[-22:]).all() or not np.isfinite(rv[s + 1]):
-            continue
-        rows.append(_har_row(window))
-        targets.append(float(np.log(max(rv[s + 1], _EPSILON_VARIANCE))))
-    if len(rows) < 20:
-        raise ValueError("insufficient finite history to fit causal log-HAR")
-    x = np.vstack(rows)
-    y = np.asarray(targets, dtype=np.float64)
-    penalty = np.eye(x.shape[1], dtype=np.float64) * float(ridge)
-    penalty[0, 0] = 0.0
-    return np.linalg.solve(x.T @ x + penalty, x.T @ y)
-
-
 def causal_log_har_forecasts(
     rv_daily: pd.Series,
     horizons: tuple[int, ...],
@@ -129,8 +108,25 @@ def causal_log_har_forecasts(
     last_refit = -refit_every
     maximum_horizon = max(horizons)
     horizon_to_column = {horizon: column for column, horizon in enumerate(horizons)}
+    # Incremental normal equations turn repeated expanding HAR fits from a
+    # quadratic design rebuild into O(n) rank-one updates. At origin t we add
+    # only row s=t-1, whose response rv[t] has just become observable.
+    xtx = np.zeros((4, 4), dtype=np.float64)
+    xty = np.zeros(4, dtype=np.float64)
+    fitted_rows = 0
+    penalty = np.eye(4, dtype=np.float64) * float(ridge)
+    penalty[0, 0] = 0.0
 
-    for origin in range(max(minimum_history, 22), len(rv)):
+    for origin in range(22, len(rv)):
+        training_origin = origin - 1
+        if np.isfinite(rv[training_origin - 21 : training_origin + 2]).all():
+            design = _har_row(rv[: training_origin + 1])
+            response = float(np.log(max(rv[origin], _EPSILON_VARIANCE)))
+            xtx += np.outer(design, design)
+            xty += design * response
+            fitted_rows += 1
+        if origin < max(minimum_history, 22) or fitted_rows < 20:
+            continue
         # OHLC-derived variance has an unavoidable NaN on the first session
         # because no previous close exists. Only the trailing HAR information
         # set must be finite; an old prefix NaN must not suppress every later
@@ -138,7 +134,7 @@ def causal_log_har_forecasts(
         if not np.isfinite(rv[origin - 21 : origin + 1]).all():
             continue
         if coefficients is None or origin - last_refit >= refit_every:
-            coefficients = _fit_log_har(rv, origin, ridge)
+            coefficients = np.linalg.solve(xtx + penalty, xty)
             last_refit = origin
 
         history = list(np.maximum(rv[: origin + 1], _EPSILON_VARIANCE))

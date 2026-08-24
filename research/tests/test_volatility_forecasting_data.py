@@ -50,6 +50,67 @@ def test_causal_log_har_returns_positive_ordered_horizon_sums() -> None:
     assert (finite[:, 1] < finite[:, 2]).all()
 
 
+def test_incremental_log_har_matches_expanding_normal_equations() -> None:
+    rng = np.random.default_rng(44)
+    values = np.exp(rng.normal(-8.5, 0.5, 140))
+    horizons = (1, 3, 7)
+    actual = causal_log_har_forecasts(
+        pd.Series(values),
+        horizons,
+        minimum_history=60,
+        refit_every=5,
+    )
+
+    expected = np.full_like(actual, np.nan)
+    horizon_columns = {horizon: column for column, horizon in enumerate(horizons)}
+    coefficients = None
+    last_refit = -5
+    penalty = np.eye(4) * 1e-4
+    penalty[0, 0] = 0.0
+    for origin in range(22, len(values)):
+        training_origins = range(21, origin)
+        design = []
+        response = []
+        for training_origin in training_origins:
+            history = values[: training_origin + 1]
+            design.append(
+                [
+                    1.0,
+                    np.log(history[-1]),
+                    np.log(np.mean(history[-5:])),
+                    np.log(np.mean(history[-22:])),
+                ]
+            )
+            response.append(np.log(values[training_origin + 1]))
+        if origin < 60 or len(design) < 20:
+            continue
+        if coefficients is None or origin - last_refit >= 5:
+            matrix = np.asarray(design)
+            coefficients = np.linalg.solve(
+                matrix.T @ matrix + penalty,
+                matrix.T @ np.asarray(response),
+            )
+            last_refit = origin
+        history = list(values[: origin + 1])
+        cumulative = 0.0
+        for step in range(1, max(horizons) + 1):
+            row = np.asarray(
+                [
+                    1.0,
+                    np.log(history[-1]),
+                    np.log(np.mean(history[-5:])),
+                    np.log(np.mean(history[-22:])),
+                ]
+            )
+            next_variance = max(float(np.exp(np.clip(row @ coefficients, -30.0, 5.0))), 1e-12)
+            history.append(next_variance)
+            cumulative += next_variance
+            if step in horizon_columns:
+                expected[origin, horizon_columns[step]] = cumulative
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-12, equal_nan=True)
+
+
 def test_panel_examples_align_features_baseline_and_future_targets() -> None:
     protocol = VolatilityForecastProtocol(
         horizons=(1, 3, 7),
