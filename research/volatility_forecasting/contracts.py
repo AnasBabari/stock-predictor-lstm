@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
 
-VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v5"
+VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v6"
 MODEL_ARCHITECTURE_VERSION = "baseline-residual-tcn-v2"
 TARGET_VERSION = "future-rv-total-v1"
 DEFAULT_HORIZONS = (1, 3, 5, 7, 14, 30)
@@ -37,6 +37,7 @@ class VolatilityForecastProtocol:
     seeds: tuple[int, ...] = (41, 42, 43)
     realized_variance_proxy: str = "overnight_plus_rogers_satchell"
     baseline_family: str = "causal_log_har"
+    comparison_baseline_family: str = "adaptive_calibrated_har_c2c_v1"
 
     def __post_init__(self) -> None:
         if not self.horizons or tuple(sorted(set(self.horizons))) != self.horizons:

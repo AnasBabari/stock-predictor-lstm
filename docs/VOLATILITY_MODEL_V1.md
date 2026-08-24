@@ -73,10 +73,19 @@ candidates, not proof that a candidate works on this application.
 
 Every origin receives a causal log-HAR cumulative variance forecast. At origin
 `t`, its fit may use responses observed through `t`; recursive steps beyond
-`t` use forecasts, not realized future values. EWMA, GARCH, GJR-GARCH, and a
-naive rolling-volatility forecast remain benchmark competitors. The neural
-model predicts a bounded log-variance correction around the best frozen
-baseline rather than an unconstrained variance level.
+`t` use forecasts, not realized future values. The neural model predicts a
+bounded log-variance correction around HAR rather than an unconstrained
+variance level.
+
+Promotion is deliberately harder than beating raw HAR. Inside each outer
+fold, the pre-evaluation calibration region compares calibrated HAR,
+RiskMetrics EWMA, 5/20/60-session rolling close-to-close volatility, their
+multi-scale geometric mean, and log-space HAR blends. It freezes one family,
+blend weight, and bounded multiplicative scale per horizon before seeing the
+outer validation rows. A candidate must beat those fold-local adaptive
+forecasts. GARCH and GJR-GARCH remain separately reported econometric
+challengers because their iterative fits are not part of the lightweight
+production baseline.
 
 For return location, the benchmark is zero cumulative return. A learned return
 mean can be shrunk or rejected independently without suppressing a promoted
@@ -84,12 +93,15 @@ volatility forecast.
 
 The realized-variance proxy and the conditional variance of cumulative close
 returns are related but not numerically interchangeable. Each fold therefore
-fits a bounded, per-horizon return-variance scale on its inner information set
-by minimizing Gaussian CRPS. The candidate and matched baseline receive
-separate calibration using the same pre-evaluation rows. QLIKE continues to
-score the unscaled realized-variance forecast; CRPS and interval coverage use
-the calibrated return-distribution variance. No outer fold or certification
-return participates in calibration.
+fits bounded, per-horizon calibration on its inner information set. Realized
+variance receives a multiplicative QLIKE scale; return-distribution variance
+receives an additional scale chosen by Gaussian CRPS. The candidate and the
+fold-selected matched baseline receive separate calibration using the same
+pre-evaluation rows, with market sessions equal-weighted so duplicated
+cross-sectional shocks cannot dominate the fit. QLIKE scores calibrated
+realized variance; CRPS and interval coverage use calibrated
+return-distribution variance. No outer fold or certification outcome
+participates in selection or calibration.
 
 ## Point-in-time financial-news channel
 

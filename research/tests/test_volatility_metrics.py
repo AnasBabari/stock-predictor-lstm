@@ -4,6 +4,7 @@ import numpy as np
 from volatility_forecasting.metrics import (
     DistributionPredictions,
     fit_crps_variance_scale,
+    fit_qlike_variance_scale,
     gaussian_crps,
     horizon_distribution_metrics,
     qlike_losses,
@@ -30,6 +31,27 @@ def test_return_variance_scale_is_fitted_only_from_supplied_distribution_rows() 
     scale = fit_crps_variance_scale(variance, returns)
     assert scale.shape == (1,)
     assert 3.4 <= scale[0] <= 4.0
+
+
+def test_qlike_scale_recovers_multiplicative_variance_bias() -> None:
+    forecast = np.ones((20, 2), dtype=np.float64)
+    realized = forecast * np.array([2.0, 3.0])
+    np.testing.assert_allclose(fit_qlike_variance_scale(forecast, realized), [2.0, 3.0])
+
+
+def test_qlike_scale_equal_weights_market_sessions() -> None:
+    forecast = np.ones((12, 1), dtype=np.float64)
+    realized = np.concatenate([np.full((8, 1), 4.0), np.ones((4, 1))])
+    sessions = np.array(
+        ["a"] * 8 + ["b", "c", "d", "e"],
+        dtype=str,
+    )
+    # One crowded session and four single-row sessions receive equal date
+    # weight, so the fitted scale is (4 + 1 + 1 + 1 + 1) / 5.
+    np.testing.assert_allclose(
+        fit_qlike_variance_scale(forecast, realized, session_labels=sessions),
+        [1.6],
+    )
 
 
 def test_horizon_metrics_report_proper_scores_calibration_and_direction() -> None:

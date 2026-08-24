@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import gc
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import numpy as np
 import torch
 
 from backend.panel.selection import diebold_mariano_hac, holm_correction
 
+from .baselines import (
+    fit_adaptive_variance_baseline,
+    predict_adaptive_variance_baseline,
+)
 from .contracts import VolatilityForecastProtocol, VolatilityPromotionGate
 from .data import VolatilityPanelExamples
 from .folds import VolatilityFoldPlan, build_inner_training_split
 from .metrics import (
     DistributionPredictions,
     fit_crps_variance_scale,
+    fit_qlike_variance_scale,
     horizon_distribution_metrics,
     qlike_losses,
 )
@@ -42,8 +47,10 @@ class FoldEvidence:
     best_epoch: int
     duration_seconds: float
     parameter_count: int
+    variance_scale: tuple[float, ...]
     return_variance_scale: tuple[float, ...]
     baseline_return_variance_scale: tuple[float, ...]
+    comparison_baseline_selection: tuple[dict[str, float | int | str], ...]
     training_history: tuple[dict[str, float], ...]
     metrics: tuple[dict[str, float | int], ...]
 
@@ -84,6 +91,7 @@ class DevelopmentEvaluation:
     promotion: tuple[HorizonPromotionDecision, ...]
     oof_indices: np.ndarray
     predictions: DistributionPredictions
+    comparison_baseline_variance: np.ndarray
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:
@@ -372,6 +380,7 @@ def evaluate_tcn_development(
     oof_location: list[np.ndarray] = []
     oof_direction: list[np.ndarray] = []
     oof_return_variance: list[np.ndarray] = []
+    oof_comparison_baseline_variance: list[np.ndarray] = []
     oof_baseline_return_variance: list[np.ndarray] = []
 
     for fold in fold_plan.folds:
@@ -406,12 +415,24 @@ def evaluate_tcn_development(
             early_stopping,
             news_features=news_features,
         )
-        return_variance_scale = fit_crps_variance_scale(
+        variance_scale = fit_qlike_variance_scale(
             calibration_predictions.variance,
+            examples.realized_variance[early_stopping],
+            session_labels=examples.origin_dates[early_stopping],
+        )
+        calibrated_variance = calibration_predictions.variance * variance_scale
+        return_variance_scale = fit_crps_variance_scale(
+            calibrated_variance,
             examples.cumulative_returns[early_stopping],
         )
+        baseline_selection = fit_adaptive_variance_baseline(examples, early_stopping)
+        calibration_baseline = predict_adaptive_variance_baseline(
+            examples,
+            early_stopping,
+            baseline_selection,
+        )
         baseline_return_variance_scale = fit_crps_variance_scale(
-            examples.baseline_variance[early_stopping],
+            calibration_baseline,
             examples.cumulative_returns[early_stopping],
         )
         raw_predictions = predict_distribution(
@@ -420,19 +441,22 @@ def evaluate_tcn_development(
             validation,
             news_features=news_features,
         )
+        comparison_baseline = predict_adaptive_variance_baseline(
+            examples,
+            validation,
+            baseline_selection,
+        )
         predictions = DistributionPredictions(
-            variance=raw_predictions.variance,
+            variance=raw_predictions.variance * variance_scale,
             return_location=raw_predictions.return_location,
             direction_probabilities=raw_predictions.direction_probabilities,
-            return_variance=raw_predictions.variance * return_variance_scale,
+            return_variance=raw_predictions.variance * variance_scale * return_variance_scale,
         )
-        baseline_return_variance = (
-            examples.baseline_variance[validation] * baseline_return_variance_scale
-        )
+        baseline_return_variance = comparison_baseline * baseline_return_variance_scale
         metrics = tuple(
             horizon_distribution_metrics(
                 predictions=predictions,
-                baseline_variance=examples.baseline_variance[validation],
+                baseline_variance=comparison_baseline,
                 baseline_return_variance=baseline_return_variance,
                 realized_variance=examples.realized_variance[validation],
                 cumulative_returns=examples.cumulative_returns[validation],
@@ -455,9 +479,13 @@ def evaluate_tcn_development(
                 best_epoch=trained.best_epoch,
                 duration_seconds=trained.duration_seconds,
                 parameter_count=trained.parameter_count,
+                variance_scale=tuple(float(value) for value in variance_scale),
                 return_variance_scale=tuple(float(value) for value in return_variance_scale),
                 baseline_return_variance_scale=tuple(
                     float(value) for value in baseline_return_variance_scale
+                ),
+                comparison_baseline_selection=tuple(
+                    asdict(item) for item in baseline_selection.horizons
                 ),
                 training_history=trained.history,
                 metrics=metrics,
@@ -468,6 +496,7 @@ def evaluate_tcn_development(
         oof_location.append(predictions.return_location)
         oof_direction.append(predictions.direction_probabilities)
         oof_return_variance.append(predictions.return_variance)
+        oof_comparison_baseline_variance.append(comparison_baseline)
         oof_baseline_return_variance.append(baseline_return_variance)
         del trained
         gc.collect()
@@ -484,10 +513,14 @@ def evaluate_tcn_development(
         return_variance=np.concatenate(oof_return_variance, axis=0)[order],
     )
     pooled_baseline_return_variance = np.concatenate(oof_baseline_return_variance, axis=0)[order]
+    pooled_comparison_baseline_variance = np.concatenate(
+        oof_comparison_baseline_variance,
+        axis=0,
+    )[order]
     pooled_metrics = tuple(
         horizon_distribution_metrics(
             predictions=pooled_predictions,
-            baseline_variance=examples.baseline_variance[indices],
+            baseline_variance=pooled_comparison_baseline_variance,
             baseline_return_variance=pooled_baseline_return_variance,
             realized_variance=examples.realized_variance[indices],
             cumulative_returns=examples.cumulative_returns[indices],
@@ -500,7 +533,7 @@ def evaluate_tcn_development(
         examples.realized_variance[indices],
     )
     baseline_losses = qlike_losses(
-        examples.baseline_variance[indices],
+        pooled_comparison_baseline_variance,
         examples.realized_variance[indices],
     )
     promotion = assess_promotion(
@@ -522,4 +555,5 @@ def evaluate_tcn_development(
         promotion=promotion,
         oof_indices=indices,
         predictions=pooled_predictions,
+        comparison_baseline_variance=pooled_comparison_baseline_variance,
     )

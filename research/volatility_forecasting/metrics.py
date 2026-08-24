@@ -107,6 +107,51 @@ def fit_crps_variance_scale(
     return scales
 
 
+def fit_qlike_variance_scale(
+    forecast_variance: np.ndarray,
+    realized_variance: np.ndarray,
+    *,
+    session_labels: np.ndarray | None = None,
+    minimum_scale: float = 0.25,
+    maximum_scale: float = 4.0,
+) -> np.ndarray:
+    """Fit one multiplicative QLIKE calibration per horizon.
+
+    For positive forecast ``f`` and realization ``y``, the QLIKE-optimal
+    multiplicative scale is mean(y / f).  The caller supplies only a
+    pre-evaluation calibration region; clipping prevents unstable extremes.
+    """
+    forecast = np.asarray(forecast_variance, dtype=np.float64)
+    realized = np.asarray(realized_variance, dtype=np.float64)
+    if forecast.ndim != 2 or forecast.shape != realized.shape or len(forecast) < 5:
+        raise ValueError("QLIKE calibration requires matched [rows, horizons] arrays")
+    if not 0 < minimum_scale <= maximum_scale:
+        raise ValueError("QLIKE calibration scale bounds are invalid")
+    if not (
+        np.isfinite(forecast).all()
+        and np.isfinite(realized).all()
+        and (forecast > 0).all()
+        and (realized > 0).all()
+    ):
+        raise ValueError("QLIKE calibration requires finite positive variances")
+    ratios = realized / forecast
+    if session_labels is None:
+        scales = np.mean(ratios, axis=0)
+    else:
+        labels = np.asarray(session_labels)
+        if labels.ndim != 1 or len(labels) != len(forecast):
+            raise ValueError("QLIKE calibration session labels must match rows")
+        sessions, inverse = np.unique(labels, return_inverse=True)
+        if len(sessions) < 5:
+            raise ValueError("QLIKE calibration requires at least five sessions")
+        totals = np.zeros((len(sessions), forecast.shape[1]), dtype=np.float64)
+        counts = np.zeros(len(sessions), dtype=np.int64)
+        np.add.at(totals, inverse, ratios)
+        np.add.at(counts, inverse, 1)
+        scales = np.mean(totals / counts[:, None], axis=0)
+    return np.clip(scales, minimum_scale, maximum_scale)
+
+
 def _safe_ratio(candidate: float, baseline: float) -> float:
     return float(candidate / baseline) if np.isfinite(baseline) and baseline > 0 else float("nan")
 
