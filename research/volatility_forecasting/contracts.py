@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
 
-VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v4"
+VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v5"
 MODEL_ARCHITECTURE_VERSION = "baseline-residual-tcn-v2"
 TARGET_VERSION = "future-rv-total-v1"
 DEFAULT_HORIZONS = (1, 3, 5, 7, 14, 30)

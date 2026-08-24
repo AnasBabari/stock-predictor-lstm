@@ -188,6 +188,14 @@ Primary evidence:
 - return-location MAE/RMSE relative to zero return, reported separately;
 - identical-origin market-only versus market-plus-news ablation results.
 
+Statistical inference is clustered by exchange session. Candidate and matched
+baseline losses are first averaged across all eligible assets for each origin
+date, and the moving-block bootstrap plus Diebold-Mariano/Holm tests operate on
+that session sequence. Treating ticker-date rows as independent observations
+would pseudo-replicate common market shocks and make confidence intervals and
+significance tests too optimistic. Descriptive pooled metrics may still use all
+untouched rows, but they cannot replace the session-clustered promotion gate.
+
 Realized volatility, return-distribution intervals, return location, and
 direction are promoted independently. A weak interval, return-location, or
 direction head cannot veto a statistically supported realized-variance

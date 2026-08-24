@@ -171,12 +171,40 @@ def moving_block_ratio_upper_bound(
     return float(np.quantile(ratios, confidence))
 
 
+def cluster_losses_by_session(
+    losses: np.ndarray,
+    origin_dates: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Average cross-sectional losses by session before time-series inference.
+
+    Treating every ticker-date row as an independent time observation would
+    understate uncertainty because assets share the same market shocks. The
+    promotion test therefore operates on one equal-weight loss vector per
+    exchange session while descriptive metrics retain all OOF rows.
+    """
+    values = np.asarray(losses, dtype=np.float64)
+    dates = np.asarray(origin_dates, dtype="datetime64[D]")
+    if values.ndim != 2 or dates.ndim != 1 or len(values) != len(dates) or len(values) < 5:
+        raise ValueError("loss clustering requires matched [rows, horizons] losses and dates")
+    if not np.isfinite(values).all() or np.isnat(dates).any():
+        raise ValueError("loss clustering inputs must be finite and date-valid")
+    sessions, inverse = np.unique(dates, return_inverse=True)
+    if len(sessions) < 5:
+        raise ValueError("loss clustering requires at least five distinct sessions")
+    totals = np.zeros((len(sessions), values.shape[1]), dtype=np.float64)
+    counts = np.zeros(len(sessions), dtype=np.int64)
+    np.add.at(totals, inverse, values)
+    np.add.at(counts, inverse, 1)
+    return totals / counts[:, None], sessions
+
+
 def assess_promotion(
     *,
     pooled_metrics: tuple[dict[str, float | int], ...],
     fold_metrics: tuple[tuple[dict[str, float | int], ...], ...],
     candidate_qlike_losses: np.ndarray,
     baseline_qlike_losses: np.ndarray,
+    loss_dates: np.ndarray,
     horizons: tuple[int, ...],
     gate: VolatilityPromotionGate | None = None,
     resamples: int = 1000,
@@ -188,21 +216,31 @@ def assess_promotion(
         raise ValueError("candidate and baseline QLIKE loss matrices must match")
     if candidate_qlike_losses.shape[1] != len(horizons):
         raise ValueError("loss matrix horizon count does not match contract")
+    clustered_candidate, sessions = cluster_losses_by_session(
+        candidate_qlike_losses,
+        loss_dates,
+    )
+    clustered_baseline, baseline_sessions = cluster_losses_by_session(
+        baseline_qlike_losses,
+        loss_dates,
+    )
+    if not np.array_equal(sessions, baseline_sessions):
+        raise ValueError("candidate and baseline loss sessions do not match")
 
     dm_rows: list[tuple[float, float]] = []
     upper_bounds: list[float] = []
     for column, horizon in enumerate(horizons):
         dm_rows.append(
             diebold_mariano_hac(
-                candidate_qlike_losses[:, column],
-                baseline_qlike_losses[:, column],
+                clustered_candidate[:, column],
+                clustered_baseline[:, column],
                 max_lag=max(1, horizon - 1),
             )
         )
         upper_bounds.append(
             moving_block_ratio_upper_bound(
-                candidate_qlike_losses[:, column],
-                baseline_qlike_losses[:, column],
+                clustered_candidate[:, column],
+                clustered_baseline[:, column],
                 resamples=resamples,
                 block_length=max(5, horizon),
                 seed=seed + column,
@@ -470,6 +508,7 @@ def evaluate_tcn_development(
         fold_metrics=tuple(fold_metric_rows),
         candidate_qlike_losses=candidate_losses,
         baseline_qlike_losses=baseline_losses,
+        loss_dates=examples.origin_dates[indices],
         horizons=protocol.horizons,
         gate=promotion_gate,
         resamples=resamples,

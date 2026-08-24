@@ -5,6 +5,7 @@ from volatility_forecasting.contracts import VolatilityForecastProtocol, Volatil
 from volatility_forecasting.data import VolatilityPanelExamples
 from volatility_forecasting.evaluation import (
     assess_promotion,
+    cluster_losses_by_session,
     evaluate_tcn_development,
     moving_block_ratio_upper_bound,
 )
@@ -42,6 +43,31 @@ def test_moving_block_ratio_is_below_one_for_uniformly_better_losses() -> None:
     assert upper < 1.0
 
 
+def test_loss_clustering_equal_weights_sessions_not_ticker_rows() -> None:
+    losses = np.array(
+        [
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+            [7.0, 8.0],
+            [9.0, 10.0],
+            [11.0, 12.0],
+        ]
+    )
+    dates = np.array(
+        ["2025-01-02", "2025-01-02", "2025-01-03", "2025-01-04", "2025-01-05", "2025-01-06"],
+        dtype="datetime64[D]",
+    )
+    clustered, sessions = cluster_losses_by_session(losses, dates)
+    np.testing.assert_allclose(clustered[0], [2.0, 3.0])
+    np.testing.assert_allclose(clustered[1:], losses[2:])
+    assert len(sessions) == 5
+
+
+def _loss_dates(rows: int) -> np.ndarray:
+    return np.datetime64("2020-01-01") + np.arange(rows).astype("timedelta64[D]")
+
+
 def test_promotion_reports_independent_volatility_and_distribution_verdicts() -> None:
     rng = np.random.default_rng(2)
     baseline = rng.uniform(0.2, 0.5, size=(300, 1))
@@ -53,6 +79,7 @@ def test_promotion_reports_independent_volatility_and_distribution_verdicts() ->
         fold_metrics=folds,
         candidate_qlike_losses=candidate,
         baseline_qlike_losses=baseline,
+        loss_dates=_loss_dates(len(candidate)),
         horizons=(7,),
         gate=VolatilityPromotionGate(),
         resamples=200,
@@ -78,6 +105,7 @@ def test_promotion_fails_closed_when_coverage_or_fold_is_bad() -> None:
         fold_metrics=folds,
         candidate_qlike_losses=candidate,
         baseline_qlike_losses=baseline,
+        loss_dates=_loss_dates(len(candidate)),
         horizons=(7,),
         resamples=200,
     )[0]
@@ -101,6 +129,7 @@ def test_bad_auxiliary_return_head_does_not_veto_promoted_volatility() -> None:
         fold_metrics=folds,
         candidate_qlike_losses=candidate,
         baseline_qlike_losses=baseline,
+        loss_dates=_loss_dates(len(candidate)),
         horizons=(7,),
         resamples=200,
     )[0]
@@ -122,6 +151,7 @@ def test_bad_interval_crps_does_not_veto_realized_volatility() -> None:
         fold_metrics=folds,
         candidate_qlike_losses=candidate,
         baseline_qlike_losses=baseline,
+        loss_dates=_loss_dates(len(candidate)),
         horizons=(7,),
         resamples=200,
     )[0]
