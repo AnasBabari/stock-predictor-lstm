@@ -15,7 +15,11 @@ import numpy as np
 import pandas as pd
 
 from backend.panel.features import build_features_v5
-from backend.panel.volatility import cumulative_variance_target, realized_variance_proxies
+from backend.panel.volatility import (
+    causal_log_har_forecasts,
+    cumulative_variance_target,
+    realized_variance_proxies,
+)
 
 from .contracts import VolatilityForecastProtocol
 
@@ -67,87 +71,6 @@ class VolatilityPanelExamples:
             raise ValueError("variance targets and baselines must be strictly positive")
         if not np.isin(self.direction_classes, (0, 1, 2)).all():
             raise ValueError("direction class must be down=0, neutral=1, or up=2")
-
-
-def _har_row(history: np.ndarray) -> np.ndarray:
-    """Log-HAR predictors ending at the final value in ``history``."""
-    if len(history) < 22:
-        raise ValueError("HAR row requires at least 22 realized observations")
-    safe = np.maximum(np.asarray(history, dtype=np.float64), _EPSILON_VARIANCE)
-    return np.array(
-        [
-            1.0,
-            np.log(safe[-1]),
-            np.log(np.mean(safe[-5:])),
-            np.log(np.mean(safe[-22:])),
-        ],
-        dtype=np.float64,
-    )
-
-
-def causal_log_har_forecasts(
-    rv_daily: pd.Series,
-    horizons: tuple[int, ...],
-    *,
-    minimum_history: int = 60,
-    refit_every: int = 5,
-    ridge: float = 1e-4,
-) -> np.ndarray:
-    """Return causal cumulative variance forecasts for every origin.
-
-    Between refits, coefficients are held fixed. Recursive future HAR inputs
-    use model forecasts only; realized values after the origin are never read.
-    """
-    if not horizons or min(horizons) < 1:
-        raise ValueError("horizons must contain positive integers")
-    if refit_every < 1:
-        raise ValueError("refit_every must be positive")
-    rv = np.asarray(rv_daily, dtype=np.float64)
-    output = np.full((len(rv), len(horizons)), np.nan, dtype=np.float64)
-    coefficients: np.ndarray | None = None
-    last_refit = -refit_every
-    maximum_horizon = max(horizons)
-    horizon_to_column = {horizon: column for column, horizon in enumerate(horizons)}
-    # Incremental normal equations turn repeated expanding HAR fits from a
-    # quadratic design rebuild into O(n) rank-one updates. At origin t we add
-    # only row s=t-1, whose response rv[t] has just become observable.
-    xtx = np.zeros((4, 4), dtype=np.float64)
-    xty = np.zeros(4, dtype=np.float64)
-    fitted_rows = 0
-    penalty = np.eye(4, dtype=np.float64) * float(ridge)
-    penalty[0, 0] = 0.0
-
-    for origin in range(22, len(rv)):
-        training_origin = origin - 1
-        if np.isfinite(rv[training_origin - 21 : training_origin + 2]).all():
-            design = _har_row(rv[: training_origin + 1])
-            response = float(np.log(max(rv[origin], _EPSILON_VARIANCE)))
-            xtx += np.outer(design, design)
-            xty += design * response
-            fitted_rows += 1
-        if origin < max(minimum_history, 22) or fitted_rows < 20:
-            continue
-        # OHLC-derived variance has an unavoidable NaN on the first session
-        # because no previous close exists. Only the trailing HAR information
-        # set must be finite; an old prefix NaN must not suppress every later
-        # forecast in the series.
-        if not np.isfinite(rv[origin - 21 : origin + 1]).all():
-            continue
-        if coefficients is None or origin - last_refit >= refit_every:
-            coefficients = np.linalg.solve(xtx + penalty, xty)
-            last_refit = origin
-
-        history = list(np.maximum(rv[: origin + 1], _EPSILON_VARIANCE))
-        cumulative = 0.0
-        for step in range(1, maximum_horizon + 1):
-            row = _har_row(np.asarray(history, dtype=np.float64))
-            next_variance = float(np.exp(np.clip(row @ coefficients, -30.0, 5.0)))
-            next_variance = max(next_variance, _EPSILON_VARIANCE)
-            history.append(next_variance)
-            cumulative += next_variance
-            if step in horizon_to_column:
-                output[origin, horizon_to_column[step]] = cumulative
-    return output
 
 
 def _direction_class(cumulative_return: float, baseline_variance: float) -> int:
