@@ -48,6 +48,8 @@ def test_horizon_metrics_report_proper_scores_calibration_and_direction() -> Non
     assert metrics[0]["direction_balanced_accuracy"] == 1.0
     assert metrics[0]["direction_brier"] == 0.0
     assert metrics[0]["relative_return_mae"] == 0.0
+    assert "relative_variance_only_gaussian_crps" in metrics[0]
+    assert "variance_only_coverage_80" in metrics[0]
     assert 0.0 <= metrics[0]["coverage_80"] <= 1.0
 
 

@@ -42,13 +42,22 @@ class FoldEvidence:
 @dataclass(frozen=True)
 class HorizonPromotionDecision:
     horizon: int
+    volatility_promoted: bool
+    return_location_promoted: bool
+    direction_promoted: bool
     promoted: bool
     reasons: tuple[str, ...]
+    return_location_reasons: tuple[str, ...]
+    direction_reasons: tuple[str, ...]
     folds_beating_baseline: int
+    return_folds_beating_baseline: int
     worst_fold_relative_qlike: float
     relative_qlike: float
     relative_qlike_upper_95: float
     relative_gaussian_crps: float
+    relative_variance_only_gaussian_crps: float
+    relative_return_mae: float
+    relative_return_rmse: float
     dm_statistic: float
     dm_p_value: float
     holm_significant: bool
@@ -148,7 +157,7 @@ def assess_promotion(
     resamples: int = 1000,
     seed: int = 42,
 ) -> tuple[HorizonPromotionDecision, ...]:
-    """Apply QLIKE, CRPS, calibration, fold, bootstrap, and DM gates."""
+    """Promote variance independently from auxiliary return and direction heads."""
     settings = gate or VolatilityPromotionGate()
     if candidate_qlike_losses.shape != baseline_qlike_losses.shape:
         raise ValueError("candidate and baseline QLIKE loss matrices must match")
@@ -183,38 +192,78 @@ def assess_promotion(
         folds_beating = sum(value < 1.0 for value in fold_relative)
         worst_fold = max(fold_relative)
         relative_qlike = float(pooled["relative_qlike"])
-        relative_crps = float(pooled["relative_gaussian_crps"])
-        coverage_80 = float(pooled["coverage_80"])
+        relative_full_model_crps = float(pooled["relative_gaussian_crps"])
+        relative_variance_crps = float(pooled["relative_variance_only_gaussian_crps"])
+        relative_return_mae = float(pooled["relative_return_mae"])
+        relative_return_rmse = float(pooled["relative_return_rmse"])
+        coverage_80 = float(pooled["variance_only_coverage_80"])
         dm_stat, dm_p = dm_rows[column]
-        reasons: list[str] = []
+        volatility_reasons: list[str] = []
         if relative_qlike >= settings.maximum_relative_qlike:
-            reasons.append("pooled relative QLIKE did not clear the improvement gate")
+            volatility_reasons.append("pooled relative QLIKE did not clear the improvement gate")
         if upper_bounds[column] >= 1.0:
-            reasons.append("bootstrap upper confidence bound did not beat the baseline")
+            volatility_reasons.append("bootstrap upper confidence bound did not beat the baseline")
         if folds_beating < settings.minimum_folds_beating_baseline:
-            reasons.append("too few expanding folds beat the matched baseline")
+            volatility_reasons.append("too few expanding folds beat the matched baseline")
         if worst_fold > settings.maximum_worst_fold_relative_qlike:
-            reasons.append("worst fold exceeded the stability guardrail")
-        if relative_crps >= settings.maximum_relative_gaussian_crps:
-            reasons.append("probabilistic return CRPS did not beat the baseline")
+            volatility_reasons.append("worst fold exceeded the stability guardrail")
+        if relative_variance_crps >= settings.maximum_relative_variance_only_crps:
+            volatility_reasons.append(
+                "candidate variance CRPS around the zero-return baseline did not improve"
+            )
         if (
             not settings.minimum_interval_coverage_80
             <= coverage_80
             <= settings.maximum_interval_coverage_80
         ):
-            reasons.append("80% interval coverage is outside the calibration band")
+            volatility_reasons.append(
+                "zero-centred 80% interval coverage is outside the calibration band"
+            )
         if dm_stat >= 0 or not holm[column]:
-            reasons.append("paired QLIKE improvement is not Holm-significant")
+            volatility_reasons.append("paired QLIKE improvement is not Holm-significant")
+
+        return_fold_relative = [
+            (
+                float(metrics[column]["relative_return_mae"]),
+                float(metrics[column]["relative_return_rmse"]),
+            )
+            for metrics in fold_metrics
+        ]
+        return_folds_beating = sum(mae < 1.0 and rmse < 1.0 for mae, rmse in return_fold_relative)
+        return_reasons: list[str] = []
+        if relative_return_mae >= settings.maximum_relative_return_mae:
+            return_reasons.append("return-location MAE did not beat zero return")
+        if relative_return_rmse >= settings.maximum_relative_return_rmse:
+            return_reasons.append("return-location RMSE did not beat zero return")
+        if return_folds_beating < settings.minimum_return_folds_beating_baseline:
+            return_reasons.append("return location was not stable across expanding folds")
+
+        # Direction remains an auxiliary diagnostic until its matched
+        # pre-evaluation class-prevalence baseline is threaded through every
+        # fold. It must fail closed rather than inherit volatility promotion.
+        direction_reasons = (
+            "direction head is diagnostic until its matched pre-evaluation baseline gate is implemented",
+        )
+        volatility_promoted = not volatility_reasons
         decisions.append(
             HorizonPromotionDecision(
                 horizon=horizon,
-                promoted=not reasons,
-                reasons=tuple(reasons),
+                volatility_promoted=volatility_promoted,
+                return_location_promoted=not return_reasons,
+                direction_promoted=False,
+                promoted=volatility_promoted,
+                reasons=tuple(volatility_reasons),
+                return_location_reasons=tuple(return_reasons),
+                direction_reasons=direction_reasons,
                 folds_beating_baseline=folds_beating,
+                return_folds_beating_baseline=return_folds_beating,
                 worst_fold_relative_qlike=worst_fold,
                 relative_qlike=relative_qlike,
                 relative_qlike_upper_95=upper_bounds[column],
-                relative_gaussian_crps=relative_crps,
+                relative_gaussian_crps=relative_full_model_crps,
+                relative_variance_only_gaussian_crps=relative_variance_crps,
+                relative_return_mae=relative_return_mae,
+                relative_return_rmse=relative_return_rmse,
                 dm_statistic=float(dm_stat),
                 dm_p_value=float(dm_p),
                 holm_significant=bool(holm[column]),

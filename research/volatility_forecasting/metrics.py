@@ -131,9 +131,14 @@ def horizon_distribution_metrics(
     for column, horizon in enumerate(horizons):
         model_qlike = qlike_losses(predictions.variance[:, column], realized[:, column])
         baseline_qlike = qlike_losses(baseline[:, column], realized[:, column])
-        model_crps = gaussian_crps(
+        full_model_crps = gaussian_crps(
             returns[:, column],
             predictions.return_location[:, column],
+            predictions.variance[:, column],
+        )
+        variance_only_crps = gaussian_crps(
+            returns[:, column],
+            np.zeros(len(returns), dtype=np.float64),
             predictions.variance[:, column],
         )
         baseline_crps = gaussian_crps(
@@ -141,9 +146,14 @@ def horizon_distribution_metrics(
             np.zeros(len(returns), dtype=np.float64),
             baseline[:, column],
         )
-        model_nll = gaussian_nll(
+        full_model_nll = gaussian_nll(
             returns[:, column],
             predictions.return_location[:, column],
+            predictions.variance[:, column],
+        )
+        variance_only_nll = gaussian_nll(
+            returns[:, column],
+            np.zeros(len(returns), dtype=np.float64),
             predictions.variance[:, column],
         )
         baseline_nll = gaussian_nll(
@@ -162,12 +172,21 @@ def horizon_distribution_metrics(
             "relative_qlike": _safe_ratio(
                 float(np.mean(model_qlike)), float(np.mean(baseline_qlike))
             ),
-            "gaussian_crps": float(np.mean(model_crps)),
+            # The full-model score remains diagnostic. Volatility promotion
+            # uses the candidate variance around the matched zero-return
+            # location so a weak auxiliary mean cannot veto a strong variance
+            # forecast (or hide behind it).
+            "gaussian_crps": float(np.mean(full_model_crps)),
             "baseline_gaussian_crps": float(np.mean(baseline_crps)),
             "relative_gaussian_crps": _safe_ratio(
-                float(np.mean(model_crps)), float(np.mean(baseline_crps))
+                float(np.mean(full_model_crps)), float(np.mean(baseline_crps))
             ),
-            "gaussian_nll": float(np.mean(model_nll)),
+            "variance_only_gaussian_crps": float(np.mean(variance_only_crps)),
+            "relative_variance_only_gaussian_crps": _safe_ratio(
+                float(np.mean(variance_only_crps)), float(np.mean(baseline_crps))
+            ),
+            "gaussian_nll": float(np.mean(full_model_nll)),
+            "variance_only_gaussian_nll": float(np.mean(variance_only_nll)),
             "baseline_gaussian_nll": float(np.mean(baseline_nll)),
             "log_variance_mae": float(np.mean(np.abs(log_variance_error))),
             "log_variance_rmse": float(np.sqrt(np.mean(log_variance_error**2))),
@@ -192,6 +211,14 @@ def horizon_distribution_metrics(
                 np.mean((returns[:, column] >= lower) & (returns[:, column] <= upper))
             )
             evidence[f"mean_width_{label}"] = float(np.mean(upper - lower))
+            variance_only_lower = -z_value * standard_deviation
+            variance_only_upper = z_value * standard_deviation
+            evidence[f"variance_only_coverage_{label}"] = float(
+                np.mean(
+                    (returns[:, column] >= variance_only_lower)
+                    & (returns[:, column] <= variance_only_upper)
+                )
+            )
         evidence.update(
             _multiclass_metrics(
                 predictions.direction_probabilities[:, column, :],

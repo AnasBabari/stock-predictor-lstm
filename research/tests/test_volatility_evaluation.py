@@ -12,11 +12,20 @@ from volatility_forecasting.folds import build_volatility_fold_plan
 from volatility_forecasting.model import BaselineResidualTCNConfig, TorchTrainingConfig
 
 
-def _metric(relative_qlike: float, relative_crps: float = 0.95, coverage: float = 0.8):
+def _metric(
+    relative_qlike: float,
+    relative_crps: float = 0.95,
+    coverage: float = 0.8,
+    return_mae: float = 0.95,
+    return_rmse: float = 0.95,
+):
     return {
         "relative_qlike": relative_qlike,
-        "relative_gaussian_crps": relative_crps,
-        "coverage_80": coverage,
+        "relative_gaussian_crps": 1.25,
+        "relative_variance_only_gaussian_crps": relative_crps,
+        "variance_only_coverage_80": coverage,
+        "relative_return_mae": return_mae,
+        "relative_return_rmse": return_rmse,
     }
 
 
@@ -49,6 +58,9 @@ def test_promotion_requires_every_probabilistic_and_stability_gate() -> None:
         resamples=200,
     )[0]
     assert decision.promoted
+    assert decision.volatility_promoted
+    assert decision.return_location_promoted
+    assert not decision.direction_promoted
     assert decision.reasons == ()
     assert decision.folds_beating_baseline == 5
     assert decision.holm_significant
@@ -71,6 +83,30 @@ def test_promotion_fails_closed_when_coverage_or_fold_is_bad() -> None:
     assert not decision.promoted
     assert any("coverage" in reason for reason in decision.reasons)
     assert any("fold" in reason for reason in decision.reasons)
+
+
+def test_bad_auxiliary_return_head_does_not_veto_promoted_volatility() -> None:
+    rng = np.random.default_rng(11)
+    baseline = rng.uniform(0.2, 0.5, size=(300, 1))
+    candidate = baseline * 0.7
+    pooled = (_metric(0.7, return_mae=1.05, return_rmse=1.08),)
+    folds = tuple(
+        (_metric(value, return_mae=1.03, return_rmse=1.04),)
+        for value in (0.72, 0.71, 0.75, 0.76, 0.74)
+    )
+    decision = assess_promotion(
+        pooled_metrics=pooled,
+        fold_metrics=folds,
+        candidate_qlike_losses=candidate,
+        baseline_qlike_losses=baseline,
+        horizons=(7,),
+        resamples=200,
+    )[0]
+    assert decision.volatility_promoted
+    assert decision.promoted
+    assert not decision.return_location_promoted
+    assert any("MAE" in reason for reason in decision.return_location_reasons)
+    assert any("RMSE" in reason for reason in decision.return_location_reasons)
 
 
 def test_tiny_development_run_produces_disjoint_oof_evidence() -> None:

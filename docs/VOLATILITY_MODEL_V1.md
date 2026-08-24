@@ -112,12 +112,16 @@ Candidate news features include:
   geopolitical event, derived from a frozen exposure map rather than hindsight.
 
 News does not directly set a price direction. A geopolitical declaration, for
-example, can increase uncertainty and propagate through commodity exposures,
-but the sign and size are learned from prior point-in-time observations. The
-model compares market-only TCN, market-plus-news TCN, and matched baselines on
-the exact same origins. News ships only if it improves QLIKE/CRPS, tail
-coverage, stress-regime results, and asset-transfer results without relying on
-late, revised, duplicated, or unverifiable stories.
+example, can increase uncertainty and propagate through oil, freight,
+defence, airline, chemical, and consumer-input exposures, but the sign and
+size are learned from prior point-in-time observations rather than encoded as
+a hand-written trade. Direct issuer news, macro news, event severity,
+commodity transmission, sector exposure, source quality, novelty, and missing
+news are separate auditable channels. The model compares market-only TCN,
+market-plus-news TCN, and matched baselines on the exact same origins. News
+ships only if it improves QLIKE/CRPS, tail coverage, stress-regime results,
+and asset-transfer results without relying on late, revised, duplicated, or
+unverifiable stories.
 
 ## Candidate architecture
 
@@ -152,20 +156,31 @@ opened once for certification.
 Primary evidence:
 
 - QLIKE and QLIKE ratio versus the strongest matched variance baseline;
-- Gaussian CRPS and negative log likelihood;
+- variance-only Gaussian CRPS and negative log likelihood around the matched
+  zero-return location, plus the full learned-location score as a diagnostic;
 - 50%, 80%, and 95% interval coverage and width;
 - log-variance MAE/RMSE;
 - direction multiclass Brier score, log loss, macro F1, and balanced accuracy;
 - return-location MAE/RMSE relative to zero return, reported separately;
 - identical-origin market-only versus market-plus-news ablation results.
 
-Conservative initial promotion defaults require median relative QLIKE below
-0.98, at least four of five folds beating the baseline, worst-fold relative
-QLIKE no higher than 1.10, useful CRPS, acceptable 80% coverage, paired
-statistical evidence after multiplicity correction, stable seeds, and no
-material failure by liquidity, volatility regime, market regime, ticker size,
-or unseen-asset subgroup. These are initial guardrails, not fixed universal
-requirements; any pre-certification change creates a new protocol record.
+Volatility, return location, and direction are promoted independently. A weak
+return-location or direction head cannot veto a statistically supported
+variance forecast and cannot ride into production on the variance verdict.
+Until an auxiliary head clears its own matched gate, serving uses a zero-return
+location and/or withholds direction while retaining the promoted volatility
+distribution.
+
+Conservative initial volatility-promotion defaults require median relative
+QLIKE below 0.98, at least four of five folds beating the baseline, worst-fold
+relative QLIKE no higher than 1.10, useful variance-only CRPS, acceptable
+zero-centred 80% coverage, paired statistical evidence after multiplicity
+correction, stable seeds, and no material failure by liquidity, volatility
+regime, market regime, ticker size, or unseen-asset subgroup. Return-location
+MAE and RMSE must independently improve on zero return. Direction remains
+diagnostic until its fold-specific, pre-evaluation prevalence baseline is
+available. These are initial guardrails, not fixed universal requirements;
+any pre-certification change creates a new protocol record.
 
 ## Production response
 

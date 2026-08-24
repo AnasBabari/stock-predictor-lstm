@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
 
-VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v1"
+VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v2"
 MODEL_ARCHITECTURE_VERSION = "baseline-residual-tcn-v1"
 TARGET_VERSION = "future-rv-total-v1"
 DEFAULT_HORIZONS = (1, 3, 5, 7, 14, 30)
@@ -62,7 +62,10 @@ class VolatilityPromotionGate:
     """
 
     maximum_relative_qlike: float = 0.98
-    maximum_relative_gaussian_crps: float = 0.99
+    maximum_relative_variance_only_crps: float = 0.99
+    maximum_relative_return_mae: float = 0.99
+    maximum_relative_return_rmse: float = 0.99
+    minimum_return_folds_beating_baseline: int = 4
     minimum_folds_beating_baseline: int = 4
     maximum_worst_fold_relative_qlike: float = 1.10
     minimum_interval_coverage_80: float = 0.74
@@ -73,5 +76,11 @@ class VolatilityPromotionGate:
     def __post_init__(self) -> None:
         if not 0 < self.maximum_relative_qlike < 1:
             raise ValueError("relative QLIKE gate must require an improvement")
+        if not 0 < self.maximum_relative_variance_only_crps < 1:
+            raise ValueError("variance-only CRPS gate must require an improvement")
+        if not 0 < self.maximum_relative_return_mae < 1:
+            raise ValueError("return MAE gate must require an improvement")
+        if not 0 < self.maximum_relative_return_rmse < 1:
+            raise ValueError("return RMSE gate must require an improvement")
         if not 0 < self.minimum_interval_coverage_80 < self.maximum_interval_coverage_80 < 1:
             raise ValueError("invalid 80% interval coverage bounds")
