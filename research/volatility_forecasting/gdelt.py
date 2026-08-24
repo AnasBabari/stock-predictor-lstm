@@ -11,6 +11,7 @@ import csv
 import hashlib
 import math
 import re
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -68,6 +69,15 @@ class GdeltV1EventRow:
             raise NewsValidationError("GDELT mention counts cannot be negative")
         if not np.isfinite(self.goldstein_scale) or not np.isfinite(self.average_tone):
             raise NewsValidationError("GDELT tone and Goldstein scale must be finite")
+
+
+@dataclass(frozen=True)
+class GdeltDailyAggregationStats:
+    archive_date: str
+    total_rows: int
+    retained_rows: int
+    invalid_rows: int
+    output_events: int
 
 
 @dataclass(frozen=True)
@@ -354,4 +364,89 @@ def gdelt_v1_row_to_news_event(
             hashlib.sha256(row.source_url.encode("utf-8")).hexdigest() if row.source_url else ""
         ),
         license_class="gdelt_event_metadata",
+    )
+
+
+def aggregate_gdelt_v1_daily_lines(
+    lines: Iterable[str],
+    *,
+    archive: GdeltV1DailyArchive,
+    ticker_aliases: Mapping[str, tuple[str, ...]],
+    source_reliability: Mapping[str, float] | None = None,
+    maximum_invalid_fraction: float = 0.001,
+) -> tuple[tuple[NewsEvent, ...], GdeltDailyAggregationStats]:
+    """Compress one complete daily archive into bounded point-in-time events."""
+    if not 0 <= maximum_invalid_fraction < 1:
+        raise ValueError("maximum invalid fraction must be in [0, 1)")
+    groups: dict[str, list[NewsEvent]] = defaultdict(list)
+    total_rows = 0
+    retained_rows = 0
+    invalid_rows = 0
+    for line in lines:
+        if not line.strip():
+            continue
+        total_rows += 1
+        try:
+            row = parse_gdelt_v1_export_line(line.rstrip("\r\n"))
+            event = gdelt_v1_row_to_news_event(
+                row,
+                archive=archive,
+                ticker_aliases=ticker_aliases,
+                source_reliability=source_reliability,
+            )
+        except NewsValidationError:
+            invalid_rows += 1
+            continue
+        if not event.topics and not event.tickers:
+            continue
+        retained_rows += 1
+        if event.tickers:
+            for ticker in event.tickers:
+                groups[f"ticker:{ticker}"].append(event)
+        else:
+            groups["market"].append(event)
+
+    if total_rows == 0:
+        raise NewsValidationError("GDELT daily archive contains no event rows")
+    if invalid_rows / total_rows > maximum_invalid_fraction:
+        raise NewsValidationError("GDELT daily archive exceeded the invalid-row guardrail")
+
+    aggregated: list[NewsEvent] = []
+    for scope, events in sorted(groups.items()):
+        volume = float(len(events))
+        weights = np.asarray([max(event.confidence, 1e-6) for event in events], dtype=np.float64)
+        weights /= weights.sum()
+        positive = float(np.dot(weights, [event.positive_probability for event in events]))
+        neutral = float(np.dot(weights, [event.neutral_probability for event in events]))
+        negative = max(0.0, 1.0 - positive - neutral)
+        topics = tuple(sorted({topic for event in events for topic in event.topics}))
+        ticker = scope.partition(":")[2] if scope.startswith("ticker:") else ""
+        identity = f"gdelt1-daily:{archive.archive_date:%Y%m%d}:{scope}"
+        aggregated.append(
+            NewsEvent(
+                event_id=identity,
+                cluster_id=identity,
+                source="gdelt-daily",
+                first_seen_at=pd.Timestamp(archive.available_at),
+                published_at=None,
+                timestamp_quality="first_seen_only",
+                tickers=(ticker,) if ticker else (),
+                topics=topics,
+                positive_probability=positive,
+                neutral_probability=neutral,
+                negative_probability=negative,
+                novelty=0.5,
+                severity=max(event.severity for event in events),
+                confidence=float(np.mean([event.confidence for event in events])),
+                source_reliability=float(np.mean([event.source_reliability for event in events])),
+                license_class="gdelt_event_metadata_aggregated",
+                volume=volume,
+            )
+        )
+    return tuple(aggregated), GdeltDailyAggregationStats(
+        archive_date=archive.archive_date.isoformat(),
+        total_rows=total_rows,
+        retained_rows=retained_rows,
+        invalid_rows=invalid_rows,
+        output_events=len(aggregated),
     )

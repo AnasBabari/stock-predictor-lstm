@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 import pandas as pd
 import pytest
 from volatility_forecasting.gdelt import (
+    aggregate_gdelt_v1_daily_lines,
     gdelt_row_to_news_event,
     gdelt_v1_row_to_news_event,
     iter_gdelt_v1_daily_archives,
@@ -108,6 +109,32 @@ def test_daily_event_never_uses_event_date_as_information_time() -> None:
     assert event.eligible_at == event.first_seen_at
     assert event.tickers == ("MSFT",)
     assert "military_conflict" in event.topics
+
+
+def test_daily_archive_is_compressed_into_market_and_ticker_events() -> None:
+    ticker_line = _v1_line()
+    oil_fields = _v1_line().split("\t")
+    oil_fields[0] = "987654"
+    oil_fields[6] = "OPEC OIL"
+    oil_fields[16] = "PETROLEUM MARKET"
+    oil_fields[26] = "010"
+    oil_fields[27] = "010"
+    oil_fields[28] = "01"
+    oil_fields[57] = "https://example.com/news/opec-supply"
+    archive = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 6))[0]
+    events, stats = aggregate_gdelt_v1_daily_lines(
+        [ticker_line, "\t".join(oil_fields)],
+        archive=archive,
+        ticker_aliases={"MSFT": ("Microsoft",)},
+    )
+    assert stats.total_rows == 2
+    assert stats.retained_rows == 2
+    assert stats.output_events == 2
+    market = next(event for event in events if not event.tickers)
+    ticker = next(event for event in events if event.tickers == ("MSFT",))
+    assert "oil_supply" in market.topics
+    assert ticker.volume == 1.0
+    assert all(event.first_seen_at == pd.Timestamp("2025-01-06T12:00:00Z") for event in events)
 
 
 def test_gdelt_parser_rejects_schema_drift_and_short_aliases() -> None:
