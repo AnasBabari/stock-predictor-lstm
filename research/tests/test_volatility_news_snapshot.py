@@ -43,6 +43,7 @@ def _save(directory: Path, events: list[NewsEvent]) -> dict[str, object]:
         license_acknowledged=True,
         coverage_start="2025-01-01T00:00:00Z",
         coverage_end_exclusive="2025-02-01T00:00:00Z",
+        provenance={"source_files": 1},
     )
 
 
@@ -53,6 +54,7 @@ def test_news_snapshot_round_trip_is_canonical_and_text_free(tmp_path: Path) -> 
     assert [event.event_id for event in loaded] == ["event-1", "event-2"]
     assert verified == manifest
     assert verified["contains_article_text"] is False
+    assert verified["provenance"] == {"source_files": 1}
     rows = [
         json.loads(line)
         for line in (directory / "events.jsonl").read_text(encoding="utf-8").splitlines()

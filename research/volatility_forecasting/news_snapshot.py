@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import fields
 from pathlib import Path
 
@@ -130,6 +130,7 @@ def save_news_snapshot(
     license_acknowledged: bool,
     coverage_start: pd.Timestamp | str,
     coverage_end_exclusive: pd.Timestamp | str,
+    provenance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Write an immutable metadata-only snapshot and return its manifest."""
     if not license_acknowledged:
@@ -164,6 +165,16 @@ def save_news_snapshot(
         license_acknowledged=True,
         provider=provider,
     )
+    provenance_payload = dict(provenance or {})
+    try:
+        provenance_bytes = json.dumps(
+            provenance_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise NewsSnapshotError("news snapshot provenance must be finite JSON data") from error
     eligible = [event.eligible_at for event in ordered if event.eligible_at is not None]
     manifest = {
         **base,
@@ -175,6 +186,8 @@ def save_news_snapshot(
         "coverage_start": coverage_start_utc.isoformat(),
         "coverage_end_exclusive": coverage_end_utc.isoformat(),
         "contains_article_text": False,
+        "provenance": provenance_payload,
+        "provenance_sha256": hashlib.sha256(provenance_bytes).hexdigest(),
     }
     events_tmp = target / f".{NEWS_EVENTS_FILENAME}.tmp"
     manifest_tmp = target / f".{NEWS_MANIFEST_FILENAME}.tmp"
@@ -221,6 +234,8 @@ def load_news_snapshot(
         "coverage_start",
         "coverage_end_exclusive",
         "contains_article_text",
+        "provenance",
+        "provenance_sha256",
     }
     if not required.issubset(manifest):
         raise NewsSnapshotError("news snapshot manifest is incomplete")
@@ -236,6 +251,19 @@ def load_news_snapshot(
         raise NewsSnapshotError("news snapshot must not contain article text")
     if not isinstance(manifest["provider"], str) or not manifest["provider"].strip():
         raise NewsSnapshotError("news snapshot provider is invalid")
+    if not isinstance(manifest["provenance"], dict):
+        raise NewsSnapshotError("news snapshot provenance must be an object")
+    try:
+        provenance_bytes = json.dumps(
+            manifest["provenance"],
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise NewsSnapshotError("news snapshot provenance is invalid") from error
+    if hashlib.sha256(provenance_bytes).hexdigest() != manifest["provenance_sha256"]:
+        raise NewsSnapshotError("news snapshot provenance checksum does not match")
     coverage_start = _coverage_timestamp(manifest["coverage_start"], field="coverage_start")
     coverage_end = _coverage_timestamp(
         manifest["coverage_end_exclusive"],
