@@ -38,6 +38,12 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Bounded independent archive workers (default: 4, maximum: 8)",
+    )
+    parser.add_argument(
         "--acknowledge-gdelt-terms",
         action="store_true",
         help="Required acknowledgement that the official provider terms were reviewed",
@@ -53,12 +59,27 @@ def main() -> int:
         "Verified daily parts will be reused after interruption.",
         flush=True,
     )
+    last_reported = -1
+
+    def report_progress(completed: int, total: int, archive_date: str) -> None:
+        nonlocal last_reported
+        if completed == total or completed == 0 or completed - last_reported >= 25:
+            percent = 100.0 * completed / total
+            print(
+                f"GDELT progress: {completed:,}/{total:,} days ({percent:.1f}%), "
+                f"latest={archive_date}",
+                flush=True,
+            )
+            last_reported = completed
+
     manifest = build_gdelt_daily_snapshot(
         archives,
         output_dir=args.output_dir.resolve(),
         work_dir=args.work_dir.resolve(),
         ticker_aliases=aliases,
         license_acknowledged=True,
+        workers=args.workers,
+        progress=report_progress,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True), flush=True)
     return 0

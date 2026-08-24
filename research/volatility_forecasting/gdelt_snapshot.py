@@ -9,6 +9,7 @@ import shutil
 import urllib.request
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
@@ -174,6 +175,55 @@ def _load_verified_part(
     return events, manifest
 
 
+def _materialize_archive_part(
+    archive: GdeltV1DailyArchive,
+    *,
+    part_dir: Path,
+    download_path: Path,
+    ticker_aliases: Mapping[str, tuple[str, ...]],
+    downloader: Callable[[GdeltV1DailyArchive, Path], None],
+) -> None:
+    """Download, aggregate, and atomically save one independently keyed day."""
+    try:
+        downloader(archive, download_path)
+        events, stats = aggregate_downloaded_archive(
+            download_path,
+            archive=archive,
+            ticker_aliases=compile_ticker_aliases(ticker_aliases),
+        )
+        save_news_snapshot(
+            part_dir,
+            events,
+            provider="GDELT 1.0 daily Event metadata",
+            license_acknowledged=True,
+            coverage_start=archive.available_at,
+            coverage_end_exclusive=archive.available_at + timedelta(days=1),
+            provenance={
+                "archive_date": str(archive.archive_date),
+                "archive_url": archive.url,
+                "aggregation_stats": asdict(stats),
+            },
+        )
+    finally:
+        download_path.unlink(missing_ok=True)
+
+
+def _materialize_archive_part_default(
+    archive: GdeltV1DailyArchive,
+    part_dir: Path,
+    download_path: Path,
+    ticker_aliases: dict[str, tuple[str, ...]],
+) -> None:
+    """Pickle-safe process worker using the production downloader."""
+    _materialize_archive_part(
+        archive,
+        part_dir=part_dir,
+        download_path=download_path,
+        ticker_aliases=ticker_aliases,
+        downloader=download_gdelt_archive,
+    )
+
+
 def build_gdelt_daily_snapshot(
     archives: Sequence[GdeltV1DailyArchive],
     *,
@@ -182,10 +232,16 @@ def build_gdelt_daily_snapshot(
     ticker_aliases: Mapping[str, tuple[str, ...]],
     license_acknowledged: bool,
     downloader: Callable[[GdeltV1DailyArchive, Path], None] = download_gdelt_archive,
+    workers: int = 1,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, object]:
     """Resume verified daily parts and publish one bounded immutable snapshot."""
     if not license_acknowledged:
         raise NewsLicenseNotAcknowledged("GDELT data terms must be acknowledged explicitly")
+    if workers < 1 or workers > 8:
+        raise GdeltArchiveError("GDELT builder workers must be in [1, 8]")
+    if workers > 1 and downloader is not download_gdelt_archive:
+        raise GdeltArchiveError("parallel GDELT builds require the production downloader")
     _validate_archive_sequence(archives)
     if output_dir.exists() and (not output_dir.is_dir() or any(output_dir.iterdir())):
         raise GdeltArchiveError("final GDELT snapshot directory must be empty")
@@ -193,48 +249,70 @@ def build_gdelt_daily_snapshot(
     downloads_root = work_dir / "downloads"
     parts_root.mkdir(parents=True, exist_ok=True)
     downloads_root.mkdir(parents=True, exist_ok=True)
-    alias_matcher = compile_ticker_aliases(ticker_aliases)
-
-    all_events: list[NewsEvent] = []
-    source_stats: list[dict[str, object]] = []
+    missing: list[tuple[GdeltV1DailyArchive, Path, Path]] = []
+    completed = 0
     for archive in archives:
         part_dir = parts_root / f"{archive.archive_date:%Y%m%d}"
         verified = _load_verified_part(part_dir, archive)
         if verified is not None:
-            events, manifest = verified
-            all_events.extend(events)
-            provenance = manifest["provenance"]
-            source_stats.append(dict(provenance["aggregation_stats"]))
+            completed += 1
             continue
-
         if part_dir.exists():
             shutil.rmtree(part_dir)
         download_path = downloads_root / f"{archive.archive_date:%Y%m%d}.zip"
-        try:
-            downloader(archive, download_path)
-            events, stats = aggregate_downloaded_archive(
-                download_path,
-                archive=archive,
-                ticker_aliases=alias_matcher,
+        missing.append((archive, part_dir, download_path))
+
+    if progress is not None:
+        progress(completed, len(archives), "verified")
+    if workers == 1:
+        for archive, part_dir, download_path in missing:
+            _materialize_archive_part(
+                archive,
+                part_dir=part_dir,
+                download_path=download_path,
+                ticker_aliases=ticker_aliases,
+                downloader=downloader,
             )
-            stats_payload = asdict(stats)
-            save_news_snapshot(
-                part_dir,
-                events,
-                provider="GDELT 1.0 daily Event metadata",
-                license_acknowledged=True,
-                coverage_start=archive.available_at,
-                coverage_end_exclusive=archive.available_at + timedelta(days=1),
-                provenance={
-                    "archive_date": str(archive.archive_date),
-                    "archive_url": archive.url,
-                    "aggregation_stats": stats_payload,
-                },
-            )
-            all_events.extend(events)
-            source_stats.append(stats_payload)
-        finally:
-            download_path.unlink(missing_ok=True)
+            completed += 1
+            if progress is not None:
+                progress(completed, len(archives), str(archive.archive_date))
+    elif missing:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    _materialize_archive_part_default,
+                    archive,
+                    part_dir,
+                    download_path,
+                    dict(ticker_aliases),
+                ): archive
+                for archive, part_dir, download_path in missing
+            }
+            try:
+                for future in as_completed(futures):
+                    archive = futures[future]
+                    future.result()
+                    completed += 1
+                    if progress is not None:
+                        progress(completed, len(archives), str(archive.archive_date))
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+
+    # Re-read every part in archive order. This makes final event ordering and
+    # provenance deterministic regardless of worker completion order and also
+    # verifies that no worker claimed success without a valid snapshot.
+    all_events: list[NewsEvent] = []
+    source_stats: list[dict[str, object]] = []
+    for archive in archives:
+        verified = _load_verified_part(parts_root / f"{archive.archive_date:%Y%m%d}", archive)
+        if verified is None:
+            raise GdeltArchiveError(f"verified GDELT part is missing for {archive.archive_date}")
+        events, manifest = verified
+        all_events.extend(events)
+        provenance = manifest["provenance"]
+        source_stats.append(dict(provenance["aggregation_stats"]))
 
     totals = {
         name: sum(int(row[name]) for row in source_stats)

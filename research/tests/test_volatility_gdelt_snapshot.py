@@ -109,3 +109,18 @@ def test_frozen_aliases_cover_the_complete_volatility_universe() -> None:
         if line.strip() and not line.startswith("#")
     }
     assert set(aliases) == universe
+
+
+def test_builder_rejects_unbounded_or_custom_parallel_workers(tmp_path: Path) -> None:
+    archives = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 6))
+    kwargs = {
+        "archives": archives,
+        "output_dir": tmp_path / "snapshot",
+        "work_dir": tmp_path / "work",
+        "ticker_aliases": {"MSFT": ("Microsoft",)},
+        "license_acknowledged": True,
+    }
+    with pytest.raises(GdeltArchiveError, match="workers"):
+        build_gdelt_daily_snapshot(**kwargs, workers=9)
+    with pytest.raises(GdeltArchiveError, match="production downloader"):
+        build_gdelt_daily_snapshot(**kwargs, workers=2, downloader=_fake_downloader)
