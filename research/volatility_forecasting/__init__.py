@@ -10,6 +10,7 @@ from .contracts import (
     VolatilityForecastProtocol,
 )
 from .data import VolatilityPanelExamples, build_volatility_panel_examples
+from .news import NEWS_FEATURE_NAMES_V1, NewsEvent, NewsOrigin, aggregate_news_features
 
 __all__ = [
     "DEFAULT_HORIZONS",
@@ -17,4 +18,8 @@ __all__ = [
     "VolatilityForecastProtocol",
     "VolatilityPanelExamples",
     "build_volatility_panel_examples",
+    "NEWS_FEATURE_NAMES_V1",
+    "NewsEvent",
+    "NewsOrigin",
+    "aggregate_news_features",
 ]
