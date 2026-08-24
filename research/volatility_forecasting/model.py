@@ -45,12 +45,19 @@ class BaselineResidualTCNConfig:
 @dataclass(frozen=True)
 class VolatilityLossWeights:
     qlike: float = 0.60
-    return_likelihood: float = 0.20
-    direction: float = 0.15
+    variance_crps: float = 0.25
+    return_location: float = 0.05
+    direction: float = 0.05
     baseline_regularization: float = 0.05
 
     def __post_init__(self) -> None:
-        values = (self.qlike, self.return_likelihood, self.direction, self.baseline_regularization)
+        values = (
+            self.qlike,
+            self.variance_crps,
+            self.return_location,
+            self.direction,
+            self.baseline_regularization,
+        )
         if any(value < 0 for value in values) or not np.isclose(sum(values), 1.0):
             raise ValueError("loss weights must be non-negative and sum to one")
 
@@ -221,6 +228,7 @@ class BaselineResidualTCN(nn.Module):
 
 def volatility_multitask_loss(
     prediction: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    baseline_variance: torch.Tensor,
     realized_variance: torch.Tensor,
     cumulative_returns: torch.Tensor,
     direction_classes: torch.Tensor,
@@ -235,27 +243,49 @@ def volatility_multitask_loss(
     ratio = safe_target / safe_forecast
     qlike = torch.mean(ratio - torch.log(ratio) - 1.0)
 
-    squared_error = torch.square(cumulative_returns - return_location)
-    gaussian_nll = torch.mean(
-        0.5 * (torch.log(2 * math.pi * safe_forecast) + squared_error / safe_forecast)
+    safe_baseline = torch.clamp(baseline_variance, min=1e-12, max=1e2)
+    sigma = torch.sqrt(safe_forecast)
+    standardized_return = cumulative_returns / sigma
+    density = torch.exp(-0.5 * torch.square(standardized_return)) / math.sqrt(2.0 * math.pi)
+    distribution = 0.5 * (1.0 + torch.erf(standardized_return / math.sqrt(2.0)))
+    crps = sigma * (
+        standardized_return * (2.0 * distribution - 1.0) + 2.0 * density - 1.0 / math.sqrt(math.pi)
+    )
+    # Normalize by the matched baseline scale so long horizons and high-vol
+    # assets cannot dominate the proper-score objective merely by magnitude.
+    variance_crps = torch.mean(crps / torch.sqrt(safe_baseline))
+
+    detached_scale = torch.sqrt(safe_forecast.detach())
+    return_location_loss = F.smooth_l1_loss(
+        return_location / detached_scale,
+        cumulative_returns / detached_scale,
     )
     direction = F.cross_entropy(
         direction_logits.reshape(-1, 3),
         direction_classes.reshape(-1),
     )
-    baseline_regularization = torch.mean(torch.square(log_residual)) + torch.mean(
+    variance_regularization = torch.mean(torch.square(log_residual))
+    baseline_regularization = variance_regularization + torch.mean(
         torch.square(return_location) / safe_forecast
+    )
+    volatility_selection = (
+        loss_weights.qlike * qlike
+        + loss_weights.variance_crps * variance_crps
+        + loss_weights.baseline_regularization * variance_regularization
     )
     total = (
         loss_weights.qlike * qlike
-        + loss_weights.return_likelihood * gaussian_nll
+        + loss_weights.variance_crps * variance_crps
+        + loss_weights.return_location * return_location_loss
         + loss_weights.direction * direction
         + loss_weights.baseline_regularization * baseline_regularization
     )
     return total, {
         "total": total.detach(),
+        "volatility_selection": volatility_selection.detach(),
         "qlike": qlike.detach(),
-        "gaussian_nll": gaussian_nll.detach(),
+        "variance_crps": variance_crps.detach(),
+        "return_location": return_location_loss.detach(),
         "direction_cross_entropy": direction.detach(),
         "baseline_regularization": baseline_regularization.detach(),
     }
@@ -304,6 +334,7 @@ def _evaluate_loader(
             ]
             _, breakdown = volatility_multitask_loss(
                 model(x, baseline),
+                baseline,
                 target_var,
                 target_return,
                 direction,
@@ -319,8 +350,10 @@ def _evaluate_loader(
 def defaultdict_float() -> dict[str, float]:
     return {
         "total": 0.0,
+        "volatility_selection": 0.0,
         "qlike": 0.0,
-        "gaussian_nll": 0.0,
+        "variance_crps": 0.0,
+        "return_location": 0.0,
         "direction_cross_entropy": 0.0,
         "baseline_regularization": 0.0,
     }
@@ -417,6 +450,7 @@ def train_baseline_residual_tcn(
             ):
                 loss, _ = volatility_multitask_loss(
                     model(x, baseline),
+                    baseline,
                     target_var,
                     target_return,
                     direction,
@@ -430,7 +464,7 @@ def train_baseline_residual_tcn(
 
         validation_metrics = _evaluate_loader(model, validation_loader, selected_device, weights)
         history.append({"epoch": float(epoch), **validation_metrics})
-        validation_loss = validation_metrics["total"]
+        validation_loss = validation_metrics["volatility_selection"]
         if validation_loss < best_loss - settings.minimum_delta:
             best_loss = validation_loss
             best_epoch = epoch

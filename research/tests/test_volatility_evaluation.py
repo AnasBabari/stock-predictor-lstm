@@ -147,6 +147,7 @@ def test_tiny_development_run_produces_disjoint_oof_evidence() -> None:
         embargo_sessions=7,
         minimum_train_sessions=20,
         validation_sessions=8,
+        early_stopping_sessions=5,
         temporal_holdout_sessions=10,
         asset_holdout_fraction=0.25,
     )

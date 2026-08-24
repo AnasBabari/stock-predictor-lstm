@@ -64,6 +64,7 @@ def test_multitask_loss_is_finite_and_backpropagates() -> None:
     )
     loss, breakdown = volatility_multitask_loss(
         model(torch.from_numpy(x), torch.from_numpy(baseline)),
+        torch.from_numpy(baseline),
         torch.from_numpy(target_var),
         torch.from_numpy(returns),
         torch.from_numpy(direction),
@@ -72,6 +73,8 @@ def test_multitask_loss_is_finite_and_backpropagates() -> None:
     assert torch.isfinite(loss)
     assert all(torch.isfinite(value) for value in breakdown.values())
     assert any(parameter.grad is not None for parameter in model.parameters())
+    assert breakdown["variance_crps"] >= 0
+    assert torch.isfinite(breakdown["volatility_selection"])
 
 
 def test_robust_scaler_uses_only_supplied_training_rows() -> None:

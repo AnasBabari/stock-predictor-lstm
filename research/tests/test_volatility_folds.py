@@ -3,7 +3,11 @@ from __future__ import annotations
 import numpy as np
 from volatility_forecasting.contracts import VolatilityForecastProtocol
 from volatility_forecasting.data import VolatilityPanelExamples
-from volatility_forecasting.folds import build_volatility_fold_plan, select_asset_holdouts
+from volatility_forecasting.folds import (
+    build_inner_training_split,
+    build_volatility_fold_plan,
+    select_asset_holdouts,
+)
 
 
 def _examples(sessions: int = 90) -> VolatilityPanelExamples:
@@ -39,6 +43,7 @@ def _protocol() -> VolatilityForecastProtocol:
         embargo_sessions=7,
         minimum_train_sessions=20,
         validation_sessions=8,
+        early_stopping_sessions=5,
         temporal_holdout_sessions=10,
         asset_holdout_fraction=0.25,
     )
@@ -86,3 +91,17 @@ def test_certification_rows_are_not_in_development_folds() -> None:
     assert set(examples.tickers[plan.asset_transfer_certification_indices]).issubset(
         plan.asset_holdout_tickers
     )
+
+
+def test_inner_early_stopping_split_is_purged_and_never_uses_outer_validation() -> None:
+    examples = _examples()
+    protocol = _protocol()
+    outer = build_volatility_fold_plan(examples, protocol).folds[0]
+    inner = build_inner_training_split(examples, outer.train_indices, protocol)
+    unique_dates = np.unique(examples.origin_dates[outer.train_indices])
+    fit_end = int(np.flatnonzero(unique_dates == inner.fit_end)[0])
+    early_start = int(np.flatnonzero(unique_dates == inner.early_stopping_start)[0])
+    assert early_start - fit_end - 1 == protocol.embargo_sessions
+    assert inner.early_stopping_end <= outer.train_end
+    assert inner.early_stopping_end < outer.validation_start
+    assert np.intersect1d(inner.early_stopping_indices, outer.validation_indices).size == 0

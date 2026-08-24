@@ -138,20 +138,24 @@ RTX 2060 and CPU deployment:
 - dropout, weight decay, gradient clipping, mixed precision, early stopping,
   and deterministic recorded seeds.
 
-The loss combines QLIKE, Gaussian return likelihood, three-class cross
-entropy, and penalties that keep variance corrections and return means near
-their baselines unless data supports moving away. A TFT may be evaluated as a
-challenger because the cited paper reports strong historical-volatility
-results, but it cannot become a second production choice. Only the locked
-winner is exported.
+The variance path is optimized with QLIKE plus zero-centred Gaussian CRPS,
+both proper distribution scores, and a bounded residual penalty. The return
+location uses a separate volatility-standardized robust loss, while direction
+uses three-class cross entropy. This separation prevents a noisy auxiliary
+price head from distorting the variance that will actually be served when the
+mean is rejected. A TFT may be evaluated as a challenger because the cited
+paper reports strong historical-volatility results, but it cannot become a
+second production choice. Only the locked winner is exported.
 
 ## Evaluation and promotion
 
-Development uses five expanding date-aligned folds. Each validation boundary
-is purged by the maximum label horizon and embargoed by 30 sessions. Scalers
-fit only fitting rows. At least 20% of tickers are excluded from all fitting
-for asset-transfer evaluation. A final 252-session chronological interval is
-opened once for certification.
+Development uses five expanding date-aligned outer folds. Each outer evidence
+boundary is purged by the maximum label horizon and embargoed by 30 sessions.
+Epoch selection uses a separate 63-session tail wholly inside each outer
+training fold, with its own 30-session purge; the outer fold is never passed
+to early stopping. Scalers fit only the inner fitting rows. At least 20% of
+tickers are excluded from all fitting for asset-transfer evaluation. A final
+252-session chronological interval is opened once for certification.
 
 Primary evidence:
 

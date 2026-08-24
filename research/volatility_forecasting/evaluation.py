@@ -12,7 +12,7 @@ from backend.panel.selection import diebold_mariano_hac, holm_correction
 
 from .contracts import VolatilityForecastProtocol, VolatilityPromotionGate
 from .data import VolatilityPanelExamples
-from .folds import VolatilityFoldPlan
+from .folds import VolatilityFoldPlan, build_inner_training_split
 from .metrics import (
     DistributionPredictions,
     horizon_distribution_metrics,
@@ -30,6 +30,11 @@ from .model import (
 @dataclass(frozen=True)
 class FoldEvidence:
     fold: int
+    fit_rows: int
+    early_stopping_rows: int
+    fit_end: str
+    early_stopping_start: str
+    early_stopping_end: str
     validation_start: str
     validation_end: str
     rows: int
@@ -299,7 +304,9 @@ def evaluate_tcn_development(
     oof_direction: list[np.ndarray] = []
 
     for fold in fold_plan.folds:
-        train = fold.train_indices
+        inner = build_inner_training_split(examples, fold.train_indices, protocol)
+        train = inner.fit_indices
+        early_stopping = inner.early_stopping_indices
         validation = fold.validation_indices
         trained = train_baseline_residual_tcn(
             train_features=examples.features[train],
@@ -307,11 +314,11 @@ def evaluate_tcn_development(
             train_realized_variance=examples.realized_variance[train],
             train_cumulative_returns=examples.cumulative_returns[train],
             train_direction_classes=examples.direction_classes[train],
-            validation_features=examples.features[validation],
-            validation_baseline_variance=examples.baseline_variance[validation],
-            validation_realized_variance=examples.realized_variance[validation],
-            validation_cumulative_returns=examples.cumulative_returns[validation],
-            validation_direction_classes=examples.direction_classes[validation],
+            validation_features=examples.features[early_stopping],
+            validation_baseline_variance=examples.baseline_variance[early_stopping],
+            validation_realized_variance=examples.realized_variance[early_stopping],
+            validation_cumulative_returns=examples.cumulative_returns[early_stopping],
+            validation_direction_classes=examples.direction_classes[early_stopping],
             model_config=architecture,
             training_config=training_config,
             loss_weights=loss_weights,
@@ -333,6 +340,11 @@ def evaluate_tcn_development(
         fold_evidence.append(
             FoldEvidence(
                 fold=fold.fold,
+                fit_rows=len(train),
+                early_stopping_rows=len(early_stopping),
+                fit_end=str(inner.fit_end),
+                early_stopping_start=str(inner.early_stopping_start),
+                early_stopping_end=str(inner.early_stopping_end),
                 validation_start=str(fold.validation_start),
                 validation_end=str(fold.validation_end),
                 rows=len(validation),

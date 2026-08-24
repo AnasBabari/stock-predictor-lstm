@@ -38,6 +38,25 @@ class VolatilityFoldPlan:
     certification_start: np.datetime64
 
 
+@dataclass(frozen=True)
+class InnerTrainingSplit:
+    """Fit/early-stop split constructed solely inside an outer training fold."""
+
+    fit_indices: np.ndarray
+    early_stopping_indices: np.ndarray
+    fit_end: np.datetime64
+    early_stopping_start: np.datetime64
+    early_stopping_end: np.datetime64
+
+    def __post_init__(self) -> None:
+        if len(self.fit_indices) == 0 or len(self.early_stopping_indices) == 0:
+            raise ValueError("inner fit and early-stopping sets must be non-empty")
+        if self.fit_end >= self.early_stopping_start:
+            raise ValueError("inner fit end must precede early-stopping start")
+        if np.intersect1d(self.fit_indices, self.early_stopping_indices).size:
+            raise ValueError("inner fit and early-stopping rows overlap")
+
+
 def select_asset_holdouts(
     tickers: np.ndarray,
     *,
@@ -63,6 +82,39 @@ def select_asset_holdouts(
     selected = sorted(required_present + remaining[: holdout_count - len(required_present)])
     training = sorted(set(universe) - set(selected))
     return tuple(training), tuple(selected)
+
+
+def build_inner_training_split(
+    examples: VolatilityPanelExamples,
+    outer_train_indices: np.ndarray,
+    protocol: VolatilityForecastProtocol,
+) -> InnerTrainingSplit:
+    """Reserve a purged inner tail for epoch selection without touching OOF rows."""
+    outer = np.asarray(outer_train_indices, dtype=np.int64)
+    if outer.ndim != 1 or len(outer) == 0:
+        raise ValueError("outer training indices must be a non-empty vector")
+    dates = np.unique(examples.origin_dates[outer])
+    dates.sort()
+    required = protocol.early_stopping_sessions + protocol.embargo_sessions + 1
+    if len(dates) < required:
+        raise ValueError("outer training fold is too short for the purged early-stopping reserve")
+    early_start_position = len(dates) - protocol.early_stopping_sessions
+    fit_end_position = early_start_position - protocol.embargo_sessions
+    if fit_end_position < 1:
+        raise ValueError("inner split leaves no fitting session")
+    fit_end = dates[fit_end_position - 1]
+    early_start = dates[early_start_position]
+    early_end = dates[-1]
+    outer_dates = examples.origin_dates[outer]
+    fit = outer[outer_dates <= fit_end]
+    early = outer[(outer_dates >= early_start) & (outer_dates <= early_end)]
+    return InnerTrainingSplit(
+        fit_indices=fit,
+        early_stopping_indices=early,
+        fit_end=fit_end,
+        early_stopping_start=early_start,
+        early_stopping_end=early_end,
+    )
 
 
 def build_volatility_fold_plan(

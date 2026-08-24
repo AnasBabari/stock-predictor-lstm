@@ -11,8 +11,8 @@ from dataclasses import dataclass
 
 from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
 
-VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v2"
-MODEL_ARCHITECTURE_VERSION = "baseline-residual-tcn-v1"
+VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v3"
+MODEL_ARCHITECTURE_VERSION = "baseline-residual-tcn-v2"
 TARGET_VERSION = "future-rv-total-v1"
 DEFAULT_HORIZONS = (1, 3, 5, 7, 14, 30)
 
@@ -31,6 +31,7 @@ class VolatilityForecastProtocol:
     embargo_sessions: int = 30
     minimum_train_sessions: int = 756
     validation_sessions: int = 126
+    early_stopping_sessions: int = 63
     temporal_holdout_sessions: int = 252
     asset_holdout_fraction: float = 0.20
     seeds: tuple[int, ...] = (41, 42, 43)
@@ -46,6 +47,8 @@ class VolatilityForecastProtocol:
             raise ValueError("embargo_sessions must be at least the maximum forecast horizon")
         if self.folds < 3:
             raise ValueError("at least three expanding folds are required")
+        if self.early_stopping_sessions < 5:
+            raise ValueError("early_stopping_sessions must contain at least five sessions")
 
     @property
     def feature_count(self) -> int:
