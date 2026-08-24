@@ -9,12 +9,10 @@ influence weights, scaler statistics, baseline selection, or calibration.
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 from dataclasses import asdict, dataclass
 
 import numpy as np
-import torch
 
 from .baselines import (
     AdaptiveBaselineSelection,
@@ -182,7 +180,7 @@ def certification_development_split(
     return build_inner_training_split(examples, eligible, protocol)
 
 
-def _model_identity(
+def candidate_identity(
     training: TrainingResult,
     *,
     architecture: BaselineResidualTCNConfig,
@@ -193,8 +191,13 @@ def _model_identity(
     comparison_baseline: AdaptiveBaselineSelection,
     baseline_return_variance_scale: np.ndarray,
 ) -> str:
-    state = io.BytesIO()
-    torch.save(training.model.state_dict(), state)
+    state_hasher = hashlib.sha256()
+    for name, tensor in sorted(training.model.state_dict().items()):
+        contiguous = tensor.detach().cpu().contiguous()
+        state_hasher.update(name.encode("utf-8"))
+        state_hasher.update(str(contiguous.dtype).encode("ascii"))
+        state_hasher.update(json.dumps(list(contiguous.shape)).encode("ascii"))
+        state_hasher.update(contiguous.numpy().tobytes())
     metadata = {
         "architecture": asdict(architecture),
         "seed": seed,
@@ -207,7 +210,7 @@ def _model_identity(
         "baseline_return_variance_scale": baseline_return_variance_scale.tolist(),
     }
     payload = json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    digest = hashlib.sha256(state.getvalue() + payload).hexdigest()
+    digest = hashlib.sha256(state_hasher.digest() + payload).hexdigest()
     return f"global-volatility:{digest}"
 
 
@@ -283,7 +286,7 @@ def fit_frozen_candidate(
         baseline_variance,
         examples.cumulative_returns[calibration],
     )
-    identity = _model_identity(
+    identity = candidate_identity(
         training,
         architecture=architecture,
         seed=seed,

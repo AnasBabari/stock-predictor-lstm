@@ -8,13 +8,22 @@ omit it.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch import nn
 
-from .refit import FrozenCandidate
+from .baselines import AdaptiveBaselineHorizon, AdaptiveBaselineSelection
+from .model import (
+    BaselineResidualTCN,
+    BaselineResidualTCNConfig,
+    RobustSequenceScaler,
+    TrainingResult,
+)
+from .refit import FrozenCandidate, candidate_identity
 
 
 class ProductionVolatilityGraph(nn.Module):
@@ -196,3 +205,131 @@ def verify_onnx_parity(
         )
         maximum_errors[name] = float(np.max(np.abs(actual_values - expected_values)))
     return maximum_errors
+
+
+def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
+    """Reconstruct and verify one local candidate member for release conversion."""
+    directory = candidate_dir.resolve()
+    try:
+        manifest = json.loads((directory / "candidate-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("candidate manifest is missing or invalid") from error
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("artifact_role") != "locked_certification_candidate"
+    ):
+        raise ValueError("candidate manifest role is incompatible")
+    architecture_payload = manifest.get("architecture")
+    protocol_payload = manifest.get("protocol")
+    members = manifest.get("members")
+    if (
+        not isinstance(architecture_payload, dict)
+        or not isinstance(protocol_payload, dict)
+        or not isinstance(members, list)
+    ):
+        raise ValueError("candidate manifest is incomplete")
+    rows = [row for row in members if isinstance(row, dict) and row.get("seed") == seed]
+    if len(rows) != 1:
+        raise ValueError(f"candidate manifest does not contain exactly one seed {seed}")
+    row = rows[0]
+    filename = row.get("weights_file")
+    expected_digest = row.get("weights_sha256")
+    if (
+        not isinstance(filename, str)
+        or Path(filename).name != filename
+        or not filename.endswith(".pt")
+    ):
+        raise ValueError("candidate weights path is not allowed")
+    if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+        raise ValueError("candidate weights checksum is invalid")
+    weights_path = directory / filename
+    try:
+        weights_bytes = weights_path.read_bytes()
+    except OSError as error:
+        raise ValueError("candidate weights are missing") from error
+    if hashlib.sha256(weights_bytes).hexdigest() != expected_digest:
+        raise ValueError("candidate weights checksum does not match")
+    architecture = BaselineResidualTCNConfig(**architecture_payload)
+    model = BaselineResidualTCN(architecture)
+    try:
+        state = torch.load(weights_path, map_location="cpu", weights_only=True)
+        model.load_state_dict(state, strict=True)
+    except Exception as error:
+        raise ValueError("candidate weights are incompatible") from error
+    market_scaler = row.get("market_scaler")
+    news_scaler_payload = row.get("news_scaler")
+    comparison_rows = row.get("comparison_baseline")
+    if not isinstance(market_scaler, dict) or not isinstance(comparison_rows, list):
+        raise ValueError("candidate preprocessing metadata is incomplete")
+    training = TrainingResult(
+        model=model.eval(),
+        scaler=RobustSequenceScaler.from_dict(market_scaler),
+        news_scaler=(
+            RobustSequenceScaler.from_dict(news_scaler_payload)
+            if isinstance(news_scaler_payload, dict)
+            else None
+        ),
+        best_epoch=int(row.get("best_epoch", 0)),
+        history=(),
+        device="cpu",
+        duration_seconds=0.0,
+        parameter_count=sum(parameter.numel() for parameter in model.parameters()),
+    )
+    comparison = AdaptiveBaselineSelection(
+        horizons=tuple(AdaptiveBaselineHorizon(**value) for value in comparison_rows)
+    )
+    candidate = FrozenCandidate(
+        training=training,
+        architecture=architecture,
+        fit_split=None,  # type: ignore[arg-type] -- release conversion does not retrain
+        seed=seed,
+        epoch_budget=int(row.get("epoch_budget", 0)),
+        variance_scale=np.asarray(row.get("variance_scale"), dtype=np.float64),
+        return_variance_scale=np.asarray(row.get("return_variance_scale"), dtype=np.float64),
+        comparison_baseline=comparison,
+        baseline_return_variance_scale=np.asarray(
+            row.get("baseline_return_variance_scale"),
+            dtype=np.float64,
+        ),
+        model_identity=str(row.get("model_identity", "")),
+    )
+    horizon_shape = (architecture.horizon_count,)
+    if candidate.epoch_budget < 1 or candidate.training.best_epoch < 1:
+        raise ValueError("candidate epoch metadata is invalid")
+    if len(candidate.training.scaler.median) != architecture.feature_count:
+        raise ValueError("candidate market scaler dimension is incompatible")
+    if architecture.news_feature_count:
+        if (
+            candidate.training.news_scaler is None
+            or len(candidate.training.news_scaler.median) != architecture.news_feature_count
+        ):
+            raise ValueError("candidate news scaler dimension is incompatible")
+    elif candidate.training.news_scaler is not None:
+        raise ValueError("market-only candidate unexpectedly contains a news scaler")
+    scales = (
+        candidate.variance_scale,
+        candidate.return_variance_scale,
+        candidate.baseline_return_variance_scale,
+    )
+    if any(
+        values.shape != horizon_shape or not np.isfinite(values).all() or (values <= 0).any()
+        for values in scales
+    ):
+        raise ValueError("candidate calibration scales are incompatible")
+    if tuple(item.horizon for item in comparison.horizons) != tuple(
+        int(value) for value in protocol_payload.get("horizons", [])
+    ):
+        raise ValueError("candidate comparison baseline horizons are incompatible")
+    actual_identity = candidate_identity(
+        candidate.training,
+        architecture=candidate.architecture,
+        seed=candidate.seed,
+        epoch_budget=candidate.epoch_budget,
+        variance_scale=candidate.variance_scale,
+        return_variance_scale=candidate.return_variance_scale,
+        comparison_baseline=candidate.comparison_baseline,
+        baseline_return_variance_scale=candidate.baseline_return_variance_scale,
+    )
+    if candidate.model_identity != actual_identity:
+        raise ValueError("candidate content identity does not match weights and metadata")
+    return candidate

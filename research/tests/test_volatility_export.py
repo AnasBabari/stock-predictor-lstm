@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from dataclasses import asdict
+
 import numpy as np
 import pytest
 import torch
+from volatility_forecasting.baselines import AdaptiveBaselineHorizon, AdaptiveBaselineSelection
 from volatility_forecasting.export import (
     MarketOnlyProductionGraph,
     NewsProductionGraph,
     ProductionVolatilityGraph,
+    load_frozen_candidate_member,
     production_graph,
 )
 from volatility_forecasting.model import (
@@ -15,7 +21,7 @@ from volatility_forecasting.model import (
     RobustSequenceScaler,
     TrainingResult,
 )
-from volatility_forecasting.refit import FrozenCandidate
+from volatility_forecasting.refit import FrozenCandidate, candidate_identity
 
 
 def _candidate(*, news_features: int = 0) -> FrozenCandidate:
@@ -45,7 +51,20 @@ def _candidate(*, news_features: int = 0) -> FrozenCandidate:
         duration_seconds=0.0,
         parameter_count=sum(parameter.numel() for parameter in model.parameters()),
     )
-    return FrozenCandidate(
+    comparison = AdaptiveBaselineSelection(
+        horizons=tuple(
+            AdaptiveBaselineHorizon(
+                horizon=horizon,
+                family="causal_log_har",
+                blend_alpha=0.0,
+                multiplicative_scale=1.0,
+                calibration_qlike=0.1,
+                har_calibration_qlike=0.1,
+            )
+            for horizon in (1, 7)
+        )
+    )
+    candidate = FrozenCandidate(
         training=training,
         architecture=config,
         fit_split=None,
@@ -53,10 +72,21 @@ def _candidate(*, news_features: int = 0) -> FrozenCandidate:
         epoch_budget=1,
         variance_scale=np.asarray((2.0, 3.0)),
         return_variance_scale=np.asarray((0.5, 0.25)),
-        comparison_baseline=None,
+        comparison_baseline=comparison,
         baseline_return_variance_scale=np.ones(2),
         model_identity="fixture",
     )
+    identity = candidate_identity(
+        candidate.training,
+        architecture=candidate.architecture,
+        seed=candidate.seed,
+        epoch_budget=candidate.epoch_budget,
+        variance_scale=candidate.variance_scale,
+        return_variance_scale=candidate.return_variance_scale,
+        comparison_baseline=candidate.comparison_baseline,
+        baseline_return_variance_scale=candidate.baseline_return_variance_scale,
+    )
+    return FrozenCandidate(**{**candidate.__dict__, "model_identity": identity})
 
 
 def test_production_graph_embeds_calibration_and_normalized_probabilities() -> None:
@@ -84,3 +114,38 @@ def test_export_signature_is_explicit_about_news_input() -> None:
     assert all(tuple(output.shape[:2]) == (2, 2) for output in outputs)
     with pytest.raises(ValueError, match="market-only"):
         MarketOnlyProductionGraph(ProductionVolatilityGraph(news_candidate))
+
+
+def test_candidate_loader_verifies_weights_metadata_and_content_identity(tmp_path) -> None:
+    candidate = _candidate()
+    weights = tmp_path / "seed-41.pt"
+    torch.save(candidate.training.model.state_dict(), weights)
+    member = {
+        "seed": 41,
+        "model_identity": candidate.model_identity,
+        "weights_file": weights.name,
+        "weights_sha256": hashlib.sha256(weights.read_bytes()).hexdigest(),
+        "epoch_budget": 1,
+        "best_epoch": 1,
+        "market_scaler": candidate.training.scaler.to_dict(),
+        "news_scaler": None,
+        "variance_scale": candidate.variance_scale.tolist(),
+        "return_variance_scale": candidate.return_variance_scale.tolist(),
+        "baseline_return_variance_scale": candidate.baseline_return_variance_scale.tolist(),
+        "comparison_baseline": [asdict(value) for value in candidate.comparison_baseline.horizons],
+    }
+    manifest = {
+        "artifact_role": "locked_certification_candidate",
+        "model_identity": "ensemble-fixture",
+        "protocol": {"horizons": [1, 7]},
+        "architecture": asdict(candidate.architecture),
+        "members": [member],
+    }
+    (tmp_path / "candidate-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    loaded = load_frozen_candidate_member(tmp_path, 41)
+    assert loaded.model_identity == candidate.model_identity
+    assert loaded.training.scaler.to_dict() == candidate.training.scaler.to_dict()
+
+    weights.write_bytes(weights.read_bytes() + b"tampered")
+    with pytest.raises(ValueError, match="checksum"):
+        load_frozen_candidate_member(tmp_path, 41)
