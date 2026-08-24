@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,7 @@ import pytest
 from volatility_forecasting.cache import (
     ExampleCacheError,
     example_cache_key,
+    find_compatible_example_cache,
     load_example_cache,
     panel_fingerprint,
     save_example_cache,
@@ -48,6 +50,16 @@ def test_example_cache_round_trip_and_identity(tmp_path: Path) -> None:
     )
     np.testing.assert_array_equal(restored.features, original.features)
     np.testing.assert_array_equal(restored.tickers, original.tickers)
+    changed_model = replace(protocol, architecture_version="different-model")
+    assert example_cache_key(checksum, changed_model) == example_cache_key(checksum, protocol)
+    assert (
+        find_compatible_example_cache(
+            tmp_path,
+            panel_checksum=checksum,
+            protocol=changed_model,
+        )
+        == cache_dir.resolve()
+    )
 
 
 def test_example_cache_rejects_tampered_array(tmp_path: Path) -> None:

@@ -37,6 +37,23 @@ class ExampleCacheError(ValueError):
     """A local derived-example cache failed identity or integrity checks."""
 
 
+def _data_contract(protocol: VolatilityForecastProtocol | dict[str, object]) -> dict[str, object]:
+    payload = asdict(protocol) if isinstance(protocol, VolatilityForecastProtocol) else protocol
+    names = (
+        "target_version",
+        "horizons",
+        "feature_names",
+        "window_size",
+        "realized_variance_proxy",
+        "baseline_family",
+    )
+    contract = {name: payload.get(name) for name in names}
+    for sequence_name in ("horizons", "feature_names"):
+        value = contract[sequence_name]
+        contract[sequence_name] = list(value) if isinstance(value, (list, tuple)) else value
+    return contract
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -63,7 +80,7 @@ def example_cache_key(panel_checksum: str, protocol: VolatilityForecastProtocol)
     payload = {
         "cache_version": EXAMPLE_CACHE_VERSION,
         "panel_checksum": panel_checksum,
-        "protocol": asdict(protocol),
+        "data_contract": _data_contract(protocol),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:20]
@@ -94,6 +111,7 @@ def save_example_cache(
             "cache_key": example_cache_key(panel_checksum, protocol),
             "panel_checksum": panel_checksum,
             "protocol": asdict(protocol),
+            "data_contract": _data_contract(protocol),
             "horizons": list(examples.horizons),
             "feature_names": list(examples.feature_names),
             "rows": len(examples.features),
@@ -125,12 +143,13 @@ def load_example_cache(
         metadata = json.loads((root / "metadata.json").read_text(encoding="utf-8"))
     except (OSError, TypeError, json.JSONDecodeError) as error:
         raise ExampleCacheError("example cache metadata is unavailable or invalid") from error
-    expected_key = example_cache_key(panel_checksum, protocol)
     if metadata.get("cache_version") != EXAMPLE_CACHE_VERSION:
         raise ExampleCacheError("example cache version does not match")
-    if (
-        metadata.get("cache_key") != expected_key
-        or metadata.get("panel_checksum") != panel_checksum
+    cached_contract = metadata.get("data_contract")
+    if cached_contract is None and isinstance(metadata.get("protocol"), dict):
+        cached_contract = _data_contract(metadata["protocol"])
+    if metadata.get("panel_checksum") != panel_checksum or cached_contract != _data_contract(
+        protocol
     ):
         raise ExampleCacheError("example cache identity does not match the panel and protocol")
 
@@ -160,3 +179,35 @@ def load_example_cache(
         horizons=horizons,
         feature_names=feature_names,
     )
+
+
+def find_compatible_example_cache(
+    cache_root: Path,
+    *,
+    panel_checksum: str,
+    protocol: VolatilityForecastProtocol,
+) -> Path | None:
+    """Find a data-compatible cache even when model/evaluation settings changed."""
+    root = cache_root.resolve()
+    preferred = root / example_cache_key(panel_checksum, protocol)
+    candidates = [preferred]
+    if root.is_dir():
+        candidates.extend(
+            path for path in sorted(root.iterdir()) if path.is_dir() and path != preferred
+        )
+    expected_contract = _data_contract(protocol)
+    for candidate in candidates:
+        try:
+            metadata = json.loads((candidate / "metadata.json").read_text(encoding="utf-8"))
+        except (OSError, TypeError, json.JSONDecodeError):
+            continue
+        cached_contract = metadata.get("data_contract")
+        if cached_contract is None and isinstance(metadata.get("protocol"), dict):
+            cached_contract = _data_contract(metadata["protocol"])
+        if (
+            metadata.get("cache_version") == EXAMPLE_CACHE_VERSION
+            and metadata.get("panel_checksum") == panel_checksum
+            and cached_contract == expected_contract
+        ):
+            return candidate
+    return None

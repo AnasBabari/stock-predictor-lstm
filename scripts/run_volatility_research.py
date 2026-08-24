@@ -20,6 +20,7 @@ for candidate in (ROOT, ROOT / "research"):
 from volatility_forecasting.cache import (  # noqa: E402
     ExampleCacheError,
     example_cache_key,
+    find_compatible_example_cache,
     load_example_cache,
     panel_fingerprint,
     save_example_cache,
@@ -127,12 +128,17 @@ def main() -> int:
     panel_checksum = panel_fingerprint(args.panel_dir)
     cache_root = (args.example_cache_root or (args.panel_dir.parent / "example-cache")).resolve()
     cache_dir = cache_root / example_cache_key(panel_checksum, protocol)
+    compatible_cache = find_compatible_example_cache(
+        cache_root,
+        panel_checksum=panel_checksum,
+        protocol=protocol,
+    )
     examples = None
-    if not args.no_example_cache and cache_dir.exists():
+    if not args.no_example_cache and compatible_cache is not None:
         try:
-            print(f"Verifying derived example cache {cache_dir}...", flush=True)
+            print(f"Verifying derived example cache {compatible_cache}...", flush=True)
             examples = load_example_cache(
-                cache_dir,
+                compatible_cache,
                 panel_checksum=panel_checksum,
                 protocol=protocol,
             )
