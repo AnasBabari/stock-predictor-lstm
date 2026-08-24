@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -129,6 +131,24 @@ def test_shared_cutoff_results_match_independent_aggregation() -> None:
     together = aggregate_news_features(events, origins)
     separately = np.vstack([aggregate_news_features(events, [origin]).values for origin in origins])
     np.testing.assert_array_equal(together.values, separately)
+
+
+def test_aggregated_provider_volume_is_log_scaled_and_monotonic() -> None:
+    origin = NewsOrigin("MSFT", pd.Timestamp("2026-01-05T21:00:00Z"))
+    unit = _event("unit", "2026-01-05T18:00:00Z")
+    aggregated = replace(
+        unit,
+        event_id="aggregate",
+        cluster_id="aggregate",
+        volume=15.0,
+    )
+    unit_value = _feature(aggregate_news_features([unit], [origin]), "News_Ticker_Intensity_1D")
+    aggregate_value = _feature(
+        aggregate_news_features([aggregated], [origin]),
+        "News_Ticker_Intensity_1D",
+    )
+    assert unit_value > 0
+    assert aggregate_value / unit_value == pytest.approx(4.0)
 
 
 def test_snapshot_digest_is_order_invariant_and_license_gated() -> None:

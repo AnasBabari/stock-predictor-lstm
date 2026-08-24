@@ -50,6 +50,7 @@ def _event_payload(event: NewsEvent) -> dict[str, object]:
         "canonical_url_hash": event.canonical_url_hash,
         "language": event.language,
         "license_class": event.license_class,
+        "volume": event.volume,
     }
 
 
@@ -89,6 +90,7 @@ def _event_from_payload(payload: object) -> NewsEvent:
             canonical_url_hash=str(payload["canonical_url_hash"]),
             language=str(payload["language"]),
             license_class=str(payload["license_class"]),
+            volume=float(payload["volume"]),
         )
     except (KeyError, TypeError, ValueError, NewsValidationError) as error:
         raise NewsSnapshotError("news event row is invalid") from error

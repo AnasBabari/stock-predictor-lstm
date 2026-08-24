@@ -17,7 +17,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-NEWS_SCHEMA_VERSION = "point_in_time_news_v1"
+NEWS_SCHEMA_VERSION = "point_in_time_news_v2"
 NEWS_FEATURE_SCHEMA_VERSION = "point_in_time_news_features_v2"
 TimestampQuality = Literal["precise", "first_seen_only", "date_only", "unknown"]
 
@@ -89,6 +89,7 @@ class NewsEvent:
     canonical_url_hash: str = ""
     language: str = "en"
     license_class: str = "research_only"
+    volume: float = 1.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "first_seen_at", _utc(self.first_seen_at, field="first_seen_at"))
@@ -116,6 +117,8 @@ class NewsEvent:
             value = float(getattr(self, field_name))
             if not np.isfinite(value) or not 0 <= value <= 1:
                 raise NewsValidationError(f"{field_name} must be finite and in [0, 1]")
+        if not np.isfinite(self.volume) or self.volume <= 0:
+            raise NewsValidationError("volume must be finite and positive")
         if self.timestamp_quality == "precise" and self.published_at is None:
             raise NewsValidationError("precise events require published_at")
 
@@ -234,7 +237,9 @@ def _decay(age_hours: float, half_life_hours: float) -> float:
 
 
 def _count(_event: NewsEvent) -> float:
-    return 1.0
+    # Preserve one raw event as unit intensity while compressing large daily
+    # aggregates onto a stable logarithmic scale.
+    return float(np.log1p(_event.volume) / np.log(2.0))
 
 
 def _negative(event: NewsEvent) -> float:
