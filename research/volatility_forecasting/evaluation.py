@@ -52,10 +52,12 @@ class FoldEvidence:
 class HorizonPromotionDecision:
     horizon: int
     volatility_promoted: bool
+    return_distribution_promoted: bool
     return_location_promoted: bool
     direction_promoted: bool
     promoted: bool
     reasons: tuple[str, ...]
+    return_distribution_reasons: tuple[str, ...]
     return_location_reasons: tuple[str, ...]
     direction_reasons: tuple[str, ...]
     folds_beating_baseline: int
@@ -216,8 +218,9 @@ def assess_promotion(
             volatility_reasons.append("too few expanding folds beat the matched baseline")
         if worst_fold > settings.maximum_worst_fold_relative_qlike:
             volatility_reasons.append("worst fold exceeded the stability guardrail")
+        distribution_reasons: list[str] = []
         if relative_variance_crps >= settings.maximum_relative_variance_only_crps:
-            volatility_reasons.append(
+            distribution_reasons.append(
                 "candidate variance CRPS around the zero-return baseline did not improve"
             )
         if (
@@ -225,7 +228,7 @@ def assess_promotion(
             <= coverage_80
             <= settings.maximum_interval_coverage_80
         ):
-            volatility_reasons.append(
+            distribution_reasons.append(
                 "zero-centred 80% interval coverage is outside the calibration band"
             )
         if dm_stat >= 0 or not holm[column]:
@@ -258,10 +261,12 @@ def assess_promotion(
             HorizonPromotionDecision(
                 horizon=horizon,
                 volatility_promoted=volatility_promoted,
+                return_distribution_promoted=not distribution_reasons,
                 return_location_promoted=not return_reasons,
                 direction_promoted=False,
                 promoted=volatility_promoted,
                 reasons=tuple(volatility_reasons),
+                return_distribution_reasons=tuple(distribution_reasons),
                 return_location_reasons=tuple(return_reasons),
                 direction_reasons=direction_reasons,
                 folds_beating_baseline=folds_beating,

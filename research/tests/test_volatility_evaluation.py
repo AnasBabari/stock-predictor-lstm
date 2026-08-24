@@ -42,7 +42,7 @@ def test_moving_block_ratio_is_below_one_for_uniformly_better_losses() -> None:
     assert upper < 1.0
 
 
-def test_promotion_requires_every_probabilistic_and_stability_gate() -> None:
+def test_promotion_reports_independent_volatility_and_distribution_verdicts() -> None:
     rng = np.random.default_rng(2)
     baseline = rng.uniform(0.2, 0.5, size=(300, 1))
     candidate = baseline * 0.75
@@ -59,6 +59,7 @@ def test_promotion_requires_every_probabilistic_and_stability_gate() -> None:
     )[0]
     assert decision.promoted
     assert decision.volatility_promoted
+    assert decision.return_distribution_promoted
     assert decision.return_location_promoted
     assert not decision.direction_promoted
     assert decision.reasons == ()
@@ -81,8 +82,9 @@ def test_promotion_fails_closed_when_coverage_or_fold_is_bad() -> None:
         resamples=200,
     )[0]
     assert not decision.promoted
-    assert any("coverage" in reason for reason in decision.reasons)
     assert any("fold" in reason for reason in decision.reasons)
+    assert not decision.return_distribution_promoted
+    assert any("coverage" in reason for reason in decision.return_distribution_reasons)
 
 
 def test_bad_auxiliary_return_head_does_not_veto_promoted_volatility() -> None:
@@ -107,6 +109,26 @@ def test_bad_auxiliary_return_head_does_not_veto_promoted_volatility() -> None:
     assert not decision.return_location_promoted
     assert any("MAE" in reason for reason in decision.return_location_reasons)
     assert any("RMSE" in reason for reason in decision.return_location_reasons)
+
+
+def test_bad_interval_crps_does_not_veto_realized_volatility() -> None:
+    rng = np.random.default_rng(17)
+    baseline = rng.uniform(0.2, 0.5, size=(300, 1))
+    candidate = baseline * 0.7
+    pooled = (_metric(0.7, relative_crps=1.02),)
+    folds = tuple((_metric(value),) for value in (0.72, 0.71, 0.75, 0.76, 0.74))
+    decision = assess_promotion(
+        pooled_metrics=pooled,
+        fold_metrics=folds,
+        candidate_qlike_losses=candidate,
+        baseline_qlike_losses=baseline,
+        horizons=(7,),
+        resamples=200,
+    )[0]
+    assert decision.volatility_promoted
+    assert decision.promoted
+    assert not decision.return_distribution_promoted
+    assert any("CRPS" in reason for reason in decision.return_distribution_reasons)
 
 
 def test_tiny_development_run_produces_disjoint_oof_evidence() -> None:

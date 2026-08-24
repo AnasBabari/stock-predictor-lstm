@@ -188,23 +188,26 @@ Primary evidence:
 - return-location MAE/RMSE relative to zero return, reported separately;
 - identical-origin market-only versus market-plus-news ablation results.
 
-Volatility, return location, and direction are promoted independently. A weak
-return-location or direction head cannot veto a statistically supported
-variance forecast and cannot ride into production on the variance verdict.
-Until an auxiliary head clears its own matched gate, serving uses a zero-return
-location and/or withholds direction while retaining the promoted volatility
-distribution.
+Realized volatility, return-distribution intervals, return location, and
+direction are promoted independently. A weak interval, return-location, or
+direction head cannot veto a statistically supported realized-variance
+forecast and cannot ride into production on its verdict. Until an auxiliary
+component clears its own matched gate, the UI may report promoted expected
+volatility but must use an explicitly labelled baseline interval, a zero-return
+location, and/or withheld direction. It must not describe that combination as
+a fully promoted learned price distribution.
 
 Conservative initial volatility-promotion defaults require median relative
 QLIKE below 0.98, at least four of five folds beating the baseline, worst-fold
-relative QLIKE no higher than 1.10, useful variance-only CRPS, acceptable
-zero-centred 80% coverage, paired statistical evidence after multiplicity
-correction, stable seeds, and no material failure by liquidity, volatility
-regime, market regime, ticker size, or unseen-asset subgroup. Return-location
-MAE and RMSE must independently improve on zero return. Direction remains
-diagnostic until its fold-specific, pre-evaluation prevalence baseline is
-available. These are initial guardrails, not fixed universal requirements;
-any pre-certification change creates a new protocol record.
+relative QLIKE no higher than 1.10, paired statistical evidence after
+multiplicity correction, stable seeds, and no material failure by liquidity,
+volatility regime, market regime, ticker size, or unseen-asset subgroup.
+Return intervals separately require useful calibrated variance-only CRPS and
+acceptable zero-centred 80% coverage. Return-location MAE and RMSE must
+independently improve on zero return. Direction remains diagnostic until its
+fold-specific, pre-evaluation prevalence baseline is available. These are
+initial guardrails, not fixed universal requirements; any pre-certification
+change creates a new protocol record.
 
 ## Production response
 

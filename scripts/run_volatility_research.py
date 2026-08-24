@@ -69,8 +69,12 @@ def _seed_consensus(
         decisions = [record["promotion"][column] for record in records]
         metrics = [record["pooled_metrics"][column] for record in records]
         promoted_all_seeds = all(bool(decision["promoted"]) for decision in decisions)
+        distribution_promoted_all_seeds = all(
+            bool(decision["return_distribution_promoted"]) for decision in decisions
+        )
         summary[str(horizon)] = {
             "promoted_all_seeds": promoted_all_seeds,
+            "return_distribution_promoted_all_seeds": distribution_promoted_all_seeds,
             "relative_qlike_median": float(
                 np.median([float(metric["relative_qlike"]) for metric in metrics])
             ),
@@ -88,6 +92,10 @@ def _seed_consensus(
             ],
             "reasons_by_seed": {
                 str(record["seed"]): list(decision["reasons"])
+                for record, decision in zip(records, decisions, strict=True)
+            },
+            "return_distribution_reasons_by_seed": {
+                str(record["seed"]): list(decision["return_distribution_reasons"])
                 for record, decision in zip(records, decisions, strict=True)
             },
         }
