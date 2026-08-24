@@ -91,6 +91,17 @@ preserve provider ID, canonical URL hash, source, first-seen timestamp,
 publication timestamp and its confidence, retrieval timestamp, language,
 headline hash, entity links, and license class.
 
+The free, reproducible first implementation combines two sources with distinct
+roles. GDELT Event metadata supplies 15-minute first-seen geopolitical,
+conflict, sanctions, commodity, and macro-event signals; its event date is
+never substituted for `DATEADDED`. SEC submissions supply authoritative
+issuer events using acceptance timestamps plus a conservative availability
+delay, including 8-K, 10-Q, 10-K, 6-K, and 20-F metadata. SEC records with no
+licensed text remain neutral in sentiment rather than receiving synthetic
+polarity. Licensed headline/article embeddings, including FinBERT, are a
+separate enhancement and cannot be trained only on currently available news
+then claimed as a historical feature.
+
 At a close-of-market origin, an article is eligible only when its reliable
 publication/first-seen timestamp precedes the exchange-specific information
 cutoff. Unknown or date-only timestamps are excluded from same-day features.

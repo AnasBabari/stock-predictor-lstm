@@ -11,6 +11,7 @@ from .contracts import (
     VolatilityForecastProtocol,
 )
 from .data import VolatilityPanelExamples, build_volatility_panel_examples
+from .gdelt import GdeltEventRow, gdelt_row_to_news_event, parse_gdelt_v2_export_line
 from .news import NEWS_FEATURE_NAMES_V1, NewsEvent, NewsOrigin, aggregate_news_features
 
 __all__ = [
@@ -22,6 +23,9 @@ __all__ = [
     "save_example_cache",
     "VolatilityPanelExamples",
     "build_volatility_panel_examples",
+    "GdeltEventRow",
+    "gdelt_row_to_news_event",
+    "parse_gdelt_v2_export_line",
     "NEWS_FEATURE_NAMES_V1",
     "NewsEvent",
     "NewsOrigin",
