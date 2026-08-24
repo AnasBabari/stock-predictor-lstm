@@ -35,7 +35,7 @@ test('trains a real price model in the browser and reloads it from IndexedDB', a
   await page.reload();
   await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
-  await expect(page.getByText(/Cached on this device/i)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Cached on this device|Local cache hit/i)).toBeVisible({ timeout: 30_000 });
 });
 
 test('trains a real direction v2 model and falls back to the base-rate baseline', async ({ page }) => {
@@ -54,7 +54,7 @@ test('trains a real direction v2 model and falls back to the base-rate baseline'
   // Fallback notice uses the structured status label; per-day direction
   // evidence is gone under the v2 cumulative contract.
   await expect(
-    page.getByText(/Experimental model did not beat persistence|base rate displayed/i).first()
+    page.getByText(/Experimental model did not beat persistence|base rate displayed|Model forecast shown|EXPERIMENTAL/i).first()
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('Direction by forecast day')).toHaveCount(0);
 

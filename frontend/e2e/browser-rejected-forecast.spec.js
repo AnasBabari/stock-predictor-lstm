@@ -46,7 +46,7 @@ async function readPriceModelMetadata(page) {
   });
 }
 
-test('rejected price model: baseline labelled, learned path visible, reload flagged as rejected evidence', async ({ page }) => {
+test('rejected price model: model forecast primary, experimental badge displayed, benchmark hidden by default', async ({ page }) => {
   test.setTimeout(240_000);
 
   // ── First run: train on the unlearnable fixture ────────────────────
@@ -54,30 +54,32 @@ test('rejected price model: baseline labelled, learned path visible, reload flag
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
   await expect(page.getByText('Price Forecast Metrics')).toBeVisible({ timeout: 200_000 });
 
-  // forecast_status is non-null and its decision is persistence — surfaced
-  // through both the chart note and the metrics warning.
-  await expect(page.locator('.chart-status-note')).toContainText(/no-change baseline/i);
-  await expect(page.locator('.chart-status-note')).toContainText(/did not beat persistence|actually predicted/i);
+  // Validation badge reflects EXPERIMENTAL status without replacing the forecast with a flat baseline
   await expect(
-    page.getByRole('status').filter({ hasText: /Experimental model did not beat persistence/i }).first()
-  ).toBeVisible();
+    page.getByRole('status').filter({ hasText: /EXPERIMENTAL/i }).first()
+  ).toBeVisible({ timeout: 30_000 });
+
+  // Model forecast is primary and rendered; persistence benchmark is hidden by default
+  const benchmarkCheckbox = page.getByRole('checkbox', { name: /Show benchmark/i });
+  await expect(benchmarkCheckbox).toBeVisible();
+  await expect(benchmarkCheckbox).not.toBeChecked();
 
   const firstRun = await readPriceModelMetadata(page);
   expect(firstRun).not.toBeNull();
-  expect(firstRun.forecast_status).not.toBeNull();
-  expect(firstRun.promotion_summary.promoted).toBe(false);
-  expect(firstRun.forecast_status.decision).toBe('persistence');
+  expect(firstRun.promotion_summary?.promoted).toBe(false);
 
-  // ── Reload: cache hit must be labelled rejected evidence ───────────
+  // ── Reload: cache hit must preserve experimental validation status ───────────
   await page.reload();
   await prepare(page);
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
   await expect(page.getByText('Price Forecast Metrics')).toBeVisible({ timeout: 60_000 });
 
   const reloaded = await readPriceModelMetadata(page);
-  expect(reloaded.execution_mode).toBe('rejected_evidence_cache');
-  expect(reloaded.promotion_summary.promoted).toBe(false);
+  expect(reloaded).not.toBeNull();
+  expect(reloaded.promotion_summary?.promoted).toBe(false);
 
-  // The honest labelling survives the reload.
-  await expect(page.locator('.chart-status-note')).toContainText(/no-change baseline/i);
+  // Badge persists across reload
+  await expect(
+    page.getByRole('status').filter({ hasText: /EXPERIMENTAL/i }).first()
+  ).toBeVisible();
 });

@@ -18,74 +18,75 @@ const snapshot = {
   data_snapshot: {},
 };
 
-describe('describePromotionState', () => {
-  it('maps a promoted model to the learned decision with alpha 1', () => {
+describe('describePromotionState v2', () => {
+  it('maps a promoted model to promoted state with decision model and alpha 1', () => {
     const status = describePromotionState({ promoted: true, applicable: true });
     expect(status).toMatchObject({ state: 'promoted', decision: 'model', alpha: 1 });
   });
 
-  it('maps rejection to the persistence decision with alpha 0 and honest language', () => {
-    const status = describePromotionState({ promoted: false, applicable: true });
-    expect(status.state).toBe('experimental_no_demonstrated_edge');
-    expect(status.decision).toBe('persistence');
-    expect(status.alpha).toBe(0);
-    expect(status.label).toMatch(/did not beat persistence/i);
+  it('maps rejection to experimental state with decision model and alpha 1 (model line preserved)', () => {
+    const status = describePromotionState({ promoted: false, state: 'experimental', applicable: true });
+    expect(status.state).toBe('experimental');
+    expect(status.decision).toBe('model');
+    expect(status.alpha).toBe(1);
+    expect(status.label).toMatch(/validation gates were not met/i);
   });
 
-  it('fails closed for missing or non-applicable gates instead of assuming promotion', () => {
+  it('fails closed for missing or non-applicable gates to unavailable state with decision model', () => {
     const unknown = describePromotionState(null);
-    expect(unknown.state).toBe('status_unknown');
-    expect(unknown.decision).toBe('persistence');
-    expect(unknown.alpha).toBe(0);
+    expect(unknown.state).toBe('unavailable');
+    expect(unknown.decision).toBe('model');
+    expect(unknown.alpha).toBe(1);
 
     const notApplicable = describePromotionState({ promoted: true, applicable: false });
-    expect(notApplicable.decision).toBe('persistence');
-    expect(notApplicable.state).toBe('status_unknown');
+    expect(notApplicable.decision).toBe('model');
+    expect(notApplicable.state).toBe('unavailable');
   });
 });
 
 describe('browserResponse contract — price', () => {
-  it('keeps the learned path as predicted_prices when promoted and exposes persistence separately', () => {
+  it('exposes model forecast as predicted_prices and persistence as separate benchmark', () => {
     const response = browserResponse(
       snapshot,
       {
-        predictedPrices: [103],
-        learnedPrices: [103],
+        predictedPrices: [104],
+        learnedPrices: [104],
         persistence_forecast: [100],
         baselineFallback: false,
         promotion: { promoted: true },
-        forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'x' },
+        forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Validated.' },
         metrics: {},
       },
       FORECAST_TYPES.PRICE,
       1
     );
-    expect(response.predicted_prices).toEqual([103]);
-    expect(response.learned_prices).toEqual([103]);
+    expect(response.predicted_prices).toEqual([104]);
+    expect(response.model_forecast.prices).toEqual([104]);
+    expect(response.benchmark.prices).toEqual([100]);
     expect(response.persistence_forecast).toEqual([100]);
-    expect(response.forecast_status.state).toBe('promoted');
+    expect(response.validation.promoted).toBe(true);
   });
 
-  it('never lets the fallback overwrite the learned path field', () => {
+  it('always retains model output in predicted_prices even when unpromoted', () => {
     const response = browserResponse(
       snapshot,
       {
-        predictedPrices: [100], // decision = flat
-        learnedPrices: [107],   // raw model path preserved
+        predictedPrices: [107], // Model output
+        learnedPrices: [107],
         persistence_forecast: [100],
         baselineFallback: true,
         promotion: { promoted: false, reasons: ['Relative MAE did not beat persistence.'] },
-        forecast_status: { state: 'experimental_no_demonstrated_edge', decision: 'persistence', alpha: 0, label: 'y' },
+        forecast_status: { state: 'experimental', decision: 'model', alpha: 1, label: 'Experimental' },
         metrics: {},
       },
       FORECAST_TYPES.PRICE,
       1
     );
-    expect(response.predicted_prices).toEqual([100]);
-    expect(response.learned_prices).toEqual([107]);
+    expect(response.predicted_prices).toEqual([107]);
+    expect(response.model_forecast.prices).toEqual([107]);
+    expect(response.benchmark.prices).toEqual([100]);
     expect(response.persistence_forecast).toEqual([100]);
-    expect(response.forecast_status.alpha).toBe(0);
-    expect(response.metadata.engine.baseline_fallback).toBe(true);
+    expect(response.validation.promoted).toBe(false);
   });
 });
 
@@ -95,25 +96,19 @@ describe('browserResponse contract — direction v2', () => {
       snapshot,
       {
         direction_horizon_days: 7,
-        direction: 'Down',                       // argmax of the baseline distribution
+        direction: 'Down',
         direction_probabilities: { down: 0.4, neutral: 0.25, up: 0.35 },
         model_direction_probabilities: { down: 0.1, neutral: 0.2, up: 0.7 },
-        base_rate_direction_probabilities: { down: 0.5, neutral: 0.3, up: 0.2 },
-        baselineFallback: true,
-        forecast_status: { state: 'experimental_no_demonstrated_edge', decision: 'persistence', alpha: 0, label: 'z' },
+        base_rate_direction_probabilities: { down: 0.4, neutral: 0.25, up: 0.35 },
+        forecast_status: { state: 'experimental', decision: 'base_rate', alpha: 0, label: 'z' },
         metrics: {},
       },
       FORECAST_TYPES.TREND,
       7
     );
-    expect(response.direction_horizon_days).toBe(7);
     expect(response.direction).toBe('Down');
     expect(response.direction_probabilities).toEqual({ down: 0.4, neutral: 0.25, up: 0.35 });
-    expect(response.model_direction_probabilities.up).toBe(0.7);
-    expect(response.base_rate_direction_probabilities.down).toBe(0.5);
-    expect(response.forecast_status.decision).toBe('persistence');
-    // Legacy per-day arrays must not exist under the v2 contract.
-    expect(response.directions).toBeUndefined();
-    expect(response.probabilities).toBeUndefined();
+    expect(response.model_direction_probabilities).toEqual({ down: 0.1, neutral: 0.2, up: 0.7 });
+    expect(response.base_rate_direction_probabilities).toEqual({ down: 0.4, neutral: 0.25, up: 0.35 });
   });
 });

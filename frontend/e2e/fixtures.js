@@ -330,14 +330,17 @@ export function installStubBrowserWorker(page) {
 // the fallback-labelling contract end to end.
 export function rejectedForecastSnapshot(ticker = 'IGC') {
   const snapshot = deterministicSnapshot(ticker);
-  let state = 987654321;
-  const nextRandom = () => {
-    state = (state * 1103515245 + 12345) % 2147483648;
-    return state / 2147483648 - 0.5;
-  };
+  const total = snapshot.historical_prices.length;
+  const split = Math.floor(total * 0.8);
   const prices = [snapshot.historical_prices[0]];
-  for (let i = 1; i < snapshot.historical_prices.length; i += 1) {
-    prices.push(Math.max(1, prices[i - 1] * Math.exp(nextRandom() * 0.02)));
+  for (let i = 1; i < total; i += 1) {
+    if (i < split) {
+      // Training regime: upward drift
+      prices.push(prices[i - 1] * 1.005);
+    } else {
+      // Holdout regime: severe adverse drop (model trained on upward drift will severely miss)
+      prices.push(prices[i - 1] * 0.96);
+    }
   }
   return { ...snapshot, ticker, historical_prices: prices };
 }

@@ -12,6 +12,7 @@ import HoldoutComparisonChart from './components/HoldoutComparisonChart';
 import ModelCard from './components/ModelCard';
 import GlobalModelStatus from './components/GlobalModelStatus';
 import ForecastChartActions from './components/ForecastChartActions';
+import ResearchSignalsPanel from './components/ResearchSignalsPanel';
 import Watchlist from './components/Watchlist';
 import PredictionHistory from './components/PredictionHistory';
 import ToastContainer from './components/ToastContainer';
@@ -95,7 +96,17 @@ export default function App() {
     [addToast, handlePredict, setTicker]
   );
 
+  const handleSwitchHorizon = useCallback(
+    (newHorizon) => {
+      setForecastDays(newHorizon);
+      handlePredict(ticker, forecastType, newHorizon);
+    },
+    [forecastType, handlePredict, setForecastDays, ticker]
+  );
+
   const isBusy = isLoading || isExportLoading;
+  const lastClose = Number(predictionData?.historical_prices?.at(-1));
+  const isSubDollar = Number.isFinite(lastClose) && lastClose > 0 && lastClose < 1.0;
 
   return (
     <div className="app-container">
@@ -137,6 +148,15 @@ export default function App() {
           <div className="error-banner" role="alert">
             <span className="error-icon">⚠️</span>
             <span className="error-text">{errorMsg}</span>
+          </div>
+        )}
+
+        {isSubDollar && (
+          <div className="subdollar-notice" role="status">
+            <span className="notice-icon">ℹ</span>
+            <span>
+              <strong>Low-priced security:</strong> Small absolute price moves can create large percentage returns; forecast uncertainty may be elevated.
+            </span>
           </div>
         )}
 
@@ -216,8 +236,10 @@ export default function App() {
             <MetricsCard
               stockData={predictionData}
               forecastType={forecastType}
+              onSwitchHorizon={handleSwitchHorizon}
             />
             <HoldoutComparisonChart data={predictionData} />
+            <ResearchSignalsPanel />
             <GlobalModelStatus data={predictionData} />
             <ModelCard data={predictionData} />
           </>

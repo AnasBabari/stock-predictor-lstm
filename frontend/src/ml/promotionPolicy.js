@@ -1,20 +1,21 @@
+export const PROMOTION_POLICY_VERSION = 'v2';
+
 export const PROMOTION_THRESHOLDS = Object.freeze({
-  maximumRelativeMae: 0.98,
-  maximumRelativeRmse: 0.98,
+  maximumRelativeMae: 1.0,
+  maximumRelativeRmse: 1.0,
   minimumWinningFolds: 4,
-  maximumFoldRelativeRmse: 1.25,
+  maximumFoldRelativeRmse: 1.35,
   minimumEvaluationRows: 60,
   maximumVolatilityMultiple: 4,
   volatilityPercentile: 0.995,
   recentVolatilityWindow: 60,
-  hardHorizonRelativeCap: 1.0,
   minimumBalancedAccuracy: 0.55,
-  maximumRelativeBrier: 0.98,
+  maximumRelativeBrier: 1.0,
   minimumDirectionFoldAccuracy: 0.5,
 });
 
 function finite(value) {
-  return Number.isFinite(Number(value));
+  return value != null && Number.isFinite(Number(value));
 }
 
 export function dailyLogReturns(closingPrices) {
@@ -86,6 +87,121 @@ export function volatilityAssessment({ closingPrices, horizon, predictedCumulati
   };
 }
 
+/**
+ * Independent promotion decision for a single forecast horizon.
+ */
+export function evaluateHorizonPromotion({
+  horizon,
+  horizonMetrics,
+  evaluation,
+  closingPrices,
+  predictedCumulativeReturn,
+  thresholds = PROMOTION_THRESHOLDS,
+}) {
+  const h = Math.max(1, Math.round(Number(horizon) || 1));
+  const reasons = [];
+  const checks = { horizon: h, applicable: true };
+
+  if (!horizonMetrics || typeof horizonMetrics !== 'object') {
+    return {
+      horizon: h,
+      passed: false,
+      state: 'unavailable',
+      reasons: ['Evaluation metrics are unavailable.'],
+      checks: { ...checks, complete: false },
+    };
+  }
+
+  const maeFinite = finite(horizonMetrics.mae) && finite(horizonMetrics.rmse);
+  const relativeFinite = finite(horizonMetrics.relative_mae) && finite(horizonMetrics.relative_rmse);
+  checks.finiteMetrics = maeFinite && relativeFinite;
+  if (!maeFinite || !relativeFinite) {
+    reasons.push('Metrics contain non-finite values.');
+  }
+
+  const relRmse = Number(horizonMetrics.relative_rmse);
+  const relMae = Number(horizonMetrics.relative_mae);
+  checks.relativeRmse = relRmse;
+  checks.relativeMae = relMae;
+
+  const rows = Number(horizonMetrics.rows ?? horizonMetrics.evaluation_rows ?? 0);
+  checks.rows = rows;
+  if (rows < Number(thresholds.minimumEvaluationRows)) {
+    reasons.push('The horizon has too few evaluated observations.');
+  }
+
+  if (relRmse >= Number(thresholds.maximumRelativeRmse)) {
+    reasons.push('Relative RMSE did not beat persistence.');
+  }
+  if (relMae > Number(thresholds.maximumRelativeMae)) {
+    reasons.push('Relative MAE did not beat persistence.');
+  }
+
+  // Fold stability checks (if multi-fold research split)
+  const foldSummaries = Array.isArray(evaluation?.fold_summaries) ? evaluation.fold_summaries : [];
+  const totalFolds = Math.round(Number(evaluation?.total_folds) || 0);
+  let foldCheckPassed = true;
+
+  if (totalFolds > 1) {
+    const validFolds = foldSummaries.every(
+      (summary) => summary && finite(summary.relative_rmse ?? summary.metrics?.relative_rmse)
+    );
+    if (!validFolds || foldSummaries.length !== totalFolds) {
+      reasons.push('Fold evaluation is incomplete.');
+      foldCheckPassed = false;
+    } else {
+      const foldRmses = foldSummaries.map(
+        (summary) => Number(summary.relative_rmse ?? summary.metrics?.relative_rmse)
+      );
+      const winningFolds = foldRmses.filter((val) => val < 1.0).length;
+      const maxFoldRelativeRmse = Math.max(...foldRmses);
+      checks.winningFolds = winningFolds;
+      checks.maxFoldRelativeRmse = maxFoldRelativeRmse;
+
+      if (winningFolds < Number(thresholds.minimumWinningFolds)) {
+        reasons.push(`Model won only ${winningFolds} of ${totalFolds} folds.`);
+        foldCheckPassed = false;
+      }
+      if (maxFoldRelativeRmse > Number(thresholds.maximumFoldRelativeRmse)) {
+        reasons.push('A validation fold exceeded the allowed degradation threshold.');
+        foldCheckPassed = false;
+      }
+    }
+  }
+
+  // Volatility plausibility check
+  if (closingPrices && predictedCumulativeReturn != null) {
+    const volatility = volatilityAssessment({
+      closingPrices,
+      horizon: h,
+      predictedCumulativeReturn,
+      thresholds,
+    });
+    checks.volatility = volatility;
+    if (!volatility.plausible) {
+      reasons.push('The forecast exceeded its historically observed volatility range.');
+    }
+  }
+
+  const passed = reasons.length === 0;
+  let state = 'experimental';
+  if (passed) {
+    state = 'promoted';
+  } else if (relRmse < 1.0 && foldCheckPassed === false) {
+    state = 'candidate';
+  } else if (!maeFinite || !relativeFinite) {
+    state = 'unavailable';
+  }
+
+  return {
+    horizon: h,
+    passed,
+    state,
+    reasons,
+    checks,
+  };
+}
+
 export function evaluatePromotion({
   forecastType = 'price',
   metrics,
@@ -95,106 +211,103 @@ export function evaluatePromotion({
   closingPrices,
   thresholds = PROMOTION_THRESHOLDS,
 } = {}) {
-  const checks = { applicable: true };
+  const checks = { applicable: true, policy_version: PROMOTION_POLICY_VERSION };
   if (forecastType === 'direction') {
     return evaluateDirectionPromotion({ metrics, evaluation, thresholds });
   }
   if (forecastType !== 'price') {
-    return { promoted: true, applicable: false, reasons: [], checks: { applicable: false } };
+    return {
+      promoted: true,
+      state: 'promoted',
+      applicable: false,
+      reasons: [],
+      checks: { applicable: false },
+      promoted_horizons: [],
+      best_validated_horizon: null,
+    };
   }
-  const reasons = [];
+
   const h = Math.max(1, Math.round(Number(horizon) || 1));
-
   if (!metrics || typeof metrics !== 'object') {
-    reasons.push('Evaluation is incomplete.');
-    return { promoted: false, applicable: true, reasons, checks };
+    return {
+      promoted: false,
+      state: 'unavailable',
+      applicable: true,
+      reasons: ['Evaluation is incomplete.'],
+      checks: { ...checks, complete: false },
+      promoted_horizons: [],
+      best_validated_horizon: null,
+    };
   }
 
-  const maeFinite = finite(metrics.mae) && finite(metrics.rmse);
-  const relativeFinite = finite(metrics.relative_mae) && finite(metrics.relative_rmse);
-  if (!maeFinite || !relativeFinite) {
-    reasons.push('Metrics contain non-finite values.');
-  }
-  checks.finiteMetrics = maeFinite && relativeFinite;
-
-  if (Number(metrics.relative_mae) >= Number(thresholds.maximumRelativeMae)) {
-    reasons.push('Relative MAE did not beat persistence.');
-  }
-  if (Number(metrics.relative_rmse) >= Number(thresholds.maximumRelativeRmse)) {
-    reasons.push('Relative RMSE did not beat persistence.');
-  }
-  checks.relativeMae = Number(metrics.relative_mae);
-  checks.relativeRmse = Number(metrics.relative_rmse);
-
-  const foldSummaries = Array.isArray(evaluation?.fold_summaries) ? evaluation.fold_summaries : [];
-  const totalFolds = Math.round(Number(evaluation?.total_folds) || 0);
-  const completeEvaluation = Boolean(evaluation?.complete) && totalFolds > 0 && (
-    totalFolds === 1 ? foldSummaries.length <= 1 : foldSummaries.length === totalFolds
-  );
-  checks.completeEvaluation = completeEvaluation;
-  checks.totalFolds = totalFolds;
-
-  if (!completeEvaluation) {
-    reasons.push('Evaluation is incomplete.');
-  } else if (totalFolds > 1) {
-    const validFolds = foldSummaries.every(
-      (summary) => summary && finite(summary.relative_rmse ?? summary.metrics?.relative_rmse)
-    );
-    if (!validFolds) reasons.push('Evaluation is incomplete.');
-    else {
-      const foldRmses = foldSummaries.map(
-        (summary) => Number(summary.relative_rmse ?? summary.metrics?.relative_rmse)
-      );
-      const winningFolds = foldRmses.filter((value) => value < 1).length;
-      const maxFoldRelativeRmse = Math.max(...foldRmses);
-      checks.winningFolds = winningFolds;
-      checks.maxFoldRelativeRmse = maxFoldRelativeRmse;
-      if (winningFolds < Number(thresholds.minimumWinningFolds)) {
-        reasons.push(`Model won only ${winningFolds} of ${totalFolds} folds.`);
-      }
-      if (maxFoldRelativeRmse > Number(thresholds.maximumFoldRelativeRmse)) {
-        reasons.push('A research fold exceeded the allowed degradation threshold.');
-      }
-    }
+  const topMaeFinite = finite(metrics.mae) && finite(metrics.rmse);
+  const topRelFinite = finite(metrics.relative_mae) && finite(metrics.relative_rmse);
+  if (!topMaeFinite || !topRelFinite) {
+    return {
+      promoted: false,
+      state: 'unavailable',
+      applicable: true,
+      reasons: ['Metrics contain non-finite values.'],
+      checks: { ...checks, finiteMetrics: false },
+      promoted_horizons: [],
+      best_validated_horizon: null,
+    };
   }
 
   const perHorizon = Array.isArray(metrics.per_horizon) ? metrics.per_horizon : [];
-  const selected = perHorizon.find((entry) => Number(entry.horizon) === h);
-  const dayOne = perHorizon.find((entry) => Number(entry.horizon) === 1);
-  const selectedRows = Number(selected?.rows ?? metrics.evaluation_rows ?? 0);
-  checks.horizonRows = selectedRows;
-  checks.evaluationRows = Number(metrics.evaluation_rows ?? selectedRows);
+  const perHorizonDecisions = perHorizon.map((entry) => {
+    const dec = evaluateHorizonPromotion({
+      horizon: Number(entry.horizon),
+      horizonMetrics: entry,
+      evaluation,
+      closingPrices,
+      predictedCumulativeReturn: Number(entry.horizon) === h ? predictedCumulativeReturn : null,
+      thresholds,
+    });
+    entry.promotion = dec;
+    return dec;
+  });
 
-  if (selectedRows < Number(thresholds.minimumEvaluationRows)) {
-    reasons.push('The selected horizon has too few evaluated observations.');
-  }
+  const promotedHorizons = perHorizonDecisions
+    .filter((d) => d.passed)
+    .map((d) => d.horizon);
 
-  const horizonCap = Number(thresholds.hardHorizonRelativeCap);
-  if (dayOne && finite(dayOne.relative_mae) && finite(dayOne.relative_rmse) &&
-      (Number(dayOne.relative_mae) >= horizonCap || Number(dayOne.relative_rmse) >= horizonCap)) {
-    reasons.push('The model did not beat persistence at the one-day horizon.');
-  }
-  if (selected && selected.horizon !== 1 && finite(selected.relative_mae) && finite(selected.relative_rmse) &&
-      (Number(selected.relative_mae) >= horizonCap || Number(selected.relative_rmse) >= horizonCap)) {
-    reasons.push('The model did not beat persistence at the selected horizon.');
-  }
-  checks.dayOneRelativeMae = dayOne ? Number(dayOne.relative_mae) : null;
-  checks.dayOneRelativeRmse = dayOne ? Number(dayOne.relative_rmse) : null;
-  checks.horizonRelativeMae = selected ? Number(selected.relative_mae) : null;
-  checks.horizonRelativeRmse = selected ? Number(selected.relative_rmse) : null;
+  // Auto champion ranking across promoted horizons:
+  // 1. Lowest relative RMSE
+  // 2. Lowest relative MAE
+  // 3. Horizon order
+  const bestValidatedHorizon = promotedHorizons.length > 0
+    ? [...perHorizon]
+        .filter((entry) => promotedHorizons.includes(Number(entry.horizon)))
+        .sort((a, b) => {
+          const rmseDiff = Number(a.relative_rmse) - Number(b.relative_rmse);
+          if (Math.abs(rmseDiff) > 1e-6) return rmseDiff;
+          return Number(a.relative_mae) - Number(b.relative_mae);
+        })[0]?.horizon ?? promotedHorizons[0]
+    : null;
 
-  const volatility = volatilityAssessment({
-    closingPrices,
+  // Evaluate requested horizon independently
+  const selectedMetric = perHorizon.find((entry) => Number(entry.horizon) === h) || metrics;
+  const requestedDecision = evaluateHorizonPromotion({
     horizon: h,
+    horizonMetrics: selectedMetric,
+    evaluation,
+    closingPrices,
     predictedCumulativeReturn,
     thresholds,
   });
-  checks.volatility = volatility;
-  if (!volatility.plausible) {
-    reasons.push('The learned forecast exceeded its historically observed volatility range.');
-  }
 
-  return { promoted: reasons.length === 0, applicable: true, reasons, checks };
+  return {
+    promoted: requestedDecision.passed,
+    state: requestedDecision.state,
+    applicable: true,
+    reasons: requestedDecision.reasons,
+    checks: { ...checks, ...requestedDecision.checks },
+    per_horizon_decisions: perHorizonDecisions,
+    promoted_horizons: promotedHorizons,
+    best_validated_horizon: bestValidatedHorizon,
+    requested_horizon: h,
+  };
 }
 
 export function buildPersistenceForecast(closingPrices, days) {
@@ -203,60 +316,77 @@ export function buildPersistenceForecast(closingPrices, days) {
   return Array.from({ length: Math.max(1, Math.round(Number(days) || 1)) }, () => latest);
 }
 
-// User-facing status contract (overhaul slice 1). The decision path is what
-// the UI presents as "the forecast"; the model path is always preserved
-// separately so a safety fallback can never masquerade as an LSTM output.
-// alpha is the blend weight toward the learned path: 1 = promoted as-is,
-// 0 = pure baseline. Blending between 0 and 1 arrives in the per-horizon
-// champion slice; until then the policy remains all-or-nothing.
+/**
+ * User-facing promotion status descriptor.
+ *
+ * CRITICAL PRODUCT CONTRACT:
+ * - The decision is ALWAYS 'model' (alpha: 1) for all successfully generated model forecasts.
+ * - Promotion status controls the badge and scientific claim, NEVER overwriting the chart series with persistence.
+ */
 export function describePromotionState(promotion) {
   if (!promotion || typeof promotion !== 'object') {
-    // Never assume promotion from missing evidence.
     return {
-      state: 'status_unknown',
-      decision: 'persistence',
-      alpha: 0,
-      label: 'Forecast status could not be verified; showing the no-change baseline.',
+      state: 'unavailable',
+      decision: 'model',
+      alpha: 1,
+      label: 'Validation status could not be verified.',
     };
   }
   if (promotion.applicable === false) {
-    // No gate ran: there is no promotion evidence, so fail closed even if a
-    // stray promoted flag is present.
     return {
-      state: 'status_unknown',
-      decision: 'persistence',
-      alpha: 0,
-      label: 'No promotion gate applies to this response; showing the no-change baseline rather than an uncertified model path.',
+      state: 'unavailable',
+      decision: 'model',
+      alpha: 1,
+      label: 'No validation gate configured for this response type.',
     };
   }
-  if (promotion.promoted) {
+  if (promotion.promoted || promotion.state === 'promoted') {
     return {
       state: 'promoted',
       decision: 'model',
       alpha: 1,
-      label: 'Promoted: beat persistence on the untouched holdout.',
+      label: 'Validated against persistence on held-out evaluation.',
+    };
+  }
+  if (promotion.state === 'candidate') {
+    return {
+      state: 'candidate',
+      decision: 'model',
+      alpha: 1,
+      label: 'Competitive with benchmark but promotion evidence is incomplete.',
+    };
+  }
+  if (promotion.state === 'unavailable') {
+    return {
+      state: 'unavailable',
+      decision: 'model',
+      alpha: 1,
+      label: 'Validation unavailable: evaluation could not be completed.',
     };
   }
   return {
-    state: 'experimental_no_demonstrated_edge',
-    decision: 'persistence',
-    alpha: 0,
-    label:
-      'Experimental model did not beat persistence on the untouched holdout; ' +
-      'the forecast shown is the no-change baseline and the raw learned path is drawn for comparison.',
+    state: 'experimental',
+    decision: 'model',
+    alpha: 1,
+    label: 'Model forecast shown for research; validation gates were not met.',
   };
 }
 
 export function evaluateDirectionPromotion({ metrics, evaluation, thresholds = PROMOTION_THRESHOLDS }) {
-  // Direction v2 gates operate on the multiclass evidence produced by
-  // classificationMetricsV3 (three-way cumulative contract). Numeric gates
-  // are interim; slice 10 replaces them with block-bootstrap/DM significance.
-  const checks = { applicable: true };
+  const checks = { applicable: true, policy_version: PROMOTION_POLICY_VERSION };
   const reasons = [];
 
   if (!metrics || typeof metrics !== 'object') {
     reasons.push('Evaluation is incomplete.');
-    return { promoted: false, applicable: true, reasons, checks };
+    return {
+      promoted: false,
+      state: 'unavailable',
+      applicable: true,
+      reasons,
+      checks,
+      promoted_horizons: [],
+      best_validated_horizon: null,
+    };
   }
 
   const macroBalancedAccuracy = Number(metrics.macro_balanced_accuracy);
@@ -272,7 +402,6 @@ export function evaluateDirectionPromotion({ metrics, evaluation, thresholds = P
   checks.logLoss = logLoss;
   checks.evaluationOrigins = rowCount;
 
-  const finite = (v) => Number.isFinite(Number(v));
   const metricsFinite = [macroBalancedAccuracy, macroF1, logLoss].every(finite) &&
     (brierSkill == null || finite(brierSkill));
   checks.finiteMetrics = metricsFinite;
@@ -324,5 +453,14 @@ export function evaluateDirectionPromotion({ metrics, evaluation, thresholds = P
     reasons.push('The direction model has too few evaluated observations.');
   }
 
-  return { promoted: reasons.length === 0, applicable: true, reasons, checks };
+  const passed = reasons.length === 0;
+  return {
+    promoted: passed,
+    state: passed ? 'promoted' : 'experimental',
+    applicable: true,
+    reasons,
+    checks,
+    promoted_horizons: passed ? [1] : [],
+    best_validated_horizon: passed ? 1 : null,
+  };
 }

@@ -9,11 +9,36 @@ vi.mock('./ml/browserTrainingClient', () => ({
   browserTrainingSupported: vi.fn(() => true),
   clearBrowserModelCache: vi.fn(() => Promise.resolve()),
   trainBrowserForecast: vi.fn(({ forecastType, days, signal, onProgress }) => {
+    const horizonCount = typeof days === 'number' && days > 0 ? days : 7;
     browserTrainingState.signal = signal;
     onProgress?.({ stage: 'training', message: 'Training epoch 4 of 12…' });
     const result = forecastType === 'trend'
-      ? { direction_horizon_days: days, direction: 'Up', direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 }, model_direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 }, persistence_direction_probabilities: { down: 0.2, neutral: 0.6, up: 0.2 }, forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Promoted' }, promotion: { promoted: true }, metrics: { metric_source: 'browser_purged_holdout', macro_balanced_accuracy: 0.6 }, cacheStatus: 'stored', backend: 'cpu', executionMode: 'browser_trained' }
-      : { predictedPrices: Array.from({ length: days }, (_, index) => 405 + index), metrics: { metric_source: 'browser_purged_holdout', rmse: 1.2, mae: 0.8 }, cacheStatus: 'stored', backend: 'cpu', executionMode: 'browser_trained' };
+      ? {
+          direction_horizon_days: horizonCount,
+          direction: 'Up',
+          direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 },
+          model_direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 },
+          persistence_direction_probabilities: { down: 0.2, neutral: 0.6, up: 0.2 },
+          forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Promoted' },
+          validation: { state: 'promoted', promoted: true, selected_horizon: horizonCount },
+          promotion: { promoted: true },
+          metrics: { metric_source: 'browser_purged_holdout', macro_balanced_accuracy: 0.6 },
+          cacheStatus: 'stored',
+          backend: 'cpu',
+          executionMode: 'browser_trained',
+        }
+      : {
+          predictedPrices: Array.from({ length: horizonCount }, (_, index) => 405 + index),
+          learnedPrices: Array.from({ length: horizonCount }, (_, index) => 405 + index),
+          persistence_forecast: Array.from({ length: horizonCount }, () => 400),
+          forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Promoted' },
+          validation: { state: 'promoted', promoted: true, selected_horizon: horizonCount },
+          promotion: { promoted: true },
+          metrics: { metric_source: 'browser_purged_holdout', rmse: 1.2, mae: 0.8, relative_rmse: 0.95, relative_mae: 0.95 },
+          cacheStatus: 'stored',
+          backend: 'cpu',
+          executionMode: 'browser_trained',
+        };
     return new Promise((resolve, reject) => {
       browserTrainingState.reject = reject;
       signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')), { once: true });

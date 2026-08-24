@@ -1,33 +1,32 @@
 /**
- * Pure price-chart dataset assembly (overhaul slice 1).
+ * Pure price-chart dataset assembly.
  *
- * Contract:
- * - The decision path (what policy selected) is always drawn prominently and
- *   labelled truthfully — "Forecast" when promoted, "No-change baseline"
- *   when the learned model failed promotion.
- * - When the decision path is the baseline, the raw learned path is still
- *   drawn as a dashed diagnostic so a safety fallback can never masquerade
- *   as an LSTM output.
+ * Core Product Contract:
+ * - The primary series is ALWAYS the Model Forecast (solid bright teal/green line).
+ * - Promotion status controls the badge and scientific claim, never mutates the forecast into a flat line.
+ * - Persistence Benchmark is optional and hidden by default, drawn as a thin dashed grey line only when showBenchmark is enabled.
  */
 
 const COLORS = {
   histDark: '#58a6ff',
   histLight: '#3b82f6',
-  decisionDark: '#00f5a0',
-  decisionLight: '#10b981',
-  learnedDark: '#8b93a7',
-  learnedLight: '#64748b',
+  modelDark: '#00f5a0',
+  modelLight: '#10b981',
+  benchDark: '#8b93a7',
+  benchLight: '#64748b',
+  bandFillDark: 'rgba(0, 245, 160, 0.08)',
+  bandFillLight: 'rgba(16, 185, 129, 0.08)',
 };
 
-function padDecision(values, leadNulls, anchorPrice) {
+function padForecast(values, leadNulls, anchorPrice) {
   return [
     ...Array(Math.max(0, leadNulls)).fill(null),
     ...(anchorPrice != null ? [anchorPrice] : []),
-    ...values,
+    ...(values || []),
   ];
 }
 
-export function buildPriceSeries(stockData, daysView, isDark) {
+export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = false) {
   if (!stockData || !stockData.historical_prices || !stockData.predicted_prices) {
     return null;
   }
@@ -36,7 +35,7 @@ export function buildPriceSeries(stockData, daysView, isDark) {
   }
 
   const total = stockData.historical_prices.length;
-  const sliceIdx = Math.max(0, total - daysView);
+  const sliceIdx = Math.max(0, total - (daysView || total));
   const sliceDates = stockData.historical_dates.slice(sliceIdx);
   const slicePrices = stockData.historical_prices.slice(sliceIdx);
   const futureCount = Array.isArray(stockData.future_dates) ? stockData.future_dates.length : 0;
@@ -45,24 +44,18 @@ export function buildPriceSeries(stockData, daysView, isDark) {
   const allDates = [...sliceDates, ...stockData.future_dates];
   const historicalPadded = [...slicePrices, ...Array(futureCount).fill(null)];
   const lastClose = slicePrices[slicePrices.length - 1];
-  // Forecast lines start at the last historical close: one null per earlier
-  // historical point, then the anchor.
   const forecastLead = Math.max(0, slicePrices.length - 1);
+  const forecastSplitIndex = slicePrices.length - 1;
 
-  // Fail closed: an absent or unrecognised status must never be treated as
-  // promotion. Only an explicit promoted/model decision draws the optimistic
-  // framing; anything else is labelled as what it is.
-  const status = stockData.forecast_status || null;
-  const promoted = status?.state === 'promoted' && status?.decision === 'model';
-  const decisionLabel = promoted ? 'Predicted Price' : 'No-change baseline';
-  const decisionColor = isDark ? COLORS.decisionDark : COLORS.decisionLight;
-  const learnedColor = isDark ? COLORS.learnedDark : COLORS.learnedLight;
+  const modelColor = isDark ? COLORS.modelDark : COLORS.modelLight;
+  const benchColor = isDark ? COLORS.benchDark : COLORS.benchLight;
+  const histColor = isDark ? COLORS.histDark : COLORS.histLight;
 
   const datasets = [
     {
       label: 'Historical Price',
       data: historicalPadded,
-      borderColor: isDark ? COLORS.histDark : COLORS.histLight,
+      borderColor: histColor,
       backgroundColor: (context) => {
         const ctx = context.chart.ctx;
         const grad = ctx.createLinearGradient(0, 0, 0, 400);
@@ -73,17 +66,16 @@ export function buildPriceSeries(stockData, daysView, isDark) {
       borderWidth: 2,
       pointRadius: 0,
       pointHoverRadius: 5,
-      pointHoverBackgroundColor: isDark ? COLORS.histDark : COLORS.histLight,
-      tension: 0.35,
+      pointHoverBackgroundColor: histColor,
+      tension: 0.3,
       fill: true,
       spanGaps: false,
     },
     {
-      label: decisionLabel,
-      data: padDecision(stockData.predicted_prices, forecastLead, lastClose),
-      borderColor: decisionColor,
+      label: 'Model Forecast',
+      data: padForecast(stockData.predicted_prices, forecastLead, lastClose),
+      borderColor: modelColor,
       backgroundColor: (context) => {
-        if (!promoted) return 'transparent';
         const ctx = context.chart.ctx;
         const grad = ctx.createLinearGradient(0, 0, 0, 400);
         grad.addColorStop(0, isDark ? 'rgba(0,245,160,0.12)' : 'rgba(16,185,129,0.08)');
@@ -92,64 +84,68 @@ export function buildPriceSeries(stockData, daysView, isDark) {
       },
       borderWidth: 2.5,
       pointRadius: 4,
-      pointBackgroundColor: decisionColor,
+      pointBackgroundColor: modelColor,
       pointHoverRadius: 6,
-      borderDash: promoted ? [6, 3] : [4, 4],
-      tension: promoted ? 0.35 : 0,
+      borderDash: [],
+      tension: 0.3,
       fill: true,
       spanGaps: false,
     },
   ];
 
-  // Learned diagnostic path: shown whenever it differs from the decision path
-  // so users can see what the model actually produced before policy applied.
-  let annotation = null;
-  const learnedArray =
-    Array.isArray(stockData.learned_prices) && stockData.learned_prices.length
-      ? stockData.learned_prices
-      : null;
-  if (!promoted) {
-    if (learnedArray) {
-      datasets.push({
-        label: 'Learned model (not promoted)',
-        data: padDecision(learnedArray, forecastLead, lastClose),
-        borderColor: learnedColor,
-        backgroundColor: 'transparent',
-        borderWidth: 1.5,
-        pointRadius: 2,
-        pointBackgroundColor: learnedColor,
-        borderDash: [2, 3],
-        tension: 0.35,
-        fill: false,
-        spanGaps: false,
-      });
-    }
-    if (status?.state === 'experimental_no_demonstrated_edge') {
-      annotation =
-        'Green path is the no-change baseline: the local model did not beat persistence on its holdout.' +
-        (learnedArray ? ' Dashed grey shows what the model actually predicted.' : '');
-    } else if (!status) {
-      annotation =
-        'Green path is the no-change baseline: forecast status is unavailable for this request.' +
-        (learnedArray ? ' Dashed grey shows what the model actually predicted.' : ' No learned path is presented.');
-    } else if (learnedArray) {
-      annotation =
-        'Green path is the no-change baseline: forecast status could not be verified. Dashed grey shows what the model actually predicted.';
-    } else {
-      annotation =
-        'Green path is the no-change baseline: forecast status could not be verified, so no learned path is presented.';
-    }
+  // Optional Forecast Error Range Band
+  const errorBand = stockData.historical_error_band;
+  if (errorBand && Array.isArray(errorBand.upper_prices) && Array.isArray(errorBand.lower_prices)) {
+    datasets.push({
+      label: '90% Empirical Error Range (Upper)',
+      data: padForecast(errorBand.upper_prices, forecastLead, lastClose),
+      borderColor: 'transparent',
+      backgroundColor: isDark ? COLORS.bandFillDark : COLORS.bandFillLight,
+      pointRadius: 0,
+      fill: '+1', // Fill down to the lower band
+      tension: 0.3,
+      spanGaps: false,
+    });
+    datasets.push({
+      label: '90% Empirical Error Range (Lower)',
+      data: padForecast(errorBand.lower_prices, forecastLead, lastClose),
+      borderColor: 'transparent',
+      backgroundColor: 'transparent',
+      pointRadius: 0,
+      fill: false,
+      tension: 0.3,
+      spanGaps: false,
+    });
   }
 
-  return { labels: allDates, datasets, annotation, promoted };
+  // Optional Persistence Benchmark: shown only when explicitly requested
+  if (showBenchmark && (stockData.persistence_forecast || stockData.benchmark?.prices)) {
+    const benchPrices = stockData.persistence_forecast || stockData.benchmark?.prices;
+    datasets.push({
+      label: 'Persistence Benchmark',
+      data: padForecast(benchPrices, forecastLead, lastClose),
+      borderColor: benchColor,
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      pointRadius: 2,
+      pointBackgroundColor: benchColor,
+      borderDash: [4, 4],
+      tension: 0,
+      fill: false,
+      spanGaps: false,
+    });
+  }
+
+  return {
+    labels: allDates,
+    datasets,
+    forecastSplitIndex,
+    lastClose,
+    promoted: stockData.validation?.promoted === true || stockData.forecast_status?.state === 'promoted',
+  };
 }
 
-// Direction charts/panels need labelled trios too; kept alongside the price
-// builder so status language stays in one place.
 export function directionStatusText(status) {
   if (!status) return '';
-  if (status.state === 'promoted') return 'Promoted: beat the pre-evaluation base rate.';
-  return (
-    'Experimental direction model did not demonstrate edge; probabilities shown are the pre-evaluation base rate.'
-  );
+  return status.label || '';
 }

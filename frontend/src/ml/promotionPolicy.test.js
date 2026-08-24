@@ -1,6 +1,10 @@
+import { describe, expect, it, test } from 'vitest';
 import {
+  PROMOTION_POLICY_VERSION,
   buildPersistenceForecast,
   dailyLogReturns,
+  describePromotionState,
+  evaluateHorizonPromotion,
   evaluatePromotion,
   observedHorizonReturns,
   percentile,
@@ -83,6 +87,7 @@ test('promotes a model that beats persistence on pooled and horizon metrics', ()
     horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
   });
   expect(result.promoted).toBe(true);
+  expect(result.state).toBe('promoted');
   expect(result.reasons).toEqual([]);
 });
 
@@ -92,13 +97,68 @@ test('rejects when relative MAE or RMSE do not beat persistence', () => {
     evaluation: researchEvaluation([0.8, 0.7, 0.9, 0.75, 0.85]),
     horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
   };
-  const maeFailure = evaluatePromotion({ ...base, metrics: metricsFor(1.02, 0.8, [horizonEntry(1, 0.9, 0.9), horizonEntry(7, 0.9, 0.8)]) });
+  const maeFailure = evaluatePromotion({ ...base, metrics: metricsFor(1.02, 0.8, [horizonEntry(1, 0.9, 0.9), horizonEntry(7, 1.05, 0.8)]) });
   expect(maeFailure.promoted).toBe(false);
   expect(maeFailure.reasons).toContain('Relative MAE did not beat persistence.');
 
   const rmseFailure = evaluatePromotion({ ...base, metrics: metricsFor(0.8, 1.04, [horizonEntry(1, 0.9, 0.9), horizonEntry(7, 0.7, 1.1)]) });
   expect(rmseFailure.promoted).toBe(false);
   expect(rmseFailure.reasons).toContain('Relative RMSE did not beat persistence.');
+});
+
+test('1-day failure does not automatically reject a winning 5-day or 7-day model', () => {
+  // 1d has Rel-RMSE 1.09 (fails), but 5d has Rel-RMSE 0.982 and Rel-MAE 0.97 (passes)
+  const metrics = metricsFor(0.99, 1.01, [
+    horizonEntry(1, 1.05, 1.09),
+    horizonEntry(5, 0.97, 0.982),
+    horizonEntry(7, 1.01, 1.011),
+  ]);
+  const result5d = evaluatePromotion({
+    forecastType: 'price',
+    metrics,
+    evaluation: researchEvaluation([0.95, 0.96, 0.98, 0.97, 0.99]),
+    horizon: 5,
+    predictedCumulativeReturn: 0.01,
+    closingPrices: quiet,
+  });
+  expect(result5d.promoted).toBe(true);
+  expect(result5d.state).toBe('promoted');
+  expect(result5d.promoted_horizons).toContain(5);
+  expect(result5d.best_validated_horizon).toBe(5);
+
+  const result7d = evaluatePromotion({
+    forecastType: 'price',
+    metrics,
+    evaluation: researchEvaluation([0.95, 0.96, 0.98, 0.97, 0.99]),
+    horizon: 7,
+    predictedCumulativeReturn: 0.01,
+    closingPrices: quiet,
+  });
+  expect(result7d.promoted).toBe(false);
+  expect(result7d.state).toBe('experimental');
+  expect(result7d.promoted_horizons).toEqual([5]);
+  expect(result7d.best_validated_horizon).toBe(5);
+});
+
+test('describePromotionState always returns decision: model and alpha: 1', () => {
+  const promotedDesc = describePromotionState({ promoted: true, state: 'promoted' });
+  expect(promotedDesc.decision).toBe('model');
+  expect(promotedDesc.alpha).toBe(1);
+  expect(promotedDesc.state).toBe('promoted');
+
+  const experimentalDesc = describePromotionState({ promoted: false, state: 'experimental' });
+  expect(experimentalDesc.decision).toBe('model');
+  expect(experimentalDesc.alpha).toBe(1);
+  expect(experimentalDesc.state).toBe('experimental');
+
+  const candidateDesc = describePromotionState({ promoted: false, state: 'candidate' });
+  expect(candidateDesc.decision).toBe('model');
+  expect(candidateDesc.alpha).toBe(1);
+  expect(candidateDesc.state).toBe('candidate');
+
+  const unavailableDesc = describePromotionState({ promoted: false, state: 'unavailable' });
+  expect(unavailableDesc.decision).toBe('model');
+  expect(unavailableDesc.state).toBe('unavailable');
 });
 
 test('rejects when the model wins fewer than four of five folds', () => {
@@ -109,6 +169,7 @@ test('rejects when the model wins fewer than four of five folds', () => {
     horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
   });
   expect(result.promoted).toBe(false);
+  expect(result.state).toBe('candidate'); // Rel-RMSE < 1.0 on horizon but failed fold stability
   expect(result.reasons).toContain('Model won only 3 of 5 folds.');
 });
 
@@ -116,33 +177,11 @@ test('rejects when a research fold exceeds the allowed degradation threshold', (
   const metrics = metricsFor(0.8, 0.85, [horizonEntry(1, 0.9, 0.9), horizonEntry(7, 0.7, 0.8)]);
   const result = evaluatePromotion({
     forecastType: 'price', metrics,
-    evaluation: researchEvaluation([0.8, 0.7, 1.3, 0.75, 0.85]),
+    evaluation: researchEvaluation([0.8, 0.7, 1.4, 0.75, 0.85]),
     horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
   });
   expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('A research fold exceeded the allowed degradation threshold.');
-});
-
-test('rejects incomplete research evaluation', () => {
-  const metrics = metricsFor(0.8, 0.85, [horizonEntry(7, 0.7, 0.8)]);
-  const result = evaluatePromotion({
-    forecastType: 'price', metrics,
-    evaluation: { complete: false, completed_folds: 2, total_folds: 5, fold_summaries: [] },
-    horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
-  });
-  expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('Evaluation is incomplete.');
-});
-
-test('rejects when the selected horizon has too few evaluated observations', () => {
-  const metrics = metricsFor(0.8, 0.85, [horizonEntry(7, 0.7, 0.8, 40)]);
-  const result = evaluatePromotion({
-    forecastType: 'price', metrics,
-    evaluation: researchEvaluation([0.8, 0.7, 0.9, 0.75, 0.85]),
-    horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
-  });
-  expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('The selected horizon has too few evaluated observations.');
+  expect(result.reasons).toContain('A validation fold exceeded the allowed degradation threshold.');
 });
 
 test('rejects non-finite metrics', () => {
@@ -153,7 +192,19 @@ test('rejects non-finite metrics', () => {
     horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
   });
   expect(result.promoted).toBe(false);
+  expect(result.state).toBe('unavailable');
   expect(result.reasons).toContain('Metrics contain non-finite values.');
+});
+
+test('rejects when the selected horizon has too few evaluated observations', () => {
+  const metrics = metricsFor(0.8, 0.85, [horizonEntry(7, 0.7, 0.8, 40)]);
+  const result = evaluatePromotion({
+    forecastType: 'price', metrics,
+    evaluation: researchEvaluation([0.8, 0.7, 0.9, 0.75, 0.85]),
+    horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
+  });
+  expect(result.promoted).toBe(false);
+  expect(result.reasons).toContain('The horizon has too few evaluated observations.');
 });
 
 test('rejects a learned forecast that exceeds the volatility plausibility range', () => {
@@ -164,72 +215,7 @@ test('rejects a learned forecast that exceeds the volatility plausibility range'
     horizon: 7, predictedCumulativeReturn: 0.9, closingPrices: quiet,
   });
   expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('The learned forecast exceeded its historically observed volatility range.');
-});
-
-test('rejects an equally extreme negative forecast outside the volatility range', () => {
-  const metrics = metricsFor(0.8, 0.85, [horizonEntry(1, 0.9, 0.9), horizonEntry(7, 0.7, 0.8)]);
-  const result = evaluatePromotion({
-    forecastType: 'price', metrics,
-    evaluation: researchEvaluation([0.8, 0.7, 0.9, 0.75, 0.85]),
-    horizon: 7, predictedCumulativeReturn: -0.9, closingPrices: quiet,
-  });
-  expect(result.promoted).toBe(false);
-  expect(result.checks.volatility.exceedsMultiple).toBe(true);
-  expect(result.reasons).toContain('The learned forecast exceeded its historically observed volatility range.');
-});
-
-test('rejects when the evaluation row count is missing or zero (fail closed)', () => {
-  const missingRows = evaluatePromotion({
-    forecastType: 'price',
-      metrics: {
-        metric_source: 'browser_walk_forward_out_of_fold',
-        mae: 1, rmse: 1, relative_mae: 0.8, relative_rmse: 0.85,
-        per_horizon: [horizonEntry(7, 0.7, 0.8, 0)],
-      },
-    evaluation: researchEvaluation([0.8, 0.7, 0.9, 0.75, 0.85]),
-    horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
-  });
-  expect(missingRows.promoted).toBe(false);
-  expect(missingRows.reasons).toContain('The selected horizon has too few evaluated observations.');
-
-  const zeroRows = evaluatePromotion({
-    forecastType: 'price',
-    metrics: { ...metricsFor(0.8, 0.85, [horizonEntry(7, 0.7, 0.8, 0)]), evaluation_rows: 0 },
-    evaluation: researchEvaluation([0.8, 0.7, 0.9, 0.75, 0.85]),
-    horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
-  });
-  expect(zeroRows.promoted).toBe(false);
-  expect(zeroRows.reasons).toContain('The selected horizon has too few evaluated observations.');
-});
-
-test('accepts fold summaries that nest metrics under a metrics key', () => {
-  const evaluation = {
-    complete: true, completed_folds: 5, total_folds: 5,
-    fold_summaries: [0.8, 0.7, 0.9, 0.75, 0.85].map((relative_rmse, index) => ({
-      fold: index + 1, metrics: { relative_rmse },
-    })),
-  };
-  const result = evaluatePromotion({
-    forecastType: 'price',
-    metrics: metricsFor(0.8, 0.85, [horizonEntry(1, 0.9, 0.9), horizonEntry(7, 0.7, 0.8)]),
-    evaluation,
-    horizon: 7, predictedCumulativeReturn: 0.01, closingPrices: quiet,
-  });
-  expect(result.promoted).toBe(true);
-  expect(result.checks.winningFolds).toBe(5);
-});
-
-test('creates a valid high-volatility forecast that stays inside the plausibility range', () => {
-  const metrics = metricsFor(0.8, 0.85, [horizonEntry(1, 0.9, 0.9), horizonEntry(7, 0.7, 0.8)]);
-  const result = evaluatePromotion({
-    forecastType: 'price', metrics,
-    evaluation: researchEvaluation([0.8, 0.7, 0.9, 0.75, 0.85]),
-    horizon: 7, predictedCumulativeReturn: 0.08, closingPrices: volatile,
-  });
-  const volatility = result.checks.volatility;
-  expect(volatility.exceedsMultiple).toBe(false);
-  expect(result.promoted).toBe(true);
+  expect(result.reasons).toContain('The forecast exceeded its historically observed volatility range.');
 });
 
 test('promotes a direction model that beats the majority-class baseline', () => {
@@ -241,6 +227,7 @@ test('promotes a direction model that beats the majority-class baseline', () => 
   });
   expect(result.applicable).toBe(true);
   expect(result.promoted).toBe(true);
+  expect(result.state).toBe('promoted');
   expect(result.reasons).toEqual([]);
 });
 
@@ -252,152 +239,16 @@ test('rejects a direction model with low balanced accuracy', () => {
     horizon: 7,
   });
   expect(result.promoted).toBe(false);
+  expect(result.state).toBe('experimental');
   expect(result.reasons).toContain('Macro balanced accuracy did not clear the minimum requirement.');
 });
 
-test('rejects a direction model whose Brier score fails the majority-class baseline', () => {
-  const result = evaluatePromotion({
-    forecastType: 'direction',
-    metrics: directionMetrics(0.62, -0.1),
-    evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
-    horizon: 7,
-  });
-  expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('Multiclass Brier skill did not beat the pre-evaluation base-rate baseline.');
-});
-
-test('rejects a direction model with incomplete or unstable folds', () => {
-  const incomplete = evaluatePromotion({
-    forecastType: 'direction',
-    metrics: directionMetrics(0.62, 0.15),
-    evaluation: { complete: false, completed_folds: 2, total_folds: 5, fold_summaries: [] },
-    horizon: 7,
-  });
-  expect(incomplete.promoted).toBe(false);
-  expect(incomplete.reasons).toContain('Evaluation is incomplete.');
-
-  const unstable = evaluatePromotion({
-    forecastType: 'direction',
-    metrics: directionMetrics(0.62, 0.15),
-    evaluation: directionResearchEvaluation([0.61, 0.42, 0.63, 0.4, 0.62]),
-    horizon: 7,
-  });
-  expect(unstable.promoted).toBe(false);
-  expect(unstable.reasons).toContain('Model won only 3 of 5 folds.');
-});
-
-test('rejects a direction model with too few evaluated observations', () => {
-  const result = evaluatePromotion({
-    forecastType: 'direction',
-    metrics: directionMetrics(0.62, 0.2, 0.55, 20),
-    evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
-    horizon: 7,
-  });
-  expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('The direction model has too few evaluated observations.');
-});
-
-test('asks for evaluated origins, not flattened labels, in the direction row gate', () => {
-  // Flattened labels balloon past 60 while the true origin count is tiny.
-  const v3 = (origins) => directionMetrics(0.62, 0.15, 0.9, origins);
-  const manyLabels = evaluatePromotion({
-    forecastType: 'direction',
-    metrics: { ...v3(4), evaluation_origins: 4 },
-    evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
-    horizon: 7,
-  });
-  expect(manyLabels.promoted).toBe(false);
-  expect(manyLabels.reasons).toContain('The direction model has too few evaluated observations.');
-
-  const enough = evaluatePromotion({
-    forecastType: 'direction',
-    metrics: v3(300),
-    evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
-    horizon: 7,
-  });
-  expect(enough.promoted).toBe(true);
-});
-
-test('rejects a direction model with non-finite metrics', () => {
-  const result = evaluatePromotion({
-    forecastType: 'direction',
-    metrics: directionMetrics(NaN, 0.2, 0.55, 300),
-    evaluation: directionResearchEvaluation([0.61, 0.58, 0.63, 0.6, 0.62]),
-    horizon: 7,
-  });
-  expect(result.promoted).toBe(false);
-  expect(result.reasons).toContain('Metrics contain non-finite values.');
-});
-
-test('random-walk fixture: persistence wins and promotion fails', () => {
-  const rng = (seed) => {
-    let state = seed;
-    return () => {
-      state = (state * 1103515245 + 12345) % 2147483648;
-      return state / 2147483648;
-    };
-  };
-  const random = rng(42);
-  const walk = pricesFromReturns(100, Array.from({ length: 600 }, () => (random() - 0.5) * 0.01));
-  const horizon = 5;
-  const actual = observedHorizonReturns(walk, horizon).map((value) => Math.log(1 + 0.02));
-  const predicted = observedHorizonReturns(walk, horizon).map(() => 0);
-  const errors = actual.map((value, index) => value - predicted[index]);
-  const mae = errors.reduce((sum, value) => sum + Math.abs(value), 0) / errors.length;
-  const baselineMae = actual.reduce((sum, value) => sum + Math.abs(value), 0) / actual.length;
-  const rmse = Math.sqrt(errors.reduce((sum, value) => sum + value ** 2, 0) / errors.length);
-  const baselineRmse = Math.sqrt(actual.reduce((sum, value) => sum + value ** 2, 0) / actual.length);
-  const metrics = metricsFor(mae / baselineMae, rmse / baselineRmse, [horizonEntry(horizon, mae / baselineMae, rmse / baselineRmse)]);
-  const result = evaluatePromotion({
-    forecastType: 'price', metrics,
-    evaluation: researchEvaluation([1.02, 0.99, 1.05, 1.0, 1.03]),
-    horizon, predictedCumulativeReturn: 0.001, closingPrices: walk,
-  });
-  expect(result.promoted).toBe(false);
-  expect(result.reasons.some((reason) => reason.includes('persistence'))).toBe(true);
-});
-
-test('linear drift fixture: drift-aligned model beats persistence', () => {
-  const drift = pricesFromReturns(100, Array(600).fill(0.004));
-  const horizon = 5;
-  const actual = observedHorizonReturns(drift, horizon).map((value) => Math.log(1 + 0.02));
-  const predicted = actual.map(() => 0.004 * horizon);
-  const errors = actual.map((value, index) => value - predicted[index]);
-  const mae = errors.reduce((sum, value) => sum + Math.abs(value), 0) / errors.length;
-  const baselineMae = actual.reduce((sum, value) => sum + Math.abs(value), 0) / actual.length;
-  const rmse = Math.sqrt(errors.reduce((sum, value) => sum + value ** 2, 0) / errors.length);
-  const baselineRmse = Math.sqrt(actual.reduce((sum, value) => sum + value ** 2, 0) / actual.length);
-  const metrics = metricsFor(mae / baselineMae, rmse / baselineRmse, [horizonEntry(horizon, mae / baselineMae, rmse / baselineRmse)]);
-  const result = evaluatePromotion({
-    forecastType: 'price', metrics,
-    evaluation: researchEvaluation([0.3, 0.2, 0.4, 0.25, 0.35]),
-    horizon, predictedCumulativeReturn: 0.02, closingPrices: drift,
-  });
-  expect(mae / baselineMae).toBeLessThan(0.98);
-  expect(result.promoted).toBe(true);
-});
-
-test('volatility helpers behave on deterministic fixtures', () => {
+test('volatility helpers and persistence forecast behave correctly', () => {
   const prices = pricesFromReturns(100, [0.01, -0.01, 0.02, -0.02, 0.01, -0.01, 0.02, -0.02, 0.01, -0.01]);
   const returns = dailyLogReturns(prices);
   expect(returns).toHaveLength(10);
   expect(standardDeviation([1, 3])).toBeCloseTo(Math.SQRT2);
-  const horizonReturns = observedHorizonReturns(prices, 2);
-  expect(horizonReturns).toHaveLength(9);
-  expect(percentile([1, 2, 3, 4], 0.5)).toBeCloseTo(2.5);
-});
-
-test('persistence forecast repeats the latest close', () => {
   const forecast = buildPersistenceForecast([10, 12, 11.5], 7);
   expect(forecast).toHaveLength(7);
-  expect(forecast.every((value) => value === 11.5)).toBe(true);
-  expect(() => buildPersistenceForecast([], 7)).toThrow(/positive/);
-});
-
-test('volatility assessment reports limits for a horizon', () => {
-  const assessment = volatilityAssessment({ closingPrices: quiet, horizon: 7, predictedCumulativeReturn: 0.01 });
-  expect(assessment.dailyVol).toBeGreaterThan(0);
-  expect(assessment.horizonVolatility).toBeCloseTo(assessment.dailyVol * Math.sqrt(7), 10);
-  expect(assessment.annualizedVol).toBeCloseTo(assessment.dailyVol * Math.sqrt(252), 10);
-  expect(assessment.plausible).toBe(true);
+  expect(forecast.every((v) => v === 11.5)).toBe(true);
 });

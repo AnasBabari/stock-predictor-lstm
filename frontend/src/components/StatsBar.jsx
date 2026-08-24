@@ -1,4 +1,6 @@
 import React, { useMemo } from 'react';
+import ValidationBadge from './ValidationBadge';
+import { formatPercent, formatPrice } from '../utils/formatting';
 
 export default function StatsBar({ stockData, forecastType }) {
   const stats = useMemo(() => {
@@ -6,19 +8,21 @@ export default function StatsBar({ stockData, forecastType }) {
       return null;
     }
 
+    const valState = stockData.validation?.state || (stockData.validation?.promoted ? 'promoted' : 'experimental');
+
     if (forecastType === 'trend') {
-      // Direction v2: one three-way call per origin with named probabilities.
       const direction = stockData.direction || '—';
       const probs = stockData.direction_probabilities || {};
       const confidence = probs[direction.toLowerCase()];
 
       return {
         ticker: stockData.ticker,
-        forecastLabel: `Trend Forecast (${stockData.direction_horizon_days ?? stockData.forecast_days ?? '?'}d)`,
+        forecastLabel: `Trend (${stockData.direction_horizon_days ?? stockData.forecast_days ?? '?'}d)`,
         lastClose: '—',
         forecast: direction,
         changeText: confidence != null ? `${(confidence * 100).toFixed(1)}%` : '—',
         trendText: direction,
+        valState,
         isUp: direction === 'Up',
         isFlat: direction === 'Neutral',
       };
@@ -28,20 +32,21 @@ export default function StatsBar({ stockData, forecastType }) {
       return null;
     }
 
-    const lastClose = stockData.historical_prices[stockData.historical_prices.length - 1];
-    const forecast = stockData.predicted_prices[stockData.predicted_prices.length - 1];
+    const lastClose = Number(stockData.historical_prices.at(-1));
+    const forecast = Number(stockData.predicted_prices.at(-1));
     const isUp = forecast > lastClose;
-    const isFlat = forecast === lastClose;
+    const isFlat = Math.abs(forecast - lastClose) < 1e-6;
     const change = forecast - lastClose;
-    const changePct = ((change / lastClose) * 100).toFixed(2);
+    const changePct = lastClose > 0 ? (change / lastClose) * 100 : 0;
 
     return {
       ticker: stockData.ticker,
-      forecastLabel: 'Price Forecast',
-      lastClose: `$${lastClose.toFixed(2)}`,
-      forecast: `$${forecast.toFixed(2)}`,
-      changeText: isFlat ? '0.00%' : `${isUp ? '+' : ''}${changePct}%`,
+      forecastLabel: `Price (${stockData.forecast_days || 7}d)`,
+      lastClose: formatPrice(lastClose),
+      forecast: formatPrice(forecast),
+      changeText: formatPercent(changePct),
       trendText: isFlat ? 'Neutral' : isUp ? '▲ Bullish' : '▼ Bearish',
+      valState,
       isUp,
       isFlat,
     };
@@ -52,13 +57,13 @@ export default function StatsBar({ stockData, forecastType }) {
   const color = stats.isFlat ? 'var(--neutral)' : stats.isUp ? 'var(--bullish)' : 'var(--bearish)';
 
   return (
-    <section id="statsBar" className="stats-bar">
+    <section id="statsBar" className="stats-bar" aria-label="Forecast summary statistics">
       <div className="stat">
         <span className="stat-label">Ticker</span>
         <span className="stat-value mono">{stats.ticker}</span>
       </div>
       <div className="stat">
-        <span className="stat-label">Forecast Type</span>
+        <span className="stat-label">Forecast Horizon</span>
         <span className="stat-value mono">{stats.forecastLabel}</span>
       </div>
       <div className="stat">
@@ -66,19 +71,19 @@ export default function StatsBar({ stockData, forecastType }) {
         <span className="stat-value mono">{stats.lastClose}</span>
       </div>
       <div className="stat">
-        <span className="stat-label">Forecast</span>
-        <span className="stat-value mono">{stats.forecast}</span>
+        <span className="stat-label">Predicted Endpoint</span>
+        <span className="stat-value mono text-teal">{stats.forecast}</span>
       </div>
       <div className="stat">
-        <span className="stat-label">Change / Confidence</span>
+        <span className="stat-label">Expected Return</span>
         <span className="stat-value mono" style={{ color }}>
           {stats.changeText}
         </span>
       </div>
       <div className="stat">
-        <span className="stat-label">Trend</span>
-        <span className="stat-value" style={{ color }}>
-          {stats.trendText}
+        <span className="stat-label">Validation</span>
+        <span className="stat-value">
+          <ValidationBadge state={stats.valState} />
         </span>
       </div>
     </section>

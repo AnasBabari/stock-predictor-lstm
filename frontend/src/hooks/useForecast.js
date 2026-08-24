@@ -107,11 +107,19 @@ export function assertForecastIdentity(data, ticker, days, type) {
 }
 
 export function browserResponse(snapshot, result, forecastType, days) {
-  const baselineFallback = result.baselineFallback === true || result.promotion?.promoted === false;
+  const promotion = result.promotion || {};
+  const validation = result.validation || {
+    state: promotion.state || (promotion.promoted ? 'promoted' : 'experimental'),
+    promoted: promotion.promoted === true,
+    reasons: promotion.reasons || [],
+    selected_horizon: result.horizon || days,
+    promoted_horizons: promotion.promoted_horizons || [],
+    best_validated_horizon: promotion.best_validated_horizon || null,
+  };
   const engine = {
     family: `${result.trainingProfile || 'balanced'}_tfjs_lstm`,
-    role: baselineFallback ? 'baseline_fallback' : 'browser_learned',
-    baseline_fallback: baselineFallback,
+    role: validation.promoted ? 'browser_promoted' : 'browser_experimental',
+    validation_state: validation.state,
     cache_status: result.cacheStatus,
     backend: result.backend,
     execution_mode: result.executionMode,
@@ -128,6 +136,7 @@ export function browserResponse(snapshot, result, forecastType, days) {
     storage_status: result.storageStatus,
     evaluation: result.evaluation,
     promotion: result.promotion,
+    validation,
     schema_version: snapshot.schema_version,
     window_size: snapshot.window_size,
     feature_count: snapshot.feature_names.length,
@@ -159,6 +168,7 @@ export function browserResponse(snapshot, result, forecastType, days) {
       forecast_status: result.forecast_status,
       attention_weights: [],
       metrics: result.metrics,
+      validation,
       sentiment: { status: 'context_only', detail: 'News is not used as a browser model feature.' },
       metadata,
     };
@@ -171,7 +181,19 @@ export function browserResponse(snapshot, result, forecastType, days) {
     future_dates: snapshot.future_dates.slice(0, days),
     predicted_prices: result.predictedPrices,
     learned_prices: result.learnedPrices,
+    model_forecast: result.model_forecast || {
+      prices: result.predictedPrices,
+      source: `browser_${result.trainingProfile || 'balanced'}_lstm`,
+      candidate: 'balanced_tfjs_lstm',
+      horizon: result.horizon || days,
+    },
+    benchmark: result.benchmark || {
+      type: 'persistence',
+      prices: result.persistence_forecast,
+    },
+    validation,
     persistence_forecast: result.persistence_forecast,
+    ...(result.historical_error_band ? { historical_error_band: result.historical_error_band } : {}),
     forecast_status: result.forecast_status,
     metrics: result.metrics,
     ...(result.evaluation_series ? { evaluation_series: result.evaluation_series } : {}),

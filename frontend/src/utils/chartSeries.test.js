@@ -1,68 +1,77 @@
 import { describe, expect, it } from 'vitest';
 import { buildPriceSeries, directionStatusText } from './chartSeries';
 
-const base = {
+const samplePayload = {
   ticker: 'MSFT',
   historical_dates: ['2025-01-02', '2025-01-03', '2025-01-06'],
   historical_prices: [100, 101, 102],
   future_dates: ['2025-01-07', '2025-01-08'],
-  predicted_prices: [102, 102], // decision path (flat baseline in fallback case)
+  predicted_prices: [104, 108.8], // Always the model forecast
   learned_prices: [104, 108.8],
+  persistence_forecast: [102, 102],
+  validation: {
+    state: 'experimental',
+    promoted: false,
+    reasons: ['Relative RMSE did not beat persistence.'],
+  },
   forecast_status: {
-    state: 'experimental_no_demonstrated_edge',
-    decision: 'persistence',
-    alpha: 0,
-    label: 'Experimental model did not beat persistence…',
+    state: 'experimental',
+    decision: 'model',
+    alpha: 1,
+    label: 'Model forecast shown for research; validation gates were not met.',
   },
 };
 
-const promoted = {
-  ...base,
+const promotedPayload = {
+  ...samplePayload,
   predicted_prices: [103.1, 104.2],
-  forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Promoted…' },
+  validation: { state: 'promoted', promoted: true, reasons: [] },
+  forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Validated against persistence.' },
 };
 
-describe('buildPriceSeries — promoted', () => {
-  const series = buildPriceSeries(promoted, 21, true);
-
-  it('draws exactly historical + model forecast, labelled as a prediction', () => {
+describe('buildPriceSeries — core contract', () => {
+  it('always draws Model Forecast as the primary forecast line by default, with persistence hidden', () => {
+    const series = buildPriceSeries(samplePayload, 21, true, false);
     expect(series).not.toBeNull();
-    expect(series.datasets.map((d) => d.label)).toEqual(['Historical Price', 'Predicted Price']);
-    expect(series.promoted).toBe(true);
-    expect(series.annotation).toBeNull();
-  });
-
-  it('anchors the forecast line to the last historical close', () => {
-    const decision = series.datasets[1].data;
-    expect(decision[2]).toBe(102);
-    expect(decision[3]).toBe(103.1);
-    expect(decision[4]).toBe(104.2);
-  });
-});
-
-describe('buildPriceSeries — fallback (decision = persistence)', () => {
-  const series = buildPriceSeries(base, 21, false);
-
-  it('labels the decision path as the no-change baseline, never as the model', () => {
     const labels = series.datasets.map((d) => d.label);
-    expect(labels).toContain('No-change baseline');
-    expect(labels).not.toContain('Predicted Price');
-    expect(series.promoted).toBe(false);
+    expect(labels).toEqual(['Historical Price', 'Model Forecast']);
+    expect(labels).not.toContain('Persistence Benchmark');
   });
 
-  it('still draws the raw learned path as a dashed diagnostic', () => {
-    const learned = series.datasets.find((d) => d.label === 'Learned model (not promoted)');
-    expect(learned).toBeDefined();
-    expect(learned.borderDash.length).toBeGreaterThan(0);
-    // Anchored to last close, then the model's own values.
-    expect(learned.data[2]).toBe(102);
-    expect(learned.data[3]).toBe(104);
-    expect(learned.data[4]).toBe(108.8);
+  it('anchors the forecast line continuously to the last historical close', () => {
+    const series = buildPriceSeries(samplePayload, 21, true, false);
+    const forecastData = series.datasets[1].data;
+    expect(forecastData[2]).toBe(102); // Anchor price
+    expect(forecastData[3]).toBe(104);
+    expect(forecastData[4]).toBe(108.8);
+    expect(series.forecastSplitIndex).toBe(2);
   });
 
-  it('explains the substitution explicitly', () => {
-    expect(series.annotation).toMatch(/no-change baseline/i);
-    expect(series.annotation).toMatch(/did not beat persistence/i);
+  it('includes Persistence Benchmark as a dashed line when showBenchmark is enabled', () => {
+    const series = buildPriceSeries(samplePayload, 21, true, true);
+    expect(series).not.toBeNull();
+    const labels = series.datasets.map((d) => d.label);
+    expect(labels).toContain('Persistence Benchmark');
+
+    const bench = series.datasets.find((d) => d.label === 'Persistence Benchmark');
+    expect(bench.borderDash).toEqual([4, 4]);
+    expect(bench.data[2]).toBe(102);
+    expect(bench.data[3]).toBe(102);
+    expect(bench.data[4]).toBe(102);
+  });
+
+  it('includes historical forecast-error band when available', () => {
+    const withBand = {
+      ...samplePayload,
+      historical_error_band: {
+        lower_prices: [102.5, 106.0],
+        upper_prices: [105.5, 111.0],
+      },
+    };
+    const series = buildPriceSeries(withBand, 21, true, false);
+    const labels = series.datasets.map((d) => d.label);
+    expect(labels).toContain('90% Empirical Error Range (Upper)');
+    expect(labels).toContain('90% Empirical Error Range (Lower)');
   });
 });
 
@@ -70,50 +79,10 @@ describe('buildPriceSeries — guards', () => {
   it.each([
     [null],
     [{}],
-    [{ ...base, predicted_prices: undefined }],
-    [{ ...base, historical_dates: [] }],
-    [{ ...base, future_dates: [] }],
+    [{ ...samplePayload, predicted_prices: undefined }],
+    [{ ...samplePayload, historical_dates: [] }],
+    [{ ...samplePayload, future_dates: [] }],
   ])('returns null for incomplete payloads (%#)', (payload) => {
     expect(buildPriceSeries(payload, 21, true)).toBeNull();
-  });
-});
-
-describe('buildPriceSeries — fail-closed status', () => {
-  const { forecast_status: _omit, ...noStatus } = base;
-  const { learned_prices: _lp, forecast_status: _fs, ...unavailableNoLearned } = base;
-  const { learned_prices: _ep, ...experimentalNoLearned } = base;
-
-  it('treats an absent status as NOT promoted and still draws the learned path', () => {
-    const series = buildPriceSeries(noStatus, 21, true);
-    const labels = series.datasets.map((d) => d.label);
-    expect(labels).toContain('No-change baseline');
-    expect(labels).not.toContain('Predicted Price');
-    expect(labels).toContain('Learned model (not promoted)');
-    expect(series.annotation).toMatch(/status is unavailable/i);
-    expect(series.annotation).toMatch(/Dashed grey/);
-  });
-
-  it('uses unavailable-status wording for a baseline payload with no status and no learned path', () => {
-    const series = buildPriceSeries(unavailableNoLearned, 21, true);
-    expect(series.datasets.map((d) => d.label)).not.toContain('Learned model (not promoted)');
-    expect(series.annotation).toMatch(/status is unavailable/i);
-    expect(series.annotation).toMatch(/No learned path is presented/i);
-  });
-
-  it('keeps rejection language when the gate ran but no learned path exists', () => {
-    const series = buildPriceSeries(experimentalNoLearned, 21, true);
-    expect(series.annotation).toMatch(/did not beat persistence/i);
-    expect(series.annotation).not.toMatch(/Dashed grey/);
-  });
-});
-
-describe('directionStatusText', () => {
-  it('uses base-rate language for non-promoted direction models', () => {
-    expect(directionStatusText({ state: 'experimental_no_demonstrated_edge' })).toMatch(
-      /base rate/
-    );
-  });
-  it('is empty without status', () => {
-    expect(directionStatusText(undefined)).toBe('');
   });
 });

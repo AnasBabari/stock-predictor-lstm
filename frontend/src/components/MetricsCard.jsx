@@ -1,181 +1,299 @@
-import React from 'react';
+import React, { useState } from 'react';
+import ValidationBadge from './ValidationBadge';
+import { formatMultiplier, formatNumber, formatPercent, formatPrice } from '../utils/formatting';
 
-function MetricItem({ iconTitle, label, value }) {
-  return (
-    <div className="metric">
-      <span className="metric-icon" title={iconTitle} aria-label={iconTitle}>ⓘ</span>
-      <div className="metric-content">
-        <span className="metric-label">{label}</span>
-        <span className="metric-value mono">{value}</span>
-      </div>
-    </div>
-  );
-}
+export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }) {
+  const [activeTab, setActiveTab] = useState('forecast'); // forecast | evaluation | model | research
 
-function HorizonTable({ metrics }) {
-  const perHorizon = metrics.per_horizon;
-  if (!Array.isArray(perHorizon) || !perHorizon.length) return null;
-  const selected = Number(metrics.horizon) || null;
-  const unitLabel = !metrics.metric_units || metrics.metric_units !== 'price' ? 'Return' : 'Price';
-  return (
-    <div className="metrics-horizons">
-      <div className="metric-divider"></div>
-      <MetricItem
-        iconTitle="Metrics are reported per horizon and pooled. The row for the selected forecast horizon is highlighted."
-        label="Metrics by horizon"
-        value={`Pooled: ${perHorizon.length} horizons`}
-      />
-      <table className="horizon-metrics-table">
-        <thead>
-          <tr>
-            <th>Horizon</th>
-            <th>{unitLabel} MAE</th>
-            <th>{unitLabel} RMSE</th>
-            <th>vs persist.</th>
-            <th>Direction</th>
-            <th>Rows</th>
-          </tr>
-        </thead>
-        <tbody>
-          {perHorizon.map((entry) => {
-            const isSelected = Number(entry.horizon) === selected;
-            const beats = entry.relative_rmse != null && entry.relative_rmse < 1;
-            return (
-              <tr key={entry.horizon} className={isSelected ? 'horizon-row--selected' : ''}>
-                <td>{entry.horizon}d{isSelected ? ' ✓' : ''}</td>
-                <td className="mono">{entry.mae?.toFixed(4)}</td>
-                <td className="mono">{entry.rmse?.toFixed(4)}</td>
-                <td className="mono">{entry.relative_rmse == null ? '—' : `${entry.relative_rmse.toFixed(3)}×${beats ? '' : ' ✗'}`}</td>
-                <td className="mono">{entry.directional_accuracy == null ? '—' : `${(entry.directional_accuracy * 100).toFixed(0)}%`}</td>
-                <td className="mono">{entry.rows}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+  if (!stockData || !stockData.metrics) return null;
 
-// DirectionHorizonTable removed with direction target v2: the three-way
-// cumulative contract has no per-day decomposition.
-
-function PromotionNotice({ stockData, forecastType }) {
-  const engine = stockData.metadata?.engine;
-  const promotion = stockData.metadata?.promotion;
-  const isTrend = forecastType === 'trend';
-  const volatilityRejected = !isTrend && Array.isArray(promotion?.reasons) &&
-    promotion.reasons.some((reason) => reason.includes('volatility'));
-  const baselineReason = engine?.baseline_fallback || promotion?.promoted === false;
-  if (!baselineReason) return null;
-  const reasons = Array.isArray(promotion?.reasons) ? promotion.reasons : [];
-  const statusLabel = stockData.forecast_status?.label;
-  return (
-    <div className="metrics-warning" role="status">
-      {statusLabel
-        ? `${statusLabel}${isTrend ? '' : ' The dashed grey line on the chart shows the raw learned path.'}`
-        : volatilityRejected
-          ? 'The learned forecast exceeded its historically observed volatility range. Showing the persistence baseline.'
-          : isTrend
-            ? 'This learned direction model was not promoted and did not beat the majority-class baseline on untouched out-of-sample evaluation. Showing the majority-class baseline. The learned result remains visible for research only.'
-            : 'This learned model was not promoted and did not beat the persistence benchmark on untouched out-of-sample evaluation. Showing the persistence baseline. The learned result remains visible for research only.'}
-      {reasons.length > 0 && (
-        <ul className="promotion-reasons">
-          {reasons.map((reason) => <li key={reason}>{reason}</li>)}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function PromotedNotice({ stockData }) {
-  const promoted = stockData.forecast_status?.state === 'promoted' &&
-    stockData.metadata?.engine?.role === 'browser_learned';
-  if (!promoted) return null;
-  return (
-    <p className="metrics-promoted" role="status">
-      Promoted: this local model beat persistence on its untouched holdout, so the forecast shown is the model output.
-    </p>
-  );
-}
-
-export default function MetricsCard({ stockData, forecastType }) {
-  if (!stockData?.metrics) return null;
   const m = stockData.metrics;
-  const engine = stockData.metadata?.engine;
+  const val = stockData.validation || {};
+  const meta = stockData.metadata || {};
+  const engine = meta.engine || {};
   const isTrend = forecastType === 'trend';
-  const metricSource = m.metric_source === 'browser_walk_forward_out_of_fold'
-    ? 'Five-fold expanding purged walk-forward out-of-fold evaluation'
-    : m.metric_source === 'browser_purged_holdout'
-      ? 'Single untouched purged holdout'
-      : m.metric_source === 'walk_forward_out_of_fold'
-        ? 'Walk-forward out-of-fold evaluation'
-        : 'Baseline definition';
-  const unitLabel = !m.metric_units || m.metric_units !== 'price' ? 'Return' : 'Price';
+  const perHorizon = Array.isArray(m.per_horizon) ? m.per_horizon : [];
+  const selectedHorizon = Number(val.selected_horizon || m.horizon || stockData.forecast_days || 7);
+  const bestValidatedHorizon = val.best_validated_horizon;
 
-  const priceMetrics = [
-    [`${unitLabel} RMSE`, m.rmse?.toFixed(4), `${unitLabel} root mean squared error on cumulative log returns — lower is better`],
-    [`${unitLabel} MAE`, m.mae?.toFixed(4), `${unitLabel} mean absolute error on cumulative log returns — lower is better`],
-    ['RMSE vs persistence', m.relative_rmse == null ? null : `${m.relative_rmse.toFixed(3)}×`, 'Below 1 beats a no-change forecast'],
-    ['MAE vs persistence', m.relative_mae == null ? null : `${m.relative_mae.toFixed(3)}×`, 'Below 1 beats a no-change forecast'],
-    ['Directional accuracy', m.directional_accuracy == null ? null : `${(m.directional_accuracy * 100).toFixed(1)}%`, 'Share of horizons where predicted return sign matched the realized return'],
-    ['Dollar RMSE', m.dollar_rmse == null ? null : `$${m.dollar_rmse.toFixed(2)}`, 'Root Mean Squared Error on reconstructed prices — lower is better'],
-    ['Dollar MAE', m.dollar_mae == null ? null : `$${m.dollar_mae.toFixed(2)}`, 'Mean Absolute Error on reconstructed prices — lower is better'],
-    [`${unitLabel} R²`, m.r2?.toFixed(4), `R² on cumulative log returns — higher is better`],
-  ];
-  const trendMetrics = [
-    ['Macro balanced acc.', m.macro_balanced_accuracy == null ? null : `${(m.macro_balanced_accuracy * 100).toFixed(1)}%`, 'Mean per-class recall across down/neutral/up'],
-    ['Macro F1', m.macro_f1?.toFixed(4), 'Harmonic mean of per-class precision/recall'],
-    ['Multiclass Brier', m.multiclass_brier?.toFixed(4), 'Probability error across all three classes — lower is better'],
-    ['Brier skill', m.brier_skill == null ? '—' : `${(m.brier_skill * 100).toFixed(1)}%`, 'Improvement over the pre-evaluation base-rate baseline (above 0 beats it)'],
-    ['Log loss', m.log_loss?.toFixed(4), 'Penalised probability score — lower is better'],
-    ['Calibration ECE', m.expected_calibration_error?.toFixed(4), 'Expected calibration error on max-class confidence — lower is better'],
-    ['Base-rate baseline', Array.isArray(m.baseline_probabilities) ? m.baseline_probabilities.map((p) => `${(p * 100).toFixed(0)}%`).join(' / ') : null, 'Pre-evaluation down / neutral / up frequencies'],
-  ];
-  const metrics = (isTrend ? trendMetrics : priceMetrics).map(([label, value, title]) => ({
-    label, value: value ?? '—', title,
-  }));
-  const engineLabel = stockData.metadata?.server_pretrained || engine?.role === 'server_pretrained'
-    ? stockData.metadata.model_name || 'Server-Pretrained Model'
-    : engine?.family ? engine.family.replaceAll('_', ' ') : 'Prepared model';
-
-  const localStatus = engine?.baseline_fallback
-    ? isTrend ? 'Baseline fallback — pre-evaluation base rate displayed' : 'Baseline fallback — persistence displayed'
-    : stockData.metadata?.server_pretrained || engine?.role === 'server_pretrained'
-      ? 'Trained offline on server'
-      : engine?.role === 'learned_candidate'
-        ? 'Learned candidate'
-        : engine?.execution_mode === 'browser_artifact_loaded'
-          ? 'Cached on this device'
-          : engine?.execution_mode === 'browser_trained'
-            ? 'Trained in this browser'
-            : 'Learned locally';
-  const underperforms = !isTrend && (
-    (m.relative_rmse != null && m.relative_rmse >= 1) ||
-    (m.relative_mae != null && m.relative_mae >= 1)
-  );
+  const latestClose = Number(stockData.historical_prices?.at(-1));
+  const forecastPrice = Number(stockData.predicted_prices?.at(-1));
+  const priceChangePct = Number.isFinite(latestClose) && Number.isFinite(forecastPrice) && latestClose > 0
+    ? ((forecastPrice - latestClose) / latestClose) * 100
+    : null;
 
   return (
-    <section id="metricsCard" className={`metrics-card${engine?.baseline_fallback ? ' metrics-card--baseline' : ''}`}>
-      <MetricItem iconTitle="Selected forecast type" label="Mode" value={`${isTrend ? 'Trend' : 'Price'} Forecast Metrics`} />
-      <div className="metric-divider"></div>
-      <MetricItem iconTitle="Forecast engine and local cache status" label="Active engine" value={`${engineLabel} · ${localStatus}`} />
-      <div className="metric-divider"></div>
-      <MetricItem iconTitle={metricSource} label="Metric source" value={metricSource} />
-      {metrics.map((metric) => (
-        <React.Fragment key={metric.label}>
-          <div className="metric-divider"></div>
-          <MetricItem iconTitle={metric.title} label={metric.label} value={metric.value} />
-        </React.Fragment>
-      ))}
-      {!isTrend && <HorizonTable metrics={m} />}
-      <PromotedNotice stockData={stockData} />
-      <PromotionNotice stockData={stockData} forecastType={forecastType} />
-      {underperforms && (
-        <div className="metrics-warning" role="status">
-          This learned model did not beat the no-change persistence benchmark on its evaluation data.
-        </div>
-      )}
+    <section id="metricsCard" className="metrics-dashboard-card glow-border" aria-label="Forecast Metrics Dashboard">
+      <h3 className="sr-only">{isTrend ? 'Trend Forecast Metrics' : 'Price Forecast Metrics'}</h3>
+      <div className="metrics-tabs-header" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'forecast'}
+          className={`tab-btn ${activeTab === 'forecast' ? 'active' : ''}`}
+          onClick={() => setActiveTab('forecast')}
+        >
+          Forecast
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'evaluation'}
+          className={`tab-btn ${activeTab === 'evaluation' ? 'active' : ''}`}
+          onClick={() => setActiveTab('evaluation')}
+        >
+          Evaluation
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'model'}
+          className={`tab-btn ${activeTab === 'model' ? 'active' : ''}`}
+          onClick={() => setActiveTab('model')}
+        >
+          Model Specs
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'research'}
+          className={`tab-btn ${activeTab === 'research' ? 'active' : ''}`}
+          onClick={() => setActiveTab('research')}
+        >
+          Research Details
+        </button>
+      </div>
+
+      <div className="metrics-tab-content">
+        {/* Tab 1: Forecast Overview */}
+        {activeTab === 'forecast' && (
+          <div className="tab-pane">
+            <div className="forecast-summary-grid">
+              <div className="summary-card">
+                <span className="card-label">Validation Status</span>
+                <div className="card-value-wrap">
+                  <ValidationBadge state={val.state || (val.promoted ? 'promoted' : 'experimental')} />
+                </div>
+                <span className="card-subtext">
+                  {val.promoted
+                    ? 'Validated against persistence on held-out data.'
+                    : 'Model forecast shown; holdout validation gates were not met.'}
+                </span>
+              </div>
+
+              {!isTrend ? (
+                <>
+                  <div className="summary-card">
+                    <span className="card-label">Predicted Endpoint</span>
+                    <span className="card-value mono text-teal">{formatPrice(forecastPrice)}</span>
+                    <span className="card-subtext">Last close: {formatPrice(latestClose)}</span>
+                  </div>
+                  <div className="summary-card">
+                    <span className="card-label">Expected Return</span>
+                    <span className="card-value mono">{formatPercent(priceChangePct)}</span>
+                    <span className="card-subtext">{selectedHorizon}-day horizon</span>
+                  </div>
+                </>
+              ) : (
+                <div className="summary-card">
+                  <span className="card-label">Predicted Direction</span>
+                  <span className="card-value text-teal">{stockData.direction || 'Neutral'}</span>
+                  <span className="card-subtext">3-way probability distribution</span>
+                </div>
+              )}
+
+              <div className="summary-card">
+                <span className="card-label">Active Model Engine</span>
+                <span className="card-value font-medium">{engine.role === 'server_pretrained' ? 'server_pretrained' : engine.family ? engine.family.replaceAll('_', ' ') : 'Balanced LSTM'}</span>
+                <span className="card-subtext">Compute: {engine.role === 'server_pretrained' ? 'server-pretrained' : engine.backend?.toUpperCase() || 'WEBGPU'}</span>
+              </div>
+            </div>
+
+            {/* Smart Switch Notification when requested horizon is experimental but another is promoted */}
+            {!val.promoted && bestValidatedHorizon && bestValidatedHorizon !== selectedHorizon && onSwitchHorizon && (
+              <div className="validated-switch-banner" role="status">
+                <div className="switch-banner-text">
+                  <strong>{selectedHorizon}-Day forecast is experimental.</strong> A {bestValidatedHorizon}-Day candidate passed all validation gates.
+                </div>
+                <button
+                  type="button"
+                  className="switch-horizon-btn"
+                  onClick={() => onSwitchHorizon(bestValidatedHorizon)}
+                >
+                  Switch to {bestValidatedHorizon}-Day
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 2: Evaluation & Per-Horizon Table */}
+        {activeTab === 'evaluation' && (
+          <div className="tab-pane">
+            <div className="kpi-cards-grid">
+              {!isTrend ? (
+                <>
+                  <div className="kpi-card">
+                    <span className="kpi-label">RMSE vs Persistence</span>
+                    <span className="kpi-value mono">{formatMultiplier(m.relative_rmse)}</span>
+                    <span className="kpi-note">&lt; 1.000× beats persistence</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">MAE vs Persistence</span>
+                    <span className="kpi-value mono">{formatMultiplier(m.relative_mae)}</span>
+                    <span className="kpi-note">&le; 1.000× beats persistence</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Directional Accuracy</span>
+                    <span className="kpi-value mono">{formatPercent(m.directional_accuracy ? m.directional_accuracy * 100 : null, { includePlus: false })}</span>
+                    <span className="kpi-note">Sign agreement on holdout</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Return R²</span>
+                    <span className="kpi-value mono">{formatNumber(m.r2, { decimals: 4 })}</span>
+                    <span className="kpi-note">Log return variance explained</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Macro Balanced Acc.</span>
+                    <span className="kpi-value mono">{formatPercent(m.macro_balanced_accuracy ? m.macro_balanced_accuracy * 100 : null, { includePlus: false })}</span>
+                    <span className="kpi-note">Mean per-class recall</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Brier Skill Score</span>
+                    <span className="kpi-value mono">{formatPercent(m.brier_skill ? m.brier_skill * 100 : null)}</span>
+                    <span className="kpi-note">Above 0% beats base rate</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Macro F1 Score</span>
+                    <span className="kpi-value mono">{formatNumber(m.macro_f1, { decimals: 4 })}</span>
+                    <span className="kpi-note">Precision/recall balance</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Log Loss</span>
+                    <span className="kpi-value mono">{formatNumber(m.log_loss, { decimals: 4 })}</span>
+                    <span className="kpi-note">Cross-entropy penalty</span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {!isTrend && perHorizon.length > 0 && (
+              <div className="horizon-table-wrap">
+                <h4>Per-Horizon Evaluation Matrix</h4>
+                <table className="horizon-metrics-table">
+                  <thead>
+                    <tr>
+                      <th>Horizon</th>
+                      <th>Rel. RMSE</th>
+                      <th>Rel. MAE</th>
+                      <th>Direction</th>
+                      <th>Rows</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perHorizon.map((entry) => {
+                      const hNum = Number(entry.horizon);
+                      const isSelected = hNum === selectedHorizon;
+                      const isPromoted = entry.relative_rmse != null && entry.relative_rmse < 1.0 && (entry.relative_mae == null || entry.relative_mae <= 1.0);
+                      const rowState = isPromoted ? 'promoted' : (entry.relative_rmse < 1.0 ? 'candidate' : 'experimental');
+                      return (
+                        <tr key={entry.horizon} className={isSelected ? 'horizon-row--selected' : ''}>
+                          <td className="font-semibold">{entry.horizon}d{isSelected ? ' (Selected)' : ''}</td>
+                          <td className="mono">{formatMultiplier(entry.relative_rmse)}</td>
+                          <td className="mono">{formatMultiplier(entry.relative_mae)}</td>
+                          <td className="mono">{formatPercent(entry.directional_accuracy ? entry.directional_accuracy * 100 : null, { includePlus: false })}</td>
+                          <td className="mono">{entry.rows || '—'}</td>
+                          <td>
+                            <ValidationBadge state={rowState} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 3: Model & Hardware Specs */}
+        {activeTab === 'model' && (
+          <div className="tab-pane">
+            <div className="specs-grid">
+              <div className="spec-item">
+                <span className="spec-label">Model Architecture</span>
+                <span className="spec-value">{meta.architecture || 'balanced_lstm_in_browser'}</span>
+              </div>
+              <div className="spec-item">
+                <span className="spec-label">Feature Schema</span>
+                <span className="spec-value mono">Stationary v4 ({meta.feature_count || 28} features)</span>
+              </div>
+              <div className="spec-item">
+                <span className="spec-label">Lookback Window</span>
+                <span className="spec-value">{meta.window_size || 60} trading sessions</span>
+              </div>
+              <div className="spec-item">
+                <span className="spec-label">Training Duration</span>
+                <span className="spec-value mono">{meta.training_duration_ms ? `${meta.training_duration_ms} ms` : '—'}</span>
+              </div>
+              <div className="spec-item">
+                <span className="spec-label">Selected Epochs</span>
+                <span className="spec-value mono">{meta.selected_epochs ?? '—'}</span>
+              </div>
+              <div className="spec-item">
+                <span className="spec-label">Compute Backend</span>
+                <span className="spec-value mono">{engine.backend?.toUpperCase() || 'WEBGPU'}</span>
+              </div>
+              <div className="spec-item full-width">
+                <span className="spec-label">Data Snapshot Hash</span>
+                <span className="spec-value mono text-xs">{meta.snapshot_id || '—'}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 4: Research & Gate Checks */}
+        {activeTab === 'research' && (
+          <div className="tab-pane">
+            <div className="research-pane-content">
+              <h4>Holdout Evaluation Protocol</h4>
+              <p className="text-sm text-secondary mb-3">
+                Evaluation was conducted on an untouched chronological holdout partition with strict horizon purging to eliminate lookahead leakage.
+              </p>
+
+              {Array.isArray(val.reasons) && val.reasons.length > 0 && (
+                <div className="gate-reasons-box">
+                  <h5>Promotion Gate Findings:</h5>
+                  <ul>
+                    {val.reasons.map((reason, idx) => (
+                      <li key={idx}>{reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="metric-rows-summary">
+                <div className="metric-summary-row">
+                  <span>Metric Source:</span>
+                  <span className="mono">{m.metric_source || 'browser_purged_holdout'}</span>
+                </div>
+                <div className="metric-summary-row">
+                  <span>Evaluated Rows:</span>
+                  <span className="mono">{m.evaluation_rows || '—'} sessions</span>
+                </div>
+                <div className="metric-summary-row">
+                  <span>Dollar RMSE / MAE:</span>
+                  <span className="mono">{formatPrice(m.dollar_rmse)} / {formatPrice(m.dollar_mae)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

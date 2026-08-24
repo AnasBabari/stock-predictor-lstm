@@ -24,7 +24,12 @@ import {
   median,
   regressionMetrics,
 } from './evaluation';
-import { buildPersistenceForecast, describePromotionState, evaluatePromotion } from './promotionPolicy';
+import {
+  PROMOTION_POLICY_VERSION,
+  buildPersistenceForecast,
+  describePromotionState,
+  evaluatePromotion,
+} from './promotionPolicy';
 import { resolveTrainingProfile } from './trainingProfiles';
 import { buildBrowserModel } from './modelFactory';
 import { isRejectedArtifact, isVersionedKey } from './storageKeys';
@@ -622,6 +627,7 @@ function validCachedModel(model, metadata, snapshot, profile, backend, horizon) 
   return metadata.model_version === MODEL_VERSION &&
     metadata.architecture_version === ARCHITECTURE_VERSION &&
     metadata.target_mode === TARGET_MODE &&
+    metadata.promotion_policy_version === PROMOTION_POLICY_VERSION &&
     metadata.horizon === horizon &&
     metadata.snapshot_id === snapshot.snapshot_id &&
     metadata.training_profile === profile.id &&
@@ -669,6 +675,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
 
   let model;
   let prepared;
+  let trained = null;
   let persistedMetadata = null;
   let promotion = null;
   let forecastStatus = null;
@@ -711,7 +718,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
   }
 
   if (!model) {
-    const trained = profile.id === 'research'
+    trained = profile.id === 'research'
       ? await trainResearch(id, snapshot, forecastType, profile, startedAt, checkpointKey, horizon)
       : await trainHoldout(id, snapshot, forecastType, profile, startedAt, horizon);
     ({ model, prepared, metrics, evaluation, selectedEpochs, completedEpochs } = trained);
@@ -733,6 +740,7 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       model_version: MODEL_VERSION,
       architecture_version: ARCHITECTURE_VERSION,
       target_mode: TARGET_MODE,
+      promotion_policy_version: PROMOTION_POLICY_VERSION,
       horizon,
       training_profile: profile.id,
       backend,
@@ -873,21 +881,65 @@ async function trainAndPredict(id, snapshot, rawForecastType, days, profileName)
       predictedCumulativeReturn: Number(predicted[0][horizon - 1]),
       closingPrices: snapshot.historical_prices,
     });
-    // Regression guard: forecastStatus MUST be assigned on the price branch
-    // too — a null here silently re-labelled the persistence fallback as a
-    // promoted model forecast in the chart.
     forecastStatus = describePromotionState(promotion);
     const baselineFallback = !promotion.promoted;
     const persistenceForecast = buildPersistenceForecast(
       snapshot.historical_prices, requestedDays
     );
-    const predictedPrices = baselineFallback ? persistenceForecast : learnedPrices;
+
+    const modelForecast = {
+      prices: learnedPrices,
+      source: `browser_${profile.id}_lstm`,
+      candidate: 'balanced_tfjs_lstm',
+      horizon,
+    };
+    const benchmark = {
+      type: 'persistence',
+      prices: persistenceForecast,
+    };
+    const validation = {
+      state: promotion.state || (promotion.promoted ? 'promoted' : 'experimental'),
+      promoted: promotion.promoted === true,
+      reasons: promotion.reasons || [],
+      selected_horizon: horizon,
+      promoted_horizons: promotion.promoted_horizons || [],
+      best_validated_horizon: promotion.best_validated_horizon || null,
+      checks: promotion.checks || {},
+    };
+
+    let historicalErrorBand = null;
+    const evalSeries = trained?.evaluation_series || null;
+    if (evalSeries && Array.isArray(evalSeries.actual_prices) && Array.isArray(evalSeries.predicted_prices)) {
+      const residuals = [];
+      for (let i = 0; i < evalSeries.actual_prices.length; i += 1) {
+        const act = evalSeries.actual_prices[i];
+        const pred = evalSeries.predicted_prices[i];
+        if (Number.isFinite(act) && Number.isFinite(pred) && act > 0 && pred > 0) {
+          residuals.push(Math.log(act / pred));
+        }
+      }
+      if (residuals.length >= 10) {
+        residuals.sort((a, b) => a - b);
+        const p05 = residuals[Math.floor(residuals.length * 0.05)];
+        const p95 = residuals[Math.ceil(residuals.length * 0.95) - 1];
+        historicalErrorBand = {
+          lower_prices: learnedPrices.map((p) => Number((p * Math.exp(p05)).toFixed(4))),
+          upper_prices: learnedPrices.map((p) => Number((p * Math.exp(p95)).toFixed(4))),
+          label: '90% empirical historical forecast-error range (p05–p95 held-out)',
+        };
+      }
+    }
+
     return {
       ...common,
-      // Decision path; learned path and baseline are always separate fields.
-      predictedPrices,
+      // The predicted prices ALWAYS contain the model forecast
+      predictedPrices: learnedPrices,
       learnedPrices,
+      model_forecast: modelForecast,
+      benchmark,
+      validation,
       persistence_forecast: persistenceForecast,
+      ...(historicalErrorBand ? { historical_error_band: historicalErrorBand } : {}),
       baselineFallback,
       forecast_status: forecastStatus,
       promotion,

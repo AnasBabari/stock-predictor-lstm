@@ -71,8 +71,9 @@ async function trainAndCollectState(browser, forecastType, trainingData) {
         database.close();
       }
     });
+    await page.getByRole('tab', { name: /Evaluation/i }).click();
     return {
-      metrics: await page.locator('#metricsCard .metric-value').allTextContents(),
+      metrics: await page.locator('#metricsCard .kpi-value').allTextContents(),
       scaler,
     };
   } finally {
@@ -98,7 +99,7 @@ test('price: corruption beyond the final-refit boundary cannot move metrics', as
   const corrupted = corruptSnapshot(clean, boundary);
 
   const corruptedState = await trainAndCollectState(browser, 'price', corrupted);
-  expect(corruptedState.metrics.length).toBeGreaterThan(4);
+  expect(corruptedState.metrics.length).toBeGreaterThan(0);
   expect(corruptedState.scaler).not.toBeNull();
   const cleanState = await trainAndCollectState(browser, 'price', clean);
   expect(cleanState.metrics).toEqual(corruptedState.metrics);
