@@ -97,11 +97,20 @@ def predict_distribution(
     examples: VolatilityPanelExamples,
     indices: np.ndarray,
     *,
+    news_features: np.ndarray | None = None,
     batch_size: int = 2048,
 ) -> DistributionPredictions:
     """Run bounded fold inference and return CPU NumPy arrays."""
     device = next(result.model.parameters()).device
     scaled = result.scaler.transform(examples.features[indices])
+    if result.news_scaler is not None:
+        if news_features is None or news_features.shape[0] != len(examples.features):
+            raise ValueError("news-enabled inference requires one aligned row per example")
+        scaled_news = result.news_scaler.transform(news_features[indices])
+    else:
+        if news_features is not None:
+            raise ValueError("market-only inference cannot accept news features")
+        scaled_news = None
     variances: list[np.ndarray] = []
     locations: list[np.ndarray] = []
     logits_rows: list[np.ndarray] = []
@@ -111,7 +120,12 @@ def predict_distribution(
             stop = start + batch_size
             x = torch.from_numpy(scaled[start:stop]).to(device)
             baseline = torch.from_numpy(examples.baseline_variance[indices[start:stop]]).to(device)
-            forecast_var, location, logits, _ = result.model(x, baseline)
+            news = (
+                torch.from_numpy(scaled_news[start:stop]).to(device)
+                if scaled_news is not None
+                else None
+            )
+            forecast_var, location, logits, _ = result.model(x, baseline, news)
             variances.append(forecast_var.cpu().numpy())
             locations.append(location.cpu().numpy())
             logits_rows.append(logits.cpu().numpy())
@@ -299,12 +313,20 @@ def evaluate_tcn_development(
     seed: int = 42,
     device: str | None = None,
     resamples: int = 1000,
+    news_features: np.ndarray | None = None,
 ) -> DevelopmentEvaluation:
     """Train one model per expanding fold and pool untouched OOF evidence."""
     architecture = model_config or BaselineResidualTCNConfig(
         feature_count=examples.features.shape[-1],
         horizon_count=len(protocol.horizons),
     )
+    if news_features is not None:
+        news_features = np.asarray(news_features, dtype=np.float32)
+        expected_news_shape = (len(examples.features), architecture.news_feature_count)
+        if news_features.shape != expected_news_shape:
+            raise ValueError(f"news feature matrix must have shape {expected_news_shape}")
+    elif architecture.news_feature_count:
+        raise ValueError("news-enabled architecture requires an aligned news feature matrix")
     fold_evidence: list[FoldEvidence] = []
     fold_metric_rows: list[tuple[dict[str, float | int], ...]] = []
     oof_indices: list[np.ndarray] = []
@@ -330,13 +352,22 @@ def evaluate_tcn_development(
             validation_realized_variance=examples.realized_variance[early_stopping],
             validation_cumulative_returns=examples.cumulative_returns[early_stopping],
             validation_direction_classes=examples.direction_classes[early_stopping],
+            train_news_features=news_features[train] if news_features is not None else None,
+            validation_news_features=(
+                news_features[early_stopping] if news_features is not None else None
+            ),
             model_config=architecture,
             training_config=training_config,
             loss_weights=loss_weights,
             seed=seed,
             device=device,
         )
-        calibration_predictions = predict_distribution(trained, examples, early_stopping)
+        calibration_predictions = predict_distribution(
+            trained,
+            examples,
+            early_stopping,
+            news_features=news_features,
+        )
         return_variance_scale = fit_crps_variance_scale(
             calibration_predictions.variance,
             examples.cumulative_returns[early_stopping],
@@ -345,7 +376,12 @@ def evaluate_tcn_development(
             examples.baseline_variance[early_stopping],
             examples.cumulative_returns[early_stopping],
         )
-        raw_predictions = predict_distribution(trained, examples, validation)
+        raw_predictions = predict_distribution(
+            trained,
+            examples,
+            validation,
+            news_features=news_features,
+        )
         predictions = DistributionPredictions(
             variance=raw_predictions.variance,
             return_location=raw_predictions.return_location,

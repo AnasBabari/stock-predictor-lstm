@@ -22,6 +22,8 @@ from torch.utils.data import DataLoader, TensorDataset
 class BaselineResidualTCNConfig:
     feature_count: int
     horizon_count: int
+    news_feature_count: int = 0
+    news_channels: int = 24
     channels: int = 48
     dilations: tuple[int, ...] = (1, 2, 4, 8, 16)
     kernel_size: int = 3
@@ -32,6 +34,8 @@ class BaselineResidualTCNConfig:
     def __post_init__(self) -> None:
         if self.feature_count < 1 or self.horizon_count < 1:
             raise ValueError("feature_count and horizon_count must be positive")
+        if self.news_feature_count < 0 or self.news_channels < 1:
+            raise ValueError("news feature count cannot be negative and channels must be positive")
         if self.channels < 4:
             raise ValueError("channels must be at least four")
         if not self.dilations or any(value < 1 for value in self.dilations):
@@ -88,8 +92,8 @@ class RobustSequenceScaler:
     @classmethod
     def fit(cls, features: np.ndarray, *, clip: float = 10.0) -> RobustSequenceScaler:
         values = np.asarray(features, dtype=np.float64)
-        if values.ndim != 3 or len(values) == 0:
-            raise ValueError("scaler requires non-empty [rows, window, features] input")
+        if values.ndim not in (2, 3) or len(values) == 0:
+            raise ValueError("scaler requires non-empty [rows, ..., features] input")
         flattened = values.reshape(-1, values.shape[-1])
         median = np.median(flattened, axis=0)
         q25 = np.percentile(flattened, 25, axis=0)
@@ -178,6 +182,21 @@ class BaselineResidualTCN(nn.Module):
             ]
         )
         self.final_norm = nn.LayerNorm(config.channels)
+        if config.news_feature_count:
+            self.news_projection: nn.Module | None = nn.Sequential(
+                nn.Linear(config.news_feature_count, config.news_channels),
+                nn.LayerNorm(config.news_channels),
+                nn.SiLU(),
+                nn.Dropout(config.dropout),
+            )
+            self.news_fusion: nn.Module | None = nn.Sequential(
+                nn.Linear(config.channels + config.news_channels, config.channels),
+                nn.LayerNorm(config.channels),
+                nn.SiLU(),
+            )
+        else:
+            self.news_projection = None
+            self.news_fusion = None
         self.log_variance_residual_head = nn.Linear(config.channels, config.horizon_count)
         self.return_location_head = nn.Linear(config.channels, config.horizon_count)
         self.direction_head = nn.Linear(config.channels, config.horizon_count * 3)
@@ -197,6 +216,7 @@ class BaselineResidualTCN(nn.Module):
         self,
         features: torch.Tensor,
         baseline_variance: torch.Tensor,
+        news_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if features.ndim != 3:
             raise ValueError("features must have shape [batch, window, features]")
@@ -206,6 +226,17 @@ class BaselineResidualTCN(nn.Module):
         for block in self.blocks:
             values = block(values)
         encoded = self.final_norm(values[:, :, -1])
+        if self.news_projection is not None and self.news_fusion is not None:
+            if news_features is None or news_features.shape != (
+                len(features),
+                self.config.news_feature_count,
+            ):
+                raise ValueError("model requires aligned [batch, news_features] input")
+            encoded = self.news_fusion(
+                torch.cat((encoded, self.news_projection(news_features)), dim=1)
+            )
+        elif news_features is not None:
+            raise ValueError("market-only model cannot accept news features")
 
         log_residual = self.config.maximum_log_variance_correction * torch.tanh(
             self.log_variance_residual_head(encoded)
@@ -295,6 +326,7 @@ def volatility_multitask_loss(
 class TrainingResult:
     model: BaselineResidualTCN
     scaler: RobustSequenceScaler
+    news_scaler: RobustSequenceScaler | None
     best_epoch: int
     history: tuple[dict[str, float], ...]
     device: str
@@ -308,13 +340,20 @@ def _tensor_dataset(
     realized_variance: np.ndarray,
     cumulative_returns: np.ndarray,
     direction_classes: np.ndarray,
+    news_features: np.ndarray | None = None,
 ) -> TensorDataset:
+    news = (
+        np.asarray(news_features, dtype=np.float32)
+        if news_features is not None
+        else np.empty((len(features), 0), dtype=np.float32)
+    )
     return TensorDataset(
         torch.from_numpy(np.asarray(features, dtype=np.float32)),
         torch.from_numpy(np.asarray(baseline_variance, dtype=np.float32)),
         torch.from_numpy(np.asarray(realized_variance, dtype=np.float32)),
         torch.from_numpy(np.asarray(cumulative_returns, dtype=np.float32)),
         torch.from_numpy(np.asarray(direction_classes, dtype=np.int64)),
+        torch.from_numpy(news),
     )
 
 
@@ -329,11 +368,11 @@ def _evaluate_loader(
     model.eval()
     with torch.no_grad():
         for batch in loader:
-            x, baseline, target_var, target_return, direction = [
+            x, baseline, target_var, target_return, direction, news = [
                 value.to(device) for value in batch
             ]
             _, breakdown = volatility_multitask_loss(
-                model(x, baseline),
+                model(x, baseline, news if news.shape[1] else None),
                 baseline,
                 target_var,
                 target_return,
@@ -371,6 +410,8 @@ def train_baseline_residual_tcn(
     validation_realized_variance: np.ndarray,
     validation_cumulative_returns: np.ndarray,
     validation_direction_classes: np.ndarray,
+    train_news_features: np.ndarray | None = None,
+    validation_news_features: np.ndarray | None = None,
     model_config: BaselineResidualTCNConfig,
     training_config: TorchTrainingConfig | None = None,
     loss_weights: VolatilityLossWeights | None = None,
@@ -391,12 +432,32 @@ def train_baseline_residual_tcn(
     scaler = RobustSequenceScaler.fit(train_features)
     train_x = scaler.transform(train_features)
     validation_x = scaler.transform(validation_features)
+    news_scaler: RobustSequenceScaler | None = None
+    if model_config.news_feature_count:
+        if train_news_features is None or validation_news_features is None:
+            raise ValueError("news-enabled training requires aligned train and validation features")
+        if train_news_features.shape != (len(train_features), model_config.news_feature_count):
+            raise ValueError("training news feature shape does not match the model contract")
+        if validation_news_features.shape != (
+            len(validation_features),
+            model_config.news_feature_count,
+        ):
+            raise ValueError("validation news feature shape does not match the model contract")
+        news_scaler = RobustSequenceScaler.fit(train_news_features)
+        train_news = news_scaler.transform(train_news_features)
+        validation_news = news_scaler.transform(validation_news_features)
+    else:
+        if train_news_features is not None or validation_news_features is not None:
+            raise ValueError("market-only training cannot accept news features")
+        train_news = None
+        validation_news = None
     train_dataset = _tensor_dataset(
         train_x,
         train_baseline_variance,
         train_realized_variance,
         train_cumulative_returns,
         train_direction_classes,
+        train_news,
     )
     validation_dataset = _tensor_dataset(
         validation_x,
@@ -404,6 +465,7 @@ def train_baseline_residual_tcn(
         validation_realized_variance,
         validation_cumulative_returns,
         validation_direction_classes,
+        validation_news,
     )
     generator = torch.Generator().manual_seed(seed)
     train_loader = DataLoader(
@@ -439,7 +501,7 @@ def train_baseline_residual_tcn(
     for epoch in range(1, settings.maximum_epochs + 1):
         model.train()
         for batch in train_loader:
-            x, baseline, target_var, target_return, direction = [
+            x, baseline, target_var, target_return, direction, news = [
                 value.to(selected_device, non_blocking=True) for value in batch
             ]
             optimizer.zero_grad(set_to_none=True)
@@ -449,7 +511,7 @@ def train_baseline_residual_tcn(
                 enabled=use_amp,
             ):
                 loss, _ = volatility_multitask_loss(
-                    model(x, baseline),
+                    model(x, baseline, news if news.shape[1] else None),
                     baseline,
                     target_var,
                     target_return,
@@ -481,6 +543,7 @@ def train_baseline_residual_tcn(
     return TrainingResult(
         model=model,
         scaler=scaler,
+        news_scaler=news_scaler,
         best_epoch=best_epoch,
         history=tuple(history),
         device=str(selected_device),

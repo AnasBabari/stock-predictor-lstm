@@ -57,6 +57,37 @@ def test_causal_convolution_output_before_perturbation_is_unchanged() -> None:
     assert not torch.allclose(original_output[:, :, 15:], changed_output[:, :, 15:])
 
 
+def test_news_channel_is_explicit_and_changes_the_shared_representation() -> None:
+    x, baseline, *_ = _batch()
+    model = BaselineResidualTCN(
+        BaselineResidualTCNConfig(
+            feature_count=x.shape[-1],
+            horizon_count=baseline.shape[-1],
+            news_feature_count=5,
+            news_channels=4,
+            dropout=0.0,
+        )
+    ).eval()
+    news = torch.zeros((len(x), 5))
+    changed = news.clone()
+    changed[:, 0] = 3.0
+    with torch.no_grad():
+        first = model(torch.from_numpy(x), torch.from_numpy(baseline), news)
+        second = model(torch.from_numpy(x), torch.from_numpy(baseline), changed)
+    assert not torch.allclose(first[2], second[2])
+    with pytest.raises(ValueError, match="requires aligned"):
+        model(torch.from_numpy(x), torch.from_numpy(baseline))
+
+
+def test_market_only_model_rejects_news_features() -> None:
+    x, baseline, *_ = _batch()
+    model = BaselineResidualTCN(
+        BaselineResidualTCNConfig(feature_count=x.shape[-1], horizon_count=baseline.shape[-1])
+    )
+    with pytest.raises(ValueError, match="cannot accept news"):
+        model(torch.from_numpy(x), torch.from_numpy(baseline), torch.zeros((len(x), 1)))
+
+
 def test_multitask_loss_is_finite_and_backpropagates() -> None:
     x, baseline, target_var, returns, direction = _batch()
     model = BaselineResidualTCN(
@@ -130,4 +161,45 @@ def test_tiny_cpu_training_returns_bounded_model_and_train_only_scaler() -> None
     np.testing.assert_allclose(
         result.scaler.median,
         RobustSequenceScaler.fit(x[:24]).median,
+    )
+
+
+def test_news_training_uses_a_separate_train_only_scaler() -> None:
+    x, baseline, target_var, returns, direction = _batch(rows=24, window=16, features=4)
+    rng = np.random.default_rng(81)
+    news = rng.normal(size=(24, 3)).astype(np.float32)
+    result = train_baseline_residual_tcn(
+        train_features=x[:18],
+        train_baseline_variance=baseline[:18],
+        train_realized_variance=target_var[:18],
+        train_cumulative_returns=returns[:18],
+        train_direction_classes=direction[:18],
+        validation_features=x[18:],
+        validation_baseline_variance=baseline[18:],
+        validation_realized_variance=target_var[18:],
+        validation_cumulative_returns=returns[18:],
+        validation_direction_classes=direction[18:],
+        train_news_features=news[:18],
+        validation_news_features=news[18:] * 1000,
+        model_config=BaselineResidualTCNConfig(
+            feature_count=4,
+            horizon_count=3,
+            news_feature_count=3,
+            channels=8,
+            dilations=(1,),
+            dropout=0.0,
+        ),
+        training_config=TorchTrainingConfig(
+            maximum_epochs=1,
+            patience=1,
+            batch_size=8,
+            use_amp=False,
+        ),
+        seed=6,
+        device="cpu",
+    )
+    assert result.news_scaler is not None
+    np.testing.assert_allclose(
+        result.news_scaler.median,
+        RobustSequenceScaler.fit(news[:18]).median,
     )
