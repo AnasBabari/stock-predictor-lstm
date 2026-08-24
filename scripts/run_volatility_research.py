@@ -105,6 +105,12 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--quick", action="store_true", help="Non-certifiable one-seed smoke run")
     parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        help="Development-only seed subset; certification requires the frozen three seeds",
+    )
+    parser.add_argument(
         "--example-cache-root",
         type=Path,
         help="Local derived-array cache (defaults beside the immutable panel)",
@@ -114,7 +120,13 @@ def main() -> int:
 
     protocol = VolatilityForecastProtocol()
     gate = VolatilityPromotionGate()
-    seeds = (protocol.seeds[1],) if args.quick else protocol.seeds
+    seeds = (
+        tuple(args.seeds)
+        if args.seeds
+        else ((protocol.seeds[1],) if args.quick else protocol.seeds)
+    )
+    if len(set(seeds)) != len(seeds) or not set(seeds).issubset(protocol.seeds):
+        parser.error(f"--seeds must be unique members of {protocol.seeds}")
     maximum_epochs = min(args.maximum_epochs, 3) if args.quick else args.maximum_epochs
     training = TorchTrainingConfig(
         maximum_epochs=maximum_epochs,
@@ -199,7 +211,12 @@ def main() -> int:
 
     report = {
         "created_at_utc": datetime.now(UTC).isoformat(),
-        "certifiable": not args.quick and len(seed_records) == len(protocol.seeds),
+        "certifiable": (
+            not args.quick
+            and seeds == protocol.seeds
+            and args.maximum_epochs == TorchTrainingConfig().maximum_epochs
+            and args.batch_size == TorchTrainingConfig().batch_size
+        ),
         "mode": "quick_smoke" if args.quick else "full_development",
         "panel_dir": str(args.panel_dir.resolve()),
         "protocol": asdict(protocol),

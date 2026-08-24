@@ -41,6 +41,7 @@ class FoldEvidence:
     best_epoch: int
     duration_seconds: float
     parameter_count: int
+    training_history: tuple[dict[str, float], ...]
     metrics: tuple[dict[str, float | int], ...]
 
 
@@ -351,6 +352,7 @@ def evaluate_tcn_development(
                 best_epoch=trained.best_epoch,
                 duration_seconds=trained.duration_seconds,
                 parameter_count=trained.parameter_count,
+                training_history=trained.history,
                 metrics=metrics,
             )
         )
