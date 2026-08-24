@@ -88,6 +88,67 @@ class FrozenCandidate:
         return variance, variance * self.baseline_return_variance_scale
 
 
+@dataclass(frozen=True)
+class FrozenEnsemble:
+    """One production candidate composed of fixed-seed members."""
+
+    members: tuple[FrozenCandidate, ...]
+    model_identity: str
+
+    def __post_init__(self) -> None:
+        if not self.members:
+            raise ValueError("frozen ensemble requires at least one member")
+        seeds = tuple(member.seed for member in self.members)
+        if tuple(sorted(set(seeds))) != seeds:
+            raise ValueError("ensemble members must have unique increasing seeds")
+
+    def predict(
+        self,
+        examples: VolatilityPanelExamples,
+        indices: np.ndarray,
+        *,
+        news_features: np.ndarray | None = None,
+    ) -> DistributionPredictions:
+        predictions = [
+            member.predict(examples, indices, news_features=news_features)
+            for member in self.members
+        ]
+        return DistributionPredictions(
+            variance=np.mean([item.variance for item in predictions], axis=0),
+            return_location=np.mean([item.return_location for item in predictions], axis=0),
+            direction_probabilities=np.mean(
+                [item.direction_probabilities for item in predictions],
+                axis=0,
+            ),
+            return_variance=np.mean([item.return_variance for item in predictions], axis=0),
+        )
+
+    def matched_baselines(
+        self,
+        examples: VolatilityPanelExamples,
+        indices: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        baselines = [member.matched_baselines(examples, indices) for member in self.members]
+        reference_variance, reference_return = baselines[0]
+        if any(
+            not np.allclose(variance, reference_variance, rtol=1e-10, atol=1e-12)
+            or not np.allclose(return_variance, reference_return, rtol=1e-10, atol=1e-12)
+            for variance, return_variance in baselines[1:]
+        ):
+            raise RuntimeError("ensemble members do not share one matched baseline contract")
+        return reference_variance, reference_return
+
+
+def ensemble_identity(members: tuple[FrozenCandidate, ...]) -> str:
+    if not members:
+        raise ValueError("cannot identify an empty ensemble")
+    ordered = sorted((member.seed, member.model_identity) for member in members)
+    if len({seed for seed, _identity in ordered}) != len(ordered):
+        raise ValueError("ensemble member seeds must be unique")
+    payload = json.dumps(ordered, separators=(",", ":")).encode("utf-8")
+    return f"global-volatility-ensemble:{hashlib.sha256(payload).hexdigest()}"
+
+
 def derive_epoch_budget(development_record: dict[str, object]) -> int:
     """Derive a robust fixed budget from the five untouched fold choices."""
     folds = development_record.get("folds")
@@ -244,3 +305,34 @@ def fit_frozen_candidate(
         baseline_return_variance_scale=baseline_return_scale,
         model_identity=identity,
     )
+
+
+def fit_frozen_ensemble(
+    *,
+    examples: VolatilityPanelExamples,
+    fold_plan: VolatilityFoldPlan,
+    protocol: VolatilityForecastProtocol,
+    development_records: dict[int, dict[str, object]],
+    architecture: BaselineResidualTCNConfig,
+    device: str,
+    batch_size: int = 512,
+    news_features: np.ndarray | None = None,
+) -> FrozenEnsemble:
+    """Fit the fixed-seed ensemble selected by the frozen development report."""
+    if tuple(sorted(development_records)) != protocol.seeds:
+        raise ValueError(f"development records must cover frozen seeds {protocol.seeds}")
+    members = tuple(
+        fit_frozen_candidate(
+            examples=examples,
+            fold_plan=fold_plan,
+            protocol=protocol,
+            development_record=development_records[seed],
+            architecture=architecture,
+            seed=seed,
+            device=device,
+            batch_size=batch_size,
+            news_features=news_features,
+        )
+        for seed in protocol.seeds
+    )
+    return FrozenEnsemble(members=members, model_identity=ensemble_identity(members))

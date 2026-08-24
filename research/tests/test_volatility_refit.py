@@ -5,7 +5,12 @@ import pytest
 from volatility_forecasting.contracts import VolatilityForecastProtocol
 from volatility_forecasting.data import VolatilityPanelExamples
 from volatility_forecasting.folds import VolatilityFoldPlan
-from volatility_forecasting.refit import certification_development_split, derive_epoch_budget
+from volatility_forecasting.refit import (
+    FrozenEnsemble,
+    certification_development_split,
+    derive_epoch_budget,
+    ensemble_identity,
+)
 
 
 def test_epoch_budget_is_conservative_median_of_fold_choices() -> None:
@@ -16,6 +21,18 @@ def test_epoch_budget_is_conservative_median_of_fold_choices() -> None:
         derive_epoch_budget({"folds": [{"best_epoch": 2}]})
     with pytest.raises(ValueError, match="invalid best epoch"):
         derive_epoch_budget({"folds": [{"best_epoch": 2}, {"best_epoch": 3}, {"best_epoch": 0}]})
+
+
+def test_ensemble_identity_is_seed_ordered_and_rejects_duplicate_members() -> None:
+    first = type("Member", (), {"seed": 41, "model_identity": "model-a"})()
+    second = type("Member", (), {"seed": 42, "model_identity": "model-b"})()
+    identity = ensemble_identity((first, second))
+    assert identity.startswith("global-volatility-ensemble:")
+    assert identity == ensemble_identity((second, first))
+    with pytest.raises(ValueError, match="unique"):
+        ensemble_identity((first, first))
+    with pytest.raises(ValueError, match="unique increasing"):
+        FrozenEnsemble(members=(second, first), model_identity=identity)
 
 
 def test_certification_split_excludes_unseen_assets_and_reserved_dates() -> None:
