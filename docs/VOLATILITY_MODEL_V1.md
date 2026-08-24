@@ -185,6 +185,15 @@ ships only if it improves QLIKE/CRPS, tail coverage, stress-regime results,
 and asset-transfer results without relying on late, revised, duplicated, or
 unverifiable stories.
 
+`configs/news-ticker-exposures-v1.json` freezes coarse business-model
+sensitivities before evaluation. It covers every panel symbol and records its
+methodology and checksum in the run report. The values are transmission
+hypotheses, not estimated causal effects: NMM is highly sensitive to shipping,
+oil, sanctions, and conflict events, while MSFT has a stronger regulatory and
+technology-supply-chain profile. No exposure is fitted from returns or model
+errors. The entire channel remains removable unless the matched ablation
+passes across seeds, folds, regimes, and held-out assets.
+
 ## Candidate architecture
 
 The first promoted candidate must be a causal residual TCN sized for a 6 GiB

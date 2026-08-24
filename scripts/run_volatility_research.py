@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -50,6 +49,7 @@ from volatility_forecasting.news_alignment import (  # noqa: E402
     aggregate_news_for_market_rows,
     validate_news_coverage,
 )
+from volatility_forecasting.news_exposures import load_news_exposure_map  # noqa: E402
 from volatility_forecasting.news_snapshot import load_news_snapshot  # noqa: E402
 
 from backend.panel.snapshots import load_panel_from_directory  # noqa: E402
@@ -115,34 +115,6 @@ def _seed_consensus(
             },
         }
     return summary
-
-
-def _load_exposure_map(path: Path | None) -> dict[str, dict[str, float]]:
-    if path is None:
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError("news exposure map is missing or invalid JSON") from error
-    if not isinstance(payload, dict):
-        raise ValueError("news exposure map must be an object")
-    result: dict[str, dict[str, float]] = {}
-    for ticker, topics in payload.items():
-        if not isinstance(ticker, str) or not ticker.strip() or not isinstance(topics, dict):
-            raise ValueError("news exposure entries must map tickers to topic objects")
-        normalized: dict[str, float] = {}
-        for topic, weight in topics.items():
-            if not isinstance(topic, str) or not topic.strip() or isinstance(weight, bool):
-                raise ValueError("news exposure topics and weights are invalid")
-            try:
-                numeric = float(weight)
-            except (TypeError, ValueError) as error:
-                raise ValueError("news exposure weights must be numeric") from error
-            if not math.isfinite(numeric) or not 0 <= numeric <= 1:
-                raise ValueError("news exposure weights must be finite and in [0, 1]")
-            normalized[topic.strip().lower()] = numeric
-        result[ticker.strip().upper()] = normalized
-    return result
 
 
 def _fold_relative_qlike(evaluation) -> np.ndarray:
@@ -287,10 +259,22 @@ def main() -> int:
     news_features: np.ndarray | None = None
     news_manifest: dict[str, object] | None = None
     exposure_map: dict[str, dict[str, float]] = {}
+    exposure_metadata: dict[str, object] | None = None
     if args.news_snapshot_dir is not None:
         print(f"Verifying immutable news snapshot {args.news_snapshot_dir}...", flush=True)
         events, news_manifest = load_news_snapshot(args.news_snapshot_dir)
-        exposure_map = _load_exposure_map(args.news_exposure_map)
+        if args.news_exposure_map is not None:
+            loaded_exposures = load_news_exposure_map(
+                args.news_exposure_map,
+                required_tickers={str(ticker) for ticker in examples.tickers},
+            )
+            exposure_map = loaded_exposures.exposures
+            exposure_metadata = {
+                "schema_version": loaded_exposures.schema_version,
+                "methodology": loaded_exposures.methodology,
+                "source_sha256": loaded_exposures.source_sha256,
+                "source_path": str(args.news_exposure_map.resolve()),
+            }
         news_matrix = aggregate_news_for_market_rows(
             events,
             examples.tickers,
@@ -443,6 +427,7 @@ def main() -> int:
             "feature_schema_version": NEWS_FEATURE_SCHEMA_VERSION,
             "feature_names": list(NEWS_FEATURE_NAMES_V2),
             "exposure_map": exposure_map,
+            "exposure_metadata": exposure_metadata,
             "architecture": asdict(news_architecture),
             "seeds": news_seed_records,
             "ablation_gate": asdict(NewsAblationGate()),
