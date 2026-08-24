@@ -17,6 +17,13 @@ for candidate in (ROOT, ROOT / "research"):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from volatility_forecasting.cache import (  # noqa: E402
+    ExampleCacheError,
+    example_cache_key,
+    load_example_cache,
+    panel_fingerprint,
+    save_example_cache,
+)
 from volatility_forecasting.contracts import (  # noqa: E402
     VolatilityForecastProtocol,
     VolatilityPromotionGate,
@@ -70,7 +77,9 @@ def _seed_consensus(
                 np.max([float(metric["relative_qlike"]) for metric in metrics])
             ),
             "relative_crps_median": float(
-                np.median([float(metric["relative_gaussian_crps"]) for metric in metrics])
+                np.median(
+                    [float(metric["relative_variance_only_gaussian_crps"]) for metric in metrics]
+                )
             ),
             "coverage_80_range": [
                 float(np.min([float(metric["coverage_80"]) for metric in metrics])),
@@ -94,6 +103,12 @@ def main() -> int:
     parser.add_argument("--maximum-epochs", type=int, default=60)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--quick", action="store_true", help="Non-certifiable one-seed smoke run")
+    parser.add_argument(
+        "--example-cache-root",
+        type=Path,
+        help="Local derived-array cache (defaults beside the immutable panel)",
+    )
+    parser.add_argument("--no-example-cache", action="store_true")
     args = parser.parse_args()
 
     protocol = VolatilityForecastProtocol()
@@ -109,10 +124,34 @@ def main() -> int:
     run_dir = args.run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Loading immutable panel from {args.panel_dir}...", flush=True)
-    panel = load_panel_from_directory(args.panel_dir)
-    print(f"Building causal examples for {len(panel)} tickers...", flush=True)
-    examples = build_volatility_panel_examples(panel, protocol)
+    panel_checksum = panel_fingerprint(args.panel_dir)
+    cache_root = (args.example_cache_root or (args.panel_dir.parent / "example-cache")).resolve()
+    cache_dir = cache_root / example_cache_key(panel_checksum, protocol)
+    examples = None
+    if not args.no_example_cache and cache_dir.exists():
+        try:
+            print(f"Verifying derived example cache {cache_dir}...", flush=True)
+            examples = load_example_cache(
+                cache_dir,
+                panel_checksum=panel_checksum,
+                protocol=protocol,
+            )
+            print("Loaded verified causal examples from the local cache.", flush=True)
+        except ExampleCacheError as error:
+            print(f"Ignoring invalid example cache: {error}", flush=True)
+    if examples is None:
+        print(f"Loading immutable panel from {args.panel_dir}...", flush=True)
+        panel = load_panel_from_directory(args.panel_dir)
+        print(f"Building causal examples for {len(panel)} tickers...", flush=True)
+        examples = build_volatility_panel_examples(panel, protocol)
+        if not args.no_example_cache:
+            print(f"Saving checksummed derived examples to {cache_dir}...", flush=True)
+            save_example_cache(
+                cache_dir,
+                examples,
+                panel_checksum=panel_checksum,
+                protocol=protocol,
+            )
     fold_plan = build_volatility_fold_plan(examples, protocol)
     print(
         f"Built {len(examples.features):,} examples; "
