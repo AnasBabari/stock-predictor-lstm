@@ -17,14 +17,33 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 RELEASE_SCHEMA_VERSION = 1
+MAX_RELEASE_FILES = 32
+MAX_RELEASE_FILE_BYTES = 64 * 1024 * 1024
+MAX_RELEASE_TOTAL_BYTES = 128 * 1024 * 1024
+MAX_RELEASE_MANIFEST_BYTES = 1024 * 1024
 
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _artifact_path(root: Path, name: object) -> Path:
+    """Resolve one portable relative artifact path inside ``root``."""
+    if not isinstance(name, str) or not name or len(name) > 240 or "\\" in name or ":" in name:
+        raise ValueError("release artifact path is invalid")
+    relative = PurePosixPath(name)
+    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError("release artifact path must stay inside the release directory")
+    target = root.joinpath(*relative.parts).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError as error:
+        raise ValueError("release artifact path escapes the release directory") from error
+    return target
 
 
 def build_release(
@@ -39,12 +58,20 @@ def build_release(
 
     if not model_files:
         raise ValueError("release requires at least one model file")
+    if len(model_files) > MAX_RELEASE_FILES:
+        raise ValueError("release contains too many artifact files")
+    total_bytes = sum(len(data) for data in model_files.values())
+    if total_bytes > MAX_RELEASE_TOTAL_BYTES or any(
+        not isinstance(data, bytes) or not data or len(data) > MAX_RELEASE_FILE_BYTES
+        for data in model_files.values()
+    ):
+        raise ValueError("release artifact files exceed the bounded size contract")
     out_dir.mkdir(parents=True, exist_ok=False)
 
     file_checksums: dict[str, str] = {}
     for name in sorted(model_files):
         data = model_files[name]
-        target_path = out_dir / name
+        target_path = _artifact_path(out_dir, name)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_bytes(data)
         file_checksums[name] = _sha256_bytes(data)
@@ -104,6 +131,8 @@ def verify_release(release_dir: Path, *, public_key_path: Path) -> dict:
         raise FileNotFoundError(f"Missing manifest file at {manifest_path}")
 
     raw = manifest_path.read_bytes()
+    if len(raw) > MAX_RELEASE_MANIFEST_BYTES:
+        raise ValueError("release manifest exceeds the bounded size contract")
     try:
         manifest = json.loads(raw)
     except Exception as exc:
@@ -126,10 +155,20 @@ def verify_release(release_dir: Path, *, public_key_path: Path) -> dict:
     except InvalidSignature as exc:
         raise ValueError("release signature verification failed.") from exc
 
-    for name, expected in manifest["files"].items():
-        path = release_dir / name
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files or len(files) > MAX_RELEASE_FILES:
+        raise ValueError("release file manifest is invalid")
+    total_bytes = 0
+    for name, expected in files.items():
+        if not isinstance(expected, str) or len(expected) != 64:
+            raise ValueError("release file checksum is invalid")
+        path = _artifact_path(release_dir, name)
         if not path.exists():
             raise FileNotFoundError(f"Listed release file absent from disk: {name}")
+        size = path.stat().st_size
+        total_bytes += size
+        if size <= 0 or size > MAX_RELEASE_FILE_BYTES or total_bytes > MAX_RELEASE_TOTAL_BYTES:
+            raise ValueError("release artifact files exceed the bounded size contract")
         actual = _sha256_bytes(path.read_bytes())
         if actual != expected:
             raise ValueError(f"checksum mismatch for {name}: tampered or truncated.")

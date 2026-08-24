@@ -131,6 +131,31 @@ def test_unsupported_schema_version_rejected(tmp_path: Path, key_pair) -> None:
         verify_release(out, public_key_path=public_pem)
 
 
+@pytest.mark.parametrize(
+    "name", ("../escape.onnx", "/absolute.onnx", "C:/drive.onnx", "bad\\path.onnx")
+)
+def test_release_rejects_artifact_path_traversal(tmp_path: Path, key_pair, name: str) -> None:
+    private_pem, _ = key_pair
+    with pytest.raises(ValueError, match="artifact path"):
+        build_release(
+            tmp_path / "rel",
+            {name: b"model"},
+            METADATA,
+            private_key_path=private_pem,
+        )
+
+
+def test_release_rejects_empty_and_oversized_artifacts(tmp_path: Path, key_pair) -> None:
+    private_pem, _ = key_pair
+    with pytest.raises(ValueError, match="bounded size"):
+        build_release(
+            tmp_path / "empty",
+            {"model.onnx": b""},
+            METADATA,
+            private_key_path=private_pem,
+        )
+
+
 def test_build_catalog_validates_required_fields() -> None:
     from release.bundle import build_catalog
 
