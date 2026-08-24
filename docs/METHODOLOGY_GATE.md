@@ -12,7 +12,7 @@ per-fold trainEnd, and per-observation fold rows when pooling out-of-fold
 predictions. The served artifact is the final refit, and cached evidence is
 superseded whenever the method changes.
 
-recorded_sha: 2f1fd2a
+recorded_sha: 6374c4c
 freeze_record_commit: fb1bbbf020a19ff2482225ab60941f4b24cdd0bb
 
 **Field conventions.** `recorded_sha` identifies the battery-verified tree the
@@ -33,11 +33,11 @@ failure fails the check closed rather than skipping it.
 Recorded evidence is valid only when every step below passes at `recorded_sha`
 (the tree the battery was re-run on) on a clean worktree:
 
-1. `npx vitest run` (frontend unit suite) — currently 152 tests across 23
+1. `npx vitest run` (frontend unit suite) — currently 211 tests across 31
    files for frontend units.
 2. `npm run build` (frontend production build).
 3. Contract e2e: `npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js` — server contract and fixture contracts without real TensorFlow.js training.
-4. Real-training e2e: `npx playwright test e2e/browser-real-training.spec.js --workers=1` — a real TensorFlow.js model trains in Chromium against the deterministic fixture for price and direction; the direction run must fall back to the majority-class baseline and render per-day direction evidence.
+4. Real-training e2e: `npx playwright test e2e/browser-real-training.spec.js --workers=1` — a real TensorFlow.js model trains in Chromium against deterministic price and direction fixtures; the price run must prove that a reload uses the IndexedDB artifact, and the direction run must render the explicitly labelled matched pre-evaluation base-rate fallback under the cumulative three-way target contract.
 5. Temporal-isolation e2e: `npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1` — distorting rows strictly beyond the final-refit boundary must leave metrics and the stored scaler bit-identical between clean and corrupted runs.
 
 Guidance: `python scripts/check_methodology_gate.py` in CI fails when any
