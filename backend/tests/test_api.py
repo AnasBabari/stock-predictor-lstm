@@ -97,6 +97,40 @@ def test_ready_reports_server_forecast_infrastructure_by_mode(monkeypatch):
     assert healthy.json()["dependencies"]["server_forecasts"]["required"] is False
 
 
+def test_ready_requires_a_verified_global_volatility_release(monkeypatch):
+    api._record_upstream("available")
+    monkeypatch.setattr(api.settings, "volatility_serving_required", True)
+    monkeypatch.setattr(api.settings, "volatility_release_dir", "/signed/release")
+    monkeypatch.setattr(api.settings, "volatility_public_key_path", "/keys/public.pem")
+    monkeypatch.setattr(
+        "routes.volatility_v2.volatility_release_readiness",
+        lambda: {
+            "configured": True,
+            "status": "integrity_failure",
+            "certified_horizons": [],
+        },
+    )
+    unavailable = client.get("/ready")
+    assert unavailable.status_code == 503
+    assert unavailable.json()["dependencies"]["global_volatility"] == {
+        "configured": True,
+        "status": "integrity_failure",
+        "certified_horizons": [],
+        "required": True,
+    }
+
+    monkeypatch.setattr(
+        "routes.volatility_v2.volatility_release_readiness",
+        lambda: {
+            "configured": True,
+            "status": "ready",
+            "model_id": "global-volatility-tcn-v1",
+            "certified_horizons": [1, 5, 7],
+        },
+    )
+    assert client.get("/ready").status_code == 200
+
+
 def test_ready_reflects_market_circuit_breaker_open_and_recovery():
     api._record_upstream("available")
     assert client.get("/ready").status_code == 200
