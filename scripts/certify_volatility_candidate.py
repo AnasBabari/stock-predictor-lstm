@@ -40,6 +40,11 @@ def _canonical_digest(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _json_normalised(value: object) -> object:
+    """Round-trip through JSON so tuple-valued fields compare equal to lists."""
+    return json.loads(json.dumps(value))
+
+
 def validate_development_report(
     report: object,
     protocol: VolatilityForecastProtocol,
@@ -47,14 +52,17 @@ def validate_development_report(
     """Fail closed unless the report can predeclare a certification candidate."""
     if not isinstance(report, dict) or report.get("certifiable") is not True:
         raise ValueError("development report is absent or non-certifiable")
-    if report.get("protocol") != asdict(protocol):
+    if _json_normalised(report.get("protocol")) != _json_normalised(asdict(protocol)):
         raise ValueError("development report protocol does not match the frozen implementation")
     if report.get("mode") != "full_development":
         raise ValueError("this certification command accepts the market-only control report")
     architecture_payload = report.get("architecture")
     if not isinstance(architecture_payload, dict):
         raise ValueError("development report architecture is missing")
-    architecture = BaselineResidualTCNConfig(**architecture_payload)
+    normalised = _json_normalised(architecture_payload)
+    if isinstance(normalised.get("dilations"), list):
+        normalised["dilations"] = tuple(normalised["dilations"])
+    architecture = BaselineResidualTCNConfig(**normalised)
     if architecture.feature_count != protocol.feature_count:
         raise ValueError("development architecture feature count is incompatible")
     records = report.get("seeds")

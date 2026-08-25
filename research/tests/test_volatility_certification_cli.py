@@ -53,3 +53,16 @@ def test_report_validation_rejects_noncertifiable_and_missing_seed_evidence() ->
     report["seeds"] = report["seeds"][:-1]
     with pytest.raises(ValueError, match="frozen seeds"):
         MODULE.validate_development_report(report, protocol)
+
+
+def test_report_validation_accepts_json_round_tripped_reports() -> None:
+    """Regression: on-disk reports carry lists where the protocol has tuples."""
+    import json
+
+    protocol = VolatilityForecastProtocol()
+    report = json.loads(json.dumps(_report()))
+    records, architecture, eligible = MODULE.validate_development_report(report, protocol)
+    assert tuple(records) == protocol.seeds
+    assert architecture.dilations == tuple(architecture.dilations)
+    assert isinstance(architecture.dilations, tuple)
+    assert eligible == (1, 3, 5, 7, 14)
