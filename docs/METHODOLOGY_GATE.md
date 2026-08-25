@@ -1,4 +1,10 @@
-# Browser methodology gate
+# Legacy browser methodology gate
+
+This record guards the retained TFJS rollback/compatibility path. It is not
+the production model certification: global volatility uses the locked CUDA
+walk-forward and one-shot holdout protocol in GLOBAL_MODELS.md. Keeping this
+gate explicit prevents old browser evidence from being mistaken for the
+signed production release.
 
 The browser evidence contract is pinned to a full check: reported numbers must
 never outlive the method that produced them. Quick/Balanced metrics come from a
