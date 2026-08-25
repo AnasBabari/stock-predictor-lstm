@@ -3,11 +3,13 @@ import { clearBrowserModelCache, trainBrowserForecast } from '../ml/browserTrain
 import { createSnapshotClient } from '../ml/snapshotClient';
 import { fetchServerPrediction } from '../ml/serverModelClient';
 import { isGlobalModelEnabled, loadGlobalModel } from '../ml/globalModelClient';
+import { fetchVolatilityForecast } from '../ml/volatilityClient';
 import { defaultTrainingProfile } from '../ml/trainingProfiles';
 import { safeGet, safeSet } from '../utils/safeStorage';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
+const VOLATILITY_SERVING_ENABLED = import.meta.env.VITE_VOLATILITY_SERVING_ENABLED === 'true';
 const DEPLOYMENT_TRAINING_MODE = (
   window.STOCKLSTM_TRAINING_MODE ||
   import.meta.env.VITE_TRAINING_MODE ||
@@ -31,6 +33,8 @@ export const stageLabels = {
   checkpoint_loaded: 'Resuming your local research benchmark…',
   evaluating_fold: 'Running walk-forward evaluation…',
   final_fit: 'Fitting the final local model…',
+  volatility_snapshot: 'Building a causal volatility snapshot…',
+  volatility_inference: 'Running the signed global volatility model…',
   training: 'Training your local model…',
   generating_forecast: 'Generating browser forecast…',
   completed: 'Forecast ready.',
@@ -295,6 +299,14 @@ export function useForecast({ addToast, onNewTickerSearched }) {
     async (symbol, days, type, signal, onProgress) => {
       const horizonRequest = normalizeHorizonRequest(days);
       const explicitDays = horizonRequest.requested_horizon;
+      if (VOLATILITY_SERVING_ENABLED && type === FORECAST_TYPES.PRICE && explicitDays != null) {
+        onProgress?.({ stage: 'volatility_snapshot' });
+        const volatilityResult = await fetchVolatilityForecast(symbol, explicitDays, signal, {
+          baseUrl: API_BASE,
+        });
+        onProgress?.({ stage: 'volatility_inference' });
+        return volatilityResult;
+      }
       let serverPrediction = null;
       if (horizonRequest.horizon_mode === 'explicit' && DEPLOYMENT_TRAINING_MODE !== 'browser_only') {
         onProgress?.({ stage: 'checking_server', message: 'Checking for server-pretrained models...' });
