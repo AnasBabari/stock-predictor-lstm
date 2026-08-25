@@ -14,6 +14,7 @@ export function useCompleteAnalysisExport({
   ticker,
   forecastDays,
   trainingProfile,
+  volatilityServing = false,
 }) {
   const [isExportLoading, setIsExportLoading] = useState(false);
   const exportAbortControllerRef = useRef(null);
@@ -44,9 +45,11 @@ export function useCompleteAnalysisExport({
     exportAbortControllerRef.current = controller;
 
     const priceKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.PRICE, trainingProfile);
-    const trendKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.TREND, trainingProfile);
     const cachedPrice = forecastCacheRef.current.get(priceKey);
-    const cachedTrend = forecastCacheRef.current.get(trendKey);
+    const trendKey = volatilityServing
+      ? null
+      : forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.TREND, trainingProfile);
+    const cachedTrend = trendKey ? forecastCacheRef.current.get(trendKey) : null;
 
     const ensureForecast = async (type) => {
       const data = await fetchPredictionData(
@@ -65,6 +68,27 @@ export function useCompleteAnalysisExport({
     try {
       setIsExportLoading(true);
       const priceData = cachedPrice || (await ensureForecast(FORECAST_TYPES.PRICE));
+      if (volatilityServing) {
+        const metadata = {
+          ticker: tickerSymbol,
+          generated_at: new Date().toISOString(),
+          forecast_days: forecastDays,
+          serving_mode: 'signed_global_volatility',
+          metric_source: priceData.metrics?.metric_source,
+          model_id: priceData.metadata?.model_version,
+          snapshot_id: priceData.metadata?.snapshot_id,
+          location_source: priceData.metadata?.engine?.location_source,
+        };
+        await exportCompleteAnalysis({
+          priceData,
+          directionData: null,
+          metadata,
+        });
+        if (exportRequestIdRef.current === exportRequestId) {
+          addToast('success', 'Volatility evidence exported as ZIP');
+        }
+        return;
+      }
       const trendData = cachedTrend || (await ensureForecast(FORECAST_TYPES.TREND));
 
       if (!priceData || !trendData) {
@@ -113,6 +137,7 @@ export function useCompleteAnalysisExport({
     fetchPredictionData,
     forecastCacheRef,
     forecastDays,
+    volatilityServing,
     setErrorMsg,
     ticker,
     trainingProfile,

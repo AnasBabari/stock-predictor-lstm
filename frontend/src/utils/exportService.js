@@ -94,6 +94,44 @@ export async function exportAttentionCSV(stockData) {
 }
 
 export async function exportCompleteAnalysis({ priceData, directionData, metadata }) {
+  if (metadata?.serving_mode === 'signed_global_volatility') {
+    if (!priceData || priceData.ticker !== String(metadata.ticker).toUpperCase()) {
+      throw new Error('Volatility evidence identity does not match the requested export.');
+    }
+    if (Number(priceData.forecast_days) !== Number(metadata.forecast_days)) {
+      throw new Error('Volatility evidence horizon does not match the requested export.');
+    }
+    if (priceData.metadata?.engine?.certified_head !== 'volatility') {
+      throw new Error('The export is not backed by the certified volatility head.');
+    }
+    const zip = new JSZip();
+    const volatilityRows = [['Date', 'P05', 'P10', 'P25', 'P50', 'P75', 'P90', 'P95']];
+    const quantiles = priceData.volatility_cone || {};
+    priceData.future_dates.forEach((date, index) => {
+      volatilityRows.push([
+        date,
+        quantiles.p05?.[index],
+        quantiles.p10?.[index],
+        quantiles.p25?.[index],
+        quantiles.p50?.[index],
+        quantiles.p75?.[index],
+        quantiles.p90?.[index],
+        quantiles.p95?.[index],
+      ]);
+    });
+    const historyRows = [['Date', 'Close', 'Type']];
+    priceData.historical_dates.forEach((date, index) => {
+      historyRows.push([date, priceData.historical_prices[index], 'Historical']);
+    });
+    zip.file('volatility_forecast.csv', csvFromRows(volatilityRows));
+    zip.file('market_history.csv', csvFromRows(historyRows));
+    zip.file('metadata.json', JSON.stringify(metadata, null, 2));
+    zip.file('evidence.json', JSON.stringify(priceData.evidence || {}, null, 2));
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const filename = `${metadata.ticker}_volatility_evidence.zip`;
+    downloadBlob(blob, filename);
+    return { blob, filename };
+  }
   assertCompleteIdentity(priceData, directionData, metadata);
   const zip = new JSZip();
 

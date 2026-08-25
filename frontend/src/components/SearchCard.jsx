@@ -208,7 +208,9 @@ export default function SearchCard({
             value={forecastDays}
             onChange={(e) => setForecastDays(e.target.value === 'auto' ? 'auto' : Number(e.target.value))}
           >
-            <option value="auto">Auto · development-ranked</option>
+            {!volatilityServingEnabled && (
+              <option value="auto">Auto · development-ranked</option>
+            )}
             <option value={1}>1 day</option>
             <option value={3}>3 days</option>
             <option value={5}>5 days</option>

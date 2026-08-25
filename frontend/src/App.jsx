@@ -81,6 +81,7 @@ export default function App() {
     ticker,
     forecastDays,
     trainingProfile,
+    volatilityServing: VOLATILITY_SERVING_ENABLED,
   });
 
   const handleSelectTicker = useCallback(
