@@ -114,6 +114,8 @@ def test_serves_certified_volatility_cone(monkeypatch) -> None:
     assert body["ticker"] == "NMM"
     assert body["as_of"] == "2026-08-21"
     assert body["current_price"] == pytest.approx(88.78)
+    assert body["historical_dates"] == []
+    assert body["historical_prices"] == [88.0]
     quantiles = body["forecast"]["price_quantiles"]
     values = [quantiles[key][-1] for key in QUANTILE_KEYS]
     assert values == sorted(values)

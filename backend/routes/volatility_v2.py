@@ -240,6 +240,8 @@ async def volatility_forecast_v2(
         "as_of": snapshot.origin_date,
         "horizon": int(horizon),
         "current_price": float(snapshot.origin_close),
+        "historical_dates": list(snapshot.historical_dates),
+        "historical_prices": [float(value) for value in snapshot.historical_prices],
         "forecast": {
             "price_quantiles": _price_quantiles(
                 snapshot.origin_close,
