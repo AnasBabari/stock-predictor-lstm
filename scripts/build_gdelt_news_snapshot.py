@@ -41,6 +41,14 @@ def main() -> int:
         default=[],
         help="Explicit provider gap to record (repeatable; never silently skipped)",
     )
+    parser.add_argument(
+        "--record-missing-404",
+        action="store_true",
+        help=(
+            "Record official HTTP 404 archive gaps explicitly and continue; every gap is "
+            "listed in the final manifest"
+        ),
+    )
     parser.add_argument("--ticker-aliases", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
@@ -87,6 +95,7 @@ def main() -> int:
         license_acknowledged=True,
         workers=args.workers,
         missing_archive_dates=args.allow_missing_archive,
+        record_missing_404=args.record_missing_404,
         progress=report_progress,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True), flush=True)

@@ -35,6 +35,10 @@ class GdeltArchiveError(RuntimeError):
     """A GDELT source archive failed bounded download or verification."""
 
 
+class GdeltArchiveNotFound(GdeltArchiveError):
+    """The official provider has no archive for the requested day."""
+
+
 def load_ticker_aliases(path: Path) -> dict[str, tuple[str, ...]]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -93,7 +97,8 @@ def download_gdelt_archive(
             raise GdeltArchiveError("GDELT archive download was empty")
         os.replace(temporary, destination)
     except HTTPError as error:
-        raise GdeltArchiveError(
+        error_type = GdeltArchiveNotFound if error.code == 404 else GdeltArchiveError
+        raise error_type(
             f"GDELT archive download failed for {archive.archive_date} (HTTP {error.code})"
         ) from error
     except (OSError, ValueError) as error:
@@ -218,15 +223,22 @@ def _materialize_archive_part_default(
     part_dir: Path,
     download_path: Path,
     ticker_aliases: dict[str, tuple[str, ...]],
-) -> None:
+    record_missing_404: bool,
+) -> str | None:
     """Pickle-safe process worker using the production downloader."""
-    _materialize_archive_part(
-        archive,
-        part_dir=part_dir,
-        download_path=download_path,
-        ticker_aliases=ticker_aliases,
-        downloader=download_gdelt_archive,
-    )
+    try:
+        _materialize_archive_part(
+            archive,
+            part_dir=part_dir,
+            download_path=download_path,
+            ticker_aliases=ticker_aliases,
+            downloader=download_gdelt_archive,
+        )
+    except GdeltArchiveNotFound as error:
+        if not record_missing_404:
+            raise
+        return str(error)
+    return None
 
 
 def _materialize_missing_archive_part(
@@ -268,6 +280,7 @@ def build_gdelt_daily_snapshot(
     downloader: Callable[[GdeltV1DailyArchive, Path], None] = download_gdelt_archive,
     workers: int = 1,
     missing_archive_dates: Sequence[date] = (),
+    record_missing_404: bool = False,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, object]:
     """Resume verified daily parts and publish one bounded immutable snapshot."""
@@ -289,6 +302,7 @@ def build_gdelt_daily_snapshot(
     parts_root.mkdir(parents=True, exist_ok=True)
     downloads_root.mkdir(parents=True, exist_ok=True)
     missing: list[tuple[GdeltV1DailyArchive, Path, Path]] = []
+    observed_missing_dates: set[date] = set(allowed_gaps)
     completed = 0
     for archive in archives:
         part_dir = parts_root / f"{archive.archive_date:%Y%m%d}"
@@ -313,13 +327,23 @@ def build_gdelt_daily_snapshot(
         progress(completed, len(archives), "verified")
     if workers == 1:
         for archive, part_dir, download_path in missing:
-            _materialize_archive_part(
-                archive,
-                part_dir=part_dir,
-                download_path=download_path,
-                ticker_aliases=ticker_aliases,
-                downloader=downloader,
-            )
+            try:
+                _materialize_archive_part(
+                    archive,
+                    part_dir=part_dir,
+                    download_path=download_path,
+                    ticker_aliases=ticker_aliases,
+                    downloader=downloader,
+                )
+            except GdeltArchiveNotFound as error:
+                if not record_missing_404:
+                    raise
+                _materialize_missing_archive_part(
+                    archive,
+                    part_dir=part_dir,
+                    reason=str(error),
+                )
+                observed_missing_dates.add(archive.archive_date)
             completed += 1
             if progress is not None:
                 progress(completed, len(archives), str(archive.archive_date))
@@ -332,13 +356,21 @@ def build_gdelt_daily_snapshot(
                     part_dir,
                     download_path,
                     dict(ticker_aliases),
+                    record_missing_404,
                 ): archive
                 for archive, part_dir, download_path in missing
             }
             try:
                 for future in as_completed(futures):
                     archive = futures[future]
-                    future.result()
+                    missing_reason = future.result()
+                    if missing_reason is not None:
+                        _materialize_missing_archive_part(
+                            archive,
+                            part_dir=parts_root / f"{archive.archive_date:%Y%m%d}",
+                            reason=missing_reason,
+                        )
+                        observed_missing_dates.add(archive.archive_date)
                     completed += 1
                     if progress is not None:
                         progress(completed, len(archives), str(archive.archive_date))
@@ -380,7 +412,7 @@ def build_gdelt_daily_snapshot(
             "source_last_date": str(last.archive_date),
             "ticker_alias_count": len(ticker_aliases),
             "missing_archive_dates": [
-                str(value) for value in sorted(allowed_gaps)
+                str(value) for value in sorted(observed_missing_dates)
             ],
             **totals,
         },

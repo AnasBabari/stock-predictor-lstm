@@ -9,6 +9,7 @@ import pytest
 from volatility_forecasting.gdelt import iter_gdelt_v1_daily_archives
 from volatility_forecasting.gdelt_snapshot import (
     GdeltArchiveError,
+    GdeltArchiveNotFound,
     aggregate_downloaded_archive,
     build_gdelt_daily_snapshot,
     load_ticker_aliases,
@@ -140,3 +141,40 @@ def test_builder_records_explicit_provider_gap_without_silent_zero_news(tmp_path
     assert manifest["provenance"]["missing_archive_dates"] == ["2025-01-06"]
     events, _ = load_news_snapshot(tmp_path / "snapshot")
     assert len(events) == 2
+
+
+def test_builder_can_record_http_404_as_explicit_provider_gap(tmp_path: Path) -> None:
+    archives = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 8))
+
+    def missing_downloader(archive, _destination: Path) -> None:
+        if archive.archive_date == date(2025, 1, 6):
+            raise GdeltArchiveNotFound("HTTP 404")
+        _fake_downloader(archive, _destination)
+
+    manifest = build_gdelt_daily_snapshot(
+        archives,
+        output_dir=tmp_path / "snapshot",
+        work_dir=tmp_path / "work",
+        ticker_aliases={"MSFT": ("Microsoft",)},
+        license_acknowledged=True,
+        downloader=missing_downloader,
+        record_missing_404=True,
+    )
+    assert manifest["provenance"]["missing_archive_dates"] == ["2025-01-06"]
+
+
+def test_builder_still_fails_closed_on_http_404_by_default(tmp_path: Path) -> None:
+    archives = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 7))
+
+    def missing_downloader(_archive, _destination: Path) -> None:
+        raise GdeltArchiveNotFound("HTTP 404")
+
+    with pytest.raises(GdeltArchiveNotFound):
+        build_gdelt_daily_snapshot(
+            archives,
+            output_dir=tmp_path / "snapshot",
+            work_dir=tmp_path / "work",
+            ticker_aliases={"MSFT": ("Microsoft",)},
+            license_acknowledged=True,
+            downloader=missing_downloader,
+        )
