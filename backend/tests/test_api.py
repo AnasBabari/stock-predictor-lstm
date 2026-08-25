@@ -254,18 +254,15 @@ def test_openapi_contains_public_routes_and_horizon_constraints():
     assert days["schema"]["maximum"] == MAX_FORECAST_DAYS
 
 
-def test_model_performance_discloses_browser_engine():
+def test_model_performance_discloses_global_volatility_engine():
     response = client.get("/api/v1/model-performance/AAPL")
     assert response.status_code == 200
     body = response.json()
-    assert body["engine"] == {
-        "family": "compact_tfjs_lstm",
-        "role": "browser_training_available",
-        "baseline_fallback": False,
-        "artifact_version": None,
-    }
-    assert body["metrics"]["metric_source"] == "browser_purged_holdout"
-    assert body["benchmark"]["validation_folds"] is None
+    assert body["engine"]["family"] == "baseline_residual_tcn_ensemble"
+    assert body["engine"]["role"] == "global_volatility"
+    assert body["engine"]["status"] == "unconfigured"
+    assert body["metrics"]["metric_source"] == "locked_purged_walk_forward"
+    assert body["benchmark"]["validation_folds"] == 5
 
 
 def test_forecast_openapi_declares_shared_telemetry_contract():

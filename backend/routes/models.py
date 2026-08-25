@@ -47,9 +47,10 @@ def list_models():
     during rollout, but are explicitly disabled so clients cannot mistake them
     for the production model.
     """
-    release_configured = bool(
-        settings.volatility_release_dir and settings.volatility_public_key_path
-    )
+    from routes.volatility_v2 import volatility_release_readiness
+
+    release = volatility_release_readiness()
+    release_configured = release["status"] == "ready"
     server_models = {
         "status": "disabled",
         "reason": "Legacy per-ticker server models are disabled; use the global volatility contract.",
@@ -60,12 +61,14 @@ def list_models():
         "manifest": {},
         "server_models": server_models,
         "global_volatility": {
-            "status": "configured" if release_configured else "unconfigured",
+            "status": release["status"],
             "reason": (
-                "Signed global volatility release is configured."
+                "Signed global volatility release is verified and ready."
                 if release_configured
-                else "No signed global volatility release is mounted; requests abstain."
+                else "No verified signed global volatility release is ready; requests abstain."
             ),
+            "model_id": release.get("model_id"),
+            "certified_horizons": release.get("certified_horizons", []),
             "model_family": "baseline_residual_tcn_ensemble",
             "endpoint": "/api/v2/forecast",
             "horizons": [1, 3, 5, 7, 14, 30],
@@ -161,25 +164,36 @@ def model_performance(
     ticker: str,
     forecast_type: Literal["price", "direction"] = Query(default="price"),
 ):
-    """Disclose the browser-training contract and any optional offline evidence."""
+    """Disclose the certified global-volatility contract, not browser training."""
     ticker = validate_ticker(ticker)
+    from routes.volatility_v2 import volatility_release_readiness
+
+    release = volatility_release_readiness()
+    is_volatility = forecast_type == "price"
     return {
         "ticker": ticker,
         "forecast_type": forecast_type,
         "engine": {
-            "family": "compact_tfjs_lstm",
-            "role": "browser_training_available",
+            "family": "baseline_residual_tcn_ensemble" if is_volatility else None,
+            "role": "global_volatility" if is_volatility else "not_certified",
             "baseline_fallback": False,
-            "artifact_version": None,
+            "artifact_version": release.get("model_id"),
+            "status": release["status"] if is_volatility else "not_certified",
+            "certified_head": "volatility" if is_volatility else None,
         },
         "metrics": {
-            "metric_source": "browser_purged_holdout",
-            "detail": "Metrics are produced locally in the browser after training.",
+            "metric_source": "locked_purged_walk_forward" if is_volatility else "not_certified",
+            "detail": (
+                "QLIKE and coverage describe the locked offline volatility evaluation."
+                if is_volatility
+                else "No direction model is certified for production."
+            ),
         },
         "benchmark": {
             "snapshot": None,
-            "validation_method": "browser_purged_holdout",
-            "validation_folds": None,
-            "metric_source": "browser_purged_holdout",
+            "validation_method": "purged_walk_forward" if is_volatility else None,
+            "validation_folds": 5 if is_volatility else None,
+            "metric_source": "locked_purged_walk_forward" if is_volatility else "not_certified",
+            "certified_horizons": release.get("certified_horizons", []) if is_volatility else [],
         },
     }

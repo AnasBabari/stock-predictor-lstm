@@ -216,6 +216,10 @@ class VolatilityRuntimeContract:
             return True
         return horizon in self.certified_horizons
 
+    def certified_horizon_list(self) -> tuple[int, ...]:
+        """Return the horizons that are safe to expose from this release."""
+        return tuple(horizon for horizon in self.horizons if self.is_certified_horizon(horizon))
+
     def certification_summary(self, horizon: int) -> Mapping[str, Any] | None:
         if self.certification_metrics is None:
             return None

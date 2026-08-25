@@ -72,7 +72,7 @@ def health():
 
 @router.get("/ready")
 def ready():
-    """Readiness checks the market-data dependency and server-forecast stack when enabled."""
+    """Readiness checks market data and any configured learned-serving contract."""
     market_ready, upstream = market_circuit_breaker.is_ready()
     is_ready = market_ready
     dependencies = {
@@ -82,7 +82,27 @@ def ready():
             "writable": None,
             "detail": "Browser-trained models are trained and cached in each user's browser.",
         },
+        "global_volatility": {
+            "configured": bool(
+                settings.volatility_release_dir and settings.volatility_public_key_path
+            ),
+            "required": settings.volatility_serving_required,
+            "status": "not_required",
+        },
     }
+
+    if settings.volatility_serving_required or (
+        settings.volatility_release_dir and settings.volatility_public_key_path
+    ):
+        from routes.volatility_v2 import volatility_release_readiness
+
+        volatility_ready = volatility_release_readiness()
+        dependencies["global_volatility"] = {
+            **volatility_ready,
+            "required": settings.volatility_serving_required,
+        }
+        if settings.volatility_serving_required:
+            is_ready = is_ready and volatility_ready["status"] == "ready"
 
     if settings.server_forecast_serving_enabled:
         from server_models.api import server_forecast_readiness

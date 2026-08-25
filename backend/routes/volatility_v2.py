@@ -101,10 +101,10 @@ class _ResponseCache:
     """Small bounded TTL cache keyed by (ticker, horizon)."""
 
     def __init__(self, max_entries: int = 128) -> None:
-        self._entries: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+        self._entries: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
         self._max_entries = max_entries
 
-    def get(self, key: tuple[str, int]) -> dict[str, Any] | None:
+    def get(self, key: tuple[str, str, int]) -> dict[str, Any] | None:
         entry = self._entries.get(key)
         if entry is None:
             return None
@@ -115,7 +115,7 @@ class _ResponseCache:
             return None
         return payload
 
-    def put(self, key: tuple[str, int], payload: dict[str, Any]) -> None:
+    def put(self, key: tuple[str, str, int], payload: dict[str, Any]) -> None:
         if len(self._entries) >= self._max_entries:
             oldest = min(self._entries, key=lambda item: self._entries[item][0])
             self._entries.pop(oldest, None)
@@ -123,6 +123,29 @@ class _ResponseCache:
 
 
 _response_cache = _ResponseCache()
+
+
+def volatility_release_readiness() -> dict[str, Any]:
+    """Return signed-release readiness without exposing internal errors."""
+    if not settings.volatility_release_dir or not settings.volatility_public_key_path:
+        return {
+            "configured": False,
+            "status": "unconfigured",
+            "certified_horizons": [],
+        }
+    runtime, failure = _RELEASE_STATE.get()
+    if runtime is None:
+        return {
+            "configured": False,
+            "status": "integrity_failure" if failure and "integrity" in failure else "unavailable",
+            "certified_horizons": [],
+        }
+    return {
+        "configured": True,
+        "status": "ready",
+        "model_id": runtime.model_id,
+        "certified_horizons": list(runtime.certified_horizon_list()),
+    }
 
 
 def _price_quantiles(
@@ -171,16 +194,17 @@ async def volatility_forecast_v2(
             detail=f"horizon must be one of {list(VOLATILITY_HORIZONS)}",
         )
 
-    cache_key = (symbol, horizon)
-    cached = _response_cache.get(cache_key)
-    if cached is not None:
-        return VolatilityForecastResponse.model_validate(cached)
-
     runtime, load_failure = _RELEASE_STATE.get()
     if runtime is None:
         raise _abstain(load_failure or "no certified volatility model is available")
     if not runtime.is_certified_horizon(horizon):
         raise _abstain(f"the certified ensemble did not clear the {horizon}-session guardrails")
+    # Include the signed model id so a promoted release cannot serve a prior
+    # bundle's response until the generic TTL expires.
+    cache_key = (runtime.model_id, symbol, horizon)
+    cached = _response_cache.get(cache_key)
+    if cached is not None:
+        return VolatilityForecastResponse.model_validate(cached)
 
     from services.volatility_snapshot import build_volatility_inference_snapshot
 
