@@ -112,6 +112,7 @@ from routes.training_data import (
 from routes.training_data import (
     router as training_data_router,
 )
+from routes.volatility_v2 import router as volatility_v2_router
 from server_models.api import router as server_forecasts_router
 from server_models.response_models import (
     DirectionForecastResponse,
@@ -258,6 +259,7 @@ app.include_router(market_router)
 app.include_router(models_router)
 app.include_router(forecasts_router)
 app.include_router(server_forecasts_router)
+app.include_router(volatility_v2_router)
 
 
 # ── Compatibility Helpers for Legacy Callers & Tests ────────────────

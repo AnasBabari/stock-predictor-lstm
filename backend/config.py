@@ -99,6 +99,12 @@ class Settings(BaseSettings):
     server_forecast_private_key_path: str | None = None
     server_forecast_public_key_path: str | None = None
     registry_database_url: str | None = None
+
+    # Certified global-volatility serving (v2). Absent paths keep the
+    # endpoint fail-closed on an explicit no-certified-model state.
+    volatility_release_dir: str | None = None
+    volatility_public_key_path: str | None = None
+    volatility_forecast_cache_ttl: int = Field(default=900, ge=0, le=86400)
     s3_endpoint_url: str | None = None
     s3_bucket: str | None = None
     s3_key_prefix: str = "artifacts"
