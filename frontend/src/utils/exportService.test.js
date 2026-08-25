@@ -105,4 +105,23 @@ describe('complete analysis export identity', () => {
     expect(zip.file('evidence.json')).not.toBeNull();
     expect(zip.file('direction_forecast.csv')).toBeNull();
   });
+
+  it('rejects incomplete volatility quantile paths', async () => {
+    const payload = {
+      ticker: 'MSFT',
+      forecast_days: 1,
+      future_dates: ['2026-08-04'],
+      historical_dates: ['2026-07-31'],
+      historical_prices: [100],
+      volatility_cone: { p50: [100] },
+      metadata: { engine: { certified_head: 'volatility' } },
+    };
+    await expect(
+      exportCompleteAnalysis({
+        priceData: payload,
+        directionData: null,
+        metadata: { ticker: 'MSFT', forecast_days: 1, serving_mode: 'signed_global_volatility' },
+      }),
+    ).rejects.toThrow(/quantile paths/);
+  });
 });

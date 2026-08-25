@@ -104,9 +104,27 @@ export async function exportCompleteAnalysis({ priceData, directionData, metadat
     if (priceData.metadata?.engine?.certified_head !== 'volatility') {
       throw new Error('The export is not backed by the certified volatility head.');
     }
+    const expectedDays = Number(metadata.forecast_days);
+    const quantileKeys = ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'];
+    if (
+      !Array.isArray(priceData.future_dates) ||
+      priceData.future_dates.length !== expectedDays ||
+      !Array.isArray(priceData.historical_dates) ||
+      !Array.isArray(priceData.historical_prices) ||
+      priceData.historical_dates.length !== priceData.historical_prices.length
+    ) {
+      throw new Error('Volatility evidence contains misaligned date and price paths.');
+    }
+    const quantiles = priceData.volatility_cone || {};
+    if (quantileKeys.some((key) => (
+      !Array.isArray(quantiles[key]) ||
+      quantiles[key].length !== expectedDays ||
+      quantiles[key].some((value) => !Number.isFinite(Number(value)) || Number(value) <= 0)
+    ))) {
+      throw new Error('Volatility evidence contains incomplete or invalid quantile paths.');
+    }
     const zip = new JSZip();
     const volatilityRows = [['Date', 'P05', 'P10', 'P25', 'P50', 'P75', 'P90', 'P95']];
-    const quantiles = priceData.volatility_cone || {};
     priceData.future_dates.forEach((date, index) => {
       volatilityRows.push([
         date,
