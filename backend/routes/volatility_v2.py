@@ -50,6 +50,8 @@ class VolatilityForecastResponse(BaseModel):
     as_of: str
     horizon: int
     current_price: float
+    historical_dates: list[str]
+    historical_prices: list[float]
     forecast: dict[str, Any]
     evidence: dict[str, Any]
 
