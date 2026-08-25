@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -307,159 +308,282 @@ def aggregate_news_features(
         for ticker, weights in (exposure_map or {}).items()
     }
     timeline = _deduplicated_timeline(events)
+    if not origins:
+        return NewsFeatureMatrix(
+            values=np.empty((0, len(NEWS_FEATURE_NAMES_V2)), dtype=np.float32),
+            tickers=np.empty(0, dtype=str),
+            cutoffs=np.empty(0, dtype="datetime64[ns]"),
+        )
+
+    # Origins are normally panel rows: all tickers share the same market-close
+    # cutoff.  Grouping them lets us build the seven-day event indexes and the
+    # market-wide aggregates once per cutoff instead of rescanning the same
+    # event list for every ticker.  Numeric event arrays avoid repeated pandas
+    # Timedelta arithmetic in the hot loop while preserving `_weighted_sum`'s
+    # age, decay, confidence, and exposure semantics.
     eligible_ns = np.asarray([event.eligible_at.value for event in timeline], dtype=np.int64)
-    recent_by_cutoff: dict[int, list[NewsEvent]] = {}
-    rows: list[list[float]] = []
+    confidence_reliability = np.asarray(
+        [event.confidence * event.source_reliability for event in timeline], dtype=np.float64
+    )
+    count_values = np.asarray([_count(event) for event in timeline], dtype=np.float64)
+    negative_values = np.asarray([_negative(event) for event in timeline], dtype=np.float64)
+    absolute_sentiment_values = np.asarray(
+        [_absolute_sentiment(event) for event in timeline], dtype=np.float64
+    )
+    novelty_values = np.asarray([_novelty(event) for event in timeline], dtype=np.float64)
+    severity_values = np.asarray([_severity(event) for event in timeline], dtype=np.float64)
+    conflict_values = np.asarray(
+        [_conflict_severity(event) for event in timeline], dtype=np.float64
+    )
+    commodity_values = np.asarray(
+        [_commodity_severity(event) for event in timeline], dtype=np.float64
+    )
+    macro_values = np.asarray([_macro_severity(event) for event in timeline], dtype=np.float64)
+    low_quality = np.asarray(
+        [event.timestamp_quality != "precise" for event in timeline], dtype=bool
+    )
+    sources = tuple(event.source for event in timeline)
+    positions_by_ticker: dict[str, np.ndarray] = {}
+    positions_by_topic: dict[str, np.ndarray] = {}
+    ticker_lists: dict[str, list[int]] = defaultdict(list)
+    topic_lists: dict[str, list[int]] = defaultdict(list)
+    for position, event in enumerate(timeline):
+        for ticker in event.tickers:
+            ticker_lists[ticker].append(position)
+        for topic in event.topics:
+            topic_lists[topic].append(position)
+    positions_by_ticker = {
+        ticker: np.asarray(positions, dtype=np.int64) for ticker, positions in ticker_lists.items()
+    }
+    positions_by_topic = {
+        topic: np.asarray(positions, dtype=np.int64) for topic, positions in topic_lists.items()
+    }
 
-    for origin in origins:
-        cutoff_ns = origin.cutoff_at.value
-        recent = recent_by_cutoff.get(cutoff_ns)
-        if recent is None:
-            lower_ns = (origin.cutoff_at - pd.Timedelta(days=7)).value
-            left = int(np.searchsorted(eligible_ns, lower_ns, side="left"))
-            right = int(np.searchsorted(eligible_ns, cutoff_ns, side="right"))
-            recent = timeline[left:right]
-            recent_by_cutoff[cutoff_ns] = recent
-        ticker_events = [(event, 1.0) for event in recent if origin.ticker in event.tickers]
-        ticker_exposures = exposures.get(origin.ticker, {})
-        exposure_events: list[tuple[NewsEvent, float]] = []
-        for event in recent:
-            weight = max((ticker_exposures.get(topic, 0.0) for topic in event.topics), default=0.0)
-            if weight > 0:
-                exposure_events.append((event, min(weight, 1.0)))
-        market_events = [(event, 1.0) for event in recent]
+    # Resolve each exposure map once.  Each array is sorted in timeline order,
+    # with the maximum topic weight for an event, exactly matching the previous
+    # per-origin `max(topic_weight)` construction.
+    exposure_positions: dict[str, np.ndarray] = {}
+    exposure_weights: dict[str, np.ndarray] = {}
+    for ticker, ticker_exposures in exposures.items():
+        weights_by_position: dict[int, float] = {}
+        for topic, topic_weight in ticker_exposures.items():
+            if topic_weight <= 0:
+                continue
+            for position in positions_by_topic.get(topic, np.empty(0, dtype=np.int64)):
+                weights_by_position[int(position)] = max(
+                    weights_by_position.get(int(position), 0.0),
+                    min(topic_weight, 1.0),
+                )
+        if weights_by_position:
+            positions = np.asarray(sorted(weights_by_position), dtype=np.int64)
+            exposure_positions[ticker] = positions
+            exposure_weights[ticker] = np.asarray(
+                [weights_by_position[int(position)] for position in positions],
+                dtype=np.float64,
+            )
 
-        ticker_1d = _weighted_sum(
-            ticker_events,
-            origin.cutoff_at,
+    origins_by_cutoff: dict[int, list[tuple[int, NewsOrigin]]] = defaultdict(list)
+    for row_index, origin in enumerate(origins):
+        origins_by_cutoff[origin.cutoff_at.value].append((row_index, origin))
+    rows: list[list[float] | None] = [None] * len(origins)
+    hour_ns = float(pd.Timedelta(hours=1).value)
+    log_two = float(np.log(2.0))
+
+    def _window_positions(indexes: np.ndarray, left: int, right: int) -> np.ndarray:
+        if len(indexes) == 0:
+            return indexes
+        start = bisect_left(indexes, left)
+        end = bisect_left(indexes, right)
+        return indexes[start:end]
+
+    def _weighted_numeric(
+        positions: np.ndarray,
+        ages: np.ndarray,
+        values: np.ndarray,
+        *,
+        maximum_age_hours: float,
+        half_life_hours: float,
+        exposure: np.ndarray | None = None,
+    ) -> float:
+        if len(positions) == 0:
+            return 0.0
+        valid = (ages >= 0.0) & (ages <= maximum_age_hours)
+        if not np.any(valid):
+            return 0.0
+        age_values = ages[valid]
+        decay = np.exp(-log_two * np.maximum(age_values, 0.0) / half_life_hours)
+        weights = confidence_reliability[positions[valid]] * values[positions[valid]]
+        if exposure is not None:
+            weights = weights * exposure[valid]
+        return float(np.sum(decay * weights, dtype=np.float64))
+
+    for cutoff_ns, cutoff_origins in origins_by_cutoff.items():
+        cutoff = cutoff_origins[0][1].cutoff_at
+        lower_ns = (cutoff - pd.Timedelta(days=7)).value
+        left = int(np.searchsorted(eligible_ns, lower_ns, side="left"))
+        right = int(np.searchsorted(eligible_ns, cutoff_ns, side="right"))
+        market_positions = np.arange(left, right, dtype=np.int64)
+        market_ages = (cutoff_ns - eligible_ns[left:right]) / hour_ns
+        market_1d = _weighted_numeric(
+            market_positions,
+            market_ages,
+            count_values,
             maximum_age_hours=24,
             half_life_hours=12,
-            value=_count,
         )
-        sources_3d = {
-            event.source
-            for event, _ in ticker_events
-            if event.eligible_at is not None
-            and origin.cutoff_at - event.eligible_at <= pd.Timedelta(days=3)
-        }
-        eligible_3d = [
-            event
-            for event, _ in market_events
-            if event.eligible_at is not None
-            and origin.cutoff_at - event.eligible_at <= pd.Timedelta(days=3)
-        ]
+        market_features = (
+            market_1d,
+            _weighted_numeric(
+                market_positions,
+                market_ages,
+                negative_values,
+                maximum_age_hours=24,
+                half_life_hours=12,
+            ),
+            _weighted_numeric(
+                market_positions,
+                market_ages,
+                conflict_values,
+                maximum_age_hours=72,
+                half_life_hours=36,
+            ),
+            _weighted_numeric(
+                market_positions,
+                market_ages,
+                commodity_values,
+                maximum_age_hours=72,
+                half_life_hours=36,
+            ),
+            _weighted_numeric(
+                market_positions,
+                market_ages,
+                macro_values,
+                maximum_age_hours=72,
+                half_life_hours=36,
+            ),
+        )
+        market_3d = market_ages <= 72.0
         low_quality_fraction = (
-            sum(event.timestamp_quality != "precise" for event in eligible_3d) / len(eligible_3d)
-            if eligible_3d
+            float(np.count_nonzero(low_quality[left:right][market_3d]))
+            / float(np.count_nonzero(market_3d))
+            if np.any(market_3d)
             else 0.0
         )
 
-        rows.append(
-            [
-                _weighted_sum(
-                    ticker_events,
-                    origin.cutoff_at,
+        for row_index, origin in cutoff_origins:
+            ticker_positions = _window_positions(
+                positions_by_ticker.get(origin.ticker, np.empty(0, dtype=np.int64)),
+                left,
+                right,
+            )
+            ticker_ages = (cutoff_ns - eligible_ns[ticker_positions]) / hour_ns
+            ticker_1d = _weighted_numeric(
+                ticker_positions,
+                ticker_ages,
+                count_values,
+                maximum_age_hours=24,
+                half_life_hours=12,
+            )
+            sources_3d = {
+                sources[int(position)]
+                for position, age in zip(ticker_positions, ticker_ages, strict=True)
+                if 0.0 <= age <= 72.0
+            }
+
+            ticker_exposure_positions = _window_positions(
+                exposure_positions.get(origin.ticker, np.empty(0, dtype=np.int64)),
+                left,
+                right,
+            )
+            if len(ticker_exposure_positions):
+                exposure_start = bisect_left(
+                    exposure_positions[origin.ticker], int(ticker_exposure_positions[0])
+                )
+                exposure_end = exposure_start + len(ticker_exposure_positions)
+                ticker_exposure_weights = exposure_weights[origin.ticker][
+                    exposure_start:exposure_end
+                ]
+            else:
+                ticker_exposure_weights = None
+            exposure_ages = (
+                (cutoff_ns - eligible_ns[ticker_exposure_positions]) / hour_ns
+                if len(ticker_exposure_positions)
+                else np.empty(0, dtype=np.float64)
+            )
+
+            rows[row_index] = [
+                _weighted_numeric(
+                    ticker_positions,
+                    ticker_ages,
+                    count_values,
                     maximum_age_hours=1,
                     half_life_hours=1,
-                    value=_count,
                 ),
                 ticker_1d,
-                _weighted_sum(
-                    ticker_events,
-                    origin.cutoff_at,
+                _weighted_numeric(
+                    ticker_positions,
+                    ticker_ages,
+                    count_values,
                     maximum_age_hours=72,
                     half_life_hours=36,
-                    value=_count,
                 ),
-                _weighted_sum(
-                    ticker_events,
-                    origin.cutoff_at,
+                _weighted_numeric(
+                    ticker_positions,
+                    ticker_ages,
+                    negative_values,
                     maximum_age_hours=24,
                     half_life_hours=12,
-                    value=_negative,
                 ),
-                _weighted_sum(
-                    ticker_events,
-                    origin.cutoff_at,
+                _weighted_numeric(
+                    ticker_positions,
+                    ticker_ages,
+                    absolute_sentiment_values,
                     maximum_age_hours=24,
                     half_life_hours=12,
-                    value=_absolute_sentiment,
                 ),
-                _weighted_sum(
-                    ticker_events,
-                    origin.cutoff_at,
+                _weighted_numeric(
+                    ticker_positions,
+                    ticker_ages,
+                    novelty_values,
                     maximum_age_hours=72,
                     half_life_hours=36,
-                    value=_novelty,
                 ),
-                _weighted_sum(
-                    ticker_events,
-                    origin.cutoff_at,
+                _weighted_numeric(
+                    ticker_positions,
+                    ticker_ages,
+                    severity_values,
                     maximum_age_hours=72,
                     half_life_hours=36,
-                    value=_severity,
                 ),
                 float(len(sources_3d)),
-                _weighted_sum(
-                    exposure_events,
-                    origin.cutoff_at,
+                _weighted_numeric(
+                    ticker_exposure_positions,
+                    exposure_ages,
+                    count_values,
                     maximum_age_hours=24,
                     half_life_hours=12,
-                    value=_count,
+                    exposure=ticker_exposure_weights,
                 ),
-                _weighted_sum(
-                    exposure_events,
-                    origin.cutoff_at,
+                _weighted_numeric(
+                    ticker_exposure_positions,
+                    exposure_ages,
+                    conflict_values,
                     maximum_age_hours=72,
                     half_life_hours=36,
-                    value=_conflict_severity,
+                    exposure=ticker_exposure_weights,
                 ),
-                _weighted_sum(
-                    exposure_events,
-                    origin.cutoff_at,
+                _weighted_numeric(
+                    ticker_exposure_positions,
+                    exposure_ages,
+                    commodity_values,
                     maximum_age_hours=72,
                     half_life_hours=36,
-                    value=_commodity_severity,
+                    exposure=ticker_exposure_weights,
                 ),
-                _weighted_sum(
-                    market_events,
-                    origin.cutoff_at,
-                    maximum_age_hours=24,
-                    half_life_hours=12,
-                    value=_count,
-                ),
-                _weighted_sum(
-                    market_events,
-                    origin.cutoff_at,
-                    maximum_age_hours=24,
-                    half_life_hours=12,
-                    value=_negative,
-                ),
-                _weighted_sum(
-                    market_events,
-                    origin.cutoff_at,
-                    maximum_age_hours=72,
-                    half_life_hours=36,
-                    value=_conflict_severity,
-                ),
-                _weighted_sum(
-                    market_events,
-                    origin.cutoff_at,
-                    maximum_age_hours=72,
-                    half_life_hours=36,
-                    value=_commodity_severity,
-                ),
-                _weighted_sum(
-                    market_events,
-                    origin.cutoff_at,
-                    maximum_age_hours=72,
-                    half_life_hours=36,
-                    value=_macro_severity,
-                ),
+                *market_features,
                 float(low_quality_fraction),
                 float(ticker_1d == 0.0),
             ]
-        )
 
     return NewsFeatureMatrix(
         values=np.asarray(rows, dtype=np.float32),
