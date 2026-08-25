@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { clearBrowserModelCache, trainBrowserForecast } from '../ml/browserTrainingClient';
 import { createSnapshotClient } from '../ml/snapshotClient';
 import { fetchServerPrediction } from '../ml/serverModelClient';
 import { isGlobalModelEnabled, loadGlobalModel } from '../ml/globalModelClient';
@@ -405,6 +404,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
       }
 
       try {
+        const { trainBrowserForecast } = await import('../ml/browserTrainingClient');
         const result = await trainBrowserForecast({
           snapshot,
           forecastType: type,
@@ -552,6 +552,7 @@ export function useForecast({ addToast, onNewTickerSearched }) {
 
   const handleClearBrowserModels = useCallback(async () => {
     try {
+      const { clearBrowserModelCache } = await import('../ml/browserTrainingClient');
       await clearBrowserModelCache();
       forecastCacheRef.current.clear();
       snapshotClientRef.current?.clear();

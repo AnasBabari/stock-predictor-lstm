@@ -21,7 +21,7 @@ function progressPercent(progress) {
   return Math.min(80, (epoch / epochs) * 80);
 }
 
-export default function LoadingIndicator({ isLoading, stage, progress, profile = 'balanced', onCancel }) {
+export default function LoadingIndicator({ isLoading, stage, progress, profile = 'balanced', onCancel, volatilityServing = false }) {
   if (!isLoading) return null;
   const percent = progressPercent(progress);
   const fold = progress?.fold && progress?.folds ? `Fold ${progress.fold} of ${progress.folds} · ` : '';
@@ -43,21 +43,21 @@ export default function LoadingIndicator({ isLoading, stage, progress, profile =
           <path d="M9 21h6M10 17v4M14 17v4" />
         </svg>
       </div>
-      <p className="loading-text">{stage || 'Preparing local browser training…'}</p>
+      <p className="loading-text">{stage || (volatilityServing ? 'Verifying signed volatility release…' : 'Preparing local browser training…')}</p>
       {(fold || epoch) && <p className="loading-detail">{fold}{epoch}</p>}
       <div className="loading-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent == null ? undefined : Math.round(percent)}>
         <div className={`loading-progress-fill${percent == null ? ' indeterminate' : ''}`} style={percent == null ? undefined : { width: `${percent}%` }} />
       </div>
       <p className="loading-hint">
-        {profile[0].toUpperCase() + profile.slice(1)} · expected {expectedDurationLabel(profile)}
+        {volatilityServing ? 'Signed global model · server CPU inference' : `${profile[0].toUpperCase() + profile.slice(1)} · expected ${expectedDurationLabel(profile)}`}
         {progress?.backend ? ` · ${progress.backend.toUpperCase()}` : ''}
         {progress?.elapsed_ms != null ? ` · elapsed ${formatDuration(progress.elapsed_ms)}` : ''}
         {remainingMs != null ? ` · about ${formatDuration(remainingMs)} remaining` : ''}
       </p>
-      {progress?.benchmark_ms != null && (
+      {!volatilityServing && progress?.benchmark_ms != null && (
         <p className="loading-hint">Local capability check: {progress.benchmark_ms} ms. Models and metrics stay on this device.</p>
       )}
-      <button type="button" className="training-cancel-button" onClick={onCancel}>Cancel local training</button>
+      <button type="button" className="training-cancel-button" onClick={onCancel}>{volatilityServing ? 'Cancel request' : 'Cancel local training'}</button>
     </div>
   );
 }

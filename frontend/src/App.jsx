@@ -114,7 +114,7 @@ export default function App() {
       <Navbar
         theme={theme}
         onToggleTheme={toggleTheme}
-        onClearBrowserModels={handleClearBrowserModels}
+        onClearBrowserModels={VOLATILITY_SERVING_ENABLED ? null : handleClearBrowserModels}
       />
 
       <main className="main-content">
@@ -142,6 +142,7 @@ export default function App() {
             progress={trainingProgress}
             profile={trainingProfile}
             onCancel={handleCancelRequest}
+            volatilityServing={VOLATILITY_SERVING_ENABLED}
           />
         )}
 
@@ -231,6 +232,7 @@ export default function App() {
                 onAddWatchlist={handleAddWatchlist}
                 onToast={addToast}
                 onExportCompleteAnalysis={handleExportCompleteAnalysis}
+                volatilityServing={VOLATILITY_SERVING_ENABLED}
               />
             </div>
 

@@ -8,6 +8,7 @@ export default function ForecastChartActions({
   onAddWatchlist,
   onToast,
   onExportCompleteAnalysis,
+  volatilityServing = false,
 }) {
   const handleExportPng = useCallback(() => {
     if (!chartRef?.current || !stockData) return;
@@ -78,9 +79,9 @@ export default function ForecastChartActions({
           type="button"
           className="action-chip accent"
           onClick={onExportCompleteAnalysis}
-          title="Export both price and trend forecasts as a ZIP bundle"
+          title={volatilityServing ? 'Export volatility evidence and baseline context as a ZIP bundle' : 'Export both price and trend forecasts as a ZIP bundle'}
         >
-          Complete Analysis
+          {volatilityServing ? 'Export Evidence' : 'Complete Analysis'}
         </button>
       </div>
     </div>
