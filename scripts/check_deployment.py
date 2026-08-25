@@ -44,6 +44,7 @@ EXPECTED_FEATURES = [
 ]
 
 EXPECTED_TARGET_MODE = "cumulative_log_return_v1"
+EXPECTED_VOLATILITY_HORIZONS = (1, 3, 5, 7, 14, 30)
 
 
 @dataclass
@@ -138,6 +139,58 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "/models did not report the expected deployment training mode",
         )
         browser = models.get("browser_training", {})
+        if getattr(args, "forecast_contract", "legacy") == "global_volatility":
+            global_model = models.get("global_volatility", {})
+            add(
+                results,
+                "global_volatility_configured",
+                global_model.get("status") == "configured",
+                "signed global volatility release is not configured",
+            )
+            add(
+                results,
+                "browser_training_disabled",
+                browser.get("status") == "disabled",
+                "browser training is still advertised in the production contract",
+            )
+            forecast, _ = get_json(
+                base_url,
+                f"/api/v2/forecast?ticker={ticker}&horizon=7",
+                timeout=args.timeout,
+            )
+            quantiles = (forecast.get("forecast") or {}).get("price_quantiles") or {}
+            future_dates = (forecast.get("forecast") or {}).get("future_dates") or []
+            evidence = forecast.get("evidence") or {}
+            add(
+                results,
+                "volatility_identity",
+                forecast.get("ticker") == ticker and forecast.get("horizon") == 7,
+                "volatility response identity does not match the requested ticker/horizon",
+            )
+            add(
+                results,
+                "volatility_path_shape",
+                len(future_dates) == 7
+                and all(len(quantiles.get(key, [])) == 7 for key in ("p05", "p50", "p95")),
+                "volatility response does not contain seven daily uncertainty values",
+            )
+            add(
+                results,
+                "volatility_evidence",
+                evidence.get("certified") is True
+                and (evidence.get("certified_heads") or {}).get("volatility") is True
+                and evidence.get("metric_source") == "locked_purged_walk_forward",
+                "volatility response did not disclose locked certified evidence",
+            )
+            passed = all(item.passed for item in results)
+            return {
+                "status": "passed" if passed else "failed",
+                "base_url": base_url,
+                "ticker": ticker,
+                "duration_seconds": round(time.monotonic() - started, 3),
+                "deployment": {"commit": observed_commit, "environment": observed_environment},
+                "checks": [item.__dict__ for item in results],
+            }
         add(
             results,
             "browser_training_contract",
@@ -246,6 +299,12 @@ def main() -> int:
         default="browser_only",
         choices=("browser_only", "hybrid", "server_pretrained"),
         help="Expected deployment training mode; /models must agree.",
+    )
+    parser.add_argument(
+        "--forecast-contract",
+        choices=("legacy", "global_volatility"),
+        default="legacy",
+        help="Serving contract to probe; global_volatility is the production path after cutover.",
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()

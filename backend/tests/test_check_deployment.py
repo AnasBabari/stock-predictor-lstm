@@ -134,3 +134,49 @@ def test_smoke_run_accepts_server_pretrained_deployment(monkeypatch):
         )
     )
     assert result["status"] == "passed"
+
+
+def test_smoke_run_accepts_global_volatility_contract(monkeypatch):
+    def fake_get(_base, path, **_kwargs):
+        if path == "/health":
+            return {
+                "status": "ok",
+                "deployment": {"commit": "abcdef123456", "environment": "production"},
+            }, {}
+        if path == "/models":
+            return {
+                "server_models": {"status": "disabled", "training_mode": "browser_only"},
+                "browser_training": {"status": "disabled"},
+                "global_volatility": {"status": "configured"},
+            }, {}
+        if path.startswith("/api/v2/forecast"):
+            return {
+                "ticker": "MSFT",
+                "horizon": 7,
+                "forecast": {
+                    "future_dates": [f"2026-08-{22 + i:02d}" for i in range(7)],
+                    "price_quantiles": {key: [100.0] * 7 for key in ("p05", "p50", "p95")},
+                },
+                "evidence": {
+                    "certified": True,
+                    "certified_heads": {"volatility": True},
+                    "metric_source": "locked_purged_walk_forward",
+                },
+            }, {}
+        raise AssertionError(f"unexpected smoke path: {path}")
+
+    monkeypatch.setattr(smoke, "get_json", fake_get)
+    result = smoke.run(
+        argparse.Namespace(
+            base_url="https://api.example",
+            ticker="MSFT",
+            expected_commit="abcdef1234567890",
+            expected_environment="production",
+            timeout=1,
+            restart_window=0,
+            cors_origin=None,
+            training_mode="browser_only",
+            forecast_contract="global_volatility",
+        )
+    )
+    assert result["status"] == "passed"
