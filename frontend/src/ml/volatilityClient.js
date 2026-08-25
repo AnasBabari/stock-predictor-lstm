@@ -88,6 +88,7 @@ export function mapVolatilityResponse(body, ticker, days) {
     forecast_days: days,
     forecast_type: 'price',
     current_price: data.current_price,
+    forecast: data.forecast,
     historical_dates: data.historical_dates,
     historical_prices: data.historical_prices,
     future_dates: data.forecast.future_dates,
