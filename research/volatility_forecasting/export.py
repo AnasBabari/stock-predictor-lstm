@@ -415,6 +415,14 @@ def assemble_release_bundle(
         "news_feature_count": int(architecture.news_feature_count),
         "members": [{"seed": seed, "file": f"members/seed-{seed}.onnx"} for seed in seeds],
     }
+    locked = manifest.get("locked_certification")
+    if isinstance(locked, dict):
+        certified_horizons = locked.get("certified_horizons")
+        if isinstance(certified_horizons, list) and all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in certified_horizons
+        ):
+            metadata["certified_horizons"] = sorted(certified_horizons)
     try:
         from release.bundle import build_release, verify_release
     except ImportError:  # pragma: no cover - research harness runs from the repository root
