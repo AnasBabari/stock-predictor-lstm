@@ -155,7 +155,6 @@ def test_daily_aggregate_survives_weighted_share_drift_near_the_simplex_edge() -
     drifted = np.asarray([0.5 + 8e-17, 0.5 + 8e-17], dtype=np.float64)
     assert _clipped_weighted_share(drifted, [1.0, 1.0]) == 1.0
     assert _clipped_weighted_share(drifted, [-1.0, -1.0]) == 0.0
-
     archive = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 6))[0]
     for rows in range(1, 41):
         events, stats = aggregate_gdelt_v1_daily_lines(
@@ -172,3 +171,20 @@ def test_daily_aggregate_survives_weighted_share_drift_near_the_simplex_edge() -
             )
             assert all(0.0 <= value <= 1.0 for value in probabilities)
             assert sum(probabilities) == pytest.approx(1.0)
+
+
+def test_simplex_shares_survive_exhaustive_rounding_grid() -> None:
+    """Regression: naive subtraction produced negative shares for ~50% of pairs."""
+    from volatility_forecasting.gdelt import _simplex_shares
+
+    for i in range(201):
+        for j in range(201):
+            positive, neutral, negative = _simplex_shares(i / 200, j / 200)
+            probabilities = (positive, neutral, negative)
+            assert all(0.0 <= value <= 1.0 for value in probabilities), (i, j)
+            assert sum(probabilities) == pytest.approx(1.0, abs=1e-9)
+    # Drift-prone real examples from the failing archives.
+    for pair in ((0.01, 0.995), (0.015, 0.99), (0.9999999999999999, 0.0)):
+        positive, neutral, negative = _simplex_shares(*pair)
+        assert min(positive, neutral, negative) >= 0.0
+        assert sum((positive, neutral, negative)) == pytest.approx(1.0, abs=1e-9)

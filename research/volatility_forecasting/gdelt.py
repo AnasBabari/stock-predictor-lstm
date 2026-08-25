@@ -403,6 +403,24 @@ def _clipped_weighted_share(weights: np.ndarray, values: list[float]) -> float:
     return float(min(1.0, max(0.0, np.dot(weights, values))))
 
 
+def _simplex_shares(positive: float, neutral: float) -> tuple[float, float, float]:
+    """Derive (positive, neutral, negative) shares that always form a valid simplex.
+
+    Naive ``1.0 - positive - neutral`` rounds below zero for many valid input
+    pairs, so every share is derived through guarded arithmetic.
+    """
+    positive = min(1.0, max(0.0, float(positive)))
+    neutral = min(1.0, max(0.0, float(neutral)))
+    combined = positive + neutral
+    if combined > 1.0:
+        scale = 1.0 / combined
+        positive *= scale
+        neutral *= scale
+        combined = 1.0
+    negative = max(0.0, 1.0 - combined)
+    return positive, neutral, negative
+
+
 def aggregate_gdelt_v1_daily_lines(
     lines: Iterable[str],
     *,
@@ -461,13 +479,7 @@ def aggregate_gdelt_v1_daily_lines(
             weights, [event.positive_probability for event in events]
         )
         neutral = _clipped_weighted_share(weights, [event.neutral_probability for event in events])
-        combined = positive + neutral
-        if combined > 1.0:
-            # Guard against accumulated floating-point drift pushing the
-            # aggregated shares outside the probability simplex.
-            positive /= combined
-            neutral /= combined
-        negative = 1.0 - positive - neutral
+        positive, neutral, negative = _simplex_shares(positive, neutral)
         topics = tuple(sorted({topic for event in events for topic in event.topics}))
         ticker = scope.partition(":")[2] if scope.startswith("ticker:") else ""
         identity = f"gdelt1-daily:{archive.archive_date:%Y%m%d}:{scope}"
