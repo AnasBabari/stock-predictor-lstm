@@ -58,6 +58,9 @@ def _fake_snapshot(ticker: str = "NMM"):
         baseline_candidates={},
         historical_dates=(),
         historical_prices=np.array([88.0]),
+        future_dates=tuple(
+            f"2026-08-{22 + index:02d}" for index in range(len(VOLATILITY_HORIZONS) * 5)
+        ),
     )
 
 
@@ -112,11 +115,13 @@ def test_serves_certified_volatility_cone(monkeypatch) -> None:
     assert body["as_of"] == "2026-08-21"
     assert body["current_price"] == pytest.approx(88.78)
     quantiles = body["forecast"]["price_quantiles"]
-    values = [quantiles[key][0] for key in QUANTILE_KEYS]
+    values = [quantiles[key][-1] for key in QUANTILE_KEYS]
     assert values == sorted(values)
     assert all(value > 0 for value in values)
+    assert all(len(quantiles[key]) == 7 for key in QUANTILE_KEYS)
+    assert body["forecast"]["future_dates"] == list(_fake_snapshot().future_dates[:7])
     assert quantiles["p05"][0] < body["current_price"] < quantiles["p95"][0]
-    assert quantiles["p50"][0] == pytest.approx(88.78, rel=1e-9)
+    assert quantiles["p50"][-1] == pytest.approx(88.78, rel=1e-9)
     expected_annualized = float(np.sqrt((4e-4 / 7) * 252))
     assert body["forecast"]["expected_annualized_volatility"] == pytest.approx(
         expected_annualized, rel=1e-6

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from calendars import future_trading_dates
 from data_pipeline import _download_ohlcv
 from panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5, build_features_v5
 from panel.volatility import causal_log_har_forecasts, realized_variance_proxies
@@ -28,6 +29,7 @@ class VolatilityInferenceSnapshot:
     baseline_candidates: dict[str, np.ndarray]
     historical_dates: tuple[str, ...]
     historical_prices: np.ndarray
+    future_dates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.features.shape != (VOLATILITY_WINDOW_SIZE, len(self.feature_names)):
@@ -42,6 +44,10 @@ class VolatilityInferenceSnapshot:
             raise ValueError("volatility origin close must be finite and positive")
         if len(self.historical_dates) != len(self.historical_prices):
             raise ValueError("volatility chart history is misaligned")
+        if any(not isinstance(value, str) for value in self.future_dates):
+            raise ValueError("volatility future dates must be strings")
+        if any(a >= b for a, b in zip(self.future_dates, self.future_dates[1:], strict=False)):
+            raise ValueError("volatility future dates must be chronological")
 
 
 def _baseline_candidates(feature_row: pd.Series, har: np.ndarray) -> dict[str, np.ndarray]:
@@ -108,6 +114,11 @@ def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnaps
         raise ValueError("latest market history cannot form a finite volatility snapshot")
     history = raw.iloc[max(0, last - 89) : last + 1]
     dates = raw.index[last - VOLATILITY_WINDOW_SIZE + 1 : last + 1]
+    future_dates, _ = future_trading_dates(
+        symbol,
+        pd.Timestamp(raw.index[last]),
+        max(VOLATILITY_HORIZONS),
+    )
     return VolatilityInferenceSnapshot(
         ticker=symbol,
         snapshot_id=_snapshot_identity(symbol, dates, window, baseline),
@@ -119,4 +130,5 @@ def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnaps
         baseline_candidates=_baseline_candidates(features.iloc[last], baseline),
         historical_dates=tuple(pd.Timestamp(value).date().isoformat() for value in history.index),
         historical_prices=history["Close"].to_numpy(dtype=np.float64),
+        future_dates=tuple(future_dates),
     )

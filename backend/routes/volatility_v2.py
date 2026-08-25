@@ -123,11 +123,26 @@ class _ResponseCache:
 _response_cache = _ResponseCache()
 
 
-def _price_quantiles(current_price: float, cumulative_variance: float) -> dict[str, list[float]]:
-    """Zero-location lognormal bands derived from certified variance only."""
-    deviation = float(np.sqrt(max(cumulative_variance, 0.0)))
+def _price_quantiles(
+    current_price: float,
+    cumulative_variance: float,
+    horizon: int,
+) -> dict[str, list[float]]:
+    """Zero-location lognormal bands derived from certified variance only.
+
+    The certified head emits cumulative variance at selected horizons. Between
+    the origin and a requested horizon we expose a transparent linear variance
+    cone, never a learned directional path.
+    """
+    if horizon < 1:
+        raise ValueError("quantile horizon must be positive")
     return {
-        name: [float(current_price * np.exp(z * deviation))]
+        name: [
+            float(
+                current_price * np.exp(z * np.sqrt(max(cumulative_variance, 0.0) * day / horizon))
+            )
+            for day in range(1, horizon + 1)
+        ]
         for name, z in _QUANTILE_Z_SCORES.items()
     }
 
@@ -196,6 +211,15 @@ async def volatility_forecast_v2(
     horizon_index = VOLATILITY_HORIZONS.index(horizon)
     variance_at_horizon = float(forecast.forecast_variance[horizon_index])
     daily_variance = variance_at_horizon / horizon
+    future_dates = tuple(snapshot.future_dates[:horizon])
+    if len(future_dates) != horizon:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "forecast_calendar_unavailable",
+                "reason": "future trading dates could not be generated for this forecast",
+            },
+        )
     evidence = {
         "model_id": runtime.model_id,
         "member_seeds": list(runtime.member_seeds),
@@ -217,7 +241,12 @@ async def volatility_forecast_v2(
         "horizon": int(horizon),
         "current_price": float(snapshot.origin_close),
         "forecast": {
-            "price_quantiles": _price_quantiles(snapshot.origin_close, variance_at_horizon),
+            "price_quantiles": _price_quantiles(
+                snapshot.origin_close,
+                variance_at_horizon,
+                horizon,
+            ),
+            "future_dates": list(future_dates),
             "probability_up": None,
             "expected_cumulative_variance": variance_at_horizon,
             "expected_annualized_volatility": float(
