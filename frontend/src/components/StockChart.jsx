@@ -56,6 +56,8 @@ const StockChart = forwardRef(function StockChart(
   ref
 ) {
   const isDark = theme === 'dark';
+  const isVolatility = stockData?.metadata?.engine?.certified_head === 'volatility'
+    || stockData?.volatility_cone != null;
   const [showBenchmark, setShowBenchmark] = useState(false);
 
   const chartData = useMemo(() => {
@@ -150,7 +152,9 @@ const StockChart = forwardRef(function StockChart(
   return (
     <section id="chartContainer" className="chart-section">
       <div className="chart-header">
-        <h2 id="chartTitle">{stockData.ticker} — Historical vs Predicted</h2>
+                <h2 id="chartTitle">
+                  {stockData.ticker} — {isVolatility ? 'Historical vs Volatility Cone' : 'Historical vs Predicted'}
+                </h2>
         <div className="chart-header-actions">
           <label className="benchmark-toggle" htmlFor="showBenchmarkCheck">
             <input

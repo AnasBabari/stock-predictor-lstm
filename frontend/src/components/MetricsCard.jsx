@@ -12,6 +12,7 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
   const meta = stockData.metadata || {};
   const engine = meta.engine || {};
   const isTrend = forecastType === 'trend';
+  const isVolatility = engine.certified_head === 'volatility' || stockData.volatility_cone != null;
   const perHorizon = Array.isArray(m.per_horizon) ? m.per_horizon : [];
   const selectedHorizon = Number(val.selected_horizon || m.horizon || stockData.forecast_days || 7);
   const bestValidatedHorizon = val.best_validated_horizon;
@@ -75,13 +76,28 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
                   <ValidationBadge state={val.state || (val.promoted ? 'promoted' : 'experimental')} />
                 </div>
                 <span className="card-subtext">
-                  {val.promoted
-                    ? 'Validated against persistence on held-out data.'
-                    : 'Model forecast shown; holdout validation gates were not met.'}
+                  {isVolatility
+                    ? 'Conditional volatility cleared the locked evidence gate; location remains the matched persistence baseline.'
+                    : val.promoted
+                      ? 'Validated against persistence on held-out data.'
+                      : 'Model forecast shown; holdout validation gates were not met.'}
                 </span>
               </div>
 
-              {!isTrend ? (
+              {isVolatility ? (
+                <>
+                  <div className="summary-card">
+                    <span className="card-label">Location Center</span>
+                    <span className="card-value mono text-teal">{formatPrice(latestClose)}</span>
+                    <span className="card-subtext">Unchanged-close persistence baseline</span>
+                  </div>
+                  <div className="summary-card">
+                    <span className="card-label">Annualized Volatility</span>
+                    <span className="card-value mono">{formatPercent(stockData.forecast?.expected_annualized_volatility * 100)}</span>
+                    <span className="card-subtext">Certified volatility head</span>
+                  </div>
+                </>
+              ) : !isTrend ? (
                 <>
                   <div className="summary-card">
                     <span className="card-label">Predicted Endpoint</span>
@@ -104,8 +120,8 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
 
               <div className="summary-card">
                 <span className="card-label">Active Model Engine</span>
-                <span className="card-value font-medium">{engine.role === 'server_pretrained' ? 'server_pretrained' : engine.family ? engine.family.replaceAll('_', ' ') : 'Balanced LSTM'}</span>
-                <span className="card-subtext">Compute: {engine.role === 'server_pretrained' ? 'server-pretrained' : engine.backend?.toUpperCase() || 'WEBGPU'}</span>
+                <span className="card-value font-medium">{isVolatility ? 'Global volatility ensemble' : engine.role === 'server_pretrained' ? 'server_pretrained' : engine.family ? engine.family.replaceAll('_', ' ') : 'Balanced LSTM'}</span>
+                <span className="card-subtext">Compute: {isVolatility ? 'server CPU / signed ONNX' : engine.role === 'server_pretrained' ? 'server-pretrained' : engine.backend?.toUpperCase() || 'WEBGPU'}</span>
               </div>
             </div>
 
@@ -131,7 +147,30 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
         {activeTab === 'evaluation' && (
           <div className="tab-pane">
             <div className="kpi-cards-grid">
-              {!isTrend ? (
+              {isVolatility ? (
+                <>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Relative QLIKE</span>
+                    <span className="kpi-value mono">{formatMultiplier(m.relative_qlike)}</span>
+                    <span className="kpi-note">&lt; 1.000× beats the matched baseline</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">80% Cone Coverage</span>
+                    <span className="kpi-value mono">{formatPercent(m.coverage_80 != null ? m.coverage_80 * 100 : null, { includePlus: false })}</span>
+                    <span className="kpi-note">Locked purged walk-forward</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">95% Cone Coverage</span>
+                    <span className="kpi-value mono">{formatPercent(m.coverage_95 != null ? m.coverage_95 * 100 : null, { includePlus: false })}</span>
+                    <span className="kpi-note">Untouched evidence source</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Direction</span>
+                    <span className="kpi-value mono">Not certified</span>
+                    <span className="kpi-note">No learned price-direction claim</span>
+                  </div>
+                </>
+              ) : !isTrend ? (
                 <>
                   <div className="kpi-card">
                     <span className="kpi-label">RMSE vs Persistence</span>
@@ -226,11 +265,11 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
             <div className="specs-grid">
               <div className="spec-item">
                 <span className="spec-label">Model Architecture</span>
-                <span className="spec-value">{meta.architecture || 'balanced_lstm_in_browser'}</span>
+                <span className="spec-value">{isVolatility ? 'Baseline-residual TCN ensemble (signed ONNX)' : meta.architecture || 'balanced_lstm_in_browser'}</span>
               </div>
               <div className="spec-item">
                 <span className="spec-label">Feature Schema</span>
-                <span className="spec-value mono">Stationary v4 ({meta.feature_count || 28} features)</span>
+                <span className="spec-value mono">{isVolatility ? `Deployable v5 (${meta.feature_count || '—'} features)` : `Stationary v4 (${meta.feature_count || 28} features)`}</span>
               </div>
               <div className="spec-item">
                 <span className="spec-label">Lookback Window</span>
@@ -238,15 +277,15 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
               </div>
               <div className="spec-item">
                 <span className="spec-label">Training Duration</span>
-                <span className="spec-value mono">{meta.training_duration_ms ? `${meta.training_duration_ms} ms` : '—'}</span>
+                <span className="spec-value mono">{isVolatility ? 'Offline RTX certification' : meta.training_duration_ms ? `${meta.training_duration_ms} ms` : '—'}</span>
               </div>
               <div className="spec-item">
                 <span className="spec-label">Selected Epochs</span>
-                <span className="spec-value mono">{meta.selected_epochs ?? '—'}</span>
+                <span className="spec-value mono">{isVolatility ? 'Frozen development budget' : meta.selected_epochs ?? '—'}</span>
               </div>
               <div className="spec-item">
                 <span className="spec-label">Compute Backend</span>
-                <span className="spec-value mono">{engine.backend?.toUpperCase() || 'WEBGPU'}</span>
+                <span className="spec-value mono">{isVolatility ? 'CPU / ONNX Runtime' : engine.backend?.toUpperCase() || 'WEBGPU'}</span>
               </div>
               <div className="spec-item full-width">
                 <span className="spec-label">Data Snapshot Hash</span>
@@ -262,7 +301,9 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
             <div className="research-pane-content">
               <h4>Holdout Evaluation Protocol</h4>
               <p className="text-sm text-secondary mb-3">
-                Evaluation was conducted on an untouched chronological holdout partition with strict horizon purging to eliminate lookahead leakage.
+                {isVolatility
+                  ? 'Volatility evidence is locked to purged expanding walk-forward evaluation with temporal and ticker-transfer holdouts.'
+                  : 'Evaluation was conducted on an untouched chronological holdout partition with strict horizon purging to eliminate lookahead leakage.'}
               </p>
 
               {Array.isArray(val.reasons) && val.reasons.length > 0 && (
@@ -279,7 +320,7 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
               <div className="metric-rows-summary">
                 <div className="metric-summary-row">
                   <span>Metric Source:</span>
-                  <span className="mono">{m.metric_source || 'browser_purged_holdout'}</span>
+                  <span className="mono">{m.metric_source || (isVolatility ? 'locked_purged_walk_forward' : 'browser_purged_holdout')}</span>
                 </div>
                 <div className="metric-summary-row">
                   <span>Evaluated Rows:</span>

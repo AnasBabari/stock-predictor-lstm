@@ -19,7 +19,7 @@ import ToastContainer from './components/ToastContainer';
 import { useTheme } from './hooks/useTheme';
 import { useToasts } from './hooks/useToasts';
 import { isValidTicker, useWatchlist } from './hooks/useWatchlist';
-import { FORECAST_TYPES, useForecast } from './hooks/useForecast';
+import { FORECAST_TYPES, VOLATILITY_SERVING_ENABLED, useForecast } from './hooks/useForecast';
 import { useCompleteAnalysisExport } from './hooks/useCompleteAnalysisExport';
 
 export default function App() {
@@ -132,6 +132,7 @@ export default function App() {
           onPredict={handlePredict}
           isLoading={isBusy}
           apiBase={apiBase}
+          volatilityServingEnabled={VOLATILITY_SERVING_ENABLED}
         />
 
         {isBusy && (
@@ -263,7 +264,7 @@ export default function App() {
 
       <footer className="footer">
         <p>
-          StockLSTM — browser-trained LSTM with purged-holdout evaluation, persistence baselines, and stationary features.
+          StockLSTM — signed global volatility forecasts with causal market snapshots, persistence location baselines, and leakage-safe evidence.
         </p>
       </footer>
 

@@ -50,6 +50,8 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
   const modelColor = isDark ? COLORS.modelDark : COLORS.modelLight;
   const benchColor = isDark ? COLORS.benchDark : COLORS.benchLight;
   const histColor = isDark ? COLORS.histDark : COLORS.histLight;
+  const isVolatility = stockData.metadata?.engine?.certified_head === 'volatility'
+    || stockData.volatility_cone != null;
 
   const datasets = [
     {
@@ -72,7 +74,7 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
       spanGaps: false,
     },
     {
-      label: 'Model Forecast',
+      label: isVolatility ? 'Unchanged-close location baseline' : 'Model Forecast',
       data: padForecast(stockData.predicted_prices, forecastLead, lastClose),
       borderColor: modelColor,
       backgroundColor: (context) => {
@@ -86,7 +88,7 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
       pointRadius: 4,
       pointBackgroundColor: modelColor,
       pointHoverRadius: 6,
-      borderDash: [],
+      borderDash: isVolatility ? [5, 4] : [],
       tension: 0.3,
       fill: true,
       spanGaps: false,
@@ -97,7 +99,7 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
   const errorBand = stockData.historical_error_band;
   if (errorBand && Array.isArray(errorBand.upper_prices) && Array.isArray(errorBand.lower_prices)) {
     datasets.push({
-      label: '90% Empirical Error Range (Upper)',
+      label: isVolatility ? 'Certified volatility cone (upper)' : '90% Empirical Error Range (Upper)',
       data: padForecast(errorBand.upper_prices, forecastLead, lastClose),
       borderColor: 'transparent',
       backgroundColor: isDark ? COLORS.bandFillDark : COLORS.bandFillLight,
@@ -107,7 +109,7 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
       spanGaps: false,
     });
     datasets.push({
-      label: '90% Empirical Error Range (Lower)',
+      label: isVolatility ? 'Certified volatility cone (lower)' : '90% Empirical Error Range (Lower)',
       data: padForecast(errorBand.lower_prices, forecastLead, lastClose),
       borderColor: 'transparent',
       backgroundColor: 'transparent',
@@ -141,7 +143,8 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
     datasets,
     forecastSplitIndex,
     lastClose,
-    promoted: stockData.validation?.promoted === true || stockData.forecast_status?.state === 'promoted',
+    promoted: !isVolatility && (stockData.validation?.promoted === true || stockData.forecast_status?.state === 'promoted'),
+    volatilityOnly: isVolatility,
   };
 }
 

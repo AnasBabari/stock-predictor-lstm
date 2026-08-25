@@ -9,6 +9,8 @@ export default function StatsBar({ stockData, forecastType }) {
     }
 
     const valState = stockData.validation?.state || (stockData.validation?.promoted ? 'promoted' : 'experimental');
+    const isVolatility = stockData.metadata?.engine?.certified_head === 'volatility'
+      || stockData.volatility_cone != null;
 
     if (forecastType === 'trend') {
       const direction = stockData.direction || '—';
@@ -38,6 +40,21 @@ export default function StatsBar({ stockData, forecastType }) {
     const isFlat = Math.abs(forecast - lastClose) < 1e-6;
     const change = forecast - lastClose;
     const changePct = lastClose > 0 ? (change / lastClose) * 100 : 0;
+
+    if (isVolatility) {
+      return {
+        ticker: stockData.ticker,
+        forecastLabel: `Volatility cone (${stockData.forecast_days || 7}d)`,
+        lastClose: formatPrice(lastClose),
+        forecast: 'Unchanged close',
+        changeText: 'Not certified',
+        trendText: 'Volatility only',
+        valState,
+        isUp: false,
+        isFlat: true,
+        volatilityOnly: true,
+      };
+    }
 
     return {
       ticker: stockData.ticker,
@@ -71,11 +88,11 @@ export default function StatsBar({ stockData, forecastType }) {
         <span className="stat-value mono">{stats.lastClose}</span>
       </div>
       <div className="stat">
-        <span className="stat-label">Predicted Endpoint</span>
+        <span className="stat-label">{stats.volatilityOnly ? 'Location Center' : 'Predicted Endpoint'}</span>
         <span className="stat-value mono text-teal">{stats.forecast}</span>
       </div>
       <div className="stat">
-        <span className="stat-label">Expected Return</span>
+        <span className="stat-label">{stats.volatilityOnly ? 'Directional Claim' : 'Expected Return'}</span>
         <span className="stat-value mono" style={{ color }}>
           {stats.changeText}
         </span>

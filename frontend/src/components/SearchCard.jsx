@@ -13,6 +13,7 @@ export default function SearchCard({
   onPredict,
   isLoading,
   apiBase,
+  volatilityServingEnabled = false,
 }) {
   const [suggestions, setSuggestions] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -134,7 +135,9 @@ export default function SearchCard({
 
   return (
     <section className="input-card glow-border" id="inputCard">
-      <ForecastTypeToggle value={forecastType} onChange={onForecastTypeChange} />
+      {!volatilityServingEnabled && (
+        <ForecastTypeToggle value={forecastType} onChange={onForecastTypeChange} />
+      )}
       <div className="input-row">
         <div className="input-wrapper" ref={searchWrapperRef}>
           <label htmlFor="tickerInput" className="sr-only">
@@ -215,7 +218,7 @@ export default function SearchCard({
           </select>
         </div>
 
-        <div className="forecast-selector quality-selector">
+        {!volatilityServingEnabled && <div className="forecast-selector quality-selector">
           <label htmlFor="trainingProfile" className="sr-only">
             Browser training quality
           </label>
@@ -230,7 +233,7 @@ export default function SearchCard({
             <option value="balanced">Balanced · recommended</option>
             <option value="research">Research · 5-fold</option>
           </select>
-        </div>
+        </div>}
 
         <button
           type="button"

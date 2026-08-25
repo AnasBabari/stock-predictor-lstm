@@ -3,6 +3,7 @@ import React from 'react';
 const TARGET_DESCRIPTION = {
   price: 'Cumulative log return r(t,h) = ln(P(t+h) / P(t)); prices reconstructed from the latest close.',
   trend: 'One three-way call per forecast origin: sign of the CUMULATIVE h-day log return with a volatility-aware neutral band (Down/Neutral/Up softmax).',
+  volatility: 'Conditional cumulative return variance; the displayed location is the unchanged-close persistence baseline.',
 };
 
 function row(label, value) {
@@ -22,6 +23,7 @@ export default function ModelCard({ data: stockData }) {
   const metadata = stockData?.metadata;
   if (!metadata) return null;
   const isTrend = stockData.direction != null;
+  const isVolatility = metadata.engine?.certified_head === 'volatility' || stockData.volatility_cone != null;
   const engineRole = metadata.engine?.role || 'unknown';
   const snapshot = metadata.data_snapshot || {};
   const qualityStatus = snapshot.quality?.status;
@@ -32,7 +34,7 @@ export default function ModelCard({ data: stockData }) {
         <h3>Model card &amp; methodology</h3>
       </summary>
       <div className="model-card-body">
-        {row('Target', TARGET_DESCRIPTION[isTrend ? 'trend' : 'price'])}
+        {row('Target', TARGET_DESCRIPTION[isVolatility ? 'volatility' : isTrend ? 'trend' : 'price'])}
         {row('Lookback window', `${metadata.window_size ?? '?'} sessions`)}
         {row('Forecast horizon', `${stockData.forecast_days ?? '?'} day(s)`)}
         {row(
@@ -40,8 +42,10 @@ export default function ModelCard({ data: stockData }) {
           `${metadata.engine?.family ?? 'baseline'} (${engineRole})`
         )}
         {row(
-          'Local model state',
-          metadata.engine?.execution_mode === 'browser_artifact_loaded'
+          'Model state',
+          metadata.engine?.execution_mode === 'server_artifact_loaded'
+            ? 'Signed server artifact loaded'
+            : metadata.engine?.execution_mode === 'browser_artifact_loaded'
             ? 'Cached on this device'
             : metadata.engine?.execution_mode === 'browser_trained'
               ? 'Trained in this browser'
@@ -50,16 +54,16 @@ export default function ModelCard({ data: stockData }) {
                 : metadata.engine?.cache_status || 'Not reported'
         )}
         {row('Feature count', String(metadata.feature_count ?? '?'))}
-        {row('Schema version', `v${metadata.schema_version ?? '?'}`)}
-        {row('Scaling', 'Robust median/IQR, fit on the training partition only')}
+        {row('Schema version', `${metadata.schema_version ?? '?'}`)}
+        {row('Scaling', isVolatility ? 'Frozen train-only scaler from the signed release' : 'Robust median/IQR, fit on the training partition only')}
         {row(
           'Evaluation split',
-          '80/20 chronological with a horizon-purged boundary; metrics are out-of-sample'
+          isVolatility ? 'Locked purged walk-forward plus temporal and ticker-transfer holdouts' : '80/20 chronological with a horizon-purged boundary; metrics are out-of-sample'
         )}
         {row('Metric source', metadata.metric_source || 'not reported')}
         {row(
-          'Final refit caveat',
-          'Displayed future forecast comes from a model refitted on all history; it is not independently validated.'
+          'Location caveat',
+          isVolatility ? 'The center line is an explicit matched persistence baseline; only the volatility cone is learned and certified.' : 'Displayed future forecast comes from a model refitted on all history; it is not independently validated.'
         )}
         {row(
           'Data adjustment',

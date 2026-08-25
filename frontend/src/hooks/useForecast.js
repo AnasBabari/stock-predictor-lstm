@@ -9,7 +9,7 @@ import { safeGet, safeSet } from '../utils/safeStorage';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
-const VOLATILITY_SERVING_ENABLED = import.meta.env.VITE_VOLATILITY_SERVING_ENABLED === 'true';
+export const VOLATILITY_SERVING_ENABLED = import.meta.env.VITE_VOLATILITY_SERVING_ENABLED === 'true';
 const DEPLOYMENT_TRAINING_MODE = (
   window.STOCKLSTM_TRAINING_MODE ||
   import.meta.env.VITE_TRAINING_MODE ||
