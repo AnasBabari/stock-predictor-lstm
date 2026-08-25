@@ -124,3 +124,19 @@ def test_builder_rejects_unbounded_or_custom_parallel_workers(tmp_path: Path) ->
         build_gdelt_daily_snapshot(**kwargs, workers=9)
     with pytest.raises(GdeltArchiveError, match="production downloader"):
         build_gdelt_daily_snapshot(**kwargs, workers=2, downloader=_fake_downloader)
+
+
+def test_builder_records_explicit_provider_gap_without_silent_zero_news(tmp_path: Path) -> None:
+    archives = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 8))
+    manifest = build_gdelt_daily_snapshot(
+        archives,
+        output_dir=tmp_path / "snapshot",
+        work_dir=tmp_path / "work",
+        ticker_aliases={"MSFT": ("Microsoft",)},
+        license_acknowledged=True,
+        downloader=_fake_downloader,
+        missing_archive_dates=(date(2025, 1, 6),),
+    )
+    assert manifest["provenance"]["missing_archive_dates"] == ["2025-01-06"]
+    events, _ = load_news_snapshot(tmp_path / "snapshot")
+    assert len(events) == 2

@@ -6,12 +6,13 @@ import io
 import json
 import os
 import shutil
+from urllib.error import HTTPError
 import urllib.request
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -91,6 +92,10 @@ def download_gdelt_archive(
         if written == 0:
             raise GdeltArchiveError("GDELT archive download was empty")
         os.replace(temporary, destination)
+    except HTTPError as error:
+        raise GdeltArchiveError(
+            f"GDELT archive download failed for {archive.archive_date} (HTTP {error.code})"
+        ) from error
     except (OSError, ValueError) as error:
         raise GdeltArchiveError("GDELT archive download failed") from error
     finally:
@@ -224,6 +229,35 @@ def _materialize_archive_part_default(
     )
 
 
+def _materialize_missing_archive_part(
+    archive: GdeltV1DailyArchive,
+    *,
+    part_dir: Path,
+    reason: str,
+) -> None:
+    """Persist an explicit provider gap; never silently convert it to no news."""
+    save_news_snapshot(
+        part_dir,
+        (),
+        provider="GDELT 1.0 daily Event metadata",
+        license_acknowledged=True,
+        coverage_start=archive.available_at,
+        coverage_end_exclusive=archive.available_at + timedelta(days=1),
+        provenance={
+            "archive_date": str(archive.archive_date),
+            "missing_archive": True,
+            "missing_reason": reason,
+            "aggregation_stats": {
+                "archive_date": str(archive.archive_date),
+                "total_rows": 0,
+                "retained_rows": 0,
+                "invalid_rows": 0,
+                "output_events": 0,
+            },
+        },
+    )
+
+
 def build_gdelt_daily_snapshot(
     archives: Sequence[GdeltV1DailyArchive],
     *,
@@ -233,6 +267,7 @@ def build_gdelt_daily_snapshot(
     license_acknowledged: bool,
     downloader: Callable[[GdeltV1DailyArchive, Path], None] = download_gdelt_archive,
     workers: int = 1,
+    missing_archive_dates: Sequence[date] = (),
     progress: Callable[[int, int, str], None] | None = None,
 ) -> dict[str, object]:
     """Resume verified daily parts and publish one bounded immutable snapshot."""
@@ -243,6 +278,10 @@ def build_gdelt_daily_snapshot(
     if workers > 1 and downloader is not download_gdelt_archive:
         raise GdeltArchiveError("parallel GDELT builds require the production downloader")
     _validate_archive_sequence(archives)
+    allowed_gaps = set(missing_archive_dates)
+    archive_dates = {archive.archive_date for archive in archives}
+    if not allowed_gaps.issubset(archive_dates):
+        raise GdeltArchiveError("missing archive dates must belong to the requested range")
     if output_dir.exists() and (not output_dir.is_dir() or any(output_dir.iterdir())):
         raise GdeltArchiveError("final GDELT snapshot directory must be empty")
     parts_root = work_dir / "parts"
@@ -259,6 +298,14 @@ def build_gdelt_daily_snapshot(
             continue
         if part_dir.exists():
             shutil.rmtree(part_dir)
+        if archive.archive_date in allowed_gaps:
+            _materialize_missing_archive_part(
+                archive,
+                part_dir=part_dir,
+                reason="explicitly acknowledged provider archive gap",
+            )
+            completed += 1
+            continue
         download_path = downloads_root / f"{archive.archive_date:%Y%m%d}.zip"
         missing.append((archive, part_dir, download_path))
 
@@ -332,6 +379,9 @@ def build_gdelt_daily_snapshot(
             "source_first_date": str(first.archive_date),
             "source_last_date": str(last.archive_date),
             "ticker_alias_count": len(ticker_aliases),
+            "missing_archive_dates": [
+                str(value) for value in sorted(allowed_gaps)
+            ],
             **totals,
         },
     )

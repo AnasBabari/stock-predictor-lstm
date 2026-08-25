@@ -41,60 +41,62 @@ class ModelPerformanceResponse(BaseModel):
 
 @router.get("/models")
 def list_models():
-    """Describe browser-trained model availability and server-forecast stack when enabled."""
-    from server_models.api import MESSAGES, server_forecast_readiness
+    """Describe the single signed global-volatility serving contract.
 
+    The legacy per-ticker/browser entries remain as compatibility diagnostics
+    during rollout, but are explicitly disabled so clients cannot mistake them
+    for the production model.
+    """
+    release_configured = bool(
+        settings.volatility_release_dir and settings.volatility_public_key_path
+    )
     server_models = {
         "status": "disabled",
-        "reason": "Server forecast serving is disabled.",
+        "reason": "Legacy per-ticker server models are disabled; use the global volatility contract.",
         "training_mode": settings.training_mode,
     }
-    if settings.server_forecast_serving_enabled:
-        readiness = server_forecast_readiness()
-        if readiness.configured:
-            status = "configured"
-            reason = "Server-pretrained forecast serving is configured."
-        else:
-            status = readiness.reason or "unconfigured"
-            reason = MESSAGES.get(status, "Server forecast serving is not fully configured.")
-        server_models = {
-            "status": status,
-            "reason": reason,
-            "training_mode": settings.training_mode,
-            "bundle_retention_days": settings.server_bundle_retention_days,
-        }
     return {
         "version": APP_VERSION,
         "manifest": {},
         "server_models": server_models,
+        "global_volatility": {
+            "status": "configured" if release_configured else "unconfigured",
+            "reason": (
+                "Signed global volatility release is configured."
+                if release_configured
+                else "No signed global volatility release is mounted; requests abstain."
+            ),
+            "model_family": "baseline_residual_tcn_ensemble",
+            "endpoint": "/api/v2/forecast",
+            "horizons": [1, 3, 5, 7, 14, 30],
+            "certified_heads": {
+                "volatility": True,
+                "return_distribution": False,
+                "direction": False,
+            },
+            "metric_source": "locked_purged_walk_forward",
+            "training": "offline RTX workstation",
+        },
         "browser_training": {
-            "status": "available",
-            "model_family": "compact_tfjs_lstm",
-            "storage": "indexeddb",
-            "cache_scope": "per_user_per_ticker",
-            "supported_forecast_types": ["price", "direction"],
+            "status": "disabled",
+            "reason": "Production training and inference run from the signed global volatility release.",
+            "model_family": None,
+            "storage": None,
         },
         "model_storage": {
-            "location": "registry" if settings.server_forecast_serving_enabled else "browser",
-            "required": (
-                settings.server_forecast_serving_enabled
-                and settings.training_mode == "server_pretrained"
-            ),
-            "detail": (
-                "Server artifacts are stored in the registry and object store."
-                if settings.server_forecast_serving_enabled
-                else "Models are trained and cached per user in the browser."
-            ),
+            "location": "signed_release" if release_configured else "none",
+            "required": True,
+            "detail": "The API loads only a checksum- and signature-verified global volatility bundle.",
         },
         "availability": {
             "price": {
-                "status": "browser_available",
-                "engine": "compact_tfjs_lstm",
-                "tickers": [],
+                "status": "volatility_location_baseline",
+                "engine": "baseline_residual_tcn_ensemble",
+                "tickers": "global",
             },
             "direction": {
-                "status": "browser_available",
-                "engine": "compact_tfjs_lstm",
+                "status": "not_certified",
+                "engine": None,
                 "tickers": [],
             },
         },

@@ -34,6 +34,13 @@ def main() -> int:
     )
     parser.add_argument("--start", type=_date, required=True, help="First archive date, inclusive")
     parser.add_argument("--end", type=_date, required=True, help="Last archive date, exclusive")
+    parser.add_argument(
+        "--allow-missing-archive",
+        type=_date,
+        action="append",
+        default=[],
+        help="Explicit provider gap to record (repeatable; never silently skipped)",
+    )
     parser.add_argument("--ticker-aliases", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
@@ -79,6 +86,7 @@ def main() -> int:
         ticker_aliases=aliases,
         license_acknowledged=True,
         workers=args.workers,
+        missing_archive_dates=args.allow_missing_archive,
         progress=report_progress,
     )
     print(json.dumps(manifest, indent=2, sort_keys=True), flush=True)

@@ -722,20 +722,18 @@ def test_diagnostics_404_when_not_trained():
         assert client.get("/api/v1/diagnostics/AAPL").status_code == 404
 
 
-def test_models_advertises_browser_training_and_disabled_server_models():
+def test_models_advertises_signed_global_volatility_and_disabled_browser_training():
     body = client.get("/models").json()
     assert body["server_models"] == {
         "status": "disabled",
-        "reason": "Server forecast serving is disabled.",
+        "reason": "Legacy per-ticker server models are disabled; use the global volatility contract.",
         "training_mode": "browser_only",
     }
-    assert body["model_storage"] == {
-        "location": "browser",
-        "required": False,
-        "detail": "Models are trained and cached per user in the browser.",
-    }
-    assert body["browser_training"]["status"] == "available"
-    assert body["browser_training"]["storage"] == "indexeddb"
+    assert body["global_volatility"]["endpoint"] == "/api/v2/forecast"
+    assert body["global_volatility"]["certified_heads"]["volatility"] is True
+    assert body["global_volatility"]["certified_heads"]["direction"] is False
+    assert body["browser_training"]["status"] == "disabled"
+    assert body["model_storage"]["location"] == "none"
 
 
 def test_training_data_route_returns_validated_snapshot(monkeypatch):
