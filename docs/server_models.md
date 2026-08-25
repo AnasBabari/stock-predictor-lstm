@@ -1,9 +1,10 @@
-# Server-pretrained forecast bundles
+# Legacy server-pretrained forecast bundles
 
-The hybrid serving path lets a small, explicit background job produce signed,
-versioned forecast artifacts that FastAPI can serve without any TensorFlow or
-Keras import on the request path. The UI treats a server forecast exactly like a
-browser-trained one, so the two paths are interchangeable at the render layer.
+This document describes the retained per-ticker compatibility path. It is not
+the production contract: production uses the signed global-volatility ONNX
+release documented in GLOBAL_MODELS.md. The routes and job remain isolated for
+migration/rollback and are disabled by default; they must never be presented as
+the global champion or as a browser-trained result.
 
 ## Configuration
 

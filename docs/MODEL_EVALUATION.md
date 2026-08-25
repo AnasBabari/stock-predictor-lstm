@@ -52,7 +52,7 @@ price only, OHLCV, OHLCV plus technical values, OHLCV plus market context,
 OHLCV plus technical and market context, and all production market features.
 The news set appears only after timestamp-safe news columns have been merged.
 
-The benchmark CLI currently evaluates these five deterministic baselines. TensorFlow candidates use the opt-in offline training dependency group; the production browser path uses its own compact TensorFlow.js model and reports `browser_purged_holdout` metrics separately.
+The benchmark CLI evaluates deterministic baselines and the opt-in CUDA global-volatility candidates. Production evidence comes only from the global volatility protocol and is labelled `locked_purged_walk_forward`; legacy browser metrics are historical research evidence and are not a production claim.
 
 ## Promotion gate
 
@@ -93,13 +93,13 @@ promotion**, which is deliberately torch-free.
 
 ## Training lifecycle
 
-Walk-forward folds provide published offline out-of-fold metrics. The Python trainer uses a purged tail to select its epoch count and can write a research artifact only when the opt-in `training` dependency group is enabled. Production does not load that artifact. Browser Quick and Balanced profiles report one untouched purged holdout as `browser_purged_holdout`. Browser Research performs five expanding, 60-session, train-only-scaled and purged folds, pools their untouched predictions as `browser_walk_forward_out_of_fold`, then fits the final local model. Browser and Python evidence are methodologically comparable only when the snapshot, schema, split, architecture, and metric source are disclosed; TensorFlow.js GPU weights are not expected to be bit-identical to Python TensorFlow.
+Walk-forward folds provide offline out-of-fold metrics. The global volatility trainer runs on the RTX workstation, keeps fold-local preprocessing, and exports only a CPU-parity signed ONNX candidate after the locked certification gate. Production does not load browser artifacts or claim browser holdout metrics. GPU weights are not expected to be bit-identical across machines; snapshot, schema, split, seed, architecture, and runtime metadata are the reproducibility unit.
 
-The benchmark promotion decision is advisory and offline. It does not write a Render model directory, update a production endpoint, or change the browser model selected by a user.
+The benchmark promotion decision is advisory until the one-shot certification and signed release steps complete. It does not write a Render model directory or update a production endpoint automatically.
 
 ## News features
 
-Live Yahoo headlines are descriptive response context only. Historical news features require a licensed, timestamped archive. Records without a publication time are excluded; every session sees only earlier articles. The current feature builder creates exponentially decayed sentiment, effective article count, and sentiment-confidence series. They must enter a controlled ablation and pass the same promotion gate before being added to a future browser schema.
+Live Yahoo headlines are descriptive response context only. Historical news features require a licensed, timestamped archive. Records without a publication time are excluded; every session sees only earlier articles. The GDELT snapshot builder records event provenance, topic exposures, decay/coverage channels, and explicit provider archive gaps. News enters a paired market-only ablation and must pass the same locked promotion gate before becoming a serving feature.
 
 Offline operator pretraining is optional and is not part of Render deployment. Enable the `training` dependency group before preparing a research candidate:
 
@@ -114,12 +114,10 @@ Preparing a candidate makes offline diagnostics available; it does not make the 
 
 ## Target contract
 
-The browser training path fixes `target_mode = "cumulative_log_return_v1"`.
-Every price model regresses the cumulative log return from the forecast origin
-to its horizon, $r_{t,h} = \ln(P_{t+h}/P_t)$, and forecasts are converted back
-to price units as $\hat{P}_{t+h} = P_t \cdot \exp(\hat{r}_{t,h})$. The offline
-experiments share this direct-horizon formulation; their default `log_return`
-target is the same cumulative log return from each origin.
+The global volatility path fixes the cumulative-variance and return-location
+contracts in `docs/VOLATILITY_MODEL_V1.md`. The deployed head forecasts
+conditional variance; the center line remains the matched unchanged-close
+baseline until a separate return-location head passes its own evidence gate.
 
 `backend/experiments/targets.py` defines four `TargetType` values, each with an
 exact inverse used before error reporting:
