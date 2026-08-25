@@ -1,162 +1,65 @@
-# Global Model Pipeline
+# Global volatility models
 
-This document describes the offline global-model training pipeline
-(slices 4–10) and the browser-side serving path (slices 11–13). It covers
-provenance, feature schema, candidate space, evaluation protocol,
-selection gates, release flow, and known limitations.
+This is the research, certification, and release contract for the production global model. It is deliberately separate from browser TFJS experiments and from Render request handling.
 
-## Architecture overview
+## Pipeline
 
-```text
-Offline panel data and research
-        │
-        ├── Econometric baselines (EWMA, GARCH, GJR, HAR)
-        ├── Linear/tree baselines (Ridge, ElasticNet, DLinear)
-        ├── Global LSTM/GRU (shared encoder across tickers)
-        ├── GARCH-LSTM hybrid volatility model
-        └── Global TCN candidates
-                 │
-        Purged walk-forward evaluation (calendar-aligned)
-                 │
-       Per-task/per-horizon champions + shrinkage blending
-                 │
-     Signed versioned TF.js release bundle
-                 │
-       Vercel/CDN static model delivery
-                 │
-Render feature snapshot → Browser inference
-                 │
-       Optional local calibration only
-                 │
- Learned + baseline + blended + intervals
-```
+    immutable panel snapshot + point-in-time news snapshot
+            ↓
+    causal Deployable Schema v5 + econometric baselines
+            ↓
+    paired market-only/news candidate evaluation on CUDA
+            ↓
+    calendar-aligned expanding folds with purge + embargo
+            ↓
+    horizon-specific QLIKE/coverage/calibration/promotion gates
+            ↓
+    one locked untouched certification holdout
+            ↓
+    CPU-parity ONNX members → signed immutable release
+            ↓
+    Render /api/v2/forecast → Vercel volatility cone
 
-## Data provenance (slice 4)
+## Data provenance
 
-Panel snapshots are immutable and content-addressed. The builder validates
-every ticker's OHLCV history (duplicates, chronology, finite values,
-positive prices), flags >20% single-day moves as suspicious adjustments,
-computes per-ticker sha256 checksums, and produces a pooled panel id.
-Files are write-once; corrections produce a new snapshot.
+Panel files are immutable and content-addressed. The builder validates positive prices, chronology, duplicates, finite values, suspicious adjustments, per-ticker checksums, and pooled snapshot identity. The initial universe is survivor-biased and must be labelled as such. Provider licenses are acknowledged before downloads; model redistribution rights are checked before signing.
 
-**License gate:** `PANEL_LICENSE_ACKNOWLEDGED=true` is required before any
-provider-backed download. Review the provider's terms for offline model
-training, public application use, derived weight distribution, caching,
-and redistribution restrictions first.
+The GDELT builder stores one verified daily part per archive, raw/aggregated checksums, coverage cutoffs, alias-map version, aggregation counts, and explicit missing_archive_dates. A provider HTTP 404 may be recorded only with the explicit --record-missing-404 operator flag; all other failures remain fail-closed. This prevents absent archives from becoming silent zero-news observations.
 
-**Survivorship limitation:** the initial universe (~500–1,000 currently
-listed US equities) is survivor-biased. Results must be labelled as such
-until a point-in-time universe containing delisted securities is available.
+## Deployable Schema v5
 
-Run pipeline:
-`python scripts/run_global_pipeline.py --run-dir runs/prod`
-or build panel snapshot:
-`python scripts/build_panel.py --run-dir runs/panel_snapshot --n-tickers 50 --n-sessions 500`
+The serving contract has 26 causal columns: return structure, overnight/open-close/range and drawdown terms, realized-volatility proxies, EWMA/HAR inputs, liquidity/illiquidity terms, and stale-price diagnostics. Research-only cross-sectional ranks and regime labels are not accepted by the single-ticker serving runtime.
 
-To evaluate and certify against the locked holdout:
-`python scripts/run_global_pipeline.py --open-locked-certification-holdout --run-dir runs/certified`
+## Candidates and metrics
 
-## Feature schema (slice 5 & 9)
+Candidates include persistence, shrunk mean, Ridge/ElasticNet, DLinear, residual TCN, and GARCH-LSTM hybrids, with EWMA/HAR/GARCH/GJR as variance baselines. Volatility is scored primarily with QLIKE plus log-variance error, calibration, interval coverage, and width. Return-location and direction heads are evaluated separately and may be withheld even when volatility clears its gate.
 
-Features are split into two explicit contracts:
+The current development evidence selected a market-only residual TCN ensemble for short horizons. It is not production-certified until the locked holdout and release verification complete. News is retained as a paired ablation candidate; it can displace the market-only model only when it improves the same horizons on identical origins and survives the predeclared gate.
 
-### Deployable Schema (`deployable_v5` — 26 features)
-Single-ticker stationary indicators reproducible causal at browser/backend inference:
-- **Return structure (13)**: Return_1D, Return_5D, Return_10D, Return_20D, Overnight_Return, OpenToClose_Return, HL_Range_Log, Downside_Semivar_20, Realized_Skew_20, Realized_Kurt_20, Drawdown_From_Peak, Up_Streak, Down_Streak.
-- **Volatility structure (7)**: Vol_C2C_5, Vol_C2C_10, Vol_C2C_20, Vol_C2C_60, EWMA_Var (λ=0.94), Vol_Of_Vol_20, Vol_Percentile_252.
-- **Liquidity (6)**: Log_Dollar_Volume, Dollar_Volume_Median_20, Volume_Surprise, Amihud_Illiquidity_20, Zero_Return_Fraction_20, Stale_Price_Flag.
+## Evaluation and promotion
 
-### Research Schema (`research_v5`)
-Extends `deployable_v5` with research-only regime labels (trend/vol/liquidity terciles) and causal same-date cross-sectional ranks (`*_XSRank`). Cross-sectional features require the whole panel and are excluded from single-ticker deployable champion models.
+All assets share calendar boundaries. Training windows expand through time; the forecast horizon is purged and an embargo prevents adjacent information leakage. Each fold fits its own scaler and preprocessing state. Candidate choices are made on development folds only. Bootstrap intervals, Diebold–Mariano tests with Holm correction, fold consistency, seed dispersion, and calibration are frozen before evaluation.
 
-Every feature is causal: row t uses only information from rows ≤ t.
-Ablation testing is required before promoting any feature group.
+The locked certification holdout is consumed exactly once after the winner decision. The final refit is used to create the deployable artifact but never supplies reported metrics. A horizon that does not clear its guardrails is absent from certified_horizons and the API abstains.
 
-## Evaluation protocol (slices 6–7)
+## Release bundle
 
-### Calendar-time separation
+backend/release/bundle.py signs a directory containing ONNX members and manifest.json. The manifest binds runtime schema, feature order, window, horizon list, model id, member seeds/files, certified horizon decisions, certification metrics, and SHA-256 checksums. The serving runtime verifies Ed25519, checksums, paths, input/output names, feature schema, model size, and CPU inference before caching the runtime.
 
-All assets share the SAME session grid and boundaries. Expanding training
-windows advance in calendar time with a horizon purge plus embargo gap.
-An asset-transfer holdout reserves entire tickers that never appear in
-training.
+No model binary or private key belongs in Git. Release storage is immutable; promotion updates a pointer only after all checks pass. Response-cache keys include the signed model id so a new release cannot reuse a prior generation's forecast.
 
-### Baselines
+## News methodology
 
-Volatility baselines include EWMA/RiskMetrics, HAR-RV, GARCH(1,1)-t, and
-GJR-GARCH. Return baselines include persistence/zero return, shrunk
-rolling mean, Ridge/ElasticNet, and DLinear. Direction baselines include
-the matched pre-evaluation base rate and market-direction classifier.
+News features are derived from timestamped GDELT events before each market origin, aggregated through frozen topic exposures and bounded decay/coverage channels. The ablation report must disclose event counts, missing archive dates, coverage, feature version, and exact matched OOF indices. A news candidate is rejected when coverage is sparse, provider gaps overlap the evaluation advantage, or the paired model fails QLIKE/coverage gates. Live headlines remain context-only until a separately certified snapshot service exists.
 
-### Metrics
+## Operational constraints
 
-Return/price: log-return MAE/MSE/RMSE, relative MAE/RMSE vs persistence.
-Direction: multiclass Brier + skill, macro balanced accuracy/F1, log loss,
-calibration ECE. Volatility: QLIKE (primary), log-variance MAE/RMSE,
-Mincer–Zarnowitz calibration. Distribution: pinball loss, CRPS, coverage.
-
-No "price accuracy" percentages are used anywhere in this project.
-
-### Promotion gates
-
-Promotion occurs independently for every task/horizon. Gates require:
-relative MAE and RMSE both < 1.0; bootstrap 95% CI upper bound < 1.0;
-DM test significance after Holm correction; ≥4 of 5 folds beating the
-baseline; no fold exceeding a 1.15 relative-RMSE ceiling; seed dispersion
-within threshold; calibration checks passing.
-
-These thresholds are promotion requirements, not hyperparameters to tune
-against repeatedly.
-
-### Shrinkage blending
-
-Admissible candidates receive a convex blend weight α ∈ [0,1] regularized
-toward zero. A marginal model produces a cautious near-baseline forecast;
-α = 0 means the learned model supplied no usable edge at that horizon.
-
-## Candidate space (slices 8–9)
-
-| Family | Description | Dependencies |
-|---|---|---|
-| persistence | Zero cumulative excess return | none |
-| ridge/enet_global | Regularized linear over flattened windows | scikit-learn |
-| dlinear_global | Trend + residual decomposition linear | scikit-learn |
-| global_lstm/gru | Shared-encoder recurrent with quantile+direction heads | TensorFlow (opt-in) |
-| global_tcn | Residual causal dilated convolutions | TensorFlow (opt-in) |
-| garch_lstm | Two-branch hybrid: econometric forecasts + LSTM residual | TensorFlow + scipy |
-
-Neural candidates require the opt-in `training` dependency group and are
-never promoted without evidence on frozen untouched data.
-
-## Release flow (slice 11)
-
-1. Offline training produces a trained Keras model.
-2. TF.js conversion via `tensorflowjs_converter` (requires npm install).
-3. `backend/release/bundle.py` assembles manifest.json with per-file
-   sha256 checksums, signs with Ed25519 using the existing signing key.
-4. Verification fails closed on missing key, invalid signature, or any
-   checksum mismatch.
-5. Release bundles are published as immutable GitHub Release assets;
-   Vercel downloads them at build time after verifying checksums.
-
-Raw model weights are never committed to Git and never placed on Render.
-
-## Browser serving (slices 12–13)
-
-The frontend loads a pinned catalog (`/models/global/catalog.json`),
-verifies artifact checksums via WebCrypto, loads via tfjs, and runs
-inference. Feature-flagged off by default (`VITE_GLOBAL_MODEL_ENABLED`).
-When unavailable, the system transparently falls back to browser-local
-training or labelled baselines — never presenting a fallback as a model.
-
-Local calibration may adjust bias/scale/temperature/conformal intervals
-using only pre-origin data. It cannot retrain the full production model.
+Research runs on the local RTX machine with bounded CUDA memory, deterministic seeds where supported, subprocess isolation, and resumable run manifests. Render runs CPU-only ONNX inference with a small response cache and no training. /ready can require a verified release; /models exposes the actual status. Vercel uses the volatility client behind VITE_VOLATILITY_SERVING_ENABLED=true.
 
 ## Known limitations
 
-- Daily OHLCV carries limited predictive signal; simple baselines are
-  often competitive.
-- The initial research universe is survivor-biased.
-- No intraday, options-implied, fundamental, or news data is included.
-- Single-process backend by design.
-- All claims require frozen untouched-data certification before production.
+- Daily OHLCV volatility is difficult to predict and simple baselines often remain competitive.
+- The current production center line is a baseline, not a learned expected return.
+- News archives have provider gaps and license/coverage constraints.
+- The initial panel is survivor-biased and lacks options-implied, intraday, and fundamentals data.
+- GPU results are not bit-for-bit identical across machines; snapshot, code, seed, fold, and runtime manifests are the reproducibility unit.

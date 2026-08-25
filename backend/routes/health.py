@@ -80,7 +80,7 @@ def ready():
         "model_storage": {
             "required": False,
             "writable": None,
-            "detail": "Browser-trained models are trained and cached in each user's browser.",
+            "detail": "Production models are immutable signed releases; no request writes model files.",
         },
         "global_volatility": {
             "configured": bool(

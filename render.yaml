@@ -43,3 +43,8 @@ services:
         value: "4"
       - key: PREDICTION_TIMEOUT_SECONDS
         value: "600"
+      # The release directory and public key are mounted/configured only when
+      # the signed candidate has completed locked certification. Keeping these
+      # unset makes /api/v2/forecast fail closed instead of serving a baseline.
+      - key: VOLATILITY_SERVING_REQUIRED
+        value: "false"

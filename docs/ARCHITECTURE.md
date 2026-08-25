@@ -2,80 +2,63 @@
 
 ## Production request flow
 
-The React SPA requests a fresh, validated feature snapshot from FastAPI. In Compose, Nginx proxies same-origin `/api/` paths to the backend and overwrites the forwarding chain at the trusted boundary. Render runs only the lightweight data service: no TensorFlow import, Keras artifact, model directory, boot-time pretraining, or model-weight upload is part of the production request path.
+The browser requests a signed global volatility forecast from FastAPI. FastAPI validates the ticker and horizon, verifies the immutable release once per process, builds a causal market snapshot, runs every CPU ONNX ensemble member, and returns dated quantile paths plus the exact evidence identity. Render has no TensorFlow import, Keras artifact directory, boot-time training, or model-weight upload.
 
-```mermaid
+\`\`\`mermaid
 flowchart LR
-    browser[Browser / React SPA] --> nginx[Nginx or Vercel]
-    nginx --> api[FastAPI: validation, rate limit, cache]
-    api --> yahoo[Yahoo Finance + calendars]
-    api --> snapshot[Validated 28-feature snapshot (Schema v4)]
-    snapshot --> worker[TensorFlow.js Web Worker]
-    worker --> indexeddb[(Per-browser IndexedDB)]
-    worker --> metrics[Purged holdout or five-fold metrics]
-    worker --> forecast[Browser forecast]
-    forecast --> browser
-    api -->|upstream failure| fallback[Explicit server persistence/base-rate fallback]
-    fallback --> browser
-```
+    browser[React SPA / Vercel] --> api[FastAPI / Render]
+    api --> release[Signed ONNX release]
+    api --> market[Yahoo history + exchange calendar]
+    market --> snapshot[Causal Deployable Schema v5 snapshot]
+    release --> runtime[CPU ensemble runtime]
+    snapshot --> runtime
+    runtime --> cone[Certified volatility cone]
+    cone --> browser
+    api -->|missing, invalid, stale, uncertified| abstain[503 explicit abstention]
+\`\`\`
 
-`GET /api/v1/training-data?ticker=MSFT` is the only learned-forecast input. It validates the ticker, fetches one coherent market snapshot, preserves the 28-feature order (Stationary Schema v4), emits finite rows and backend calendar dates, and fingerprints the exact payload with a deterministic `snapshot_id`. The response is bounded to the historical period and 2,000 rows, rate-limited separately, and never accepts client feature matrices.
+The production route is \`GET /api/v2/forecast?ticker=MSFT&horizon=7\`. Supported horizons are \`{1, 3, 5, 7, 14, 30}\` trading sessions. A request is accepted only when the signed manifest, per-file SHA-256 checksums, Ed25519 signature, schema, feature order, ONNX I/O names, member set, model size, and requested horizon all verify.
 
-The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain for rollback and unsupported clients. They return persistence or recent-base-rate outputs with `server_disabled_fallback` metadata. A flat compatibility response is never presented as a learned model.
+The API returns a p05–p95 lognormal cone derived from certified cumulative variance. p50 is the unchanged-close location baseline; it is not a learned price path. The current release does not certify return location or direction, and the UI says so. A failed horizon is an abstention, not a baseline masquerading as a model.
 
-## Browser model boundary
+## Data contract
 
-The worker offers three immutable profiles. Quick uses a 16/8-unit LSTM for a single purged holdout; Balanced uses a 32/16-unit LSTM with two dropout layers and a single purged holdout; Research uses the Balanced architecture for five expanding 60-session folds before a final fit. The shared semantics are:
+\`backend/services/volatility_snapshot.py\` builds Deployable Schema v5 with 26 causal features. The 60-row input window, feature names, calendar dates, origin close, and snapshot fingerprint are bound to the runtime contract. Cross-sectional ranks, research-only regime labels, and future-filled values cannot enter the serving matrix.
 
-- 60-session inputs with horizon-sized outputs, batch size 32, Adam 0.001, and no shuffle. The requested horizon is bucketed to one of {1, 3, 5, 7, 14, 30}, and each trained model's output width equals its resolved horizon bucket. The API snapshot still carries 30 future dates under `output_width` as the payload contract, but a trained model predicts only its selected horizon span.
-- A train-only min/max or robust scaler and a 29-sample purge at every evaluation or early-stopping boundary.
-- Linear cumulative log-return price output ($r_{t,h} = \ln(P_{t+h}/P_t)$) and a three-way softmax direction head ([down, neutral, up], categorical cross-entropy): one call per origin on the cumulative h-day return, with a volatility-aware neutral band (target contract `cumulative_three_way_v2`).
-- WebGPU, WebGL, then CPU selection, with runtime and capability metadata recorded.
-- Cooperative cancellation, tensor disposal, and final-model refitting using the selected epoch count.
+\`GET /api/v1/training-data\` remains a bounded diagnostic/research snapshot. It rejects client matrices, non-finite values, invalid chronology, invalid tickers, and oversized responses. It is not used to train models in the Render request process.
 
-### Evaluation and artifact provenance
+## Offline research boundary
 
-Reported metrics always describe a model that never saw its evaluation window: Quick/Balanced metrics come from the selection model evaluated on the untouched post-purge holdout (a scaler fitted only to fitting observations backs both the training data and the metric display), and Research metrics come from untouched out-of-fold predictions of per-fold models. The persisted, served artifact is the *final refit*: the same profile trains once more on the full available sequence range with the selected epoch count, purely for local inference. Its stored scaler is the final-refit scaler, which legitimately spans the full sequence range, so scaler state alone must never be compared to selection-time boundaries. No metric is ever claimed from predictions of the final refit.
+The RTX workstation runs the research harness in \`research/volatility_forecasting\`:
 
-Research requires at least 300 fitting sequences before its first validation fold. Each fold has its own scaler and purged early-stopping tail; untouched out-of-fold predictions are pooled before metrics are calculated. Completed fold summaries are checkpointed for 24 hours, but partial work is never labelled as a completed benchmark.
+1. Build an immutable, license-acknowledged panel snapshot.
+2. Derive causal market features and econometric baselines.
+3. Evaluate persistence, shrunk mean, Ridge/ElasticNet, DLinear, residual TCN, and GARCH-LSTM challengers on calendar-aligned expanding folds with purge and embargo.
+4. Run paired market-only versus market-plus-news ablations on exactly the same folds and origins.
+5. Apply horizon-specific QLIKE, coverage, calibration, bootstrap, DM/Holm, fold-consistency, and seed-dispersion gates.
+6. Consume one untouched holdout only after the methodology gate and winner decision pass.
+7. Export ONNX members, verify CPU parity, sign the manifest, and mount the immutable release.
 
-Cache keys include architecture/model versions, schema, ordered-feature signature, ticker, forecast type, profile, backend, snapshot, window, and horizon. Final models and companion evidence use IndexedDB, expire after seven days, and are bounded to eight models and 200 MiB. Stale-version keys from earlier model/architecture/schema namespaces are reclaimed eagerly on cache maintenance rather than waiting for expiry. Higher-quality successful profiles evict lower-quality variants for the same ticker/type. Storage failures retain only the current session model.
+The final refit is never used to claim evaluation metrics. Locked evaluation metrics describe only untouched out-of-fold or certification observations.
 
-Quick/Balanced evidence uses `browser_purged_holdout`; Research uses `browser_walk_forward_out_of_fold`. Price results show errors and persistence-relative ratios, not “accuracy.” Direction results disclose accuracy and the majority-class baseline, derived from pre-evaluation labels only, and report the same evidence per forecast day. TensorFlow.js GPU kernels may differ numerically by browser, so reproducibility is defined by the recorded snapshot, seed, profile, splits, TensorFlow.js version, and backend rather than bit-identical weights.
+## News boundary
 
-## Data and news boundary
+Historical news is aligned by publication timestamp before each market origin. The GDELT builder stores raw-event checksums, daily aggregation statistics, topic exposures, coverage cutoffs, decay settings, and explicit archive-gap dates. A provider missing archive is an annotated gap, never an unobserved no-news day. News features remain an ablation input until they demonstrate incremental value against the market-only champion.
 
-The production feature matrix has 28 ordered columns (Stationary Schema v4): five relative price returns/log-volume changes, nine stationary technical ratios, four momentum & realized volatility features, six market-context returns & rolling Beta measures, and four cyclic calendar features. Market context is aligned to the last known close before each session; no future value is filled in. Exchange calendars support international suffixes and 24/7 crypto pairs, with unknown dotted symbols returned as an explicit NYSE fallback.
+Live Yahoo headlines remain context-only in compatibility responses. They are not silently merged into the production feature matrix.
 
-Live Yahoo Finance headlines are normalized and scored for direction-response context only. Headline sentiment is not in the browser feature matrix, so the UI does not claim news improved the learned model. Historical news experiments accept timestamped articles only, align publication time before each session, expose coverage/decay metadata, and require controlled ablation and purged promotion evidence before any future schema change.
+## Release and readiness
 
-## Offline research and training boundary
+\`backend/release/bundle.py\` creates an immutable manifest with runtime schema, model id, member seeds/files, feature order, certified horizons, certification metrics, and checksums. \`VolatilityOnnxRuntime.from_release_bundle\` verifies the manifest and opens CPU sessions. \`/models\` reports the verified model id and horizons; \`/ready\` can require the release with \`VOLATILITY_SERVING_REQUIRED=true\`.
 
-The Python TensorFlow trainer, artifact registry, walk-forward evaluator, candidate baselines, and promotion commands remain available in the opt-in `training` dependency group. They may write local artifacts under an operator-selected directory for research and benchmark reproducibility. They are not imported by `api.py`, installed by the Render production build, called by `render.yaml`, or reachable from public request handling.
+The response cache is bounded and keyed by \`(signed_model_id, ticker, horizon)\`. A newly promoted release therefore cannot inherit an older model’s cached response. Cache entries are also rejected before use when the current release no longer certifies the horizon.
 
-Offline validation supports expanding and rolling folds with training-only scalers, purged early-stopping tails, per-horizon and pooled origin/horizon metrics, persistence-relative errors, and direction baselines. Promotion is an explicit operator action; no offline artifact is deployed automatically to Render.
+## Compatibility and security
 
-### Server bundle storage lifecycle
+The legacy \`/api/v1/predict\` routes are persistence/base-rate compatibility endpoints with \`server_disabled_fallback\` metadata. They never train. Trusted proxy addresses are exact configured peers/CIDRs; forwarded headers are replaced at Nginx. CORS is explicit, errors are sanitized, and no user identifiers or model weights are sent to Render.
 
-Opt-in server-pretrained bundles remain immutable, but their object blobs have a
-bounded lifecycle. A training-job startup (or `run_server_training.py --gc-only`)
-removes non-pointer objects older than the conservative 30-day default while
-retaining registry and audit rows. The registry locks the current/previous
-promotion snapshot before deletion, protects rollback targets, records
-`bundle_pruned_at`, and rejects future promotion of a pruned row. Readiness and
-`/models` disclose the configured retention window; they do not claim that a
-sweep succeeded unless the separate training/maintenance job actually ran.
-
-## Caching and concurrency
-
-The backend response cache stores only bounded market-data-derived baseline responses. Its identity includes ticker, horizon, and forecast type, and cache hits do not load or validate model artifacts. The browser independently fetches a current snapshot before loading a cached model, so a changed snapshot forces retraining.
-
-Compatibility requests still use a bounded coalescing executor, short-lived status registry, rate limits, upstream circuit breaker, and sanitized error responses. These controls protect the data service; browser training capacity is isolated to each user's device.
-
-## Security boundaries
-
-Ticker identities are validated before any upstream or path selection. Forwarded client addresses affect rate limiting only when the direct peer is an exact configured trusted proxy; direct callers cannot spoof another bucket. Nginx replaces, rather than appends to, forwarding headers. CORS allows explicit origins without credentials, internal errors are sanitized, and no model weights or user identifiers are sent to Render. React renders external text as text nodes; export identity/length checks and CSV formula neutralization remain in place.
+The browser may retain old TFJS code during rollback migration, but production uses \`VITE_VOLATILITY_SERVING_ENABLED=true\` and must not advertise browser-trained learned forecasts. Any eventual removal of that code must also remove its dependencies, profile selector, worker bundle, and stale documentation in one reviewed boundary.
 
 ## Deployment gate
 
-The Render backend and Vercel frontend are guarded by repository smoke, resource-budget, and browser E2E checks. The gate intentionally separates repository validation from provider dashboard actions; see [DEPLOYMENT_GATE.md](DEPLOYMENT_GATE.md).
+Repository checks validate the release contract, resource budget, API docs, and browser integration. Provider smoke tests must verify \`/health\`, \`/ready\`, \`/models\`, and a seven-day \`/api/v2/forecast\` response against the same deployed commit. See [DEPLOYMENT_GATE.md](DEPLOYMENT_GATE.md).

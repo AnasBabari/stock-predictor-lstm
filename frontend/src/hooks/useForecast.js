@@ -8,8 +8,14 @@ import { defaultTrainingProfile } from '../ml/trainingProfiles';
 import { safeGet, safeSet } from '../utils/safeStorage';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
-const BROWSER_TRAINING_ENABLED = import.meta.env.VITE_BROWSER_TRAINING_ENABLED !== 'false';
-export const VOLATILITY_SERVING_ENABLED = import.meta.env.VITE_VOLATILITY_SERVING_ENABLED === 'true';
+// Production builds use the signed global-volatility contract by default. The
+// explicit false override is retained for local rollback/contract fixtures;
+// browser training is never an implicit production fallback.
+export const VOLATILITY_SERVING_ENABLED =
+  import.meta.env.VITE_VOLATILITY_SERVING_ENABLED === 'true' ||
+  (import.meta.env.PROD && import.meta.env.VITE_VOLATILITY_SERVING_ENABLED !== 'false');
+const BROWSER_TRAINING_ENABLED =
+  import.meta.env.VITE_BROWSER_TRAINING_ENABLED === 'true' && !VOLATILITY_SERVING_ENABLED;
 const DEPLOYMENT_TRAINING_MODE = (
   window.STOCKLSTM_TRAINING_MODE ||
   import.meta.env.VITE_TRAINING_MODE ||

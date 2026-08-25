@@ -1,115 +1,90 @@
 # API reference
 
-Local backend: `http://127.0.0.1:8000`. Interactive OpenAPI: `/docs`; schema: `/openapi.json`.
+Local backend: http://127.0.0.1:8000. Interactive OpenAPI: /docs; schema: /openapi.json.
 
-All errors use `{"detail":"..."}`. `400` means invalid or insufficient instrument data, `422` means query-schema failure, `429` means per-client rate limiting, and `503` means retryable market-data or service failure. Server forecast compatibility responses can be successful baselines; their metadata never claims a learned server model.
+Errors use {"detail":"..."} or a documented structured detail. 400 means an invalid ticker/horizon or insufficient history, 409 means the history cannot support the requested causal snapshot, 429 means rate limiting, 502 means an upstream market-data failure, and 503 means the signed model is unavailable, incompatible, uncertified, or failed closed.
 
 ## Probes and discovery
 
-- `GET /`: service metadata and links to health, readiness, and OpenAPI documentation.
-- `GET /health`: process liveness only.
-- `GET /ready`: readiness for the market-data dependency. Model storage is not required; browser IndexedDB is outside the server readiness probe.
-- `GET /models`: reports `server_models.status = disabled` and `browser_training.status = available` with `storage = indexeddb`.
-- `GET /api/v1/search?query=AAPL`: up to eight Yahoo suggestions. A syntactically valid exact symbol remains available as a generic `SYMBOL` fallback if autocomplete is down.
-- `GET /api/v1/info?ticker=AAPL`: fundamentals with a thread-safe cache.
-- `GET /api/v1/prediction-status/{request_id}`: short-lived compatibility telemetry for a request ID. Responses use `Cache-Control: no-store`.
+- GET / — service metadata and documentation links.
+- GET /health — O(1) liveness; does not load model files.
+- GET /ready — market-data readiness and, when required/configured, verified global-release readiness.
+- GET /models — signed global-volatility status, model id, certified horizons, disabled legacy/browser paths, and metric source.
+- GET /api/v1/search?query=AAPL — bounded Yahoo suggestions.
+- GET /api/v1/info?ticker=AAPL — fundamentals with a bounded cache.
 
-## `GET /api/v1/training-data`
+## GET /api/v2/forecast
 
-Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`). Rate limit: 10/minute/client. The server fetches and validates the bounded feature snapshot; it accepts no client-supplied feature matrix and writes no files.
+Parameters:
 
-The response preserves the 28-feature order (Stationary Schema v4), includes a deterministic `snapshot_id`, 60-session `window_size`, 30-step `output_width`, historical prices, and backend-generated future trading dates. Both `dates` and `future_dates` are strictly increasing unique ISO dates, and every future date falls after the last historical trading day; the backend validates this before serialization and the frontend re-validates it on receipt.
+- ticker: validated [A-Z0-9.\\-]{1,12} symbol.
+- horizon: one of 1, 3, 5, 7, 14, 30 trading sessions.
 
-```json
-{
-  "ticker": "MSFT",
-  "schema_version": 4,
-  "snapshot_id": "sha256...",
-  "generated_at": "2026-08-01T12:00:00Z",
-  "feature_names": [
-    "Log_Open_Rel", "Log_High_Rel", "Log_Low_Rel", "Return_1D", "Volume_Log1p_Change",
-    "Close_SMA_20", "Close_EMA_20", "RSI_14_Centered", "MACD_Close", "MACD_Signal_Close",
-    "BB_Upper_Rel", "BB_Lower_Rel", "ATR_14_Rel", "OBV_Change_Z",
-    "Return_5D", "Return_20D", "Realized_Vol_5D", "Realized_Vol_20D",
-    "SPY_Return_1D", "QQQ_Return_1D", "VIX_Return_1D", "TNX_Return_1D",
-    "Return_Rel_SPY_1D", "Beta_SPY_20D",
-    "Month_Sin", "Month_Cos", "Day_Sin", "Day_Cos"
-  ],
-  "window_size": 60,
-  "output_width": 30,
-  "target_mode": "cumulative_log_return_v1",
-  "dates": ["2026-07-29"],
-  "features": [["finite numeric values ..."]],
-  "historical_prices": ["finite positive closes ..."],
-  "future_dates": ["2026-07-30"],
-  "calendar": "NYSE",
-  "data_snapshot": {"snapshot_id": "sha256..."}
-}
-```
+Rate limit: 30 requests/minute/client. The route verifies a signed release before market-data work and before reading the response cache. Missing/stale/tampered releases and failed horizons return 503 with status abstain_no_certified_model.
 
-Invalid tickers and insufficient data return sanitized `400` responses; upstream failures return `503`. Non-finite feature rows, invalid closes, and snapshots over the 2,000-row bound are rejected or trimmed before serialization.
+Example response (abbreviated):
 
-## Compatibility forecast endpoints
+    {
+      "ticker": "MSFT",
+      "as_of": "2026-08-21",
+      "horizon": 7,
+      "current_price": 501.2,
+      "forecast": {
+        "future_dates": ["2026-08-24", "..."],
+        "price_quantiles": {
+          "p05": ["..."], "p50": [501.2], "p95": ["..."]
+        },
+        "probability_up": null,
+        "expected_cumulative_variance": 0.0012,
+        "expected_annualized_volatility": 0.208
+      },
+      "evidence": {
+        "model_id": "global-tcn-v1",
+        "snapshot_id": "sha256...",
+        "metric_source": "locked_purged_walk_forward",
+        "certified": true,
+        "certified_heads": {
+          "volatility": true,
+          "return_distribution": false,
+          "direction": false
+        },
+        "horizon_certification": {"7": {"decision": "pass"}}
+      }
+    }
 
-### `GET /api/v1/predict`
+The quantile bands are the learned/certified volatility head. The p50 line is an unchanged-close location baseline. The endpoint makes no claim that direction or expected price level was learned.
 
-Parameters: `ticker` (default `AAPL`, `[A-Z0-9.\-]{1,12}`), `days` (default 7, range 1–30). Rate limit: 5/minute/client. The endpoint is retained while the frontend migration stabilizes. It fetches market data and returns a persistence forecast, not a server-trained LSTM. The response engine is:
+## GET /models
 
-```json
-{
-  "family": "persistence",
-  "role": "server_disabled_fallback",
-  "baseline_fallback": true
-}
-```
+The response contains:
 
-`metrics.metric_source` is `baseline_definition`; it is not a walk-forward score. The bounded response cache contains only baseline responses and does not store model weights.
+- global_volatility.status: ready, unconfigured, unavailable, or integrity_failure.
+- global_volatility.model_id and certified_horizons when ready.
+- global_volatility.metric_source = locked_purged_walk_forward.
+- browser_training.status = disabled and server_models.status = disabled for the production contract.
 
-### `GET /api/v1/predict/direction`
+## GET /ready
 
-The same parameters and rate limit return a recent-up-session base-rate forecast. `directions` and `probabilities` have exactly `forecast_days` entries; `attention_weights` is an empty list because the server direction model is disabled. Live headline sentiment may be returned as response context only and is never a browser-model feature.
+The data service can be ready without a model for local development. Set VOLATILITY_SERVING_REQUIRED=true in a production serving environment to make readiness fail closed until the signed release verifies. The liveness route remains 200 during release failures so the platform can report the actual cause.
 
-```json
-{
-  "ticker": "MSFT",
-  "forecast_days": 3,
-  "future_dates": ["2026-08-03", "2026-08-04", "2026-08-05"],
-  "directions": ["Up", "Down", "Up"],
-  "probabilities": [0.55, 0.55, 0.55],
-  "attention_weights": [],
-  "metrics": {"metric_source": "baseline_definition", "naive_baseline": 0.55},
-  "metadata": {"engine": {"family": "recent_base_rate", "role": "server_disabled_fallback", "baseline_fallback": true}}
-}
-```
+## GET /api/v1/training-data
 
-## Browser model response contract
+This bounded route is for diagnostics and offline research. It returns the validated Stationary Schema v4 matrix, historical closes, future calendar dates, and deterministic snapshot id. It accepts no client feature matrix and writes no files. It is not a public training service and is not used by the production global-volatility path.
 
-The Vercel frontend fetches `/api/v1/training-data`, then sends the snapshot and the selected `quick`, `balanced`, or `research` profile to a TensorFlow.js Web Worker. Quick uses a 16/8-unit LSTM and at most 12 epochs; Balanced uses 32/16 units and at most 25 epochs; Research runs the Balanced architecture across five expanding, purged 60-session validation folds before fitting the final model. The worker tries WebGPU, WebGL, then CPU, reports fold/epoch/timing progress, supports cancellation, and disposes temporary tensors.
+## Compatibility forecasts
 
-A learned response uses `metadata.engine.role = browser_learned` and execution mode `browser_trained` or `browser_artifact_loaded`. Metadata discloses the profile, backend, TensorFlow.js and architecture versions, selected/completed epochs, evaluation completeness, storage status, snapshot, and training duration. Keys cover all compatibility inputs, and final models are limited to eight entries, 200 MiB, and seven days. Research fold summaries may resume for 24 hours; no partial run has a completed metric source.
+GET /api/v1/predict and GET /api/v1/predict/direction remain temporarily for old clients. They return persistence/recent-base-rate outputs with metadata.engine.role = server_disabled_fallback, baseline_fallback = true, and metrics.metric_source = baseline_definition. A flat compatibility result must never be labelled an LSTM or global model.
 
-Metrics always describe the selection evidence, never the artifact that is served: Quick/Balanced report the untouched post-purge holdout of the selection model; Research reports pooled untouched out-of-fold predictions. The stored model is a final refit over the full sequence range with the selected epoch count, used only for local inference, and the metadata scaler belongs to that final refit.
+The legacy GET /api/v1/server-forecasts/availability and GET /api/v1/server-forecasts/{ticker} routes are retained for migration only. Production keeps them disabled; they must not be used as the global-volatility contract.
 
-Quick/Balanced price and direction evidence is labelled `browser_purged_holdout`. A complete Research run is labelled `browser_walk_forward_out_of_fold`. Price metrics are MAE, MSE, RMSE, MAPE, R², and relative MAE/RMSE against persistence. Direction evidence follows target contract `cumulative_three_way_v2`: one Down/Neutral/Up call per forecast origin on the CUMULATIVE h-day return (neutral band = max(5bp, 10%·σ₂₀·√h)), produced by a three-unit softmax head trained with categorical cross-entropy. Direction metrics are multiclass Brier with Brier skill versus the matched pre-evaluation base rate, macro balanced accuracy/F1, log loss, and calibration ECE; there is no per-day decomposition. Price results do not expose an accuracy percentage.
+## Diagnostics and telemetry
 
-Unsupported workers or failed browser training use an explicit `baseline_fallback` response. A flat persistence result must never be presented as an LSTM result.
+- GET /api/v1/prediction-status/{request_id} — short-lived telemetry for compatibility requests only.
+- GET /api/v1/diagnostics/{ticker} — offline diagnostics when explicitly mounted; production Render normally has none.
+- GET /api/v1/model-performance/{ticker} — discloses the global volatility family, signed-release status, locked metric source, and certified horizons. Direction is reported as not certified.
 
-## Compatibility telemetry
+Compatibility forecast metadata may include typed timings_seconds (queue_wait, market_data, feature_preparation, artifact_load_validation, training, inference, and total) and execution mode (response_cache_hit, artifact_loaded, baseline_fallback, trained, or coalesced). It also carries artifact_state_before (fresh, missing, stale, or incompatible) and artifact_action (loaded, retrained, or not_applicable). Status stages include queued, downloading_market_data, preparing_features, checking_artifact, training, generating_forecast, completed, and failed. This caller-level semantics is short-lived: completed and failed views remain for up to 10 minutes and can be evicted under capacity pressure. These fields describe request telemetry only and never turn a baseline into a learned result.
 
-`GET /api/v1/prediction-status/{request_id}` accepts the UUIDv4 value sent in `X-Prediction-Request-ID` on a compatibility forecast request. Status stages remain `queued`, `downloading_market_data`, `preparing_features`, `checking_artifact`, `training`, `generating_forecast`, `completed`, or `failed`; `training` is reserved compatibility telemetry and is not entered by the public browser path. Unknown, expired, or malformed IDs return a generic `404`.
+## News
 
-Forecast metadata includes `artifact_state_before` and `artifact_action` alongside the typed `timings_seconds` fields `queue_wait`, `market_data`, `feature_preparation`, `artifact_load_validation`, `training`, `inference`, and `total`. Stages that did not run are `null`, with a non-negative measured `total`. The typed execution modes remain `response_cache_hit`, `artifact_loaded`, `baseline_fallback`, `trained`, and `coalesced`; artifact states are `fresh`, `missing`, `stale`, and `incompatible`; artifact actions are `loaded`, `retrained`, and `not_applicable`. A response-cache hit has `null` pipeline stages and a measured total. This caller-level semantics is short-lived, in-process telemetry, not durable observability. Completed and failed views may remain for up to 10 minutes and can be evicted under capacity pressure.
-
-## Offline evidence endpoints
-
-- `GET /api/v1/diagnostics/{ticker}` exposes persisted walk-forward artifacts only when the opt-in offline trainer has produced them; production Render has no such files.
-- `GET /api/v1/model-performance/{ticker}` discloses browser-training availability and any offline evidence. It must not imply that a server model is active.
-
-Live sentiment is untrusted headline-only external data. Historical news can enter only an offline, timestamped, leakage-safe ablation and must pass the same purged holdout and promotion gates as other features.
-
-## Server Pretrained Forecasts
-
-The server-forecast routes are always registered but dormant unless `SERVER_FORECAST_SERVING_ENABLED=true`. They never train or download model artifacts during request handling.
-
-- `GET /api/v1/server-forecasts/availability`: Returns the currently running mode (`browser_only`, `hybrid`, or `server_pretrained`), the configured allowlist, and the status of each allowlisted ticker (fresh, stale, missing). Cached for 300 seconds.
-- `GET /api/v1/server-forecasts/{ticker}?forecast_type=price|direction&days=N`: Serves a pre-trained, signed server forecast bundle when one is available, fresh, and compatible. The response format matches the client-trained output (`available`, `ticker`, `forecast_days`, `future_dates`, `predicted_prices`, `historical_dates`, `historical_prices`, `metrics`, and `metadata` with `engine.role: "server_pretrained"`, `metric_source: "server_purged_walk_forward"`, `origin`, and `authenticity: "ed25519_verified"` — configured serving requires an Ed25519 public key, so digest-only acceptance does not exist), so the UI renders it natively. On miss, stale, disabled, or incompatible in the browser training modes, returns `200 OK` containing a fallback instruction (`{available: false, reason: "...", fallback: "browser_training"}`). In `server_pretrained` mode the same expected absences are `503` with `fallback: null`; unexpected infrastructure failures (registry unavailable, unreadable bundle, digest mismatch, failed signature verification, contract violation, identity mismatch) always fail closed with `503` carrying `fallback: "browser_training"` in browser modes and `fallback: null` in `server_pretrained`. Successful responses are cached for 900 seconds with `ETag` set to the bundle version ID.
+Live Yahoo headline sentiment is context-only. Historical GDELT news enters only the offline timestamped ablation pipeline. News coverage, provider gaps, exposure-map version, decay parameters, and snapshot id are recorded in the research report; no news feature is served until the ablation and certification gates pass.

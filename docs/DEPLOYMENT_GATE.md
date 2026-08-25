@@ -1,6 +1,6 @@
 # Render/Vercel deployment gate
 
-The release gate keeps the free-tier Render API and Vercel frontend deployable without silently spending provider resources or shipping a broken browser-training path.
+The release gate keeps the free-tier Render API and Vercel frontend deployable without silently spending provider resources or shipping an unverified global-volatility model.
 
 ## Provider settings and secrets
 
@@ -9,7 +9,9 @@ Render service:
 - Use `render.yaml` with `plan: free`, `healthCheckPath: /health`, `autoDeploy: checksPass`, PR previews enabled, and monorepo build filters.
 - Set `CORS_ORIGIN` to the production Vercel origin.
 - Set `PREVIEW_CORS_ORIGIN_REGEX` only for preview services, for example `https://[a-z0-9-]+\.vercel\.app`.
-- Keep `SERVER_MODELS_ENABLED=false` and browser training enabled unless deliberately rolling back.
+- Set `VITE_VOLATILITY_SERVING_ENABLED=true` on the Vercel production project.
+- Set `VOLATILITY_RELEASE_DIR`, `VOLATILITY_PUBLIC_KEY_PATH`, and `VOLATILITY_SERVING_REQUIRED=true` on Render only after the signed release is mounted.
+- Keep `SERVER_MODELS_ENABLED=false` and `VITE_BROWSER_TRAINING_ENABLED=false` in production. Browser TFJS is a rollback/migration path, not the production learned-model contract.
 
 GitHub variables/secrets used by deployment-gate workflows:
 
@@ -47,7 +49,7 @@ does not actually protect `main`:
 
 Render free instances can sleep, restart, and have tight memory/CPU budgets. The resource harness fails on startup errors, exit `127`, exit `137`, restarts, and peak RSS above 400 MiB inside a 512 MiB budget. The live smoke checker uses short timeouts and sanitized JSON failures so logs do not expose provider headers or credentials.
 
-Vercel preview E2E uses a deterministic Quick-profile fixture instead of live Yahoo data. It verifies browser worker training, non-flat output, metric labels, IndexedDB cache reload behavior, direction probabilities, and captures traces/screenshots/video on failure.
+Vercel preview E2E uses a deterministic fixture for the UI contract. Production smoke separately verifies the signed global-volatility response, seven dated quantile values, release identity, and explicit abstention behavior when a release or horizon is unavailable.
 
 ## Local parity
 
@@ -66,3 +68,12 @@ $env:VERCEL_PREVIEW_URL="https://your-vercel-preview.vercel.app"
 ```
 
 If Playwright is not installed, local browser E2E is skipped. CI runs it only when a Vercel preview URL is supplied and the frontend lockfile includes the Playwright dependency.
+
+## Release smoke checklist
+
+1. `/health` reports the expected commit and environment.
+2. `/ready` is 200 only when market data and the required signed release are available.
+3. `/models` reports `global_volatility.status=ready`, the model id, and certified horizons; `browser_training.status=disabled`.
+4. `/api/v2/forecast?ticker=MSFT&horizon=7` returns seven strictly increasing dates, p05/p50/p95 arrays, and `locked_purged_walk_forward` evidence.
+5. A failed horizon or tampered bundle returns structured 503 abstention; no baseline is relabelled as learned.
+6. Vercel renders the volatility-only labels and retains the response evidence in exports.

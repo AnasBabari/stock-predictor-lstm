@@ -1,14 +1,17 @@
-# StockLSTM - Browser-trained stock forecasting
+# StockLSTM — global volatility forecasting
 
-[![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI 0.115+](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/) [![TensorFlow.js](https://img.shields.io/badge/TensorFlow.js-4.22-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/js) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI 0.115+](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-StockLSTM is a React and FastAPI stock-forecasting application. The FastAPI service retrieves Yahoo Finance history and returns a validated feature snapshot. A compact TensorFlow.js LSTM trains in each user's browser, runs in a Web Worker, and stores that user's model in IndexedDB. Render supplies data and calendar dates; it does not train models, load Keras artifacts, or retain model weights.
+StockLSTM is a React/FastAPI research application for market-volatility forecasting. The production forecast is a signed, CPU-served global TCN ensemble trained offline on the RTX workstation. Render supplies validated market history and calendars; it does not train models or accept model weights. Vercel renders the forecast and its uncertainty cone.
 
 > [!WARNING]
 > Educational project only. Forecasts, indicators, and sentiment are not financial advice.
 
 > [!NOTE]
 > GitHub Actions runs locked dependency checks, Ruff, Mypy, Bandit, pip-audit, API-documentation drift checks, backend and frontend tests/builds, and Docker Compose smoke tests. The local verification workflow may intentionally skip Bandit, but the CI gate remains active.
+
+> [!NOTE]
+> A forecast is only displayed as a learned production result when the signed release, checksum, schema, horizon certification, and metric provenance all verify. Otherwise the API abstains with `503`; it does not silently substitute a flat line and call it a model.
 
 ## Live Demo
 
@@ -23,58 +26,43 @@ StockLSTM is a React and FastAPI stock-forecasting application. The FastAPI serv
 | --- | --- |
 | ![Price forecast dashboard with historical and predicted prices.](assets/dashboard.png) | ![Direction forecast dashboard with model analysis.](assets/prediction.png) |
 
-- Search for a ticker or enter an exact symbol, then choose a 1–30 trading-day horizon.
-- The first forecast downloads a bounded feature snapshot and trains a local model. Progress, the worker backend, holdout metrics, and cache status are shown in the UI.
-- Reloading the page can load the same ticker/type model from IndexedDB. Price and direction models are separate, per browser, per ticker, and never uploaded.
-- If workers, WebGPU/WebGL/CPU TensorFlow.js, or local storage are unavailable, the UI explicitly labels the deterministic persistence/base-rate fallback.
+- Search for a validated ticker and select a supported 1-, 3-, 5-, 7-, 14-, or 30-session horizon.
+- The production path calls `GET /api/v2/forecast`; the center line is explicitly an unchanged-close location baseline and the shaded paths are the certified volatility cone.
+- The evidence card reports the true metric source (`locked_purged_walk_forward`), QLIKE, coverage, release identity, snapshot identity, and certified horizon. It does not label a volatility forecast as price-direction accuracy.
+- The API returns a sanitized abstention when a release is missing, stale, incompatible, tampered with, or not certified for the requested horizon.
 - Save results to browser-local watchlists/history and export PNG, CSV, or complete ZIP analyses.
 
 ## Architecture and data contract
 
-The production pipeline uses **Stationary Schema v4 (28 ordered features)**: relative price returns, stationary technical indicator ratios, momentum/realized volatility measures, market-context returns, rolling Beta, and cyclical calendar values. Browser training uses a 60-session input window, an 80% training split, a train-only robust scaler, and a `forecast_days - 1` purge at the train/holdout boundary. The price target is cumulative log return ($r_{t,h} = \ln(P_{t+h}/P_t)$), with prices reconstructed from the latest close; the direction target (contract `cumulative_three_way_v2`) is one Down/Neutral/Up call per origin on the cumulative horizon return with a volatility-aware neutral band, produced by a three-unit softmax head.
+The serving snapshot uses **Deployable Schema v5**: 26 causal stationary features covering return structure, realized-volatility proxies, liquidity, and market microstructure. Every row uses information available at or before its origin. A 60-session window, exchange calendar, deterministic snapshot fingerprint, and exact feature ordering are bound into the signed release contract.
 
-`GET /api/v1/training-data?ticker=MSFT` returns the validated 28-feature matrix, historical closes, strictly increasing backend-generated future trading dates that follow the last trading day, feature schema version (`schema_version: 4`), target contract (`target_mode: cumulative_log_return_v1`), and a deterministic `snapshot_id`. The frontend invalidates a cached model when that snapshot, schema, feature list, window, output width, or implementation version changes. The service bounds the snapshot to the configured historical period and 2,000 rows, returns finite numeric values only, and applies a dedicated 10-per-minute limit.
+The current champion family is a residual temporal-convolutional ensemble with frozen econometric volatility baselines. It predicts conditional variance; the API derives a transparent daily cone from the certified cumulative variance. The p50 path is intentionally the unchanged close until a separately certified return-location head clears its own gates. Direction is not certified in the current release.
 
-Three local training profiles are available:
+`GET /api/v1/training-data?ticker=MSFT` remains a bounded diagnostic/research snapshot. It returns validated features, historical closes, strictly increasing backend-generated future trading dates, schema metadata, and a deterministic `snapshot_id`; it does not train a model or accept client-supplied features.
 
-| Profile | Model and evaluation | Typical capable-desktop time |
-| --- | --- | --- |
-| Profile | Model and evaluation | Typical capable-desktop time |
-| --- | --- | --- |
-| Quick | LSTM 16/8, 12 epochs maximum, one untouched purged holdout | 30–90 seconds |
-| Balanced | LSTM 32/16, 25 epochs maximum, one untouched purged holdout | 2–10 minutes |
-| Research | Balanced model, five expanding 60-session purged folds, then a final fit | 10–45+ minutes |
-
-Balanced is the capable-desktop default; constrained or mobile devices default to Quick. Research is always an explicit choice. The worker tries WebGPU, then WebGL, then CPU. All profiles use batch size 32, Adam 0.001, no shuffle, train-only scaling, early stopping, and a final refit for local inference. Browser GPU results are methodologically reproducible from the recorded snapshot, profile, seed, split, and runtime metadata, but are not guaranteed to be bit-identical across browsers.
-
-Quick and Balanced metrics are labelled `browser_purged_holdout`. Research metrics are aggregated from untouched predictions and labelled `browser_walk_forward_out_of_fold`; incomplete or cancelled folds never receive that label. Price evidence includes MAE, MSE, RMSE, MAPE, R², and relative MAE/RMSE versus persistence. Direction evidence (target contract `cumulative_three_way_v2`) is one three-way call per forecast origin — Down/Neutral/Up on the cumulative horizon return with a volatility-aware neutral band — scored by multiclass Brier skill against the pre-evaluation base rate, macro balanced accuracy/F1, log loss, and calibration ECE. Price forecasts do not claim an “accuracy” percentage.
+Production metrics are computed offline on identical market snapshots using calendar-aligned expanding purged walk-forward folds. Volatility is scored primarily with QLIKE, log-variance error, calibration, and interval coverage; price-location and direction heads are separate gates. A development candidate is not called certified until one untouched holdout and the signed-release verification pass.
 
 > [!IMPORTANT]
-> **How to read the numbers.** The holdout/walk-forward metrics are computed once on data the selection model never saw. The *deployed* forecast is produced by a final model refitted on all available history — the UI's model card and holdout chart state this explicitly. In the offline research harness (`research/`), all 19 currently kept records predate provenance tracking and are labelled `LEGACY_UNAUDITED`; per that package's multiplicity policy they must not be presented as certified. Simple baselines (persistence, majority class) are first-class citizens here: every learned model is compared against them on identical rows, and the offline research found linear/random-feature models at least as competitive as neural ones on daily data.
+> **How to read the numbers.** `locked_purged_walk_forward` describes untouched out-of-fold evidence for the selected volatility head. The served p50 is an unchanged-close baseline; only the uncertainty cone is currently learned/certified. Development reports, browser experiments, and final refits are never presented as locked production metrics.
 
-The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available during migration. Their response metadata always identifies `server_disabled_fallback`; they are not used for learned browser forecasts. `/models` reports `server_models.status = disabled` and `browser_training.status = available`.
+The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available for old clients. Their response metadata always identifies `server_disabled_fallback`; they are persistence/base-rate results and never learned forecasts. `/models` reports `server_models.status = disabled` and `browser_training.status = disabled` in the production contract.
 
-## Server-side forecast serving
+## Signed global-volatility serving
 
-The server can also serve pre-trained, signed, versioned forecast bundles alongside the compatibility endpoints (hybrid mode). The routes are always registered but dormant by default: `SERVER_FORECAST_SERVING_ENABLED` defaults to `false`, and no ticker is served until `SERVER_FORECAST_ALLOWLIST` is configured and a fresh promoted artifact exists. Endpoints:
+`GET /api/v2/forecast?ticker=MSFT&horizon=7` serves one verified global ONNX ensemble across supported tickers. The release is trained and certified offline on the RTX workstation, signed with Ed25519, and mounted as an immutable directory. It is not trained in a public request and no model weights are uploaded by the browser.
 
-- `GET /api/v1/server-forecasts/availability` — running mode, configured allowlist, and per-ticker freshness (cached 300 s).
-- `GET /api/v1/server-forecasts/{ticker}?forecast_type=price|direction&days=N` — a persisted bundle when fresh and compatible; otherwise `200 OK` with `{available: false, fallback: "browser_training"}` in the browser training modes. In `server_pretrained` mode a missing/stale/incompatible bundle is a `503`; infrastructure failures (registry unavailable, unreadable bundle, digest mismatch, failed signature verification) always fail closed with `503`. Successful responses carry `ETag` = bundle version ID and are cached 900 s.
+The response contains dated p05–p95 volatility paths, expected annualized volatility, snapshot id, model id, certified horizon evidence, and `metric_source = locked_purged_walk_forward`. The p50 line is explicitly an unchanged-close location baseline. If the release or requested horizon is unavailable, the endpoint returns a structured 503 abstention. `/ready` can enforce this with `VOLATILITY_SERVING_REQUIRED=true`; `/models` reports the verified model id and certified horizons.
 
-Artifacts come only from an explicit background job (`backend/scripts/run_server_training.py`). The job is torch-free: it evaluates the `elastic_net` family on the full 1–30-day horizon range without the histogram gradient booster, and promotes a signed, digest-checked bundle only when pooled `relative_rmse < 0.98` and `relative_mae < 0.98`. Each bundle records reproducibility metadata (git commit, scaler parameters, feature names, per-horizon metrics) and embeds the last 120 trading days of history for the chart. Bundles are immutable in storage and versioned by ticker, forecast type, training timestamp, git SHA, and snapshot fingerprint; serving verifies the Ed25519 signature with the configured public key and there is deliberately no digest-only acceptance mode (a missing key means serving is `unconfigured`, a broken key is `integrity_failure`, both fail closed). Serving stays dormant until an allowlisted ticker actually has a fresh promoted artifact, so free-tier memory and CPU budgets are unaffected; `/models` still reports server models disabled. See [docs/server_models.md](docs/server_models.md). No bundle is currently promoted: the research survivors behind these gates are `LEGACY_UNAUDITED` until re-certified on new untouched data (see [research/README.md](research/README.md)).
+The legacy per-ticker server-bundle routes are disabled for production. Their optional offline training/registry code remains isolated for migration and retention work, but it is not reachable from the global production request path.
 
-## News and sentiment
+## News and event context
 
-Live Yahoo Finance headlines are still fetched for the direction response as context (`sentiment.status`/coverage metadata). They are deliberately not sent in the 28-feature browser matrix, so headline sentiment cannot silently become a learned input. Historical news experiments remain offline-only and must use timestamped articles, leakage-safe alignment, controlled ablations, and the same purged holdout/promotion gates as price features. This separation keeps the browser model reproducible and makes the current news limitation explicit instead of claiming that sentiment improves the forecast.
+Live Yahoo Finance headlines remain context-only. Historical GDELT event data is built into an immutable, point-in-time snapshot with topic exposures, decay/coverage metadata, checksums, and explicit provider archive gaps. Paired market-only/news ablations use the same rows, folds, seeds, and promotion gates. News can displace the market-only champion only after it demonstrates incremental QLIKE/coverage value and clears locked certification; until then it is not a production feature.
 
 
 ## Global model pipeline
 
-An offline global-model training pipeline (slices 4–10) is under active
-development. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the
-architecture, evaluation protocol, candidate space, and known limitations.
-The browser-local training path remains available behind a feature flag
-and is labelled as a research fallback, never as the production model.
+The offline global-model pipeline builds panel/news snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs the release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the full contract. Browser TFJS training is retained only for rollback during migration and is disabled in production.
 
 ## Docker Compose
 
@@ -85,7 +73,7 @@ docker compose build
 docker compose up
 ```
 
-Open <http://localhost:5500>. Nginx serves the frontend on port 5500 and proxies `/api/` to the lightweight FastAPI service. The backend binds to loopback for local access and the internal Compose network for the proxy. No model volume is required. The same browser worker/IndexedDB flow is used locally and on Render.
+Open <http://localhost:5500>. Nginx serves the frontend on port 5500 and proxies `/api/` to the lightweight FastAPI service. Without a mounted signed release, `/api/v2/forecast` intentionally returns an explicit 503; mount a verified bundle and public key for serving tests.
 
 > [!NOTE]
 > **Single-process by design.** Rate-limit buckets, caches, and the work coordinator are process-local, and both deployment targets (Render, Compose) run exactly one API worker. Scaling to multiple replicas would require external coordination and is intentionally out of scope.
