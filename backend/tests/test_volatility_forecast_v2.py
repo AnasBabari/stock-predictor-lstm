@@ -177,6 +177,33 @@ def test_repeated_requests_reuse_the_response_cache(monkeypatch) -> None:
     assert counting_snapshot.calls == 2
 
 
+def test_release_identity_partitions_response_cache(monkeypatch) -> None:
+    first_runtime = _FakeRuntime()
+    _install_release(monkeypatch, runtime=first_runtime)
+
+    def counting_snapshot(ticker: str):
+        counting_snapshot.calls += 1
+        return _fake_snapshot(ticker)
+
+    counting_snapshot.calls = 0
+    monkeypatch.setattr(
+        "services.volatility_snapshot.build_volatility_inference_snapshot",
+        counting_snapshot,
+    )
+    first = CLIENT.get("/api/v2/forecast", params={"ticker": "NMM", "horizon": 7})
+    assert first.status_code == 200
+    assert counting_snapshot.calls == 1
+
+    second_runtime = _FakeRuntime()
+    second_runtime.model_id = "global-volatility-tcn-v2"
+    volatility_v2._reset_release_state()
+    _install_release(monkeypatch, runtime=second_runtime)
+    second = CLIENT.get("/api/v2/forecast", params={"ticker": "NMM", "horizon": 7})
+    assert second.status_code == 200
+    assert second.json()["evidence"]["model_id"] == "global-volatility-tcn-v2"
+    assert counting_snapshot.calls == 2
+
+
 def test_rejects_invalid_horizon_and_ticker(monkeypatch) -> None:
     _install_release(monkeypatch, runtime=_FakeRuntime())
     assert CLIENT.get("/api/v2/forecast", params={"ticker": "NMM", "horizon": 4}).status_code == 400

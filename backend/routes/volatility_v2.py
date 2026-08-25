@@ -98,7 +98,7 @@ def _reset_release_state() -> None:
 
 
 class _ResponseCache:
-    """Small bounded TTL cache keyed by (ticker, horizon)."""
+    """Small bounded TTL cache keyed by (signed model id, ticker, horizon)."""
 
     def __init__(self, max_entries: int = 128) -> None:
         self._entries: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
