@@ -398,6 +398,11 @@ def gdelt_v1_row_to_news_event(
     )
 
 
+def _clipped_weighted_share(weights: np.ndarray, values: list[float]) -> float:
+    """Weighted mean guarded against floating-point drift outside [0, 1]."""
+    return float(min(1.0, max(0.0, np.dot(weights, values))))
+
+
 def aggregate_gdelt_v1_daily_lines(
     lines: Iterable[str],
     *,
@@ -452,9 +457,17 @@ def aggregate_gdelt_v1_daily_lines(
         volume = float(len(events))
         weights = np.asarray([max(event.confidence, 1e-6) for event in events], dtype=np.float64)
         weights /= weights.sum()
-        positive = float(np.dot(weights, [event.positive_probability for event in events]))
-        neutral = float(np.dot(weights, [event.neutral_probability for event in events]))
-        negative = max(0.0, 1.0 - positive - neutral)
+        positive = _clipped_weighted_share(
+            weights, [event.positive_probability for event in events]
+        )
+        neutral = _clipped_weighted_share(weights, [event.neutral_probability for event in events])
+        combined = positive + neutral
+        if combined > 1.0:
+            # Guard against accumulated floating-point drift pushing the
+            # aggregated shares outside the probability simplex.
+            positive /= combined
+            neutral /= combined
+        negative = 1.0 - positive - neutral
         topics = tuple(sorted({topic for event in events for topic in event.topics}))
         ticker = scope.partition(":")[2] if scope.startswith("ticker:") else ""
         identity = f"gdelt1-daily:{archive.archive_date:%Y%m%d}:{scope}"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import numpy as np
 import pandas as pd
 import pytest
 from volatility_forecasting.gdelt import (
@@ -145,3 +146,29 @@ def test_gdelt_parser_rejects_schema_drift_and_short_aliases() -> None:
         gdelt_row_to_news_event(row, ticker_aliases={"C": ("C",)})
     with pytest.raises(NewsValidationError, match="58 columns"):
         parse_gdelt_v1_export_line("too\tshort")
+
+
+def test_daily_aggregate_survives_weighted_share_drift_near_the_simplex_edge() -> None:
+    """Regression: weighted sentiment means must never escape [0, 1] by rounding."""
+    from volatility_forecasting.gdelt import _clipped_weighted_share
+
+    drifted = np.asarray([0.5 + 8e-17, 0.5 + 8e-17], dtype=np.float64)
+    assert _clipped_weighted_share(drifted, [1.0, 1.0]) == 1.0
+    assert _clipped_weighted_share(drifted, [-1.0, -1.0]) == 0.0
+
+    archive = iter_gdelt_v1_daily_archives(date(2025, 1, 5), date(2025, 1, 6))[0]
+    for rows in range(1, 41):
+        events, stats = aggregate_gdelt_v1_daily_lines(
+            [_v1_line()] * rows,
+            archive=archive,
+            ticker_aliases={"MSFT": ("Microsoft",)},
+        )
+        assert stats.output_events >= 1
+        for event in events:
+            probabilities = (
+                event.positive_probability,
+                event.neutral_probability,
+                event.negative_probability,
+            )
+            assert all(0.0 <= value <= 1.0 for value in probabilities)
+            assert sum(probabilities) == pytest.approx(1.0)
