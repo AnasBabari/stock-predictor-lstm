@@ -91,6 +91,31 @@ def main() -> int:
     ):
         raise ValueError("certified horizons are absent or outside the eligible set")
 
+    def _decision_summary(row: dict) -> dict | None:
+        if not isinstance(row, dict) or not isinstance(row.get("metrics"), dict):
+            return None
+        return {
+            "decision": row.get("decision"),
+            "relative_qlike": row.get("relative_qlike"),
+            "ratio_upper_95": row.get("ratio_upper_95"),
+            "dm_p_value": row.get("dm_p_value"),
+            "holm_significant": row.get("holm_significant"),
+            "coverage_80": row["metrics"].get("coverage_80"),
+            "coverage_95": row["metrics"].get("coverage_95"),
+            "variance_only_coverage_80": row["metrics"].get("variance_only_coverage_80"),
+            "gaussian_crps": row["metrics"].get("gaussian_crps"),
+            "required_ticker_relative_qlike": row.get("required_ticker_relative_qlike"),
+            "reasons": list(row.get("reasons") or []),
+        }
+
+    decision_summaries: dict[int, dict] = {}
+    for row in evidence.get("decisions") or []:
+        if isinstance(row, dict) and isinstance(row.get("horizon"), int):
+            summary = _decision_summary(row)
+            if summary is not None:
+                population = str(row.get("population", "unknown"))
+                decision_summaries.setdefault(int(row["horizon"]), {})[population] = summary
+
     panel_checksum = _panel_checksum(args)
     cache = find_compatible_example_cache(
         args.example_cache_root.resolve(),
@@ -171,6 +196,9 @@ def main() -> int:
             "certified_horizons": certified_horizons,
             "abstained_eligible_horizons": abstained,
             "certification_start": evidence.get("certification_start"),
+            "horizon_decisions": {
+                str(horizon): summaries for horizon, summaries in sorted(decision_summaries.items())
+            },
             "evidence_sha256": {
                 "locked-certification.json": _sha256_file(evidence_path),
                 "holdout-opened.json": _sha256_file(opened_path),

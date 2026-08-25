@@ -90,6 +90,13 @@ class VolatilityOnnxRuntime:
     def member_seeds(self) -> tuple[int, ...]:
         return self.contract.member_seeds
 
+    def is_certified_horizon(self, horizon: int) -> bool:
+        return self.contract.is_certified_horizon(horizon)
+
+    def certification_summary(self, horizon: int) -> dict | None:
+        summary = self.contract.certification_summary(horizon)
+        return dict(summary) if summary is not None else None
+
     @classmethod
     def from_release_bundle(
         cls, release_dir: Path, *, public_key_path: Path

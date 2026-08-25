@@ -24,6 +24,18 @@ class _FakeRuntime:
         self.variance = variance
         self.calls = 0
 
+    def is_certified_horizon(self, horizon: int) -> bool:
+        return horizon in (1, 5, 7)
+
+    def certification_summary(self, horizon: int):
+        if horizon not in (1, 5, 7):
+            return None
+        return {
+            "decision": "pass",
+            "relative_qlike": 0.85 - 0.05 * (horizon == 7),
+            "coverage_80": 0.79,
+        }
+
     def forecast(self, snapshot):
         self.calls += 1
         return SimpleNamespace(
@@ -122,6 +134,18 @@ def test_serves_certified_volatility_cone(monkeypatch) -> None:
     }
     assert evidence["certified"] is True
     assert "no learned direction claim" in evidence["quantile_model"]
+    summary = evidence["horizon_certification"]["7"]
+    assert summary["decision"] == "pass"
+    assert summary["coverage_80"] == pytest.approx(0.79)
+
+
+def test_abstains_on_horizons_that_failed_the_guardrail(monkeypatch) -> None:
+    _install_release(monkeypatch, runtime=_FakeRuntime())
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "NMM", "horizon": 3})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["status"] == "abstain_no_certified_model"
+    assert "guardrails" in detail["reason"]
 
 
 def test_repeated_requests_reuse_the_response_cache(monkeypatch) -> None:

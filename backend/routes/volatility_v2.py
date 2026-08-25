@@ -162,6 +162,8 @@ async def volatility_forecast_v2(
     runtime, load_failure = _RELEASE_STATE.get()
     if runtime is None:
         raise _abstain(load_failure or "no certified volatility model is available")
+    if not runtime.is_certified_horizon(horizon):
+        raise _abstain(f"the certified ensemble did not clear the {horizon}-session guardrails")
 
     from services.volatility_snapshot import build_volatility_inference_snapshot
 
@@ -194,6 +196,21 @@ async def volatility_forecast_v2(
     horizon_index = VOLATILITY_HORIZONS.index(horizon)
     variance_at_horizon = float(forecast.forecast_variance[horizon_index])
     daily_variance = variance_at_horizon / horizon
+    evidence = {
+        "model_id": runtime.model_id,
+        "member_seeds": list(runtime.member_seeds),
+        "snapshot_id": snapshot.snapshot_id,
+        "metric_source": "locked_purged_walk_forward",
+        "quantile_model": (
+            "zero_location_volatility_cone: bands derive from the certified "
+            "variance around the unchanged close; no learned direction claim"
+        ),
+        "certified_heads": dict(CERTIFIED_HEADS),
+        "certified": True,
+    }
+    certification_summary = runtime.certification_summary(horizon)
+    if certification_summary is not None:
+        evidence["horizon_certification"] = {str(horizon): certification_summary}
     payload = {
         "ticker": symbol,
         "as_of": snapshot.origin_date,
@@ -207,18 +224,7 @@ async def volatility_forecast_v2(
                 np.sqrt(daily_variance * TRADING_SESSIONS_PER_YEAR)
             ),
         },
-        "evidence": {
-            "model_id": runtime.model_id,
-            "member_seeds": list(runtime.member_seeds),
-            "snapshot_id": snapshot.snapshot_id,
-            "metric_source": "locked_purged_walk_forward",
-            "quantile_model": (
-                "zero_location_volatility_cone: bands derive from the certified "
-                "variance around the unchanged close; no learned direction claim"
-            ),
-            "certified_heads": dict(CERTIFIED_HEADS),
-            "certified": True,
-        },
+        "evidence": evidence,
     }
     _response_cache.put(cache_key, payload)
     return VolatilityForecastResponse.model_validate(payload)

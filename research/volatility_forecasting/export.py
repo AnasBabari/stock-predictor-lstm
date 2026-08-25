@@ -423,6 +423,16 @@ def assemble_release_bundle(
             for value in certified_horizons
         ):
             metadata["certified_horizons"] = sorted(certified_horizons)
+        horizon_decisions = locked.get("horizon_decisions")
+        if isinstance(horizon_decisions, dict):
+            certification_metrics: dict[str, dict] = {}
+            for raw_horizon, summaries in horizon_decisions.items():
+                if not isinstance(raw_horizon, str) or not raw_horizon.isdecimal():
+                    continue
+                if isinstance(summaries, dict):
+                    certification_metrics[raw_horizon] = summaries
+            if certification_metrics:
+                metadata["certification_metrics"] = certification_metrics
     try:
         from release.bundle import build_release, verify_release
     except ImportError:  # pragma: no cover - research harness runs from the repository root

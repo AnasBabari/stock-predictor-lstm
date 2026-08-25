@@ -66,6 +66,8 @@ class VolatilityRuntimeContract:
     horizons: tuple[int, ...] = VOLATILITY_HORIZONS
     window_size: int = VOLATILITY_WINDOW_SIZE
     news_feature_count: int = 0
+    certified_horizons: tuple[int, ...] | None = None
+    certification_metrics: Mapping[int, Mapping[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.model_id, str) or not self.model_id or len(self.model_id) > 128:
@@ -102,6 +104,22 @@ class VolatilityRuntimeContract:
             _validate_member_file(file_name)
         if len(set(self.member_files)) != len(self.member_files):
             raise ValueError("ensemble member files must be unique")
+        if self.certified_horizons is not None:
+            certified = self.certified_horizons
+            if (
+                not isinstance(certified, tuple)
+                or any(isinstance(h, bool) or not isinstance(h, int) for h in certified)
+                or tuple(sorted(certified)) != certified
+                or any(h not in self.horizons for h in certified)
+                or not certified
+            ):
+                raise ValueError("certified horizons must be a sorted subset of serving horizons")
+        if self.certification_metrics is not None:
+            if not isinstance(self.certification_metrics, Mapping):
+                raise ValueError("certification metrics must be a mapping")
+            for horizon, summary in self.certification_metrics.items():
+                if horizon not in self.horizons or not isinstance(summary, Mapping):
+                    raise ValueError("certification metrics keys must be serving horizons")
 
     @classmethod
     def from_release_metadata(
@@ -120,6 +138,33 @@ class VolatilityRuntimeContract:
         window_size = metadata.get("window_size")
         news_feature_count = metadata.get("news_feature_count", 0)
         raw_members = metadata.get("members")
+        certified_horizons_raw = metadata.get("certified_horizons")
+        if certified_horizons_raw is not None:
+            if not isinstance(certified_horizons_raw, list) or any(
+                isinstance(h, bool) or not isinstance(h, int) for h in certified_horizons_raw
+            ):
+                raise ValueError("release certified horizons are malformed")
+            certified_horizons: tuple[int, ...] | None = tuple(certified_horizons_raw)
+        else:
+            certified_horizons = None
+        certification_metrics_raw = metadata.get("certification_metrics")
+        certification_metrics: dict[int, dict[str, Any]] | None
+        if certification_metrics_raw is None:
+            certification_metrics = None
+        else:
+            if not isinstance(certification_metrics_raw, dict):
+                raise ValueError("release certification metrics are malformed")
+            certification_metrics = {}
+            for raw_key, summary in certification_metrics_raw.items():
+                if isinstance(raw_key, bool) or not isinstance(summary, dict):
+                    raise ValueError("release certification metrics are malformed")
+                if isinstance(raw_key, int):
+                    key = raw_key
+                elif isinstance(raw_key, str) and raw_key.isdecimal():
+                    key = int(raw_key)
+                else:
+                    raise ValueError("release certification metrics are malformed")
+                certification_metrics[key] = dict(summary)
         if not isinstance(model_id, str):
             raise ValueError("release model id is missing")
         if not isinstance(feature_names, list) or not all(
@@ -157,11 +202,25 @@ class VolatilityRuntimeContract:
             horizons=tuple(horizons),
             window_size=int(window_size),
             news_feature_count=int(news_feature_count),
+            certified_horizons=certified_horizons,
+            certification_metrics=certification_metrics,
         )
 
     @property
     def horizon_count(self) -> int:
         return len(self.horizons)
+
+    def is_certified_horizon(self, horizon: int) -> bool:
+        """True when the locked certification cleared this specific horizon."""
+        if self.certified_horizons is None:
+            return True
+        return horizon in self.certified_horizons
+
+    def certification_summary(self, horizon: int) -> Mapping[str, Any] | None:
+        if self.certification_metrics is None:
+            return None
+        summary = self.certification_metrics.get(horizon)
+        return dict(summary) if isinstance(summary, Mapping) else None
 
     def expected_input_names(self) -> tuple[str, ...]:
         inputs = [MODEL_INPUT_FEATURES, MODEL_INPUT_BASELINE]

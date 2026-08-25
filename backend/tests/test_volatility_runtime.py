@@ -86,6 +86,26 @@ def test_contract_binds_certified_schema_and_rejects_drift() -> None:
         _contract(window_size=30)
 
 
+def test_release_metadata_round_trips_json_certification_keys() -> None:
+    metadata = {
+        "runtime_schema": "volatility-runtime-v1",
+        "model_id": "global-volatility-tcn-v1",
+        "horizons": [1, 3, 5, 7, 14, 30],
+        "window_size": 60,
+        "news_feature_count": 0,
+        "feature_names": list(DEPLOYABLE_FEATURE_COLUMNS_V5),
+        "members": [{"seed": 41, "file": "members/seed-41.onnx"}],
+        "certified_horizons": [1, 3, 5, 7],
+        "certification_metrics": {
+            "7": {"decision": "pass", "relative_qlike": 0.91},
+        },
+    }
+    contract = VolatilityRuntimeContract.from_release_metadata(metadata, {"members/seed-41.onnx"})
+    assert contract.is_certified_horizon(7)
+    assert not contract.is_certified_horizon(14)
+    assert contract.certification_summary(7)["decision"] == "pass"
+
+
 def test_contract_rejects_invalid_membership() -> None:
     with pytest.raises(ValueError, match="unique and ascending"):
         _contract(member_seeds=(42, 41))
