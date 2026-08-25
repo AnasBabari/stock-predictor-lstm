@@ -2,8 +2,8 @@ import React from 'react';
 
 /**
  * Renders global-model status when the prediction payload carries one.
- * Shows nothing unless `data.global_model` is present (feature-flagged
- * off by default via VITE_GLOBAL_MODEL_ENABLED).
+ * Shows nothing unless a legacy global-model payload is present. Production
+ * volatility responses use the dedicated volatility evidence card instead.
  */
 export default function GlobalModelStatus({ data }) {
   const gm = data?.global_model;
