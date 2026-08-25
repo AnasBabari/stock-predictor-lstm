@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,7 +29,10 @@ from volatility_forecasting.contracts import (  # noqa: E402
     VolatilityForecastProtocol,
     VolatilityPromotionGate,
 )
-from volatility_forecasting.data import build_volatility_panel_examples  # noqa: E402
+from volatility_forecasting.data import (  # noqa: E402
+    VolatilityPanelExamples,
+    build_volatility_panel_examples,
+)
 from volatility_forecasting.evaluation import evaluate_tcn_development  # noqa: E402
 from volatility_forecasting.folds import build_volatility_fold_plan  # noqa: E402
 from volatility_forecasting.metrics import qlike_losses  # noqa: E402
@@ -150,6 +153,55 @@ def _news_ablation_consensus(
     return summary
 
 
+def _news_gap_exclusion_mask(
+    origin_dates: np.ndarray,
+    manifest: dict[str, object],
+    *,
+    lookback_days: int = 7,
+) -> tuple[np.ndarray, tuple[str, ...]]:
+    """Exclude origins whose causal news lookback intersects a provider gap."""
+    if lookback_days < 1:
+        raise ValueError("news gap lookback must be positive")
+    values = manifest.get("provenance")
+    provenance = values if isinstance(values, dict) else {}
+    raw_dates = provenance.get("missing_archive_dates", [])
+    if not isinstance(raw_dates, list) or any(not isinstance(value, str) for value in raw_dates):
+        raise ValueError("news provider-gap metadata is malformed")
+    gap_dates = tuple(sorted(set(raw_dates)))
+    mask = np.zeros(len(origin_dates), dtype=bool)
+    dates = np.asarray(origin_dates, dtype="datetime64[D]")
+    for raw_date in gap_dates:
+        try:
+            gap = np.datetime64(raw_date, "D")
+        except ValueError as error:
+            raise ValueError("news provider-gap metadata contains an invalid date") from error
+        mask |= (dates >= gap) & (dates <= gap + np.timedelta64(lookback_days, "D"))
+    return mask, gap_dates
+
+
+def _subset_examples(
+    examples: VolatilityPanelExamples,
+    keep: np.ndarray,
+) -> VolatilityPanelExamples:
+    """Keep row identities aligned when a news provider gap is excluded."""
+    selected = np.asarray(keep, dtype=bool)
+    if selected.ndim != 1 or len(selected) != len(examples.features) or not selected.any():
+        raise ValueError("news gap filtering would leave no valid volatility examples")
+    if selected.all():
+        return examples
+    return replace(
+        examples,
+        features=examples.features[selected],
+        baseline_variance=examples.baseline_variance[selected],
+        realized_variance=examples.realized_variance[selected],
+        cumulative_returns=examples.cumulative_returns[selected],
+        direction_classes=examples.direction_classes[selected],
+        tickers=examples.tickers[selected],
+        origin_dates=examples.origin_dates[selected],
+        origin_closes=examples.origin_closes[selected],
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Train and evaluate the frozen baseline-residual volatility TCN"
@@ -248,16 +300,10 @@ def main() -> int:
                 panel_checksum=panel_checksum,
                 protocol=protocol,
             )
-    fold_plan = build_volatility_fold_plan(examples, protocol)
-    print(
-        f"Built {len(examples.features):,} examples; "
-        f"training assets={len(fold_plan.train_tickers)}, "
-        f"unseen assets={fold_plan.asset_holdout_tickers}",
-        flush=True,
-    )
-
     news_features: np.ndarray | None = None
     news_manifest: dict[str, object] | None = None
+    news_gap_dates: tuple[str, ...] = ()
+    news_excluded_rows = 0
     exposure_map: dict[str, dict[str, float]] = {}
     exposure_metadata: dict[str, object] | None = None
     if args.news_snapshot_dir is not None:
@@ -283,11 +329,32 @@ def main() -> int:
         )
         validate_news_coverage(news_manifest, news_matrix.cutoffs)
         news_features = news_matrix.values
+        gap_mask, news_gap_dates = _news_gap_exclusion_mask(
+            examples.origin_dates,
+            news_manifest,
+        )
+        news_excluded_rows = int(gap_mask.sum())
+        if news_excluded_rows:
+            examples = _subset_examples(examples, ~gap_mask)
+            news_features = news_features[~gap_mask]
+            print(
+                f"Excluded {news_excluded_rows:,} origins whose seven-day causal news "
+                "lookback intersects an explicit provider gap.",
+                flush=True,
+            )
         print(
             f"Aligned {len(events):,} point-in-time events into "
-            f"{news_features.shape[1]} news features for every market row.",
+            f"{news_features.shape[1]} news features for {len(news_features):,} valid rows.",
             flush=True,
         )
+
+    fold_plan = build_volatility_fold_plan(examples, protocol)
+    print(
+        f"Built {len(examples.features):,} examples; "
+        f"training assets={len(fold_plan.train_tickers)}, "
+        f"unseen assets={fold_plan.asset_holdout_tickers}",
+        flush=True,
+    )
 
     architecture = BaselineResidualTCNConfig(
         feature_count=examples.features.shape[-1],
@@ -424,6 +491,8 @@ def main() -> int:
     if news_features is not None and news_manifest is not None and news_architecture is not None:
         report["news"] = {
             "snapshot": news_manifest,
+            "missing_archive_dates": list(news_gap_dates),
+            "excluded_provider_gap_rows": news_excluded_rows,
             "feature_schema_version": NEWS_FEATURE_SCHEMA_VERSION,
             "feature_names": list(NEWS_FEATURE_NAMES_V2),
             "exposure_map": exposure_map,
