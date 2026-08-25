@@ -16,8 +16,7 @@ from typing import Any
 import numpy as np
 
 from panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
-
-RUNTIME_SCHEMA_VERSION = "volatility-runtime-v1"
+from release.bundle import RUNTIME_SCHEMA_VERSION
 
 VOLATILITY_HORIZONS = (1, 3, 5, 7, 14, 30)
 VOLATILITY_WINDOW_SIZE = 60

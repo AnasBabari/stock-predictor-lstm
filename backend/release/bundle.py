@@ -21,6 +21,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 RELEASE_SCHEMA_VERSION = 1
+# Metadata schema consumed by the certified volatility ONNX serving runtime.
+RUNTIME_SCHEMA_VERSION = "volatility-runtime-v1"
 MAX_RELEASE_FILES = 32
 MAX_RELEASE_FILE_BYTES = 64 * 1024 * 1024
 MAX_RELEASE_TOTAL_BYTES = 128 * 1024 * 1024
@@ -54,7 +56,10 @@ def build_release(
     private_key_path: Path,
 ) -> Path:
     """Assemble + sign a release bundle. Overwrites are refused."""
-    from artifacts.signing import Ed25519ManifestSigner
+    try:
+        from artifacts.signing import Ed25519ManifestSigner
+    except ImportError:  # pragma: no cover - repository-root contexts import the package path
+        from backend.artifacts.signing import Ed25519ManifestSigner  # type: ignore[no-redef]
 
     if not model_files:
         raise ValueError("release requires at least one model file")

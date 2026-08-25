@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from artifacts.registry import ArtifactRegistryError
+from .registry import ArtifactRegistryError
 
 
 def _decode_signature(value: str) -> bytes:

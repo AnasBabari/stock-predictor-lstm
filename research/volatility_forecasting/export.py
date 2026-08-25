@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ import torch
 from torch import nn
 
 from .baselines import AdaptiveBaselineHorizon, AdaptiveBaselineSelection
+from .contracts import DEPLOYABLE_FEATURE_COLUMNS_V5
 from .model import (
     BaselineResidualTCN,
     BaselineResidualTCNConfig,
@@ -333,3 +335,99 @@ def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandid
     if candidate.model_identity != actual_identity:
         raise ValueError("candidate content identity does not match weights and metadata")
     return candidate
+
+
+def assemble_release_bundle(
+    candidate_dir: Path,
+    output_dir: Path,
+    *,
+    private_key_path: Path,
+    public_key_path: Path | None = None,
+    opset_version: int = 18,
+    parity_rows: int = 7,
+) -> dict[str, object]:
+    """Convert one locked-certification candidate into one signed ONNX bundle.
+
+    Every seed member is reloaded from verified persisted weights, exported to
+    the calibrated production graph, and parity-checked against PyTorch before
+    the bundle is signed. Serving metadata follows the frozen volatility
+    runtime schema so the CPU runtime can load the release without inference.
+    """
+    directory = candidate_dir.resolve()
+    try:
+        manifest = json.loads((directory / "candidate-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("candidate manifest is missing or invalid") from error
+    if manifest.get("artifact_role") != "locked_certification_candidate":
+        raise ValueError("only locked-certification candidates may be released")
+    model_id = manifest.get("model_identity")
+    if not isinstance(model_id, str) or not model_id or len(model_id) > 128:
+        raise ValueError("candidate model identity cannot serve as a release model id")
+    protocol_payload = manifest.get("protocol")
+    horizons = protocol_payload.get("horizons") if isinstance(protocol_payload, dict) else None
+    if (
+        not isinstance(horizons, list)
+        or not horizons
+        or any(isinstance(h, bool) or not isinstance(h, int) or h < 1 for h in horizons)
+        or tuple(sorted(horizons)) != tuple(horizons)
+    ):
+        raise ValueError("certification protocol horizons are malformed")
+    architecture_payload = manifest.get("architecture")
+    members_payload = manifest.get("members")
+    if not isinstance(architecture_payload, dict) or not isinstance(members_payload, list):
+        raise ValueError("candidate manifest is incomplete")
+    architecture = BaselineResidualTCNConfig(**architecture_payload)
+    if architecture.feature_count != len(DEPLOYABLE_FEATURE_COLUMNS_V5):
+        raise ValueError("release candidates must use the certified deployable_v5 feature schema")
+    if architecture.horizon_count != len(horizons):
+        raise ValueError("architecture horizon count does not match the certified protocol")
+    seeds = sorted(
+        int(row.get("seed")) for row in members_payload if isinstance(row, dict) and "seed" in row
+    )
+    if len(seeds) != len(members_payload) or len(set(seeds)) != len(seeds) or any(s < 1 for s in seeds):
+        raise ValueError("candidate member table is malformed")
+
+    try:
+        from release.bundle import RUNTIME_SCHEMA_VERSION
+    except ImportError:  # pragma: no cover - research harness runs from the repository root
+        from backend.release.bundle import RUNTIME_SCHEMA_VERSION  # type: ignore[no-redef]
+
+    files: dict[str, bytes] = {}
+    parity_errors: dict[str, float] = {}
+    with tempfile.TemporaryDirectory(prefix="volatility-release-") as temp:
+        temp_dir = Path(temp)
+        for seed in seeds:
+            candidate = load_frozen_candidate_member(directory, seed)
+            onnx_path = export_candidate_onnx(
+                candidate,
+                temp_dir / f"seed-{seed}.onnx",
+                opset_version=opset_version,
+            )
+            member_errors = verify_onnx_parity(candidate, onnx_path, rows=parity_rows)
+            parity_errors[f"seed-{seed}"] = max(member_errors.values())
+            files[f"members/seed-{seed}.onnx"] = onnx_path.read_bytes()
+    metadata = {
+        "runtime_schema": RUNTIME_SCHEMA_VERSION,
+        "model_id": model_id,
+        "window_size": int(architecture.window_size),
+        "horizons": [int(value) for value in horizons],
+        "feature_names": list(DEPLOYABLE_FEATURE_COLUMNS_V5),
+        "news_feature_count": int(architecture.news_feature_count),
+        "members": [{"seed": seed, "file": f"members/seed-{seed}.onnx"} for seed in seeds],
+    }
+    try:
+        from release.bundle import build_release, verify_release
+    except ImportError:  # pragma: no cover - research harness runs from the repository root
+        from backend.release.bundle import build_release, verify_release  # type: ignore[no-redef]
+
+    build_release(output_dir, files, metadata, private_key_path=Path(private_key_path))
+    if public_key_path is not None:
+        verify_release(output_dir, public_key_path=Path(public_key_path))
+    return {
+        "model_id": model_id,
+        "bundle": str(Path(output_dir).resolve()),
+        "member_seeds": seeds,
+        "max_parity_error": max(parity_errors.values()) if parity_errors else 0.0,
+        "parity_errors": parity_errors,
+        "signed_release_metadata": metadata,
+    }

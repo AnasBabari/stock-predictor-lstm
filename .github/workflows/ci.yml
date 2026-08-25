@@ -125,10 +125,11 @@ jobs:
       - run: uv lock --project backend --check
       # Default groups include dev (pytest); training/TensorFlow stays out.
       - run: uv sync --project backend --frozen
-      - name: Install CPU PyTorch for the torch-gated challenger tests
+      - name: Install CPU PyTorch and ONNX tooling for the release-path tests
         run: |
           uv pip install --project backend --python backend/.venv/bin/python --torch-backend=cpu torch
-          uv run --project backend python -c "import torch; print(f'PyTorch {torch.__version__}')"
+          uv pip install --project backend --python backend/.venv/bin/python "onnx>=1.15,<2.0" "onnxruntime>=1.19,<2.0"
+          uv run --project backend python -c "import torch, onnx, onnxruntime; print('export stack ready')"
       - name: Run research harness tests
         env:
           PYTHONPATH: research

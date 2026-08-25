@@ -1,11 +1,11 @@
 """Artifact registry primitives for evidence-gated model activation."""
 
-from artifacts.registry import (
+from .registry import (
     ArtifactRegistryError,
     LocalArtifactRegistry,
     PromotionManifest,
 )
-from artifacts.signing import Ed25519ManifestSigner, Ed25519ManifestVerifier
+from .signing import Ed25519ManifestSigner, Ed25519ManifestVerifier
 
 __all__ = [
     "ArtifactRegistryError",

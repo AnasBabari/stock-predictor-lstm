@@ -1,6 +1,6 @@
 """Serving-layer forecast engines."""
 
-from services.baselines import (
+from .baselines import (
     base_rate_direction_forecast,
     persistence_price_forecast,
 )
