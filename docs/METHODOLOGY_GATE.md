@@ -18,7 +18,7 @@ per-fold trainEnd, and per-observation fold rows when pooling out-of-fold
 predictions. The served artifact is the final refit, and cached evidence is
 superseded whenever the method changes.
 
-recorded_sha: 6374c4c
+recorded_sha: 277d816
 freeze_record_commit: cb17557e538bc58afbc969c1328848c45a99a9d8
 
 **Field conventions.** `recorded_sha` identifies the battery-verified tree the
