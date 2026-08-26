@@ -52,7 +52,7 @@ Example response (abbreviated):
       }
     }
 
-The quantile bands are the learned/certified volatility head. The p50 line is an unchanged-close location baseline. The endpoint makes no claim that direction or expected price level was learned.
+The quantile bands are the learned/certified volatility head. The p50 value is the disclosed unchanged-close distribution assumption, not a learned expected price. The frontend deliberately suppresses that flat center line and shows the certified range and expected volatility instead. The endpoint makes no claim that direction or expected price level was learned.
 
 ## GET /models
 
@@ -65,7 +65,7 @@ The response contains:
 
 ## GET /ready
 
-The data service can be ready without a model for local development. Set VOLATILITY_SERVING_REQUIRED=true in a production serving environment to make readiness fail closed until the signed release verifies. The liveness route remains 200 during release failures so the platform can report the actual cause.
+The data service can be ready without a model for local development. Set `VOLATILITY_SERVING_REQUIRED=true` in a production serving environment to make readiness fail closed until the signed release verifies. A release may come from `VOLATILITY_RELEASE_DIR`, or an ephemeral host may use the paired immutable settings `VOLATILITY_RELEASE_ARCHIVE_URL` and `VOLATILITY_RELEASE_ARCHIVE_SHA256`. Both sources require `VOLATILITY_PUBLIC_KEY_PATH`; archive SHA-256, safe extraction, Ed25519 signature, member checksums, and runtime compatibility all fail closed. The liveness route remains 200 during release failures so the platform can report the actual cause.
 
 ## GET /api/v1/training-data
 

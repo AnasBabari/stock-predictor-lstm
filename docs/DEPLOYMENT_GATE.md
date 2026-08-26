@@ -10,7 +10,7 @@ Render service:
 - Set `CORS_ORIGIN` to the production Vercel origin.
 - Set `PREVIEW_CORS_ORIGIN_REGEX` only for preview services, for example `https://[a-z0-9-]+\.vercel\.app`.
 - Set `VITE_VOLATILITY_SERVING_ENABLED=true` on the Vercel production project.
-- Set `VOLATILITY_RELEASE_DIR`, `VOLATILITY_PUBLIC_KEY_PATH`, and `VOLATILITY_SERVING_REQUIRED=true` on Render only after the signed release is mounted.
+- Keep the repository-pinned `VOLATILITY_PUBLIC_KEY_PATH` on Render. Set `VOLATILITY_SERVING_REQUIRED=true` only after certification passes. For Render's ephemeral free filesystem, publish the deterministic ZIP produced by `scripts/package_volatility_release.py` at an immutable HTTPS URL and set the paired `VOLATILITY_RELEASE_ARCHIVE_URL` and `VOLATILITY_RELEASE_ARCHIVE_SHA256`. Disk-backed deployments may use `VOLATILITY_RELEASE_DIR` instead.
 - Keep `SERVER_MODELS_ENABLED=false` and `VITE_BROWSER_TRAINING_ENABLED=false` in production. Browser TFJS is a rollback/migration path, not the production learned-model contract.
 
 GitHub variables/secrets used by deployment-gate workflows:
@@ -51,6 +51,13 @@ Render free instances can sleep, restart, and have tight memory/CPU budgets. The
 
 Vercel preview E2E uses a deterministic fixture for the UI contract. Production smoke separately verifies the signed global-volatility response, seven dated quantile values, release identity, and explicit abstention behavior when a release or horizon is unavailable.
 
+Render previews use `--forecast-contract global_volatility_abstention` until
+certification succeeds. That contract requires the structured 503 abstention
+and rejects any browser/baseline learned-model advertisement. Protected
+production smoke uses `--forecast-contract global_volatility` and requires
+`/ready` plus `/models` to report the verified release as `ready` before it
+accepts any forecast.
+
 ## Local parity
 
 Run from PowerShell:
@@ -77,3 +84,27 @@ If Playwright is not installed, local browser E2E is skipped. CI runs it only wh
 4. `/api/v2/forecast?ticker=MSFT&horizon=7` returns seven strictly increasing dates, p05/p50/p95 arrays, and `locked_purged_walk_forward` evidence.
 5. A failed horizon or tampered bundle returns structured 503 abstention; no baseline is relabelled as learned.
 6. Vercel renders the volatility-only labels and retains the response evidence in exports.
+
+## Ephemeral Render release procedure
+
+This procedure is forbidden until the locked certification outcome has overall `status = passed`.
+
+1. Assemble the signed ONNX release with `scripts/assemble_volatility_release.py`; keep the private Ed25519 key off Git and off Render.
+2. Verify the bundle locally with the pinned public key and package it without extra files:
+
+   ```powershell
+   python scripts/package_volatility_release.py `
+     --release-dir C:\path\to\signed-release `
+     --public-key-path backend\release_keys\volatility-v1.public.pem `
+     --output C:\path\to\stocklstm-volatility-v7.zip
+   ```
+
+3. Upload the ZIP to an immutable HTTPS object or GitHub Release asset. Record the command's exact `archive_sha256`; do not use a mutable `latest` URL.
+4. Confirm the Blueprint supplies
+   `VOLATILITY_PUBLIC_KEY_PATH=backend/release_keys/volatility-v1.public.pem`.
+   The public key may be distributed; the matching private key must remain off
+   Git, Render, release archives, and build logs.
+5. Set the immutable archive URL and SHA-256, then enable `VOLATILITY_SERVING_REQUIRED=true` in the same deployment change.
+6. Require `/ready`, `/models`, a certified MSFT request, a certified NMM request, and a deliberately incorrect digest smoke test before declaring the deployment complete.
+
+The backend downloads into a digest-named directory under `VOLATILITY_RELEASE_CACHE_DIR` (default platform temp storage). Restarts may download again; requests never train and never write model state. URL credentials, private signing keys, failed candidates, and unsigned prospective candidates must not enter the service configuration.

@@ -27,7 +27,7 @@ StockLSTM is a React/FastAPI research application for market-volatility forecast
 | ![Price forecast dashboard with historical and predicted prices.](assets/dashboard.png) | ![Direction forecast dashboard with model analysis.](assets/prediction.png) |
 
 - Search for a validated ticker and select a supported 1-, 3-, 5-, 7-, 14-, or 30-session horizon.
-- The production path calls `GET /api/v2/forecast`; when a verified release exists, the center line is explicitly an unchanged-close location baseline and the shaded paths are its certified volatility cone.
+- The production path calls `GET /api/v2/forecast`; when a verified release exists, the dashboard renders only its certified volatility cone. It does not draw the unchanged-close mathematical center as a learned price forecast.
 - The evidence card reports the true metric source (`locked_purged_walk_forward`), QLIKE, coverage, release identity, snapshot identity, and certified horizon. It does not label a volatility forecast as price-direction accuracy.
 - The API returns a sanitized abstention when a release is missing, stale, incompatible, tampered with, or not certified for the requested horizon.
 - Save results to browser-local watchlists/history and export PNG, CSV, or complete ZIP analyses.
@@ -51,7 +51,9 @@ The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints re
 
 `GET /api/v2/forecast?ticker=MSFT&horizon=7` is the fail-closed interface for one verified global ONNX ensemble across supported tickers. An eligible future release must be trained and certified offline on the RTX workstation, signed with Ed25519, and mounted as an immutable directory. It is never trained in a public request and no model weights are uploaded by the browser.
 
-The response contains dated p05–p95 volatility paths, expected annualized volatility, snapshot id, model id, certified horizon evidence, and `metric_source = locked_purged_walk_forward`. The p50 line is explicitly an unchanged-close location baseline. If the release or requested horizon is unavailable, the endpoint returns a structured 503 abstention. `/ready` can enforce this with `VOLATILITY_SERVING_REQUIRED=true`; `/models` reports the verified model id and certified horizons.
+The response contains dated p05–p95 volatility paths, expected annualized volatility, snapshot id, model id, certified horizon evidence, and `metric_source = locked_purged_walk_forward`. The API retains p50 as the disclosed zero-location distribution assumption, but the product does not display it as a forecast line or a 0% model prediction. If the release or requested horizon is unavailable, the endpoint returns a structured 503 abstention. `/ready` can enforce this with `VOLATILITY_SERVING_REQUIRED=true`; `/models` reports the verified model id and certified horizons.
+
+On an ephemeral host, `scripts/package_volatility_release.py` deterministically packages an already-signed release. Render can download that immutable HTTPS ZIP using `VOLATILITY_RELEASE_ARCHIVE_URL` plus its mandatory `VOLATILITY_RELEASE_ARCHIVE_SHA256`; the backend then verifies the archive digest, safe extraction paths, Ed25519 manifest, per-member checksums, and ONNX runtime contract before serving. A local `VOLATILITY_RELEASE_DIR` remains supported for Compose and disk-backed deployments. Neither source may be configured from failed or development-only evidence.
 
 The legacy per-ticker server-bundle routes are disabled for production. Their optional offline training/registry code remains isolated for migration and retention work, but it is not reachable from the global production request path.
 
@@ -62,7 +64,7 @@ Live Yahoo Finance headlines remain context-only. Historical GDELT event data is
 
 ## Global model pipeline
 
-The offline global-model pipeline builds immutable snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs only an overall passing release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the full contract and [docs/VOLATILITY_V7_PREREGISTRATION.md](docs/VOLATILITY_V7_PREREGISTRATION.md) for the fresh cycle created after v6 strict rejection. Browser TFJS training is retained only for rollback during migration and is disabled in production.
+The offline global-model pipeline builds immutable snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs only an overall passing release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the full contract and [docs/VOLATILITY_V7_PREREGISTRATION.md](docs/VOLATILITY_V7_PREREGISTRATION.md) for the fresh cycle created after v6 strict rejection. Legacy browser TFJS remains only in the isolated methodology build; the normal Vercel production bundle compiles it out and CI verifies that no worker or TFJS model code is shipped.
 
 ## Docker Compose
 

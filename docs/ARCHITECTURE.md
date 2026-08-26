@@ -49,7 +49,7 @@ Live Yahoo headlines remain context-only in compatibility responses. They are no
 
 ## Release and readiness
 
-\`backend/release/bundle.py\` creates an immutable manifest with runtime schema, model id, member seeds/files, feature order, certified horizons, certification metrics, and checksums. \`VolatilityOnnxRuntime.from_release_bundle\` verifies the manifest and opens CPU sessions. \`/models\` reports the verified model id and horizons; \`/ready\` can require the release with \`VOLATILITY_SERVING_REQUIRED=true\`.
+\`backend/release/bundle.py\` creates an immutable manifest with runtime schema, model id, member seeds/files, feature order, certified horizons, certification metrics, and checksums. \`VolatilityOnnxRuntime.from_release_bundle\` verifies the manifest and opens CPU sessions. Diskless hosts may bootstrap a deterministic immutable ZIP only after checking its configured SHA-256, bounded safe extraction, Ed25519 signature, and every member checksum. \`/models\` reports the verified model id and horizons; \`/ready\` can require the release with \`VOLATILITY_SERVING_REQUIRED=true\`.
 
 The response cache is bounded and keyed by \`(signed_model_id, ticker, horizon)\`. A newly promoted release therefore cannot inherit an older model’s cached response. Cache entries are also rejected before use when the current release no longer certifies the horizon.
 
@@ -57,7 +57,7 @@ The response cache is bounded and keyed by \`(signed_model_id, ticker, horizon)\
 
 The legacy \`/api/v1/predict\` routes are persistence/base-rate compatibility endpoints with \`server_disabled_fallback\` metadata. They never train. Trusted proxy addresses are exact configured peers/CIDRs; forwarded headers are replaced at Nginx. CORS is explicit, errors are sanitized, and no user identifiers or model weights are sent to Render.
 
-The browser may retain old TFJS code during rollback migration, but production uses \`VITE_VOLATILITY_SERVING_ENABLED=true\` and must not advertise browser-trained learned forecasts. Any eventual removal of that code must also remove its dependencies, profile selector, worker bundle, and stale documentation in one reviewed boundary.
+The source tree temporarily retains the old TFJS methodology harness, but Vite includes it only when the explicit legacy test build sets `VITE_VOLATILITY_SERVING_ENABLED=false` and `VITE_BROWSER_TRAINING_ENABLED=true`. Normal Vercel production builds compile that path out, and `npm run check:production-bundle` rejects emitted training-worker or TFJS artifacts. Production must not advertise browser-trained learned forecasts. Final source deletion must remove its dependencies, profile selector, worker tests, and methodology gate together in one reviewed boundary.
 
 ## Deployment gate
 
