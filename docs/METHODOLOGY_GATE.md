@@ -18,7 +18,7 @@ per-fold trainEnd, and per-observation fold rows when pooling out-of-fold
 predictions. The served artifact is the final refit, and cached evidence is
 superseded whenever the method changes.
 
-recorded_sha: 277d816
+recorded_sha: 39d30fff1b97cceec553d958a0619d86d035c24f
 freeze_record_commit: a78551d3f64b87f52e5d48091b224994b769b7ec
 
 **Field conventions.** `recorded_sha` identifies the battery-verified tree the
@@ -39,7 +39,7 @@ failure fails the check closed rather than skipping it.
 Recorded evidence is valid only when every step below passes at `recorded_sha`
 (the tree the battery was re-run on) on a clean worktree:
 
-1. `npx vitest run` (frontend unit suite) — currently 216 tests across 32
+1. `npx vitest run` (frontend unit suite) — currently 222 tests across 33
    files for frontend units.
 2. `npm run build` (frontend production build).
 3. Rebuild the retained browser-test bundle with
@@ -50,6 +50,13 @@ Recorded evidence is valid only when every step below passes at `recorded_sha`
    TensorFlow.js training.
 4. Real-training e2e: `npx playwright test e2e/browser-real-training.spec.js --workers=1` — a real TensorFlow.js model trains in Chromium against deterministic price and direction fixtures; the price run must prove that a reload uses the IndexedDB artifact, and the direction run must render the explicitly labelled matched pre-evaluation base-rate fallback under the cumulative three-way target contract.
 5. Temporal-isolation e2e: `npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1` — distorting rows strictly beyond the final-refit boundary must leave metrics and the stored scaler bit-identical between clean and corrupted runs.
+6. Rejected-evidence e2e: `npx playwright test e2e/browser-rejected-forecast.spec.js --workers=1` — evidence carrying a rejected promotion verdict can never be loaded as the active model, and cached evidence retains its original verdict.
+
+Recorded battery evidence at `recorded_sha` (2026-08-26): unit suite green
+(222/33); production build artifact verified TensorFlow.js-free by the
+production-bundle checker before and after the legacy-methodology rebuild;
+Playwright results 13 passed (server-contract + fixtures), 2 passed
+(real-training), 2 passed (temporal-isolation), 1 passed (rejected-forecast).
 
 Guidance: `python scripts/check_methodology_gate.py` in CI fails when any
 guard-path file changed since `recorded_sha` or when the battery listing
