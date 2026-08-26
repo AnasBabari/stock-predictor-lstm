@@ -95,7 +95,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
-      - run: npm run build
+      - name: Build browser-contract bundle
+        env:
+          # Contract and real-training specs exercise the retained TFJS
+          # rollback path. Production builds intentionally hide this path.
+          VITE_VOLATILITY_SERVING_ENABLED: "false"
+          VITE_BROWSER_TRAINING_ENABLED: "true"
+        run: npm run build
         working-directory: frontend
       - name: Browser contract tests (server path + stub worker, no real TF.js training)
         run: |

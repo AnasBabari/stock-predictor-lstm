@@ -39,10 +39,15 @@ failure fails the check closed rather than skipping it.
 Recorded evidence is valid only when every step below passes at `recorded_sha`
 (the tree the battery was re-run on) on a clean worktree:
 
-1. `npx vitest run` (frontend unit suite) — currently 211 tests across 31
+1. `npx vitest run` (frontend unit suite) — currently 216 tests across 32
    files for frontend units.
 2. `npm run build` (frontend production build).
-3. Contract e2e: `npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js` — server contract and fixture contracts without real TensorFlow.js training.
+3. Rebuild the retained browser-test bundle with
+   `VITE_VOLATILITY_SERVING_ENABLED=false VITE_BROWSER_TRAINING_ENABLED=true
+   npm run build` (production builds intentionally hide the rollback selector).
+   Contract e2e: `npx playwright test e2e/server-contract.spec.js
+   e2e/fixtures.spec.js` — server contract and fixture contracts without real
+   TensorFlow.js training.
 4. Real-training e2e: `npx playwright test e2e/browser-real-training.spec.js --workers=1` — a real TensorFlow.js model trains in Chromium against deterministic price and direction fixtures; the price run must prove that a reload uses the IndexedDB artifact, and the direction run must render the explicitly labelled matched pre-evaluation base-rate fallback under the cumulative three-way target contract.
 5. Temporal-isolation e2e: `npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1` — distorting rows strictly beyond the final-refit boundary must leave metrics and the stored scaler bit-identical between clean and corrupted runs.
 

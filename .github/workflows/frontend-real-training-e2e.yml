@@ -39,7 +39,13 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
         working-directory: frontend
-      - run: npm run build
+      - name: Build browser-training bundle
+        env:
+          # Real-training coverage must opt into the retained TFJS path;
+          # production builds deliberately use signed volatility serving.
+          VITE_VOLATILITY_SERVING_ENABLED: "false"
+          VITE_BROWSER_TRAINING_ENABLED: "true"
+        run: npm run build
         working-directory: frontend
       - name: Run real browser training E2E (single worker)
         run: npx playwright test e2e/browser-real-training.spec.js --workers=1
