@@ -77,6 +77,12 @@ def main() -> int:
     opened = json.loads(opened_path.read_text(encoding="utf-8"))
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
 
+    # Keep the strict certification policy fail-closed.  A horizon-level
+    # `certified_horizons` subset in a failed report is diagnostic evidence,
+    # not permission to materialise or sign a production candidate.
+    if evidence.get("status") != "passed":
+        raise ValueError("certification evidence did not pass every eligible horizon")
+
     recorded_digest = evidence.get("development_evidence_sha256")
     if recorded_digest != _sha256_file(report_path):
         raise ValueError("certification evidence was produced from a different development report")
