@@ -153,6 +153,13 @@ if (
     errors.append("render.yaml must install runtime dependencies from the frozen backend/uv.lock.")
 if "uv==" not in render_text:
     errors.append("render.yaml must pin the uv version used for the lockfile install.")
+if "--active" not in render_text:
+    errors.append("render.yaml must install into Render's active virtual environment.")
+if (
+    "backend/.venv/bin/python" in render_text
+    or 'startCommand: "python -m uvicorn' not in render_text
+):
+    errors.append("render.yaml must start uvicorn with Render's active Python runtime.")
 
 if errors:
     print("\n".join(f"ERROR: {error}" for error in errors), file=sys.stderr)
