@@ -6,7 +6,6 @@ import io
 import json
 import os
 import shutil
-from urllib.error import HTTPError
 import urllib.request
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
@@ -14,6 +13,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import urlparse
 
 from .gdelt import (
