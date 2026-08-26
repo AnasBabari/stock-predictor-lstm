@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from volatility_forecasting.prospective import (
     OBJECTIVE_PROFILES,
@@ -7,6 +9,7 @@ from volatility_forecasting.prospective import (
     objective_manifest,
     prospective_protocol,
     select_prospective_profile,
+    validate_prospective_panel_manifest,
 )
 
 
@@ -70,4 +73,46 @@ def test_selection_rejects_missing_or_nonfinite_evidence() -> None:
                 "volatility_only_v1": bad,
             },
             ProspectiveCycleSettings(),
+        )
+
+
+def _write_panel_manifest(tmp_path, ends: dict[str, str]) -> None:
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "panel_id": "panel-test",
+                "tickers": {ticker: {"end": end} for ticker, end in ends.items()},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_prospective_panel_manifest_must_end_exactly_at_cutoff(tmp_path) -> None:
+    _write_panel_manifest(tmp_path, {"MSFT": "2026-08-21", "NMM": "2026-08-20"})
+    manifest = validate_prospective_panel_manifest(
+        tmp_path,
+        expected_cutoff="2026-08-21",
+    )
+    assert manifest["panel_id"] == "panel-test"
+
+
+@pytest.mark.parametrize(
+    ("ends", "message"),
+    [
+        ({"MSFT": "2026-08-22"}, "post-cutoff"),
+        ({"MSFT": "2026-08-20"}, "does not end"),
+        ({"MSFT": "NaT"}, "non-finite"),
+    ],
+)
+def test_prospective_panel_manifest_rejects_invalid_temporal_scope(
+    tmp_path,
+    ends: dict[str, str],
+    message: str,
+) -> None:
+    _write_panel_manifest(tmp_path, ends)
+    with pytest.raises(ValueError, match=message):
+        validate_prospective_panel_manifest(
+            tmp_path,
+            expected_cutoff="2026-08-21",
         )

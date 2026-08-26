@@ -7,8 +7,10 @@ rule before any post-cutoff observation is loaded.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Literal
 
 import numpy as np
@@ -18,6 +20,49 @@ from .model import VolatilityLossWeights
 
 PROSPECTIVE_PROTOCOL_VERSION = "global-volatility-distribution-v7-prospective"
 PROSPECTIVE_ARCHITECTURE_VERSION = "baseline-residual-tcn-v3-objective-selection"
+
+
+def validate_prospective_panel_manifest(
+    panel_dir: Path,
+    *,
+    expected_cutoff: str,
+) -> dict[str, object]:
+    """Prove the immutable input panel contains no post-cutoff market row."""
+    try:
+        manifest = json.loads((panel_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("prospective research requires an immutable panel manifest") from error
+
+    ticker_rows = manifest.get("tickers")
+    if not isinstance(ticker_rows, dict) or not ticker_rows:
+        raise ValueError("panel manifest ticker coverage is missing")
+    try:
+        cutoff = np.datetime64(expected_cutoff, "D")
+    except ValueError as error:
+        raise ValueError("prospective development cutoff is invalid") from error
+    if np.isnat(cutoff):
+        raise ValueError("prospective development cutoff must be finite")
+
+    end_dates: list[np.datetime64] = []
+    for ticker, row in ticker_rows.items():
+        if not isinstance(ticker, str) or not ticker or not isinstance(row, dict):
+            raise ValueError("panel manifest ticker coverage is malformed")
+        end = row.get("end")
+        if not isinstance(end, str):
+            raise ValueError(f"panel manifest end date is missing for {ticker}")
+        try:
+            parsed = np.datetime64(end, "D")
+        except ValueError as error:
+            raise ValueError("panel manifest contains an invalid end date") from error
+        if np.isnat(parsed):
+            raise ValueError("panel manifest contains a non-finite end date")
+        if parsed > cutoff:
+            raise ValueError(f"panel contains post-cutoff observations for {ticker}")
+        end_dates.append(parsed)
+
+    if max(end_dates) != cutoff:
+        raise ValueError("panel does not end on the pre-registered development cutoff")
+    return manifest
 
 
 @dataclass(frozen=True)
