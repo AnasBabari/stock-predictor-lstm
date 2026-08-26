@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
@@ -32,6 +32,7 @@ from .model import (
     BaselineResidualTCNConfig,
     TorchTrainingConfig,
     TrainingResult,
+    VolatilityLossWeights,
     train_baseline_residual_tcn,
 )
 
@@ -50,6 +51,7 @@ class FrozenCandidate:
     comparison_baseline: AdaptiveBaselineSelection
     baseline_return_variance_scale: np.ndarray
     model_identity: str
+    loss_weights: VolatilityLossWeights = field(default_factory=VolatilityLossWeights)
 
     def predict(
         self,
@@ -190,6 +192,7 @@ def candidate_identity(
     return_variance_scale: np.ndarray,
     comparison_baseline: AdaptiveBaselineSelection,
     baseline_return_variance_scale: np.ndarray,
+    loss_weights: VolatilityLossWeights | None = None,
 ) -> str:
     state_hasher = hashlib.sha256()
     for name, tensor in sorted(training.model.state_dict().items()):
@@ -209,6 +212,8 @@ def candidate_identity(
         "comparison_baseline": [asdict(value) for value in comparison_baseline.horizons],
         "baseline_return_variance_scale": baseline_return_variance_scale.tolist(),
     }
+    if loss_weights is not None:
+        metadata["loss_weights"] = asdict(loss_weights)
     payload = json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(state_hasher.digest() + payload).hexdigest()
     return f"global-volatility:{digest}"
@@ -225,6 +230,7 @@ def fit_frozen_candidate(
     device: str,
     batch_size: int = 512,
     news_features: np.ndarray | None = None,
+    loss_weights: VolatilityLossWeights | None = None,
 ) -> FrozenCandidate:
     """Fit and calibrate the exact candidate that may enter locked certification."""
     epoch_budget = derive_epoch_budget(development_record)
@@ -261,6 +267,7 @@ def fit_frozen_candidate(
             batch_size=batch_size,
             use_amp=device == "cuda",
         ),
+        loss_weights=loss_weights,
         seed=seed,
         device=device,
     )
@@ -295,6 +302,7 @@ def fit_frozen_candidate(
         return_variance_scale=return_variance_scale,
         comparison_baseline=comparison,
         baseline_return_variance_scale=baseline_return_scale,
+        loss_weights=loss_weights,
     )
     return FrozenCandidate(
         training=training,
@@ -307,6 +315,7 @@ def fit_frozen_candidate(
         comparison_baseline=comparison,
         baseline_return_variance_scale=baseline_return_scale,
         model_identity=identity,
+        loss_weights=loss_weights or VolatilityLossWeights(),
     )
 
 
@@ -320,6 +329,7 @@ def fit_frozen_ensemble(
     device: str,
     batch_size: int = 512,
     news_features: np.ndarray | None = None,
+    loss_weights: VolatilityLossWeights | None = None,
 ) -> FrozenEnsemble:
     """Fit the fixed-seed ensemble selected by the frozen development report."""
     if tuple(sorted(development_records)) != protocol.seeds:
@@ -335,6 +345,7 @@ def fit_frozen_ensemble(
             device=device,
             batch_size=batch_size,
             news_features=news_features,
+            loss_weights=loss_weights,
         )
         for seed in protocol.seeds
     )

@@ -24,6 +24,7 @@ from .model import (
     BaselineResidualTCNConfig,
     RobustSequenceScaler,
     TrainingResult,
+    VolatilityLossWeights,
 )
 from .refit import FrozenCandidate, candidate_identity
 
@@ -261,6 +262,7 @@ def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandid
     market_scaler = row.get("market_scaler")
     news_scaler_payload = row.get("news_scaler")
     comparison_rows = row.get("comparison_baseline")
+    loss_weights_payload = row.get("loss_weights")
     if not isinstance(market_scaler, dict) or not isinstance(comparison_rows, list):
         raise ValueError("candidate preprocessing metadata is incomplete")
     training = TrainingResult(
@@ -280,6 +282,13 @@ def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandid
     comparison = AdaptiveBaselineSelection(
         horizons=tuple(AdaptiveBaselineHorizon(**value) for value in comparison_rows)
     )
+    if isinstance(loss_weights_payload, dict):
+        try:
+            loss_weights = VolatilityLossWeights(**loss_weights_payload)
+        except (TypeError, ValueError) as error:
+            raise ValueError("candidate loss weights are invalid") from error
+    else:
+        loss_weights = None
     candidate = FrozenCandidate(
         training=training,
         architecture=architecture,
@@ -294,6 +303,7 @@ def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandid
             dtype=np.float64,
         ),
         model_identity=str(row.get("model_identity", "")),
+        loss_weights=loss_weights or VolatilityLossWeights(),
     )
     horizon_shape = (architecture.horizon_count,)
     if candidate.epoch_budget < 1 or candidate.training.best_epoch < 1:
@@ -331,6 +341,7 @@ def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandid
         return_variance_scale=candidate.return_variance_scale,
         comparison_baseline=candidate.comparison_baseline,
         baseline_return_variance_scale=candidate.baseline_return_variance_scale,
+        loss_weights=loss_weights,
     )
     if candidate.model_identity != actual_identity:
         raise ValueError("candidate content identity does not match weights and metadata")
@@ -384,7 +395,11 @@ def assemble_release_bundle(
     seeds = sorted(
         int(row.get("seed")) for row in members_payload if isinstance(row, dict) and "seed" in row
     )
-    if len(seeds) != len(members_payload) or len(set(seeds)) != len(seeds) or any(s < 1 for s in seeds):
+    if (
+        len(seeds) != len(members_payload)
+        or len(set(seeds)) != len(seeds)
+        or any(s < 1 for s in seeds)
+    ):
         raise ValueError("candidate member table is malformed")
 
     try:
@@ -419,8 +434,7 @@ def assemble_release_bundle(
     if isinstance(locked, dict):
         certified_horizons = locked.get("certified_horizons")
         if isinstance(certified_horizons, list) and all(
-            isinstance(value, int) and not isinstance(value, bool)
-            for value in certified_horizons
+            isinstance(value, int) and not isinstance(value, bool) for value in certified_horizons
         ):
             metadata["certified_horizons"] = sorted(certified_horizons)
         horizon_decisions = locked.get("horizon_decisions")

@@ -21,6 +21,7 @@ from volatility_forecasting.model import (
     BaselineResidualTCNConfig,
     RobustSequenceScaler,
     TrainingResult,
+    VolatilityLossWeights,
 )
 from volatility_forecasting.refit import FrozenCandidate, candidate_identity
 
@@ -150,6 +151,38 @@ def test_candidate_loader_verifies_weights_metadata_and_content_identity(tmp_pat
     weights.write_bytes(weights.read_bytes() + b"tampered")
     with pytest.raises(ValueError, match="checksum"):
         load_frozen_candidate_member(tmp_path, 41)
+
+
+def test_candidate_identity_binds_explicit_loss_weights() -> None:
+    candidate = _candidate()
+    arguments = {
+        "architecture": candidate.architecture,
+        "seed": candidate.seed,
+        "epoch_budget": candidate.epoch_budget,
+        "variance_scale": candidate.variance_scale,
+        "return_variance_scale": candidate.return_variance_scale,
+        "comparison_baseline": candidate.comparison_baseline,
+        "baseline_return_variance_scale": candidate.baseline_return_variance_scale,
+    }
+    legacy_identity = candidate_identity(candidate.training, **arguments)
+    explicit_identity = candidate_identity(
+        candidate.training,
+        **arguments,
+        loss_weights=VolatilityLossWeights(),
+    )
+    challenger_identity = candidate_identity(
+        candidate.training,
+        **arguments,
+        loss_weights=VolatilityLossWeights(
+            qlike=0.70,
+            variance_crps=0.25,
+            return_location=0.0,
+            direction=0.0,
+            baseline_regularization=0.05,
+        ),
+    )
+    assert explicit_identity != legacy_identity
+    assert challenger_identity != explicit_identity
 
 
 # --- Release assembly -------------------------------------------------------
@@ -338,7 +371,9 @@ def test_assemble_refuses_candidates_off_the_certified_schema(tmp_path) -> None:
     from volatility_forecasting.export import assemble_release_bundle
 
     with pytest.raises(ValueError, match="deployable_v5"):
-        assemble_release_bundle(directory, tmp_path / "release", private_key_path=tmp_path / "k.pem")
+        assemble_release_bundle(
+            directory, tmp_path / "release", private_key_path=tmp_path / "k.pem"
+        )
 
 
 def test_assemble_refuses_non_locked_roles(tmp_path) -> None:
@@ -351,4 +386,6 @@ def test_assemble_refuses_non_locked_roles(tmp_path) -> None:
     from volatility_forecasting.export import assemble_release_bundle
 
     with pytest.raises(ValueError, match="locked-certification"):
-        assemble_release_bundle(directory, tmp_path / "release", private_key_path=tmp_path / "k.pem")
+        assemble_release_bundle(
+            directory, tmp_path / "release", private_key_path=tmp_path / "k.pem"
+        )
