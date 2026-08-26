@@ -147,7 +147,12 @@ def test_smoke_run_accepts_global_volatility_contract(monkeypatch):
             return {
                 "server_models": {"status": "disabled", "training_mode": "browser_only"},
                 "browser_training": {"status": "disabled"},
-                "global_volatility": {"status": "configured"},
+                "global_volatility": {"status": "ready"},
+            }, {}
+        if path == "/ready":
+            return {
+                "status": "ready",
+                "dependencies": {"global_volatility": {"status": "ready"}},
             }, {}
         if path.startswith("/api/v2/forecast"):
             return {
@@ -177,6 +182,46 @@ def test_smoke_run_accepts_global_volatility_contract(monkeypatch):
             cors_origin=None,
             training_mode="browser_only",
             forecast_contract="global_volatility",
+        )
+    )
+    assert result["status"] == "passed"
+
+
+def test_smoke_run_accepts_strict_pre_certification_abstention(monkeypatch):
+    def fake_get(_base, path, **_kwargs):
+        if path == "/health":
+            return {
+                "status": "ok",
+                "deployment": {"commit": "abcdef123456", "environment": "preview"},
+            }, {}
+        if path == "/models":
+            return {
+                "server_models": {"status": "disabled", "training_mode": "browser_only"},
+                "browser_training": {"status": "disabled"},
+                "global_volatility": {"status": "unconfigured"},
+            }, {}
+        raise AssertionError(f"unexpected smoke path: {path}")
+
+    monkeypatch.setattr(smoke, "get_json", fake_get)
+    monkeypatch.setattr(
+        smoke,
+        "get_json_with_status",
+        lambda *_args, **_kwargs: (
+            503,
+            {"detail": {"status": "abstain_no_certified_model"}},
+        ),
+    )
+    result = smoke.run(
+        argparse.Namespace(
+            base_url="https://api.example",
+            ticker="MSFT",
+            expected_commit="abcdef1234567890",
+            expected_environment="preview",
+            timeout=1,
+            restart_window=0,
+            cors_origin=None,
+            training_mode="browser_only",
+            forecast_contract="global_volatility_abstention",
         )
     )
     assert result["status"] == "passed"

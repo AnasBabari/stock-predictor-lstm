@@ -99,6 +99,12 @@ def test_abstains_when_release_verification_fails(monkeypatch) -> None:
     response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
     assert response.status_code == 503
     assert response.json()["detail"]["status"] == "abstain_no_certified_model"
+    readiness = volatility_v2.volatility_release_readiness()
+    assert readiness == {
+        "configured": True,
+        "status": "unavailable",
+        "certified_horizons": [],
+    }
 
 
 def test_serves_certified_volatility_cone(monkeypatch) -> None:

@@ -68,6 +68,19 @@ def get_json(
         return json.load(response), {key.lower(): value for key, value in response.headers.items()}
 
 
+def get_json_with_status(base_url: str, path: str, *, timeout: float) -> tuple[int, dict[str, Any]]:
+    """Return a JSON body for both success and deliberate HTTP failures."""
+    try:
+        body, _headers = get_json(base_url, path, timeout=timeout)
+        return 200, body
+    except HTTPError as error:
+        try:
+            body = json.load(error)
+        except (TypeError, ValueError) as parse_error:
+            raise ValueError("deployment response did not contain JSON") from parse_error
+        return error.code, body
+
+
 def add(results: list[CheckResult], name: str, passed: bool, detail: str) -> None:
     results.append(CheckResult(name=name, passed=passed, detail="" if passed else detail))
 
@@ -139,12 +152,48 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "/models did not report the expected deployment training mode",
         )
         browser = models.get("browser_training", {})
-        if getattr(args, "forecast_contract", "legacy") == "global_volatility":
+        forecast_contract = getattr(args, "forecast_contract", "legacy")
+        if forecast_contract == "global_volatility_abstention":
+            global_model = models.get("global_volatility", {})
+            add(
+                results,
+                "global_volatility_not_serving",
+                global_model.get("status") in {"unconfigured", "unavailable", "integrity_failure"},
+                "preview unexpectedly advertised a ready certified release",
+            )
+            add(
+                results,
+                "browser_training_disabled",
+                browser.get("status") == "disabled",
+                "browser training is still advertised in the production contract",
+            )
+            status, abstention = get_json_with_status(
+                base_url,
+                f"/api/v2/forecast?ticker={ticker}&horizon=7",
+                timeout=args.timeout,
+            )
+            detail = abstention.get("detail") or {}
+            add(
+                results,
+                "strict_volatility_abstention",
+                status == 503 and detail.get("status") == "abstain_no_certified_model",
+                "missing release did not return the structured 503 abstention contract",
+            )
+            passed = all(item.passed for item in results)
+            return {
+                "status": "passed" if passed else "failed",
+                "base_url": base_url,
+                "ticker": ticker,
+                "duration_seconds": round(time.monotonic() - started, 3),
+                "deployment": {"commit": observed_commit, "environment": observed_environment},
+                "checks": [item.__dict__ for item in results],
+            }
+        if forecast_contract == "global_volatility":
             global_model = models.get("global_volatility", {})
             add(
                 results,
                 "global_volatility_configured",
-                global_model.get("status") == "configured",
+                global_model.get("status") == "ready",
                 "signed global volatility release is not configured",
             )
             add(
@@ -152,6 +201,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "browser_training_disabled",
                 browser.get("status") == "disabled",
                 "browser training is still advertised in the production contract",
+            )
+            readiness, _ = get_json(base_url, "/ready", timeout=args.timeout)
+            add(
+                results,
+                "global_volatility_readiness",
+                readiness.get("status") == "ready"
+                and (readiness.get("dependencies", {}).get("global_volatility") or {}).get("status")
+                == "ready",
+                "/ready did not confirm the verified global volatility release",
             )
             forecast, _ = get_json(
                 base_url,
@@ -302,9 +360,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--forecast-contract",
-        choices=("legacy", "global_volatility"),
+        choices=("legacy", "global_volatility_abstention", "global_volatility"),
         default="legacy",
-        help="Serving contract to probe; global_volatility is the production path after cutover.",
+        help=(
+            "Serving contract to probe; use global_volatility_abstention before certification "
+            "and global_volatility only after the signed release is required."
+        ),
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()

@@ -765,6 +765,7 @@ def test_models_advertises_signed_global_volatility_and_disabled_browser_trainin
     assert body["global_volatility"]["certified_heads"]["direction"] is False
     assert body["browser_training"]["status"] == "disabled"
     assert body["model_storage"]["location"] == "none"
+    assert body["availability"]["price"]["status"] == "conditional_volatility_only"
 
 
 def test_training_data_route_returns_validated_snapshot(monkeypatch):

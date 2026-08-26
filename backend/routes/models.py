@@ -93,7 +93,7 @@ def list_models():
         },
         "availability": {
             "price": {
-                "status": "volatility_location_baseline",
+                "status": "conditional_volatility_only",
                 "engine": "baseline_residual_tcn_ensemble",
                 "tickers": "global",
             },
