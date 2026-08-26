@@ -20,11 +20,24 @@ BAD_EXIT_HINTS = {127: "command_not_found", 137: "oom_killed"}
 
 
 def rss_bytes(pid: int) -> int | None:
+    """Read conservative resident memory for the process and its children."""
+    try:
+        import psutil
+
+        process = psutil.Process(pid)
+        processes = [process, *process.children(recursive=True)]
+        return sum(int(item.memory_info().rss) for item in processes if item.is_running())
+    except ImportError:
+        pass
+    except psutil.Error:
+        return None
+
     status = Path(f"/proc/{pid}/status")
     if status.exists():
         for line in status.read_text(encoding="utf-8", errors="ignore").splitlines():
             if line.startswith("VmRSS:"):
                 return int(line.split()[1]) * 1024
+    return None
     return None
 
 
@@ -76,6 +89,8 @@ def main() -> int:
         failures.append(BAD_EXIT_HINTS.get(exit_code, f"exit_{exit_code}"))
     if peak_mib is not None and peak_mib > args.max_rss_mib:
         failures.append("peak_rss_over_budget")
+    if peak_mib is None:
+        failures.append("rss_measurement_unavailable")
     if elapsed >= args.timeout and exit_code is None:
         failures.append("timeout")
     result = {
