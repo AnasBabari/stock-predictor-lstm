@@ -21,6 +21,11 @@ from pydantic import BaseModel
 
 from config import settings
 from routes.common import limiter, validate_ticker
+from services.volatility_release_bootstrap import (
+    ReleaseBootstrapError,
+    release_source_configured,
+    resolve_release_dir,
+)
 from services.volatility_runtime.contracts import VOLATILITY_HORIZONS
 
 logger = logging.getLogger(__name__)
@@ -67,17 +72,20 @@ class _ReleaseState:
         with self._lock:
             if self._runtime is not None:
                 return self._runtime, None
-            release_dir = settings.volatility_release_dir
             public_key_path = settings.volatility_public_key_path
-            if not release_dir or not public_key_path:
+            if not release_source_configured(settings) or not public_key_path:
                 return None, "no certified volatility release is configured"
             try:
                 from services.volatility_runtime import VolatilityOnnxRuntime
 
+                release_dir = resolve_release_dir(settings)
                 runtime = VolatilityOnnxRuntime.from_release_bundle(
-                    Path(release_dir),
+                    release_dir,
                     public_key_path=Path(public_key_path),
                 )
+            except ReleaseBootstrapError as error:
+                logger.warning("volatility release bootstrap failed: %s", error)
+                return None, f"volatility release unavailable: {error}"
             except RuntimeError as error:
                 logger.warning("volatility release failed to load: %s", error)
                 return None, f"artifact integrity failure: {error}"
@@ -127,7 +135,7 @@ _response_cache = _ResponseCache()
 
 def volatility_release_readiness() -> dict[str, Any]:
     """Return signed-release readiness without exposing internal errors."""
-    if not settings.volatility_release_dir or not settings.volatility_public_key_path:
+    if not release_source_configured(settings):
         return {
             "configured": False,
             "status": "unconfigured",
@@ -136,7 +144,11 @@ def volatility_release_readiness() -> dict[str, Any]:
     runtime, failure = _RELEASE_STATE.get()
     if runtime is None:
         return {
-            "configured": False,
+            # A configured source that cannot be verified is materially
+            # different from no source at all.  Preserve that distinction so
+            # readiness and operators report an integrity/availability fault
+            # instead of a misleading configuration gap.
+            "configured": True,
             "status": "integrity_failure" if failure and "integrity" in failure else "unavailable",
             "certified_horizons": [],
         }

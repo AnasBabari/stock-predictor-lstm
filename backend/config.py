@@ -1,5 +1,7 @@
 """Application configuration with environment variable support (4.2)."""
 
+import re
+import tempfile
 import tomllib
 from ipaddress import ip_address, ip_network
 from pathlib import Path
@@ -104,6 +106,13 @@ class Settings(BaseSettings):
     # endpoint fail-closed on an explicit no-certified-model state.
     volatility_release_dir: str | None = None
     volatility_public_key_path: str | None = None
+    volatility_release_archive_url: str | None = None
+    volatility_release_archive_sha256: str | None = None
+    volatility_release_cache_dir: str = str(
+        Path(tempfile.gettempdir()) / "stocklstm-volatility-release-cache"
+    )
+    volatility_release_max_archive_mb: int = Field(default=128, ge=1, le=512)
+    volatility_release_download_timeout_seconds: int = Field(default=45, ge=5, le=300)
     volatility_serving_required: bool = False
     volatility_forecast_cache_ttl: int = Field(default=900, ge=0, le=86400)
     s3_endpoint_url: str | None = None
@@ -140,6 +149,32 @@ class Settings(BaseSettings):
             except ValueError as err:
                 raise ValueError(f"Invalid IP address or CIDR: {val}") from err
         return list(dict.fromkeys(normalised))
+
+    @model_validator(mode="after")
+    def validate_volatility_release_source(self):
+        """Require an immutable digest whenever remote release bootstrap is enabled."""
+        url = (self.volatility_release_archive_url or "").strip()
+        digest = (self.volatility_release_archive_sha256 or "").strip().lower()
+        local_dir = (self.volatility_release_dir or "").strip()
+        public_key = (self.volatility_public_key_path or "").strip()
+        if bool(url) != bool(digest):
+            raise ValueError(
+                "VOLATILITY_RELEASE_ARCHIVE_URL and "
+                "VOLATILITY_RELEASE_ARCHIVE_SHA256 must be configured together"
+            )
+        if url and not url.lower().startswith("https://"):
+            raise ValueError("VOLATILITY_RELEASE_ARCHIVE_URL must use HTTPS")
+        if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("VOLATILITY_RELEASE_ARCHIVE_SHA256 must be 64 lowercase hex digits")
+        if (url or local_dir) and not public_key:
+            raise ValueError(
+                "VOLATILITY_PUBLIC_KEY_PATH is required when a volatility release source is configured"
+            )
+        self.volatility_release_dir = local_dir or None
+        self.volatility_public_key_path = public_key or None
+        self.volatility_release_archive_url = url or None
+        self.volatility_release_archive_sha256 = digest or None
+        return self
 
     model_config = {
         "env_file": ".env",

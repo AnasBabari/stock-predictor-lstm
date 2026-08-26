@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from config import APP_VERSION, settings
 from data_pipeline import market_circuit_breaker
+from services.volatility_release_bootstrap import release_source_configured
 
 router = APIRouter(tags=["health"])
 
@@ -83,17 +84,13 @@ def ready():
             "detail": "Production models are immutable signed releases; no request writes model files.",
         },
         "global_volatility": {
-            "configured": bool(
-                settings.volatility_release_dir and settings.volatility_public_key_path
-            ),
+            "configured": release_source_configured(settings),
             "required": settings.volatility_serving_required,
             "status": "not_required",
         },
     }
 
-    if settings.volatility_serving_required or (
-        settings.volatility_release_dir and settings.volatility_public_key_path
-    ):
+    if settings.volatility_serving_required or release_source_configured(settings):
         from routes.volatility_v2 import volatility_release_readiness
 
         volatility_ready = volatility_release_readiness()
