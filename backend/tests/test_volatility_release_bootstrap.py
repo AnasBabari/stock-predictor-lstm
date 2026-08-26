@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import shutil
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +11,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+import services.volatility_release_bootstrap as bootstrap
 from config import Settings
 from release.bundle import build_release
 from services.volatility_release_bootstrap import (
@@ -87,6 +89,25 @@ def test_remote_release_is_downloaded_verified_and_reused(tmp_path: Path) -> Non
     assert release_source_configured(settings)
 
 
+def test_concurrent_cache_promotion_accepts_only_a_verified_winner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    archive, public_path = _release_archive(tmp_path)
+    settings = _settings(tmp_path, archive, public_path)
+
+    def racing_replace(source, destination):
+        shutil.copytree(source, destination)
+        raise PermissionError("simulated platform-specific directory race")
+
+    monkeypatch.setattr(bootstrap.os, "replace", racing_replace)
+    resolved = resolve_release_dir(
+        settings,
+        opener=lambda *_args, **_kwargs: _Response(archive),
+    )
+    assert (resolved / "manifest.json").is_file()
+    assert (resolved / "members" / "seed-41.onnx").is_file()
+
+
 def test_remote_release_checksum_mismatch_fails_closed(tmp_path: Path) -> None:
     archive, public_path = _release_archive(tmp_path)
     settings = _settings(tmp_path, archive, public_path)
@@ -131,3 +152,11 @@ def test_remote_release_configuration_requires_https_and_digest() -> None:
         _env_file=None,
     )
     assert configured.volatility_release_archive_sha256 == "a" * 64
+    with pytest.raises(ValueError, match="exactly one volatility release source"):
+        Settings(
+            volatility_release_dir="/release",
+            volatility_release_archive_url="https://example.test/release.zip",
+            volatility_release_archive_sha256="a" * 64,
+            volatility_public_key_path="/keys/public.pem",
+            _env_file=None,
+        )

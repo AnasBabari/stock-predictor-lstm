@@ -53,10 +53,12 @@ Vercel preview E2E uses a deterministic fixture for the UI contract. Production 
 
 Render previews use `--forecast-contract global_volatility_abstention` until
 certification succeeds. That contract requires the structured 503 abstention
-and rejects any browser/baseline learned-model advertisement. Protected
-production smoke uses `--forecast-contract global_volatility` and requires
-`/ready` plus `/models` to report the verified release as `ready` before it
-accepts any forecast.
+and rejects any browser/baseline learned-model advertisement. A manual
+production run uses the same strict-abstention contract by default. Set the
+workflow's `certified_release` input to `true` only after locked certification,
+signed-bundle publication, and Render configuration are complete; that switches
+the gate to `--forecast-contract global_volatility` and requires `/ready` plus
+`/models` to report the verified release as `ready` before accepting a forecast.
 
 ## Local parity
 

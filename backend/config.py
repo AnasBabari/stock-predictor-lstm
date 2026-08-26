@@ -162,6 +162,11 @@ class Settings(BaseSettings):
                 "VOLATILITY_RELEASE_ARCHIVE_URL and "
                 "VOLATILITY_RELEASE_ARCHIVE_SHA256 must be configured together"
             )
+        if local_dir and url:
+            raise ValueError(
+                "configure exactly one volatility release source: "
+                "VOLATILITY_RELEASE_DIR or VOLATILITY_RELEASE_ARCHIVE_URL"
+            )
         if url and not url.lower().startswith("https://"):
             raise ValueError("VOLATILITY_RELEASE_ARCHIVE_URL must use HTTPS")
         if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):

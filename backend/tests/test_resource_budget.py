@@ -50,3 +50,23 @@ def test_rss_bytes_uses_psutil_when_proc_is_unavailable(monkeypatch):
     monkeypatch.setattr(resource_budget.Path, "exists", lambda _self: False)
     monkeypatch.setattr("psutil.Process", _Process)
     assert resource_budget.rss_bytes(42) == 123456
+
+
+def test_resource_budget_reports_timeout_explicitly():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--json",
+            "--timeout",
+            "0.05",
+            sys.executable,
+            "-c",
+            "import time; time.sleep(5)",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    assert completed.returncode == 1
+    assert "timeout" in json.loads(completed.stdout)["failures"]

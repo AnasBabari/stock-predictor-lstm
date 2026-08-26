@@ -38,7 +38,6 @@ def rss_bytes(pid: int) -> int | None:
             if line.startswith("VmRSS:"):
                 return int(line.split()[1]) * 1024
     return None
-    return None
 
 
 def main() -> int:
@@ -63,12 +62,14 @@ def main() -> int:
         stderr=subprocess.PIPE,
         text=True,
     )
+    timed_out = False
     try:
         while process.poll() is None:
             current = rss_bytes(process.pid)
             if current is not None:
                 peak = max(peak, current)
             if time.monotonic() - started > args.timeout:
+                timed_out = True
                 process.terminate()
                 try:
                     process.wait(5)
@@ -91,7 +92,7 @@ def main() -> int:
         failures.append("peak_rss_over_budget")
     if peak_mib is None:
         failures.append("rss_measurement_unavailable")
-    if elapsed >= args.timeout and exit_code is None:
+    if timed_out:
         failures.append("timeout")
     result = {
         "status": "passed" if not failures else "failed",

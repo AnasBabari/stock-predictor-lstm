@@ -172,7 +172,17 @@ def resolve_release_dir(
             verify_release(extracted, public_key_path=Path(public_key))
             try:
                 os.replace(extracted, target)
-            except FileExistsError:
+            except OSError as error:
+                # The lock is process-local. Multiple service processes can
+                # finish the same cold-start download concurrently, and
+                # directory replacement reports platform-specific OSError
+                # subclasses. Accept only a winner that independently passes
+                # the full signed-release verification; otherwise preserve the
+                # original promotion failure.
+                if not target.exists():
+                    raise ReleaseBootstrapError(
+                        "verified release could not be promoted into the cache"
+                    ) from error
                 verify_release(target, public_key_path=Path(public_key))
             return target
         finally:
