@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from volatility_forecasting.contracts import VolatilityForecastProtocol
 from volatility_forecasting.data import VolatilityPanelExamples
 from volatility_forecasting.folds import (
     build_inner_training_split,
+    build_prospective_development_fold_plan,
     build_volatility_fold_plan,
     select_asset_holdouts,
 )
@@ -91,6 +93,45 @@ def test_certification_rows_are_not_in_development_folds() -> None:
     assert set(examples.tickers[plan.asset_transfer_certification_indices]).issubset(
         plan.asset_holdout_tickers
     )
+
+
+def test_prospective_plan_uses_all_historical_sessions_and_keeps_future_empty() -> None:
+    examples = _examples()
+    protocol = _protocol()
+    cutoff = examples.origin_dates.max()
+    prospective_start = cutoff + np.timedelta64(5, "D")
+    plan = build_prospective_development_fold_plan(
+        examples,
+        protocol,
+        development_cutoff=cutoff,
+        prospective_certification_start=prospective_start,
+    )
+
+    assert plan.folds[-1].validation_end == cutoff
+    assert plan.certification_start == prospective_start
+    assert len(plan.temporal_certification_indices) == 0
+    assert len(plan.asset_transfer_certification_indices) == 0
+    assert {"NMM", "MSFT"}.issubset(plan.asset_holdout_tickers)
+
+
+def test_prospective_plan_rejects_present_or_pre_cutoff_certification_rows() -> None:
+    examples = _examples()
+    protocol = _protocol()
+    cutoff = examples.origin_dates.max()
+    with pytest.raises(ValueError, match="must start after"):
+        build_prospective_development_fold_plan(
+            examples,
+            protocol,
+            development_cutoff=cutoff,
+            prospective_certification_start=cutoff,
+        )
+    with pytest.raises(ValueError, match="already present"):
+        build_prospective_development_fold_plan(
+            examples,
+            protocol,
+            development_cutoff=cutoff - np.timedelta64(10, "D"),
+            prospective_certification_start=cutoff - np.timedelta64(5, "D"),
+        )
 
 
 def test_inner_early_stopping_split_is_purged_and_never_uses_outer_validation() -> None:

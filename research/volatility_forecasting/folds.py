@@ -197,3 +197,89 @@ def build_volatility_fold_plan(
         asset_transfer_certification_indices=transfer_indices,
         certification_start=certification_start,
     )
+
+
+def build_prospective_development_fold_plan(
+    examples: VolatilityPanelExamples,
+    protocol: VolatilityForecastProtocol,
+    *,
+    development_cutoff: np.datetime64,
+    prospective_certification_start: np.datetime64,
+    asset_split_seed: int = 42,
+    required_asset_holdouts: tuple[str, ...] = ("NMM", "MSFT"),
+) -> VolatilityFoldPlan:
+    """Build development folds before a genuinely future certification window.
+
+    This plan is used after an earlier locked reserve has been consumed.  All
+    examples through ``development_cutoff`` become ordinary development data,
+    while certification arrays remain empty until observations strictly after
+    ``prospective_certification_start`` are collected in a later snapshot.
+    The caller must separately prove that target observations were also
+    bounded by the immutable panel cutoff.
+    """
+    cutoff = np.datetime64(development_cutoff, "D")
+    certification_start = np.datetime64(prospective_certification_start, "D")
+    if np.isnat(cutoff) or np.isnat(certification_start):
+        raise ValueError("prospective fold dates must be finite")
+    if certification_start <= cutoff:
+        raise ValueError("prospective certification must start after the development cutoff")
+    if np.any(examples.origin_dates >= certification_start):
+        raise ValueError("prospective certification rows are already present in development data")
+
+    unique_dates = np.unique(examples.origin_dates[examples.origin_dates <= cutoff])
+    unique_dates.sort()
+    required_sessions = (
+        protocol.minimum_train_sessions
+        + protocol.embargo_sessions
+        + protocol.folds * protocol.validation_sessions
+    )
+    if len(unique_dates) < required_sessions:
+        raise ValueError(
+            f"need at least {required_sessions} prospective development sessions, "
+            f"got {len(unique_dates)}"
+        )
+
+    train_tickers, holdout_tickers = select_asset_holdouts(
+        examples.tickers,
+        fraction=protocol.asset_holdout_fraction,
+        seed=asset_split_seed,
+        required=required_asset_holdouts,
+    )
+    first_validation_position = len(unique_dates) - protocol.folds * protocol.validation_sessions
+    training_ticker_mask = np.isin(examples.tickers, train_tickers)
+    folds: list[VolatilityFold] = []
+    for fold in range(protocol.folds):
+        validation_start_position = first_validation_position + fold * protocol.validation_sessions
+        validation_end_position = validation_start_position + protocol.validation_sessions
+        train_end_position = validation_start_position - protocol.embargo_sessions
+        if train_end_position < protocol.minimum_train_sessions:
+            raise ValueError("prospective fold plan does not satisfy minimum training history")
+
+        train_end = unique_dates[train_end_position - 1]
+        validation_start = unique_dates[validation_start_position]
+        validation_end = unique_dates[validation_end_position - 1]
+        train_mask = training_ticker_mask & (examples.origin_dates <= train_end)
+        validation_mask = (
+            training_ticker_mask
+            & (examples.origin_dates >= validation_start)
+            & (examples.origin_dates <= validation_end)
+        )
+        folds.append(
+            VolatilityFold(
+                fold=fold + 1,
+                train_indices=np.flatnonzero(train_mask),
+                validation_indices=np.flatnonzero(validation_mask),
+                train_end=train_end,
+                validation_start=validation_start,
+                validation_end=validation_end,
+            )
+        )
+
+    return VolatilityFoldPlan(
+        folds=tuple(folds),
+        train_tickers=train_tickers,
+        asset_holdout_tickers=holdout_tickers,
+        temporal_certification_indices=np.empty(0, dtype=np.int64),
+        asset_transfer_certification_indices=np.empty(0, dtype=np.int64),
+        certification_start=certification_start,
+    )
