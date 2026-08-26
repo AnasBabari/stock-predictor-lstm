@@ -45,6 +45,16 @@ from volatility_forecasting.prospective import (  # noqa: E402
     select_prospective_profile,
     validate_prospective_panel_manifest,
 )
+from volatility_forecasting.resume import (  # noqa: E402
+    ProspectiveResumeError,
+    atomic_write_json,
+    build_run_manifest,
+    expected_fold_summaries,
+    expected_oof_identity,
+    record_filename,
+    scan_run_directory,
+    validate_seed_record,
+)
 
 from backend.panel.snapshots import load_panel_from_directory  # noqa: E402
 
@@ -141,6 +151,25 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--quick", action="store_true", help="Three-epoch seed-42 screen only")
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Fail-closed resume of an interrupted full run: every existing seed "
+            "record must validate exactly against the requested configuration "
+            "before it is skipped; anything unexpected aborts"
+        ),
+    )
+    parser.add_argument(
+        "--accept-legacy-records",
+        action="store_true",
+        help=(
+            "Accept records written before embedded run manifests existed. Their "
+            "panel and objective identity cannot be verified from the file alone, "
+            "so this flag is an explicit operator attestation for an audited "
+            "checkpoint; all recomputable checks are still enforced"
+        ),
+    )
+    parser.add_argument(
         "--profiles",
         nargs="+",
         choices=tuple(OBJECTIVE_PROFILES),
@@ -151,9 +180,25 @@ def main() -> int:
         parser.error("epoch and batch settings must be positive")
     if len(set(args.profiles)) != len(args.profiles):
         parser.error("profiles must be unique")
+    if args.accept_legacy_records and not args.resume:
+        parser.error("--accept-legacy-records is only meaningful with --resume")
+    defaults = TorchTrainingConfig()
+    if args.resume and (
+        args.quick
+        or args.maximum_epochs != defaults.maximum_epochs
+        or args.batch_size != defaults.batch_size
+        or tuple(args.profiles) != ProspectiveCycleSettings().profile_names
+    ):
+        parser.error(
+            "--resume supports only the exact preregistered full comparison "
+            "(both profiles, default epochs and batch size, no --quick)"
+        )
     output = args.run_dir.resolve()
-    if output.exists() and any(output.iterdir()):
-        parser.error("--run-dir must not exist or must be empty")
+    if args.resume:
+        if not output.is_dir():
+            parser.error("--resume requires an existing run directory")
+    elif output.exists() and any(output.iterdir()):
+        parser.error("--run-dir must not exist or must be empty (use --resume)")
     output.mkdir(parents=True, exist_ok=True)
 
     cycle = ProspectiveCycleSettings()
@@ -217,39 +262,122 @@ def main() -> int:
         encoder_family="tcn",
         window_size=protocol.window_size,
     )
+    resamples = 200 if args.quick else 1000
+    # JSON round-trip once so stored manifests and expected values compare
+    # identically (tuples such as TCN dilations become lists on disk).
+    architecture_manifest = json.loads(json.dumps(asdict(architecture)))
+    planned_identity = expected_oof_identity(examples.tickers, examples.origin_dates, fold_plan)
+    planned_folds = expected_fold_summaries(examples, fold_plan, protocol)
+
+    existing_records: dict[tuple[str, int], Path] = {}
+    if args.resume:
+        try:
+            existing_records = scan_run_directory(output, tuple(args.profiles), seeds)
+        except ProspectiveResumeError as error:
+            raise SystemExit(f"resume rejected: {error}") from error
+        print(
+            f"Resume inventory accepted: {len(existing_records)} existing record(s) "
+            f"of {len(args.profiles) * len(seeds)} required.",
+            flush=True,
+        )
+
+    def _validated(record: object, profile, seed: int, *, legacy_ok: bool) -> dict[str, object]:
+        return validate_seed_record(
+            record,
+            profile_name=profile.name,
+            loss_weights=profile.loss_weights,
+            seed=seed,
+            protocol=protocol,
+            training=training,
+            oof_identity=planned_identity,
+            fold_summaries=planned_folds,
+            panel_checksum=panel_checksum,
+            device=args.device,
+            resamples=resamples,
+            architecture_manifest=architecture_manifest,
+            accept_missing_manifest=legacy_ok,
+        )
+
     profile_reports: dict[str, dict[str, object]] = {}
-    expected_oof_identity: str | None = None
+    resumed_names: list[str] = []
+    legacy_names: list[str] = []
     for profile_name in args.profiles:
         profile = OBJECTIVE_PROFILES[profile_name]
         records: list[dict[str, object]] = []
         for seed in seeds:
-            print(
-                f"Evaluating {profile_name} seed {seed} on {len(fold_plan.folds)} folds...",
-                flush=True,
-            )
-            evaluation = evaluate_tcn_development(
-                examples,
-                fold_plan,
-                protocol,
-                model_config=architecture,
-                training_config=training,
-                loss_weights=profile.loss_weights,
-                promotion_gate=gate,
-                seed=seed,
-                device=args.device,
-                resamples=200 if args.quick else 1000,
-            )
-            record = _evaluation_record(evaluation)
+            record_path = output / record_filename(profile_name, seed)
+            existing = existing_records.get((profile_name, seed))
+            if existing is not None:
+                print(f"Validating existing record {existing.name}...", flush=True)
+                try:
+                    loaded = json.loads(existing.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as error:
+                    raise SystemExit(
+                        f"resume rejected: {existing.name} is unreadable or truncated: {error}"
+                    ) from error
+                try:
+                    record = _validated(
+                        loaded,
+                        profile,
+                        seed,
+                        legacy_ok=args.accept_legacy_records,
+                    )
+                except ProspectiveResumeError as error:
+                    raise SystemExit(f"resume rejected: {error}") from error
+                resumed_names.append(existing.name)
+                if "run_manifest" not in record:
+                    legacy_names.append(existing.name)
+            else:
+                print(
+                    f"Evaluating {profile_name} seed {seed} on {len(fold_plan.folds)} folds...",
+                    flush=True,
+                )
+                evaluation = evaluate_tcn_development(
+                    examples,
+                    fold_plan,
+                    protocol,
+                    model_config=architecture,
+                    training_config=training,
+                    loss_weights=profile.loss_weights,
+                    promotion_gate=gate,
+                    seed=seed,
+                    device=args.device,
+                    resamples=resamples,
+                )
+                fresh = _evaluation_record(evaluation)
+                fresh["run_manifest"] = build_run_manifest(
+                    profile_name=profile_name,
+                    loss_weights=profile.loss_weights,
+                    seed=seed,
+                    quick=bool(args.quick),
+                    panel_checksum=panel_checksum,
+                    panel_id=panel_manifest.get("panel_id"),
+                    device=args.device,
+                    resamples=resamples,
+                    training=training,
+                    architecture_manifest=architecture_manifest,
+                    protocol=protocol,
+                    context={
+                        "git_commit": _git_head(),
+                        "created_at_utc": datetime.now(UTC).isoformat(),
+                        "torch": torch.__version__,
+                        "gpu": (
+                            torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+                        ),
+                    },
+                )
+                # Round-trip through JSON so the validated object is exactly
+                # what a future resume would read back from disk.
+                record = json.loads(
+                    json.dumps(fresh, indent=2, sort_keys=True, default=_json_value)
+                )
+                if not args.quick:
+                    record = _validated(record, profile, seed, legacy_ok=False)
+                atomic_write_json(record_path, record)
             identity = str(record["oof_identity"]["sha256"])
-            if expected_oof_identity is None:
-                expected_oof_identity = identity
-            elif identity != expected_oof_identity:
+            if identity != planned_identity["sha256"]:
                 raise RuntimeError("objective profiles did not use identical OOF rows")
             records.append(record)
-            (output / f"{profile_name}-seed-{seed}.json").write_text(
-                json.dumps(record, indent=2, sort_keys=True, default=_json_value) + "\n",
-                encoding="utf-8",
-            )
             seven_day = record["promotion"][protocol.horizons.index(7)]
             print(
                 f"{profile_name} seed {seed}: 7d relative QLIKE="
@@ -318,7 +446,10 @@ def main() -> int:
             }
             for fold in fold_plan.folds
         ],
-        "oof_identity_sha256": expected_oof_identity,
+        "oof_identity_sha256": planned_identity["sha256"],
+        "resume": bool(args.resume),
+        "resumed_records": sorted(resumed_names),
+        "legacy_records_accepted": sorted(legacy_names),
         "profiles": profile_reports,
         "selection": selection,
         "strict_release_policy": {
@@ -327,11 +458,15 @@ def main() -> int:
             "future_certification_required": True,
         },
     }
+    expected_record_count = len(args.profiles) * len(seeds)
+    actual_record_count = sum(len(report_row["seeds"]) for report_row in profile_reports.values())
+    if actual_record_count != expected_record_count:
+        raise RuntimeError(
+            f"refusing to write a final report with {actual_record_count} of "
+            f"{expected_record_count} validated records"
+        )
     report_path = output / "prospective-development-report.json"
-    report_path.write_text(
-        json.dumps(report, indent=2, sort_keys=True, default=_json_value) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_json(report_path, report, default=_json_value)
     print(json.dumps(selection, indent=2, sort_keys=True), flush=True)
     print(f"Prospective report: {report_path}", flush=True)
     return 0

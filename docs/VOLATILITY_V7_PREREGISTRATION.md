@@ -122,14 +122,44 @@ The canonical runner is `scripts/run_prospective_volatility_research.py`.
 The quick screen uses both profiles, seed 42, and at most three epochs. The
 full comparison uses both profiles, seeds 41/42/43, 60 maximum epochs, batch
 size 512, and CUDA mixed precision. Every run directory is append-only: the
-runner refuses to write into a non-empty directory. Each report records the
-Git commit, panel checksum, protocol, fold identities, OOF-index checksum,
-loss weights, runtime/GPU identity, promotion decisions, and strict release
-policy.
+runner refuses to write into a non-empty directory unless `--resume` is
+supplied. Each report records the Git commit, panel checksum, protocol, fold
+identities, OOF-index checksum, loss weights, runtime/GPU identity, promotion
+decisions, and strict release policy.
+
+`--resume` is a strict, fail-closed continuation for an interrupted full
+comparison only. It accepts only the exact preregistered full comparison
+configuration (both profiles, default epochs and batch size, no `--quick`).
+Every existing seed record is revalidated before it is skipped:
+
+- filename matches the requested profile and seed exactly,
+- JSON parses and contains the required schema,
+- protocol version, horizon coverage, and promotion rows are exact,
+- OOF identity and per-fold boundaries match the recomputed panel-derived
+  fold plan (the OOF SHA binds the ordered validation indices, tickers, and
+  dates),
+- training trace length satisfies the frozen early-stopping contract
+  (`len == min(best_epoch + patience, maximum_epochs)`), so quick screens
+  can never satisfy a full resume,
+- per-file and per-decision finite-value and ordering invariants hold,
+- no duplicate, unknown, or stray file is silently accepted — any unexpected
+  file, directory, symlink, `.tmp`, or pre-existing final report aborts,
+- a partial or truncated record aborts,
+- when an embedded `run_manifest` is present, its panel checksum, objective
+  loss weights, training config, device, resample count, protocol fingerprint,
+  and architecture are checked exactly; records that predate embedded
+  manifests are accepted only with an explicit `--accept-legacy-records`
+  attestation after the operator audits the checkpoint, and even then every
+  recomputable invariant is still enforced.
+
+Resumed records are not merged blindly. At most the missing seeds are
+evaluated; the final report is written atomically only after all six records
+have been validated.
 
 The full report is freeze-eligible only when it was generated with the exact
 default profiles, seeds, epochs, and batch size and the frozen selection rule
-returns `selected`.
+returns `selected`. A resumed directory is freeze-eligible only when its
+resume inventory was fully valid under the rules above.
 
 ## Future locked certification
 
