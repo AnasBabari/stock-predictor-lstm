@@ -34,13 +34,17 @@ The serving contract has 26 causal columns: return structure, overnight/open-clo
 
 Candidates include persistence, shrunk mean, Ridge/ElasticNet, DLinear, residual TCN, and GARCH-LSTM hybrids, with EWMA/HAR/GARCH/GJR as variance baselines. Volatility is scored primarily with QLIKE plus log-variance error, calibration, interval coverage, and width. Return-location and direction heads are evaluated separately and may be withheld even when volatility clears its gate.
 
-The current development evidence selected a market-only residual TCN ensemble for short horizons. It is not production-certified until the locked holdout and release verification complete. News is retained as a paired ablation candidate; it can displace the market-only model only when it improves the same horizons on identical origins and survives the predeclared gate.
+The v6 development evidence selected a market-only residual TCN ensemble for short horizons, but its one-use locked certification failed overall. The 3-session asset-transfer check exceeded the preregistered NMM QLIKE guardrail. Strict rejection applies: no v6 weights or passing horizon may be materialized, signed, promoted, or served, and the consumed reserve cannot be reused. The v7 prospective cycle compares exactly two predeclared objectives on development data ending 2026-08-21; see [VOLATILITY_V7_PREREGISTRATION.md](VOLATILITY_V7_PREREGISTRATION.md).
+
+News remains excluded after its matched point-in-time ablation failed to demonstrate incremental value. Reintroducing it requires a separately preregistered future cycle rather than an adjustment after seeing v7 results.
 
 ## Evaluation and promotion
 
 All assets share calendar boundaries. Training windows expand through time; the forecast horizon is purged and an embargo prevents adjacent information leakage. Each fold fits its own scaler and preprocessing state. Candidate choices are made on development folds only. Bootstrap intervals, Diebold–Mariano tests with Holm correction, fold consistency, seed dispersion, and calibration are frozen before evaluation.
 
-The locked certification holdout is consumed exactly once after the winner decision. The final refit is used to create the deployable artifact but never supplies reported metrics. A horizon that does not clear its guardrails is absent from certified_horizons and the API abstains.
+A locked certification holdout is consumed exactly once after the winner decision. The final refit never supplies reported metrics. If the overall locked result fails any required horizon or asset-transfer guardrail, the entire candidate is rejected: passing horizons are not carved out into a partial release. Materialization requires an overall evidence status of `passed`, and the API abstains when no verified release exists.
+
+Because the v6 reserve is already consumed, v7 development uses no certification rows. A new reserve begins with observations on or after 2026-08-27 and cannot be complete until the required 252 holdout sessions plus the 30-session maximum target have matured. Development selection may create only an unsigned prospective candidate; it is not a release artifact.
 
 ## Release bundle
 
@@ -59,7 +63,7 @@ Research runs on the local RTX machine with bounded CUDA memory, deterministic s
 ## Known limitations
 
 - Daily OHLCV volatility is difficult to predict and simple baselines often remain competitive.
-- The current production center line is a baseline, not a learned expected return.
+- The serving contract's center line is a baseline, not a learned expected return; no release is currently certified.
 - News archives have provider gaps and license/coverage constraints.
 - The initial panel is survivor-biased and lacks options-implied, intraday, and fundamentals data.
 - GPU results are not bit-for-bit identical across machines; snapshot, code, seed, fold, and runtime manifests are the reproducibility unit.
