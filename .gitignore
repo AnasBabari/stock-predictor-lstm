@@ -7,6 +7,11 @@ venv/
 env/
 .env
 
+# Release signing keys are never repository content. Public verification keys
+# are explicitly allowlisted because they contain no signing capability.
+*.pem
+!backend/release_keys/*.public.pem
+
 # Offline model artifacts are local research outputs only; Render and the browser path do not ship them.
 # Offline model outputs and local dependency caches
 backend/saved_models/
