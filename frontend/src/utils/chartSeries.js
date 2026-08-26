@@ -27,7 +27,9 @@ function padForecast(values, leadNulls, anchorPrice) {
 }
 
 export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = false) {
-  if (!stockData || !stockData.historical_prices || !stockData.predicted_prices) {
+  const isVolatility = stockData?.metadata?.engine?.certified_head === 'volatility'
+    || stockData?.volatility_cone != null;
+  if (!stockData || !stockData.historical_prices || (!isVolatility && !stockData.predicted_prices)) {
     return null;
   }
   if (!Array.isArray(stockData.historical_dates) || stockData.historical_dates.length === 0) {
@@ -50,9 +52,6 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
   const modelColor = isDark ? COLORS.modelDark : COLORS.modelLight;
   const benchColor = isDark ? COLORS.benchDark : COLORS.benchLight;
   const histColor = isDark ? COLORS.histDark : COLORS.histLight;
-  const isVolatility = stockData.metadata?.engine?.certified_head === 'volatility'
-    || stockData.volatility_cone != null;
-
   const datasets = [
     {
       label: 'Historical Price',
@@ -73,8 +72,11 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
       fill: true,
       spanGaps: false,
     },
-    {
-      label: isVolatility ? 'Unchanged-close location baseline' : 'Model Forecast',
+  ];
+
+  if (!isVolatility) {
+    datasets.push({
+      label: 'Model Forecast',
       data: padForecast(stockData.predicted_prices, forecastLead, lastClose),
       borderColor: modelColor,
       backgroundColor: (context) => {
@@ -88,12 +90,12 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
       pointRadius: 4,
       pointBackgroundColor: modelColor,
       pointHoverRadius: 6,
-      borderDash: isVolatility ? [5, 4] : [],
+      borderDash: [],
       tension: 0.3,
       fill: true,
       spanGaps: false,
-    },
-  ];
+    });
+  }
 
   // Optional Forecast Error Range Band
   const errorBand = stockData.historical_error_band;

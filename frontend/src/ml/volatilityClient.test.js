@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { mapVolatilityResponse, validateVolatilityResponse } from './volatilityClient';
+import {
+  fetchVolatilityForecast,
+  mapVolatilityResponse,
+  validateVolatilityResponse,
+  VolatilityApiError,
+} from './volatilityClient';
 
 function body(overrides = {}) {
   const days = 7;
@@ -39,14 +44,37 @@ function body(overrides = {}) {
 }
 
 describe('volatility client contract', () => {
-  it('maps a certified volatility response to an unchanged-close location path', () => {
+  it('maps a certified volatility response without exposing a flat price forecast', () => {
     const result = mapVolatilityResponse(body(), 'MSFT', 7);
-    expect(result.predicted_prices).toEqual(Array(7).fill(100));
-    expect(result.persistence_forecast).toEqual(Array(7).fill(100));
+    expect(result.predicted_prices).toBeNull();
+    expect(result.persistence_forecast).toBeNull();
     expect(result.historical_error_band.lower_prices).toHaveLength(7);
-    expect(result.forecast_status.decision).toBe('persistence');
+    expect(result.forecast_status.decision).toBe('volatility_cone');
+    expect(result.validation.promoted).toBe(true);
     expect(result.metadata.engine.role).toBe('server_artifact_loaded');
     expect(result.metrics.relative_qlike).toBe(0.91);
+  });
+
+  it('preserves the structured abstention code for safe UI mapping', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        detail: {
+          status: 'abstain_no_certified_model',
+          reason: 'no certified volatility release is configured',
+        },
+      }),
+    }));
+    await expect(
+      fetchVolatilityForecast('MSFT', 7, undefined, { baseUrl: 'https://api.test', fetchImpl }),
+    ).rejects.toMatchObject({
+      name: 'VolatilityApiError',
+      code: 'abstain_no_certified_model',
+      httpStatus: 503,
+    });
+    await fetchVolatilityForecast('MSFT', 7, undefined, { baseUrl: 'https://api.test', fetchImpl })
+      .catch((error) => expect(error).toBeInstanceOf(VolatilityApiError));
   });
 
   it('rejects missing or non-certified volatility evidence', () => {

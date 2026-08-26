@@ -8,6 +8,9 @@ import { safeGet, safeSet } from '../utils/safeStorage';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const IS_TEST_MODE = import.meta.env.MODE === 'test' || import.meta.env.VITEST === true;
+// Replaced at build time by Vite. Normal production builds compile the legacy
+// browser worker out entirely; only the explicit methodology build retains it.
+const LEGACY_BROWSER_BUILD = __STOCKLSTM_LEGACY_BROWSER_BUILD__;
 // Production builds use the signed global-volatility contract by default. The
 // explicit false override is retained for local rollback/contract fixtures;
 // browser training is never an implicit production fallback.
@@ -15,7 +18,7 @@ export const VOLATILITY_SERVING_ENABLED =
   import.meta.env.VITE_VOLATILITY_SERVING_ENABLED === 'true' ||
   (!IS_TEST_MODE && import.meta.env.PROD && import.meta.env.VITE_VOLATILITY_SERVING_ENABLED !== 'false');
 const BROWSER_TRAINING_ENABLED =
-  (IS_TEST_MODE || import.meta.env.VITE_BROWSER_TRAINING_ENABLED === 'true') && !VOLATILITY_SERVING_ENABLED;
+  LEGACY_BROWSER_BUILD && !VOLATILITY_SERVING_ENABLED;
 const DEPLOYMENT_TRAINING_MODE = (
   window.STOCKLSTM_TRAINING_MODE ||
   import.meta.env.VITE_TRAINING_MODE ||
@@ -49,6 +52,12 @@ export const stageLabels = {
 
 export function predictionErrorMessage(error) {
   const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+  if (error?.code === 'abstain_no_certified_model') {
+    return 'No certified global model is available yet. Forecasting is paused until a signed release passes validation.';
+  }
+  if (error?.code === 'certified_horizon_unavailable') {
+    return 'The selected horizon is not certified for the active global model.';
+  }
   if (
     error instanceof TypeError ||
     message.includes('failed to fetch') ||
@@ -79,6 +88,9 @@ export function predictionErrorMessage(error) {
   }
   if (message.includes('forecast model') || message.includes('prepared model')) {
     return 'No prepared forecast model is available for this ticker. Try an approved symbol.';
+  }
+  if (error?.name === 'VolatilityApiError' && error?.httpStatus === 503) {
+    return 'The certified forecast service is temporarily unavailable. No baseline forecast was substituted.';
   }
   if (
     message.includes('capacity') ||
@@ -124,9 +136,15 @@ export function assertForecastIdentity(data, ticker, days, type) {
   if (!data || data.ticker !== symbol || !horizonMatches) {
     throw new Error('The forecast response does not match the selected ticker and horizon.');
   }
+  const isCertifiedVolatility =
+    data?.metadata?.engine?.certified_head === 'volatility' && data?.volatility_cone != null;
   const hasExpectedPayload =
     type === FORECAST_TYPES.PRICE
-      ? data.predicted_prices?.length === selectedDays
+      ? isCertifiedVolatility
+        ? ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'].every(
+          (key) => data.volatility_cone?.[key]?.length === selectedDays,
+        )
+        : data.predicted_prices?.length === selectedDays
       : data.direction_probabilities != null &&
         Number(data.direction_horizon_days) === selectedDays;
   if (!hasExpectedPayload || data.future_dates?.length !== selectedDays) {
@@ -335,7 +353,11 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         return serverPrediction;
       }
 
-      if (horizonRequest.horizon_mode === 'explicit' && isGlobalModelEnabled()) {
+      if (
+        LEGACY_BROWSER_BUILD
+        && horizonRequest.horizon_mode === 'explicit'
+        && isGlobalModelEnabled()
+      ) {
         try {
           onProgress?.({ stage: 'checking_global', message: 'Checking verified global models…' });
           const tf = await import('@tensorflow/tfjs').catch(() => null);

@@ -29,8 +29,11 @@ export default function ForecastChartActions({
     }
 
     await exportPriceCSV(stockData);
-    onToast('success', 'Price forecast exported as CSV');
-  }, [forecastType, onToast, stockData]);
+    onToast(
+      'success',
+      volatilityServing ? 'Volatility forecast exported as CSV' : 'Price forecast exported as CSV',
+    );
+  }, [forecastType, onToast, stockData, volatilityServing]);
 
   const showPriceActions = Boolean(stockData && forecastType === 'price');
   const showTrendActions = Boolean(stockData && forecastType === 'trend');

@@ -73,13 +73,35 @@ describe('buildPriceSeries — core contract', () => {
     expect(labels).toContain('90% Empirical Error Range (Upper)');
     expect(labels).toContain('90% Empirical Error Range (Lower)');
   });
+
+  it('draws a certified volatility cone without a flat location or benchmark line', () => {
+    const volatility = {
+      ...samplePayload,
+      predicted_prices: null,
+      persistence_forecast: null,
+      metadata: { engine: { certified_head: 'volatility' } },
+      volatility_cone: { p05: [95, 94], p95: [109, 112] },
+      historical_error_band: {
+        lower_prices: [95, 94],
+        upper_prices: [109, 112],
+      },
+    };
+    const series = buildPriceSeries(volatility, 21, true, true);
+    const labels = series.datasets.map((dataset) => dataset.label);
+    expect(labels).toEqual([
+      'Historical Price',
+      'Certified volatility cone (upper)',
+      'Certified volatility cone (lower)',
+    ]);
+    expect(labels.join(' ')).not.toMatch(/unchanged|persistence|model forecast/i);
+  });
 });
 
 describe('buildPriceSeries — guards', () => {
   it.each([
     [null],
     [{}],
-    [{ ...samplePayload, predicted_prices: undefined }],
+    [{ ...samplePayload, predicted_prices: undefined, volatility_cone: undefined }],
     [{ ...samplePayload, historical_dates: [] }],
     [{ ...samplePayload, future_dates: [] }],
   ])('returns null for incomplete payloads (%#)', (payload) => {

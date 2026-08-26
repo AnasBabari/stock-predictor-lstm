@@ -7,6 +7,12 @@ const BADGE_CONFIG = {
     title: 'Validated against persistence on held-out evaluation.',
     icon: '✓',
   },
+  certified_volatility: {
+    label: 'VOLATILITY CERTIFIED',
+    className: 'badge--promoted',
+    title: 'The conditional-volatility head passed locked certification; price direction is not certified.',
+    icon: '✓',
+  },
   candidate: {
     label: 'CANDIDATE',
     className: 'badge--candidate',

@@ -49,6 +49,19 @@ function assertCompleteIdentity(priceData, directionData, metadata) {
 export async function exportPriceCSV(stockData) {
   if (!stockData) return;
 
+  if (stockData.metadata?.engine?.certified_head === 'volatility') {
+    const keys = ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'];
+    const rows = [['Date', 'P05', 'P10', 'P25', 'P50', 'P75', 'P90', 'P95']];
+    stockData.future_dates.forEach((date, index) => {
+      rows.push([date, ...keys.map((key) => stockData.volatility_cone?.[key]?.[index])]);
+    });
+    downloadBlob(
+      new Blob([csvFromRows(rows)], { type: 'text/csv' }),
+      `${stockData.ticker}_volatility_forecast.csv`,
+    );
+    return;
+  }
+
   const rows = [['Date', 'Price', 'Type']];
   stockData.historical_dates.forEach((dt, i) => {
     rows.push([dt, stockData.historical_prices[i].toFixed(2), 'Historical']);

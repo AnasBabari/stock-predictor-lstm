@@ -163,7 +163,7 @@ export default function App() {
           </div>
         )}
 
-        {stockInfo && <StockInfoGrid stockInfo={stockInfo} />}
+        {stockInfo && <StockInfoGrid info={stockInfo} />}
 
         {predictionData && (
           <>

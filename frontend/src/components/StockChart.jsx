@@ -156,7 +156,7 @@ const StockChart = forwardRef(function StockChart(
                   {stockData.ticker} — {isVolatility ? 'Historical vs Volatility Cone' : 'Historical vs Predicted'}
                 </h2>
         <div className="chart-header-actions">
-          <label className="benchmark-toggle" htmlFor="showBenchmarkCheck">
+          {!isVolatility && <label className="benchmark-toggle" htmlFor="showBenchmarkCheck">
             <input
               id="showBenchmarkCheck"
               type="checkbox"
@@ -164,7 +164,7 @@ const StockChart = forwardRef(function StockChart(
               onChange={(e) => setShowBenchmark(e.target.checked)}
             />
             <span>Show benchmark</span>
-          </label>
+          </label>}
         </div>
       </div>
       <div className="timeframe-filters">

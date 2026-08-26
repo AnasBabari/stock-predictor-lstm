@@ -12,11 +12,25 @@ const QUANTILE_KEYS = ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'];
 
 function apiErrorBody(body) {
   const detail = body?.detail;
-  if (typeof detail === 'string') return detail;
-  if (detail && typeof detail === 'object') {
-    return detail.reason || detail.message || detail.status || 'Certified volatility model unavailable.';
+  if (typeof detail === 'string') {
+    return { code: null, reason: detail };
   }
-  return 'Certified volatility model unavailable.';
+  if (detail && typeof detail === 'object') {
+    return {
+      code: detail.status || detail.code || null,
+      reason: detail.reason || detail.message || 'Certified volatility model unavailable.',
+    };
+  }
+  return { code: null, reason: 'Certified volatility model unavailable.' };
+}
+
+export class VolatilityApiError extends Error {
+  constructor(message, { code = null, httpStatus = null } = {}) {
+    super(message);
+    this.name = 'VolatilityApiError';
+    this.code = code;
+    this.httpStatus = httpStatus;
+  }
 }
 
 function finitePositive(value, label) {
@@ -80,8 +94,6 @@ export function validateVolatilityResponse(body, ticker, days) {
 export function mapVolatilityResponse(body, ticker, days) {
   const data = validateVolatilityResponse(body, ticker, days);
   const summary = data.evidence?.horizon_certification?.[String(days)] || {};
-  const p50 = data.quantiles.p50;
-  const persistence = Array(days).fill(data.current_price);
   const metricSource = data.evidence?.metric_source || 'locked_purged_walk_forward';
   return {
     ticker: data.ticker,
@@ -92,10 +104,14 @@ export function mapVolatilityResponse(body, ticker, days) {
     historical_dates: data.historical_dates,
     historical_prices: data.historical_prices,
     future_dates: data.forecast.future_dates,
-    predicted_prices: p50,
-    persistence_forecast: persistence,
+    // p50 is retained inside the signed distribution contract, but is not a
+    // learned location forecast. Keep it out of the generic price fields so
+    // presentation code cannot accidentally render a flat path as a model
+    // prediction.
+    predicted_prices: null,
+    persistence_forecast: null,
     learned_prices: null,
-    benchmark: { type: 'persistence', prices: persistence },
+    benchmark: null,
     historical_error_band: {
       lower_prices: data.quantiles.p05,
       upper_prices: data.quantiles.p95,
@@ -104,17 +120,17 @@ export function mapVolatilityResponse(body, ticker, days) {
     volatility_cone: data.quantiles,
     forecast_status: {
       state: 'certified_volatility',
-      decision: 'persistence',
-      alpha: 0,
-      label: 'Certified volatility; unchanged-close location baseline',
+      decision: 'volatility_cone',
+      alpha: 1,
+      label: 'Certified conditional-volatility forecast',
     },
     validation: {
-      state: 'volatility_certified_location_baseline',
-      promoted: false,
+      state: 'certified_volatility',
+      promoted: true,
       selected_horizon: days,
       best_validated_horizon: days,
       promoted_horizons: data.evidence?.certified_heads?.volatility ? [days] : [],
-      reasons: ['Only conditional volatility is certified; return location remains the matched persistence baseline.'],
+      reasons: ['Conditional volatility is certified; no learned return-location or direction claim is made.'],
     },
     metrics: {
       metric_source: metricSource,
@@ -165,7 +181,11 @@ export async function fetchVolatilityForecast(
   );
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(apiErrorBody(body));
+    const apiError = apiErrorBody(body);
+    throw new VolatilityApiError(apiError.reason, {
+      code: apiError.code,
+      httpStatus: response.status,
+    });
   }
   return mapVolatilityResponse(body, requestTicker, horizon);
 }

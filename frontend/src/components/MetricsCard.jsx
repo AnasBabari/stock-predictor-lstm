@@ -19,6 +19,8 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
 
   const latestClose = Number(stockData.historical_prices?.at(-1));
   const forecastPrice = Number(stockData.predicted_prices?.at(-1));
+  const volatilityLow = Number(stockData.volatility_cone?.p05?.at(-1));
+  const volatilityHigh = Number(stockData.volatility_cone?.p95?.at(-1));
   const priceChangePct = Number.isFinite(latestClose) && Number.isFinite(forecastPrice) && latestClose > 0
     ? ((forecastPrice - latestClose) / latestClose) * 100
     : null;
@@ -77,7 +79,7 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
                 </div>
                 <span className="card-subtext">
                   {isVolatility
-                    ? 'Conditional volatility cleared the locked evidence gate; location remains the matched persistence baseline.'
+                    ? 'Conditional volatility cleared the locked evidence gate; no learned return-location or direction claim is shown.'
                     : val.promoted
                       ? 'Validated against persistence on held-out data.'
                       : 'Model forecast shown; holdout validation gates were not met.'}
@@ -87,9 +89,11 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
               {isVolatility ? (
                 <>
                   <div className="summary-card">
-                    <span className="card-label">Location Center</span>
-                    <span className="card-value mono text-teal">{formatPrice(latestClose)}</span>
-                    <span className="card-subtext">Unchanged-close persistence baseline</span>
+                    <span className="card-label">90% Forecast Range</span>
+                    <span className="card-value mono text-teal">
+                      {formatPrice(volatilityLow)} – {formatPrice(volatilityHigh)}
+                    </span>
+                    <span className="card-subtext">Certified endpoint uncertainty</span>
                   </div>
                   <div className="summary-card">
                     <span className="card-label">Annualized Volatility</span>
