@@ -29,6 +29,7 @@ import numpy as np
 
 from .contracts import VolatilityForecastProtocol
 from .data import VolatilityPanelExamples
+from .folds import VolatilityFold, VolatilityFoldPlan
 
 V8_REQUIRED_EXCHANGE_MICS = ("XLON", "XNAS", "XNYS")
 
@@ -82,6 +83,67 @@ class V8SplitIndices:
     holdout_tickers: tuple[str, ...]
     train_tickers: tuple[str, ...]
     manifest: V8SplitManifest
+
+
+def build_v8_development_fold_plan(
+    examples: VolatilityPanelExamples,
+    split: V8SplitIndices,
+    protocol: VolatilityForecastProtocol,
+) -> VolatilityFoldPlan:
+    """Build expanding OOF folds using only the 85% development population."""
+
+    development_indices = np.concatenate((split.train_indices, split.validation_indices))
+    development_mask = np.zeros(len(examples.features), dtype=bool)
+    development_mask[development_indices] = True
+    training_asset_mask = np.isin(examples.tickers, split.train_tickers)
+    eligible_mask = development_mask & training_asset_mask
+    dates = np.unique(examples.origin_dates[eligible_mask])
+    dates.sort()
+    required_sessions = (
+        protocol.minimum_train_sessions
+        + protocol.embargo_sessions
+        + protocol.folds * protocol.validation_sessions
+    )
+    if len(dates) < required_sessions:
+        raise ValueError(
+            f"v8 development folds need at least {required_sessions} sessions, got {len(dates)}"
+        )
+    first_validation = len(dates) - protocol.folds * protocol.validation_sessions
+    folds: list[VolatilityFold] = []
+    for fold_number in range(protocol.folds):
+        validation_start_position = first_validation + fold_number * protocol.validation_sessions
+        validation_end_position = validation_start_position + protocol.validation_sessions
+        train_end_position = validation_start_position - protocol.embargo_sessions
+        if train_end_position < protocol.minimum_train_sessions:
+            raise ValueError("v8 fold leaves insufficient pre-validation training history")
+        train_end = dates[train_end_position - 1]
+        validation_start = dates[validation_start_position]
+        validation_end = dates[validation_end_position - 1]
+        train_indices = np.flatnonzero(eligible_mask & (examples.origin_dates <= train_end))
+        validation_indices = np.flatnonzero(
+            eligible_mask
+            & (examples.origin_dates >= validation_start)
+            & (examples.origin_dates <= validation_end)
+        )
+        folds.append(
+            VolatilityFold(
+                fold=fold_number + 1,
+                train_indices=train_indices,
+                validation_indices=validation_indices,
+                train_end=train_end,
+                validation_start=validation_start,
+                validation_end=validation_end,
+            )
+        )
+    test_dates = examples.origin_dates[split.pooled_test_indices]
+    return VolatilityFoldPlan(
+        folds=tuple(folds),
+        train_tickers=split.train_tickers,
+        asset_holdout_tickers=split.holdout_tickers,
+        temporal_certification_indices=np.empty(0, dtype=np.int64),
+        asset_transfer_certification_indices=np.empty(0, dtype=np.int64),
+        certification_start=np.min(test_dates),
+    )
 
 
 def _sha256_bytes(data: bytes) -> str:

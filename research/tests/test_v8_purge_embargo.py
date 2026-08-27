@@ -14,6 +14,7 @@ from research.volatility_forecasting.data import VolatilityPanelExamples
 from research.volatility_forecasting.split_v8 import (
     V8_REQUIRED_EXCHANGE_MICS,
     build_v8_chronological_split,
+    build_v8_development_fold_plan,
 )
 from research.volatility_forecasting.v8_protocol import v8_protocol
 
@@ -239,3 +240,25 @@ def test_assignment_identity_changes_when_security_identity_changes():
     )
     assert first.manifest.row_assignment_sha256 != second.manifest.row_assignment_sha256
     assert first.manifest.asset_identity_sha256 != second.manifest.asset_identity_sha256
+
+
+def test_development_folds_never_open_the_sealed_test() -> None:
+    ex = _dummy_examples(n_dates=1800)
+    exchange_map, security_map = _identity_maps(CERTIFIABLE_TICKERS)
+    split = build_v8_chronological_split(
+        ex,
+        required_asset_holdouts=("MSFT", "NMM"),
+        panel_checksum="sha256:panel",
+        universe_manifest_sha256="sha256:universe",
+        universe_coverage_certifiable=True,
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=security_map,
+    )
+    plan = build_v8_development_fold_plan(ex, split, v8_protocol(news_enabled=True))
+    sealed = set(split.pooled_test_indices)
+    assert len(plan.folds) == 5
+    for fold in plan.folds:
+        assert not (set(fold.train_indices) & sealed)
+        assert not (set(fold.validation_indices) & sealed)
+        assert fold.train_end < fold.validation_start
+        assert set(ex.tickers[fold.validation_indices]).issubset(set(split.train_tickers))
