@@ -89,7 +89,9 @@ def main() -> int:
 
     holdouts = tuple(sorted({t.strip().upper() for t in args.holdouts.split(",") if t.strip()}))
 
-    # Load and validate candidate
+    # Load and validate a real frozen candidate. Placeholder/dry-run artifacts
+    # must fail before the one-shot marker is written and before any sealed row
+    # is opened.
     cand_manifest_path = cand_dir / "candidate-manifest.json"
     if not cand_manifest_path.exists():
         print(f"candidate manifest missing: {cand_manifest_path}", file=sys.stderr)
@@ -100,6 +102,25 @@ def main() -> int:
             f"candidate role must be prospective_v8_development_candidate, got {cand.get('artifact_role')}",
             file=sys.stderr,
         )
+        return 2
+    if cand.get("placeholder") or cand.get("model_type") in {
+        "ridge_stub",
+        "ridge_cpu",
+        "dummy",
+    }:
+        print("placeholder candidates are not certifiable", file=sys.stderr)
+        return 2
+    members = cand.get("members")
+    if not isinstance(members, list) or not members:
+        print("candidate has no persisted model members", file=sys.stderr)
+        return 2
+    if any(
+        not isinstance(member, dict)
+        or not isinstance(member.get("weights_file"), str)
+        or not str(member["weights_file"]).endswith(".pt")
+        for member in members
+    ):
+        print("candidate members are placeholders or malformed", file=sys.stderr)
         return 2
     proto_version = cand.get("protocol_version")
     if proto_version not in (V8_PROTOCOL_VERSION_NEWS, V8_PROTOCOL_VERSION_NUMERIC):
@@ -188,24 +209,12 @@ def main() -> int:
         # Do not materialize, but still write failed report
         status = "failed"
     else:
-        # Evaluate baselines on sealed test (honest, no training on test)
-        from research.volatility_forecasting.baselines_v8 import evaluate_all_baselines
-
-        baselines = evaluate_all_baselines(examples, split)
-        # For dry-run Ridge stub, compare Ridge vs HAR on pooled test
-        # Real certification would run the 3-seed TCN ensemble
-        # Here we synthesize: if Ridge stub would have beaten HAR on val, we assume it beats on test (placeholder)
-        # In real run, we would load the 3 seed members and predict
-        har_qlike = baselines["har"]["qlike"]
-        # Simulate candidate performance as 0.98 * HAR (honest placeholder for numeric)
-        candidate_qlike = har_qlike * 0.98
-        relative_qlike = candidate_qlike / har_qlike
-        # Gate: must be <0.98 to be promoted (same as v7)
-        passed = relative_qlike < 0.98 and split.manifest.coverage_certifiable
-        status = "passed" if passed else "failed"
         print(
-            f"baselines HAR qlike {har_qlike:.4f} candidate {candidate_qlike:.4f} relative {relative_qlike:.4f} -> {status}"
+            "real v8 prediction-only certification is not yet wired; refusing "
+            "to fabricate sealed-test evidence",
+            file=sys.stderr,
         )
+        status = "failed"
 
     report = {
         "status": status,

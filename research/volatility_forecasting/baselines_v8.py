@@ -1,4 +1,4 @@
-"""v8 baselines — persistence, HAR-RV, GARCH, Ridge, and negative controls.
+"""Leakage-safe v8 development baselines.
 
 These are the preregistered baselines that any learned v8 candidate must
 beat or complement on the sealed test set.  They run on the same
@@ -8,59 +8,90 @@ chronological split and use only train rows for fitting.
 from __future__ import annotations
 
 import numpy as np
+from sklearn.linear_model import Ridge
 
+from .baselines import (
+    fit_adaptive_variance_baseline,
+    predict_adaptive_variance_baseline,
+)
 from .data import VolatilityPanelExamples
-from .split_v8 import V8SplitIndices
+from .metrics import qlike_losses
 
 
 def _qlike(y_true: np.ndarray, y_pred: np.ndarray, eps: float = 1e-8) -> float:
-    # QLIKE for variance: y_pred / y_true - log(y_pred / y_true) - 1
-    ratio = np.clip(y_pred / np.clip(y_true, eps, None), eps, 1e6)
-    return float(np.mean(ratio - np.log(ratio) - 1))
+    """Return the canonical QLIKE mean, with arguments ordered truth/forecast."""
+    realized = np.maximum(np.asarray(y_true, dtype=np.float64), eps)
+    forecast = np.maximum(np.asarray(y_pred, dtype=np.float64), eps)
+    return float(np.mean(qlike_losses(forecast, realized)))
 
 
-def persistence_baseline(
-    examples: VolatilityPanelExamples, train_idx: np.ndarray, test_idx: np.ndarray
-) -> dict[str, float]:
-    """Naive persistence: predict last realized variance (baseline_variance column 0)."""
-    # Baseline variance is already the causal HAR forecast; persistence is last RV proxy
-    # For dry-run we use baseline_variance as persistence proxy
-    y_true = examples.realized_variance[test_idx]
-    y_pred = examples.baseline_variance[test_idx]
-    return {"qlike": _qlike(y_true, y_pred)}
+def _session_equal_qlike(
+    realized: np.ndarray,
+    forecast: np.ndarray,
+    session_labels: np.ndarray,
+) -> tuple[float, list[float]]:
+    losses = qlike_losses(forecast, realized)
+    sessions, inverse = np.unique(session_labels, return_inverse=True)
+    per_session = np.zeros((len(sessions), losses.shape[1]), dtype=np.float64)
+    counts = np.zeros(len(sessions), dtype=np.int64)
+    np.add.at(per_session, inverse, losses)
+    np.add.at(counts, inverse, 1)
+    per_session /= counts[:, None]
+    return float(np.mean(per_session)), np.mean(per_session, axis=0).tolist()
 
 
-def har_baseline(examples: VolatilityPanelExamples, test_idx: np.ndarray) -> dict[str, float]:
-    y_true = examples.realized_variance[test_idx]
-    y_pred = examples.baseline_variance[test_idx]
-    return {"qlike": _qlike(y_true, y_pred)}
+def _ridge_forecast(
+    examples: VolatilityPanelExamples,
+    fit_idx: np.ndarray,
+    eval_idx: np.ndarray,
+) -> np.ndarray:
+    """Fit a positive log-variance Ridge using fit rows only."""
+    train_x = np.asarray(examples.features[fit_idx].mean(axis=1), dtype=np.float64)
+    eval_x = np.asarray(examples.features[eval_idx].mean(axis=1), dtype=np.float64)
+    train_y = np.log(np.maximum(examples.realized_variance[fit_idx], 1e-12))
+    columns: list[np.ndarray] = []
+    for column in range(train_y.shape[1]):
+        model = Ridge(alpha=1.0)
+        model.fit(train_x, train_y[:, column])
+        columns.append(np.exp(model.predict(eval_x)))
+    result = np.column_stack(columns)
+    if not np.isfinite(result).all() or (result <= 0).any():
+        raise RuntimeError("Ridge baseline produced invalid variance forecasts")
+    return result
 
 
-def ridge_baseline_stub(
-    examples: VolatilityPanelExamples, train_idx: np.ndarray, test_idx: np.ndarray
-) -> dict[str, float]:
-    """Stub: in real training this would fit Ridge on train features and predict test.
+def evaluate_development_baselines(
+    examples: VolatilityPanelExamples,
+    *,
+    fit_indices: np.ndarray,
+    evaluation_indices: np.ndarray,
+) -> dict[str, dict[str, object]]:
+    """Evaluate baselines on an explicitly supplied development partition.
 
-    For the dry-run we return a synthetic improvement factor to demonstrate
-    the reporting pipeline; real training will replace this with fitted weights
-    and honest metrics.
+    The function deliberately has no access to ``V8SplitIndices``.  Callers
+    cannot accidentally substitute the sealed test partition merely by
+    passing the split object.
     """
-    har = har_baseline(examples, test_idx)
-    # Synthetic: assume Ridge improves HAR by 1% (honest placeholder)
-    return {"qlike": har["qlike"] * 0.99, "note": "stub — replace with fitted Ridge on RTX"}
-
-
-def evaluate_all_baselines(
-    examples: VolatilityPanelExamples, split: V8SplitIndices
-) -> dict[str, dict[str, float]]:
+    fit = np.asarray(fit_indices, dtype=np.int64)
+    evaluation = np.asarray(evaluation_indices, dtype=np.int64)
+    if not len(fit) or not len(evaluation) or np.intersect1d(fit, evaluation).size:
+        raise ValueError("baseline fit/evaluation rows must be non-empty and disjoint")
+    selection = fit_adaptive_variance_baseline(examples, fit)
+    adaptive = predict_adaptive_variance_baseline(examples, evaluation, selection)
+    ridge = _ridge_forecast(examples, fit, evaluation)
+    realized = examples.realized_variance[evaluation]
+    sessions = examples.origin_dates[evaluation]
+    adaptive_mean, adaptive_horizons = _session_equal_qlike(realized, adaptive, sessions)
+    ridge_mean, ridge_horizons = _session_equal_qlike(realized, ridge, sessions)
     return {
-        "persistence": persistence_baseline(
-            examples, split.train_indices, split.pooled_test_indices
-        ),
-        "har": har_baseline(examples, split.pooled_test_indices),
-        "ridge_stub": ridge_baseline_stub(examples, split.train_indices, split.pooled_test_indices),
-        "har_temporal": har_baseline(examples, split.temporal_test_indices),
-        "har_asset_transfer": har_baseline(examples, split.asset_transfer_test_indices),
+        "adaptive_calibrated_har_c2c_v1": {
+            "qlike": adaptive_mean,
+            "per_horizon_qlike": adaptive_horizons,
+        },
+        "ridge_log_variance": {
+            "qlike": ridge_mean,
+            "per_horizon_qlike": ridge_horizons,
+        },
     }
 
 

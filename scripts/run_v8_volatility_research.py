@@ -37,7 +37,9 @@ for p in (ROOT, ROOT / "research"):
         sys.path.insert(0, str(p))
 
 from backend.panel.snapshots import load_panel_from_directory  # noqa: E402
-from research.volatility_forecasting.baselines_v8 import evaluate_all_baselines  # noqa: E402
+from research.volatility_forecasting.baselines_v8 import (  # noqa: E402
+    evaluate_development_baselines,
+)
 from research.volatility_forecasting.cache import (  # noqa: E402
     find_compatible_example_cache,
     load_example_cache,
@@ -143,51 +145,16 @@ def main() -> int:
         json.dumps(uni, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
-    # Baselines on validation (selection uses validation only, never test)
-    # For dry-run we fit a Ridge stub on train and evaluate on val
-    # Real RTX training would fit TCN with early stopping on val
-    baselines = evaluate_all_baselines(examples, split)
-    print(
-        f"baselines val HAR qlike {baselines['har']['qlike']:.4f} (temporal {baselines['har_temporal']['qlike']:.4f} asset_transfer {baselines['har_asset_transfer']['qlike']:.4f})"
+    # Development baselines use train for fitting and validation for evaluation.
+    # No sealed-test target or baseline is read here.
+    baselines = evaluate_development_baselines(
+        examples,
+        fit_indices=split.train_indices,
+        evaluation_indices=split.validation_indices,
     )
-
-    # Train lightweight Ridge per horizon on train (CPU) — placeholder for TCN on RTX
-    try:
-        from sklearn.linear_model import Ridge
-    except ImportError:
-        print(
-            "sklearn not available — skipping Ridge training, writing stub candidate",
-            file=sys.stderr,
-        )
-        ridge_qlike = baselines["ridge_stub"]["qlike"]
-        model_type = "ridge_stub"
-    else:
-        # Fit Ridge on flattened window features (mean across window for speed)
-        X_train = examples.features[split.train_indices].mean(axis=1)  # [n, 26]
-        y_train = examples.realized_variance[split.train_indices]  # [n, 6]
-        X_val = examples.features[split.validation_indices].mean(axis=1)
-        y_val = examples.realized_variance[split.validation_indices]
-        # Simple per-horizon Ridge
-        preds = []
-        for h in range(len(protocol.horizons)):
-            rid = Ridge(alpha=1.0)
-            rid.fit(X_train, y_train[:, h])
-            preds.append(rid.predict(X_val))
-        y_pred_val = np.column_stack(preds)
-        # QLIKE on val
-        eps = 1e-8
-        ratio = np.clip(y_pred_val / np.clip(y_val, eps, None), eps, 1e6)
-        qlike = float(np.mean(ratio - np.log(ratio) - 1))
-        print(f"Ridge val qlike {qlike:.4f} vs HAR {baselines['har']['qlike']:.4f}")
-        ridge_qlike = qlike
-        model_type = "ridge_cpu"
-
-    # Decide selection: must beat HAR on validation to be eligible (simplified gate)
-    # Real gate uses QLIKE 0.98 etc. per horizon per seed
-    har_qlike = baselines["har"]["qlike"]
-    eligible = ridge_qlike < har_qlike * 0.99  # 1% improvement over HAR
-    status = "selected" if eligible else "abstain"
-    print(f"selection {status}: Ridge {ridge_qlike:.4f} vs HAR {har_qlike:.4f}")
+    adaptive_qlike = float(baselines["adaptive_calibrated_har_c2c_v1"]["qlike"])
+    ridge_qlike = float(baselines["ridge_log_variance"]["qlike"])
+    print(f"development validation QLIKE adaptive={adaptive_qlike:.6f} ridge={ridge_qlike:.6f}")
 
     # GPU / runtime metadata (honest: this dry-run is CPU; RTX run will record GPU)
     gpu_info = "cpu-dry-run"
@@ -201,10 +168,11 @@ def main() -> int:
     except Exception:
         pass
 
-    # Write candidate manifest (prospective_v8_development_candidate, not yet certified)
-    # For full TCN, this would contain 3 seed members with weights; here we store Ridge coefs as stub
+    # This command no longer fabricates a certifiable candidate. Until the real
+    # RTX TCN/fusion runner writes verified .pt members, its output is explicitly
+    # development-only baseline evidence.
     candidate_manifest = {
-        "artifact_role": "prospective_v8_development_candidate",
+        "artifact_role": "v8_development_baseline_evidence",
         "protocol_version": protocol.protocol_version,
         "model_version": manifest["model_version"],
         "architecture_version": manifest["architecture_version"],
@@ -230,12 +198,12 @@ def main() -> int:
         "split_manifest_sha256": hashlib.sha256(
             json.dumps(split.manifest.__dict__, sort_keys=True, default=str).encode()
         ).hexdigest(),
-        "model_type": model_type,
+        "model_type": "ridge_log_variance_baseline",
         "validation_metrics": {
             "ridge_qlike": ridge_qlike,
-            "har_qlike": har_qlike,
-            "eligible": eligible,
-            "status": status,
+            "adaptive_baseline_qlike": adaptive_qlike,
+            "eligible": False,
+            "status": "baseline_only_not_candidate",
         },
         "baseline_metrics": baselines,
         "runtime": {
@@ -249,25 +217,14 @@ def main() -> int:
         "created_at": __import__("datetime")
         .datetime.now(__import__("datetime").timezone.utc)
         .isoformat(),
-        "note": "Dry-run Ridge CPU placeholder; full RTX training will replace with fusion TCN global-volatility-news-fusion-v8 on same split. Test set remains sealed.",
+        "note": "Development-only fitted baseline evidence. This is not a model candidate and cannot be certified or released. Test targets remain sealed.",
     }
-    # Also write a stub member file for each seed (so certification can verify member existence)
-    for seed in protocol.seeds:
-        member_path = out / f"seed-{seed}.json"
-        member_path.write_text(
-            json.dumps({"seed": seed, "model_type": model_type, "placeholder": True}, indent=2)
-            + "\n",
-            encoding="utf-8",
-        )
     (out / "candidate-manifest.json").write_text(
         json.dumps(candidate_manifest, indent=2, sort_keys=True, default=str) + "\n",
         encoding="utf-8",
     )
-    print(f"candidate written to {out} status {status} (seeds {protocol.seeds})")
-    print(
-        f"Next: certify with scripts/certify_v8_candidate.py --candidate-dir {out} --panel-dir {panel_dir} --universe-manifest {uni_path} --out /tmp/v8-cert"
-    )
-    return 0 if status == "selected" else 1
+    print(f"development baseline evidence written to {out}; no candidate was created")
+    return 3
 
 
 if __name__ == "__main__":

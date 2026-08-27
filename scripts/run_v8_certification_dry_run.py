@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Dry-run of v8 numeric certification on the historical 70/15/15 split.
+"""Dry-run of v8 split construction without opening sealed target evidence.
 
-This script demonstrates that the v8 pipeline is *certifiable today* for the
-numeric fallback (news_status=not_certified) using the existing 69-ticker
-panel.  It does not train a heavy TCN — it evaluates a lightweight
-baseline (persistence vs HAR) and a Ridge candidate on the sealed
-chronological split and reports honest metrics with the correct evidence
-labels.
+This script is structural evidence only. The existing 69-ticker panel does
+not meet the preregistered four-market universe contract and this command
+does not evaluate any sealed test target or emit certification metrics.
 
 It is the fastest way to prove that slices 3-8 are complete and that the
 full RTX training (Slice 9) has a real, purge-clean runway.
@@ -93,11 +90,10 @@ def main() -> int:
         f"Examples: {len(examples.features)} rows, {len(unique)} unique origins, tickers {len(np.unique(examples.tickers))}"
     )
 
-    # Build deterministic universe manifest for existing 69 tickers (as if PIT, allow_sparse for dry-run)
-    # In production this would be built from point-in-time membership snapshots
+    # Build a deliberately non-certifiable diagnostic universe for the existing panel.
     tickers = sorted({str(t).upper() for t in examples.tickers})
-    # For dry-run we fabricate a minimal universe manifest that covers the existing tickers
-    # Assign MICs heuristically: treat all as XNAS for dry-run, with index_memberships empty
+    # Identity and venue values below are synthetic diagnostics. They must never
+    # be reused by candidate training or certification.
     members = []
     for t in tickers[:69]:
         mic = "XNAS" if t not in {"ZIM", "FRO", "SBLK", "DAC", "STNG"} else "XNYS"
@@ -161,8 +157,8 @@ def main() -> int:
         "status": "dry_run",
         "protocol_version": protocol.protocol_version,
         "model_version": "global-volatility-v8-numeric:dry-run",
-        "metric_source": settings_manifest["metric_source"],
-        "certification_scope": settings_manifest["certification_scope"],
+        "metric_source": "none_structural_split_dry_run",
+        "certification_scope": "none",
         "panel_checksum": panel_fp,
         "universe_sha256": uni_sha,
         "split_manifest": m.__dict__,
@@ -171,7 +167,7 @@ def main() -> int:
         "pooled_test_rows": m.pooled_test_rows,
         "news_enabled": False,
         "news_status": "not_certified",
-        "note": "Dry-run uses existing panel as v8 market snapshot with allow_sparse (LSE sparse). Full certification requires RTX training (Slice 9) and immutable v8 market snapshot with 25+ per exchange.",
+        "note": "Structural split dry-run only. Synthetic universe identity, sparse venue coverage, no sealed target metrics, and no certification claim.",
         "checks": {
             "purge_strict": True,
             "embargo_per_asset": True,
