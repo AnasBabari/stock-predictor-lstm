@@ -10,7 +10,10 @@ from research.volatility_forecasting.model import (
     BaselineResidualTCNConfig,
     TorchTrainingConfig,
 )
-from research.volatility_forecasting.news_candidate_v8 import evaluate_v8_news_ablation
+from research.volatility_forecasting.news_candidate_v8 import (
+    build_v8_news_negative_controls,
+    evaluate_v8_news_ablation,
+)
 from research.volatility_forecasting.v8_protocol import v8_protocol
 
 
@@ -83,6 +86,9 @@ def test_paired_ablation_uses_identical_oof_rows_and_news_only_on_fused_model(mo
     assert calls[0]["model_config"].news_feature_count == 0
     assert calls[1]["news_features"].shape == (20, 3)
     assert calls[1]["model_config"].news_feature_count == 3
+    assert len(calls) == 4
+    assert result[0].negative_controls[0].rejected is True
+    assert result[0].negative_controls[1].rejected is True
 
 
 def test_news_ablation_rejects_misaligned_rows() -> None:
@@ -103,3 +109,36 @@ def test_news_ablation_rejects_misaligned_rows() -> None:
             training_config=TorchTrainingConfig(maximum_epochs=1, patience=1),
             device="cpu",
         )
+
+
+def test_negative_controls_never_move_future_rows_backward() -> None:
+    examples = _examples()
+    examples = VolatilityPanelExamples(
+        **{
+            **examples.__dict__,
+            "tickers": np.asarray(["A", "B"] * 10),
+            "origin_dates": np.repeat(
+                np.arange(np.datetime64("2024-01-01"), np.datetime64("2024-01-11")), 2
+            ),
+        }
+    )
+    news = np.arange(20, dtype=np.float32).reshape(20, 1)
+    controls = build_v8_news_negative_controls(examples, news, seed=7, delay_days=2)
+
+    shuffled = controls["cross_sectionally_shuffled_news"][:, 0]
+    for rows in np.arange(20).reshape(10, 2):
+        assert set(shuffled[rows]) == set(news[rows, 0])
+
+    delayed = controls["news_delayed_seven_days"][:, 0]
+    np.testing.assert_array_equal(delayed[:4], 0.0)
+    np.testing.assert_array_equal(delayed[4:], news[:-4, 0])
+
+
+def test_negative_controls_validate_delay_and_finite_values() -> None:
+    examples = _examples()
+    with pytest.raises(ValueError, match="positive delay"):
+        build_v8_news_negative_controls(examples, np.ones((20, 1)), delay_days=0)
+    invalid = np.ones((20, 1))
+    invalid[3, 0] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        build_v8_news_negative_controls(examples, invalid)
