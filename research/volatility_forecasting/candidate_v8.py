@@ -67,7 +67,11 @@ def v8_ensemble_identity(members: tuple[FrozenCandidate, ...]) -> str:
         [(member.seed, member.model_identity) for member in ordered],
         separators=(",", ":"),
     ).encode("utf-8")
-    return f"global-volatility-v8-numeric:{hashlib.sha256(identity_payload).hexdigest()}"
+    families = {member.architecture.news_feature_count > 0 for member in ordered}
+    if len(families) != 1:
+        raise ValueError("v8 ensemble cannot mix market-only and news-enabled members")
+    family = "news-transfer" if families == {True} else "numeric"
+    return f"global-volatility-v8-{family}:{hashlib.sha256(identity_payload).hexdigest()}"
 
 
 def split_validation_for_selection(
@@ -120,6 +124,7 @@ def _fit_member(
     batch_size: int,
     loss_weights: VolatilityLossWeights,
     training_config: TorchTrainingConfig | None = None,
+    news_features: np.ndarray | None = None,
 ) -> FrozenCandidate:
     train = np.asarray(train_indices, dtype=np.int64)
     calibration = partitions.calibration_indices
@@ -140,13 +145,22 @@ def _fit_member(
         validation_realized_variance=examples.realized_variance[calibration],
         validation_cumulative_returns=examples.cumulative_returns[calibration],
         validation_direction_classes=examples.direction_classes[calibration],
+        train_news_features=news_features[train] if news_features is not None else None,
+        validation_news_features=(
+            news_features[calibration] if news_features is not None else None
+        ),
         model_config=architecture,
         training_config=settings,
         loss_weights=loss_weights,
         seed=seed,
         device=device,
     )
-    raw = predict_distribution(training, examples, calibration)
+    raw = predict_distribution(
+        training,
+        examples,
+        calibration,
+        news_features=news_features,
+    )
     variance_scale = fit_qlike_variance_scale(
         raw.variance,
         examples.realized_variance[calibration],
@@ -204,8 +218,9 @@ def _evaluate_member(
     required_horizons: tuple[int, ...],
     maximum_relative_qlike: float = 0.98,
     maximum_ratio_upper_95: float = 1.0,
+    news_features: np.ndarray | None = None,
 ) -> V8MemberEvidence:
-    predictions = candidate.predict(examples, indices)
+    predictions = candidate.predict(examples, indices, news_features=news_features)
     baseline, baseline_return = candidate.matched_baselines(examples, indices)
     metrics = tuple(
         horizon_distribution_metrics(
@@ -262,7 +277,7 @@ def _evaluate_member(
     )
 
 
-def train_v8_numeric_ensemble(
+def train_v8_ensemble(
     *,
     examples: VolatilityPanelExamples,
     train_indices: np.ndarray,
@@ -276,6 +291,7 @@ def train_v8_numeric_ensemble(
     architecture: BaselineResidualTCNConfig | None = None,
     loss_weights: VolatilityLossWeights | None = None,
     training_config: TorchTrainingConfig | None = None,
+    news_features: np.ndarray | None = None,
 ) -> tuple[FrozenEnsemble, tuple[V8MemberEvidence, ...], V8ValidationPartitions]:
     partitions = split_validation_for_selection(examples, validation_indices)
     architecture = architecture or BaselineResidualTCNConfig(
@@ -283,6 +299,16 @@ def train_v8_numeric_ensemble(
         horizon_count=len(examples.horizons),
         window_size=examples.features.shape[1],
     )
+    if architecture.news_feature_count:
+        if news_features is None or news_features.shape != (
+            len(examples.features),
+            architecture.news_feature_count,
+        ):
+            raise ValueError("news candidate requires one aligned feature row per example")
+        if not np.isfinite(news_features).all():
+            raise ValueError("news candidate features must be finite")
+    elif news_features is not None:
+        raise ValueError("market-only candidate cannot receive news features")
     weights = loss_weights or VolatilityLossWeights()
     members: list[FrozenCandidate] = []
     evidence: list[V8MemberEvidence] = []
@@ -299,6 +325,7 @@ def train_v8_numeric_ensemble(
             batch_size=batch_size,
             loss_weights=weights,
             training_config=training_config,
+            news_features=news_features,
         )
         members.append(member)
         evidence.append(
@@ -307,12 +334,51 @@ def train_v8_numeric_ensemble(
                 examples,
                 partitions.selection_indices,
                 required_horizons=required_horizons,
+                news_features=news_features,
             )
         )
     ordered = tuple(sorted(members, key=lambda member: member.seed))
     model_identity = v8_ensemble_identity(ordered)
     ensemble = FrozenEnsemble(members=ordered, model_identity=model_identity)
     return ensemble, tuple(evidence), partitions
+
+
+def train_v8_numeric_ensemble(
+    *,
+    examples: VolatilityPanelExamples,
+    train_indices: np.ndarray,
+    validation_indices: np.ndarray,
+    seeds: tuple[int, ...],
+    required_horizons: tuple[int, ...],
+    device: str = "cuda",
+    maximum_epochs: int = 60,
+    patience: int = 8,
+    batch_size: int = 512,
+    architecture: BaselineResidualTCNConfig | None = None,
+    loss_weights: VolatilityLossWeights | None = None,
+    training_config: TorchTrainingConfig | None = None,
+    news_features: np.ndarray | None = None,
+) -> tuple[FrozenEnsemble, tuple[V8MemberEvidence, ...], V8ValidationPartitions]:
+    """Compatibility entry point that rejects accidental news fusion."""
+
+    if news_features is not None:
+        raise ValueError("numeric v8 training cannot accept news features")
+    if architecture is not None and architecture.news_feature_count:
+        raise ValueError("numeric v8 training requires a market-only architecture")
+    return train_v8_ensemble(
+        examples=examples,
+        train_indices=train_indices,
+        validation_indices=validation_indices,
+        seeds=seeds,
+        required_horizons=required_horizons,
+        device=device,
+        maximum_epochs=maximum_epochs,
+        patience=patience,
+        batch_size=batch_size,
+        architecture=architecture,
+        loss_weights=loss_weights,
+        training_config=training_config,
+    )
 
 
 def _sha256_file(path: Path) -> str:
@@ -355,7 +421,11 @@ def save_v8_development_candidate(
                 "epoch_budget": member.epoch_budget,
                 "best_epoch": member.training.best_epoch,
                 "market_scaler": member.training.scaler.to_dict(),
-                "news_scaler": None,
+                "news_scaler": (
+                    member.training.news_scaler.to_dict()
+                    if member.training.news_scaler is not None
+                    else None
+                ),
                 "variance_scale": member.variance_scale.tolist(),
                 "return_variance_scale": member.return_variance_scale.tolist(),
                 "baseline_return_variance_scale": member.baseline_return_variance_scale.tolist(),
@@ -371,9 +441,7 @@ def save_v8_development_candidate(
         )
     eligible = universe_certifiable and all(row.eligible for row in evidence)
     role = (
-        "prospective_v8_development_candidate"
-        if eligible
-        else "rejected_v8_development_evidence"
+        "prospective_v8_development_candidate" if eligible else "rejected_v8_development_evidence"
     )
     manifest: dict[str, object] = {
         "artifact_role": role,

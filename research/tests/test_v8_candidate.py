@@ -4,6 +4,7 @@ import numpy as np
 
 from research.volatility_forecasting.candidate_v8 import (
     split_validation_for_selection,
+    train_v8_ensemble,
     train_v8_numeric_ensemble,
 )
 from research.volatility_forecasting.data import VolatilityPanelExamples
@@ -45,13 +46,14 @@ def test_v8_numeric_model_identity_has_dedicated_namespace(monkeypatch) -> None:
     train = np.arange(0, 150)
 
     class _Member:
-        def __init__(self, seed: int) -> None:
+        def __init__(self, seed: int, architecture) -> None:
             self.seed = seed
+            self.architecture = architecture
             self.model_identity = f"global-volatility:member-{seed}"
 
     monkeypatch.setattr(
         "research.volatility_forecasting.candidate_v8._fit_member",
-        lambda **kwargs: _Member(kwargs["seed"]),
+        lambda **kwargs: _Member(kwargs["seed"], kwargs["architecture"]),
     )
     monkeypatch.setattr(
         "research.volatility_forecasting.candidate_v8._evaluate_member",
@@ -98,6 +100,7 @@ def test_v8_numeric_ensemble_forwards_architecture_and_loss_weights(monkeypatch)
     class _Member:
         def __init__(self, **kwargs):
             self.seed = kwargs["seed"]
+            self.architecture = kwargs["architecture"]
             captured.update(
                 {
                     "architecture": kwargs.get("architecture"),
@@ -113,9 +116,7 @@ def test_v8_numeric_ensemble_forwards_architecture_and_loss_weights(monkeypatch)
     )
     monkeypatch.setattr(
         "research.volatility_forecasting.candidate_v8._evaluate_member",
-        lambda candidate, *_args, **_kwargs: type(
-            "Evidence", (), {"seed": candidate.seed}
-        )(),
+        lambda candidate, *_args, **_kwargs: type("Evidence", (), {"seed": candidate.seed})(),
     )
     monkeypatch.setattr(
         "research.volatility_forecasting.candidate_v8.FrozenEnsemble",
@@ -176,3 +177,76 @@ def test_v8_numeric_ensemble_forwards_architecture_and_loss_weights(monkeypatch)
     assert captured["architecture"] is architecture
     assert captured["loss_weights"] is loss_weights
     assert captured["training_config"] is training_config
+
+
+def test_v8_news_ensemble_has_isolated_identity_and_forwards_features(monkeypatch) -> None:
+    examples = _examples()
+    validation = np.arange(200, len(examples.features))
+    train = np.arange(0, 150)
+    news = np.ones((len(examples.features), 3), dtype=np.float32)
+    captured: dict[str, object] = {}
+
+    class _Member:
+        def __init__(self, seed: int, architecture) -> None:
+            self.seed = seed
+            self.architecture = architecture
+            self.model_identity = f"global-volatility:news-member-{seed}"
+
+    def fake_fit(**kwargs):
+        captured.update(kwargs)
+        return _Member(kwargs["seed"], kwargs["architecture"])
+
+    monkeypatch.setattr(
+        "research.volatility_forecasting.candidate_v8._fit_member",
+        fake_fit,
+    )
+    monkeypatch.setattr(
+        "research.volatility_forecasting.candidate_v8._evaluate_member",
+        lambda candidate, *_args, **_kwargs: type("Evidence", (), {"seed": candidate.seed})(),
+    )
+    monkeypatch.setattr(
+        "research.volatility_forecasting.candidate_v8.FrozenEnsemble",
+        lambda members, model_identity: type(
+            "Ensemble", (), {"members": members, "model_identity": model_identity}
+        )(),
+    )
+
+    from research.volatility_forecasting.model import BaselineResidualTCNConfig
+
+    architecture = BaselineResidualTCNConfig(
+        feature_count=examples.features.shape[-1],
+        horizon_count=len(examples.horizons),
+        window_size=examples.features.shape[1],
+        news_feature_count=3,
+        news_channels=4,
+    )
+    ensemble, _evidence, _partitions = train_v8_ensemble(
+        examples=examples,
+        train_indices=train,
+        validation_indices=validation,
+        seeds=(41,),
+        required_horizons=(1, 3, 5, 7),
+        device="cpu",
+        maximum_epochs=1,
+        architecture=architecture,
+        news_features=news,
+    )
+
+    assert ensemble.model_identity.startswith("global-volatility-v8-news-transfer:")
+    assert captured["news_features"] is news
+
+
+def test_numeric_entry_point_rejects_news_contract() -> None:
+    examples = _examples()
+    news = np.ones((len(examples.features), 3), dtype=np.float32)
+    with np.testing.assert_raises_regex(ValueError, "cannot accept news"):
+        train_v8_numeric_ensemble(
+            examples=examples,
+            train_indices=np.arange(0, 150),
+            validation_indices=np.arange(200, len(examples.features)),
+            seeds=(41,),
+            required_horizons=(1,),
+            device="cpu",
+            maximum_epochs=1,
+            news_features=news,
+        )
