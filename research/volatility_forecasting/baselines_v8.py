@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 from sklearn.linear_model import Ridge
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from .baselines import (
     fit_adaptive_variance_baseline,
@@ -51,7 +53,7 @@ def _ridge_forecast(
     train_y = np.log(np.maximum(examples.realized_variance[fit_idx], 1e-12))
     columns: list[np.ndarray] = []
     for column in range(train_y.shape[1]):
-        model = Ridge(alpha=1.0)
+        model = make_pipeline(StandardScaler(), Ridge(alpha=1.0))
         model.fit(train_x, train_y[:, column])
         columns.append(np.exp(model.predict(eval_x)))
     result = np.column_stack(columns)

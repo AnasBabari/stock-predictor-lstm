@@ -26,8 +26,10 @@ for p in (ROOT, ROOT / "research"):
 
 from backend.panel.snapshots import load_panel_from_directory  # noqa: E402
 from research.volatility_forecasting.cache import (  # noqa: E402
+    example_cache_key,
     find_compatible_example_cache,
     load_example_cache,
+    save_example_cache,
 )
 from research.volatility_forecasting.cache import (  # noqa: E402
     panel_fingerprint as rf_panel_fingerprint,  # noqa: E402
@@ -47,12 +49,19 @@ DEFAULT_PANEL = Path(
 )
 
 
-def _load_examples_cached(panel_dir: Path, protocol):
+def _load_examples_cached(
+    panel_dir: Path,
+    protocol,
+    *,
+    skip_cache: bool = False,
+    cache_root: Path | None = None,
+):
     # Try cache first (10-100x faster)
-    for root in [
+    roots = ([cache_root] if cache_root is not None else []) + ([] if skip_cache else [
         Path(r"C:\tmp\stocklstm-volatility-panel-v1\example-cache"),
         ROOT / "research" / ".cache" / "volatility-examples",
-    ]:
+    ])
+    for root in roots:
         if not root.is_dir():
             continue
         try:
@@ -64,13 +73,39 @@ def _load_examples_cached(panel_dir: Path, protocol):
             continue
     # Fallback: build (slow)
     panel = load_panel_from_directory(panel_dir)
-    return build_volatility_panel_examples(panel, protocol)
+    examples = build_volatility_panel_examples(panel, protocol)
+    if cache_root is not None:
+        checksum = rf_panel_fingerprint(panel_dir)
+        save_example_cache(
+            cache_root / example_cache_key(checksum, protocol),
+            examples,
+            panel_checksum=checksum,
+            protocol=protocol,
+        )
+    return examples
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="v8 dry-run certification (numeric fallback)")
     ap.add_argument("--panel-dir", type=Path, default=DEFAULT_PANEL)
     ap.add_argument("--out", type=Path, default=Path("research/results/v8-dry-run.json"))
+    ap.add_argument(
+        "--universe-out",
+        type=Path,
+        default=None,
+        help="Optional path for the explicit non-certifiable diagnostic universe manifest",
+    )
+    ap.add_argument(
+        "--skip-example-cache",
+        action="store_true",
+        help="Build examples directly without probing legacy cache roots",
+    )
+    ap.add_argument(
+        "--example-cache-root",
+        type=Path,
+        default=None,
+        help="Readable/writable cache root for deterministic derived examples",
+    )
     args = ap.parse_args()
 
     panel_dir = args.panel_dir.resolve()
@@ -84,7 +119,12 @@ def main() -> int:
     print(f"Metric source: {settings_manifest['metric_source']}")
     print(f"Panel: {panel_dir}")
 
-    examples = _load_examples_cached(panel_dir, protocol)
+    examples = _load_examples_cached(
+        panel_dir,
+        protocol,
+        skip_cache=args.skip_example_cache,
+        cache_root=args.example_cache_root.resolve() if args.example_cache_root else None,
+    )
     unique = np.unique(examples.origin_dates)
     print(
         f"Examples: {len(examples.features)} rows, {len(unique)} unique origins, tickers {len(np.unique(examples.tickers))}"
@@ -131,6 +171,7 @@ def main() -> int:
         protocol=protocol,
         required_asset_holdouts=("NMM", "MSFT"),
         universe_manifest_sha256=uni_sha,
+        universe_coverage_certifiable=bool(uni_manifest.get("coverage_certifiable")),
         panel_checksum=panel_fp,
         news_snapshot_checksum="sha256:" + hashlib.sha256(b"no_news").hexdigest(),
     )
@@ -180,7 +221,18 @@ def main() -> int:
     args.out.write_text(
         json.dumps(out, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8"
     )
+    universe_out = (
+        args.universe_out.resolve()
+        if args.universe_out is not None
+        else args.out.resolve().with_name("universe-v8-diagnostic.json")
+    )
+    universe_out.parent.mkdir(parents=True, exist_ok=True)
+    universe_out.write_text(
+        json.dumps(uni_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     print(f"\nDry-run report written to {args.out}")
+    print(f"Non-certifiable diagnostic universe written to {universe_out}")
     print(
         "Next: run full RTX training via scripts/run_v8_volatility_research.py (Slice 9) then scripts/certify_v8_candidate.py (Slice 12)"
     )

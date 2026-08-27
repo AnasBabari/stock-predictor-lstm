@@ -262,6 +262,7 @@ def build_v8_chronological_split(
     asset_split_seed: int = 42,
     required_asset_holdouts: tuple[str, ...] | None = None,
     universe_manifest_sha256: str | None = None,
+    universe_coverage_certifiable: bool = False,
     panel_checksum: str | None = None,
     news_snapshot_checksum: str | None = None,
 ) -> V8SplitIndices:
@@ -372,9 +373,11 @@ def build_v8_chronological_split(
         raise ValueError("asset-transfer test partition empty – check holdout coverage")
     # Require panel/universe checksums for certifiable runs (not for dry-run diagnostics)
     # We allow None for non-certifiable diagnostics but record non-certifiable state
-    coverage_certifiable = True
-    if panel_checksum is None or universe_manifest_sha256 is None:
-        coverage_certifiable = False
+    coverage_certifiable = bool(
+        panel_checksum is not None
+        and universe_manifest_sha256 is not None
+        and universe_coverage_certifiable
+    )
     # Per-exchange minimum handled via universe manifest, but also check here that holdouts span at least 2 exchanges
     # (heuristic: require at least 2 distinct MICs among holdouts if universe has >=2 MICs)
 

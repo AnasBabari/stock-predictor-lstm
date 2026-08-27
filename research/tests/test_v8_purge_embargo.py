@@ -53,6 +53,7 @@ def test_purge_strict_per_row_target_end():
         required_asset_holdouts=("MSFT", "NMM"),
         panel_checksum="sha256:abc",
         universe_manifest_sha256="sha256:def",
+        universe_coverage_certifiable=True,
     )
     assert len(idx.train_indices) > 0
     # Test that embargo violation is caught when we shrink embargo below max horizon
@@ -69,6 +70,7 @@ def test_separate_temporal_vs_asset_transfer_identities():
         required_asset_holdouts=("MSFT", "NMM"),
         panel_checksum="a",
         universe_manifest_sha256="b",
+        universe_coverage_certifiable=True,
     )
     # Temporal and asset-transfer must be disjoint and non-empty
     assert len(idx.temporal_test_indices) > 0
@@ -132,6 +134,7 @@ def test_holiday_heavy_and_mixed_calendar():
         required_asset_holdouts=("MSFT", "VOD.L"),
         panel_checksum="a",
         universe_manifest_sha256="b",
+        universe_coverage_certifiable=True,
     )
     assert len(idx.temporal_test_indices) > 0
 
@@ -146,6 +149,7 @@ def test_horizons_independently():
             # purge defaults to max_horizon (30) which covers all horizons
             panel_checksum="a",
             universe_manifest_sha256="b",
+            universe_coverage_certifiable=True,
         )
         assert idx.manifest.purge_horizon_sessions >= horizon
         assert idx.manifest.purge_horizon_sessions == 30

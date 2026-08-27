@@ -194,6 +194,7 @@ def main() -> int:
         protocol=protocol,
         required_asset_holdouts=holdouts,
         universe_manifest_sha256=uni_sha,
+        universe_coverage_certifiable=bool(uni.get("coverage_certifiable")),
         panel_checksum=panel_fp,
         news_snapshot_checksum=news_sha,
     )
