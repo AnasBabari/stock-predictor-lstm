@@ -10,6 +10,12 @@ import pandas_market_calendars as mcal
 
 from .news import NewsEvent, NewsFeatureMatrix, NewsOrigin, aggregate_news_features
 
+V8_MIC_CALENDAR_NAMES = {
+    "XNAS": "NASDAQ",
+    "XNYS": "NYSE",
+    "XLON": "LSE",
+}
+
 
 def validate_news_coverage(
     manifest: Mapping[str, object],
@@ -46,28 +52,66 @@ def market_close_news_origins(
     origin_dates: np.ndarray,
     *,
     calendar_name: str = "NYSE",
+    calendar_by_ticker: Mapping[str, str] | None = None,
 ) -> tuple[NewsOrigin, ...]:
     """Map every session date to its actual UTC exchange close, including DST."""
     symbols = np.asarray(tickers, dtype=str)
     dates = np.asarray(origin_dates, dtype="datetime64[D]")
     if symbols.ndim != 1 or dates.shape != symbols.shape or len(symbols) == 0:
         raise ValueError("news alignment requires matched non-empty ticker and date vectors")
-    unique_dates = np.unique(dates)
-    calendar = mcal.get_calendar(calendar_name)
-    schedule = calendar.schedule(
-        start_date=str(unique_dates[0]),
-        end_date=str(unique_dates[-1]),
+    normalized_calendars = (
+        {
+            str(ticker).strip().upper(): str(name).strip()
+            for ticker, name in calendar_by_ticker.items()
+        }
+        if calendar_by_ticker is not None
+        else None
     )
-    close_by_date = {
-        np.datetime64(pd.Timestamp(session).date()): pd.Timestamp(close).tz_convert("UTC")
-        for session, close in schedule["market_close"].items()
-    }
-    missing = sorted({str(date) for date in unique_dates if date not in close_by_date})
-    if missing:
-        preview = ", ".join(missing[:3])
-        raise ValueError(f"origin dates are absent from {calendar_name} schedule: {preview}")
+    unique_tickers = {str(ticker).strip().upper() for ticker in symbols}
+    if normalized_calendars is not None and set(normalized_calendars) != unique_tickers:
+        raise ValueError("calendar mapping must exactly cover news-origin tickers")
+    row_calendars = np.asarray(
+        [
+            normalized_calendars[str(ticker).strip().upper()]
+            if normalized_calendars is not None
+            else calendar_name
+            for ticker in symbols
+        ],
+        dtype=str,
+    )
+    close_by_calendar_date: dict[tuple[str, np.datetime64], pd.Timestamp] = {}
+    for selected_calendar in sorted(set(row_calendars)):
+        mask = row_calendars == selected_calendar
+        calendar_dates = np.unique(dates[mask])
+        try:
+            calendar = mcal.get_calendar(selected_calendar)
+        except RuntimeError as error:
+            raise ValueError(f"unknown market calendar {selected_calendar!r}") from error
+        schedule = calendar.schedule(
+            start_date=str(calendar_dates[0]),
+            end_date=str(calendar_dates[-1]),
+        )
+        closes = {
+            np.datetime64(pd.Timestamp(session).date()): pd.Timestamp(close).tz_convert("UTC")
+            for session, close in schedule["market_close"].items()
+        }
+        missing = sorted({str(date) for date in calendar_dates if date not in closes})
+        if missing:
+            preview = ", ".join(missing[:3])
+            raise ValueError(
+                f"origin dates are absent from {selected_calendar} schedule: {preview}"
+            )
+        close_by_calendar_date.update(
+            {(selected_calendar, date): close for date, close in closes.items()}
+        )
     return tuple(
-        NewsOrigin(ticker, close_by_date[date]) for ticker, date in zip(symbols, dates, strict=True)
+        NewsOrigin(ticker, close_by_calendar_date[(selected_calendar, date)])
+        for ticker, date, selected_calendar in zip(
+            symbols,
+            dates,
+            row_calendars,
+            strict=True,
+        )
     )
 
 
@@ -78,10 +122,26 @@ def aggregate_news_for_market_rows(
     *,
     exposure_map: Mapping[str, Mapping[str, float]] | None = None,
     calendar_name: str = "NYSE",
+    calendar_by_ticker: Mapping[str, str] | None = None,
 ) -> NewsFeatureMatrix:
     origins = market_close_news_origins(
         tickers,
         origin_dates,
         calendar_name=calendar_name,
+        calendar_by_ticker=calendar_by_ticker,
     )
     return aggregate_news_features(events, origins, exposure_map=exposure_map)
+
+
+def v8_calendar_map(ticker_exchange_map: Mapping[str, str]) -> dict[str, str]:
+    """Translate verified v8 MIC identities into exchange calendar names."""
+
+    result: dict[str, str] = {}
+    for ticker, raw_mic in ticker_exchange_map.items():
+        normalized_ticker = str(ticker).strip().upper()
+        mic = str(raw_mic).strip().upper()
+        try:
+            result[normalized_ticker] = V8_MIC_CALENDAR_NAMES[mic]
+        except KeyError as error:
+            raise ValueError(f"unsupported v8 exchange MIC {mic!r}") from error
+    return result
