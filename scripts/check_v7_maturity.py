@@ -197,7 +197,7 @@ def main() -> int:
     # Derive ticker universe from manifest if available
     manifest_path = panel_dir / "manifest.json"
     if manifest_path.exists():
-        try:
+        try:  # noqa: SIM105
             _ = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception:
             pass
