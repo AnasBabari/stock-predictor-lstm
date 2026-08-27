@@ -18,7 +18,7 @@ import json
 import os
 import tempfile
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +158,7 @@ class UniverseManifest:
     seed: int = V8_UNIVERSE_SEED
     members: tuple[UniverseMember, ...] = field(default_factory=tuple)
     source_checksums: dict[str, str] = field(default_factory=dict)
+    source_attestations: dict[str, dict[str, Any]] = field(default_factory=dict)
     selection_policy: dict[str, Any] = field(default_factory=dict)
     total_members: int = 0
     per_exchange_counts: dict[str, int] = field(default_factory=dict)
@@ -187,6 +188,78 @@ def _manifest_canonical_bytes(manifest: dict[str, Any]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
         "utf-8"
     )
+
+
+def _validate_source_evidence(
+    members: list[UniverseMember],
+    *,
+    source_checksums: dict[str, str],
+    source_attestations: dict[str, dict[str, Any]],
+    require_certifiable: bool,
+) -> list[str]:
+    """Validate immutable source identities and return non-certifiable reasons.
+
+    A checksum proves which bytes were used, not that those bytes are a
+    point-in-time security master.  Certifiable manifests therefore require a
+    separate operator-supplied attestation for every member source.  The
+    attestation is content-addressed as part of the universe manifest and is
+    deliberately declarative: the repository never fabricates provider or
+    licensing claims from a current-constituent web page.
+    """
+
+    reasons: list[str] = []
+    for name, checksum in source_checksums.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("source checksum keys must be non-empty strings")
+        if not isinstance(checksum, str) or not checksum.startswith("sha256:"):
+            raise ValueError(f"source checksum for {name!r} must use sha256:<hex>")
+        digest = checksum.removeprefix("sha256:")
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
+            raise ValueError(f"source checksum for {name!r} is not a SHA-256 digest")
+
+    member_sources = {member.source.strip() for member in members}
+    missing_attestations = sorted(member_sources - set(source_attestations))
+    if missing_attestations:
+        reasons.append("missing_source_attestations:" + ",".join(missing_attestations))
+
+    required_true = (
+        "license_acknowledged",
+        "point_in_time_membership",
+        "historical_listing_status",
+        "includes_delisted_where_available",
+    )
+    for source_name, attestation in sorted(source_attestations.items()):
+        if not isinstance(source_name, str) or not source_name.strip():
+            raise ValueError("source attestation keys must be non-empty strings")
+        if not isinstance(attestation, dict):
+            raise ValueError(f"source attestation for {source_name!r} must be an object")
+        for field_name in ("source_snapshot_id", "license_id", "retrieved_at"):
+            value = attestation.get(field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"source attestation {source_name!r} has empty {field_name}"
+                )
+        try:
+            retrieved_at = datetime.fromisoformat(
+                str(attestation["retrieved_at"]).replace("Z", "+00:00")
+            )
+        except ValueError as error:
+            raise ValueError(
+                f"source attestation {source_name!r} has invalid retrieved_at"
+            ) from error
+        if retrieved_at.tzinfo is None:
+            raise ValueError(
+                f"source attestation {source_name!r} retrieved_at must include a timezone"
+            )
+        for field_name in required_true:
+            if attestation.get(field_name) is not True:
+                reasons.append(f"{source_name}:{field_name}=false")
+
+    if require_certifiable and reasons:
+        raise ValueError(
+            "universe source evidence is not certifiable: " + "; ".join(reasons)
+        )
+    return reasons
 
 
 def _validate_member(m: UniverseMember) -> None:
@@ -265,6 +338,7 @@ def build_universe_manifest(
     members: list[UniverseMember],
     *,
     source_checksums: dict[str, str] | None = None,
+    source_attestations: dict[str, dict[str, Any]] | None = None,
     selection_policy: dict[str, Any] | None = None,
     seed: int = V8_UNIVERSE_SEED,
     protocol_version: str = "global-volatility-distribution-v8-news-transfer",
@@ -277,6 +351,13 @@ def build_universe_manifest(
         raise ValueError("source_checksums is required and must be non-empty (prove provenance)")
     # selection_policy must have uniform keys per exchange
     policy = dict(selection_policy or {})
+    allow_sparse = bool(policy.get("allow_sparse", False))
+    evidence_reasons = _validate_source_evidence(
+        members,
+        source_checksums=dict(source_checksums),
+        source_attestations=dict(source_attestations or {}),
+        require_certifiable=not allow_sparse,
+    )
     # Validate dedupe by security_id (not ticker) and per-exchange minimums
     seen_ids: set[str] = set()
     seen_isins: dict[str, str] = {}
@@ -303,7 +384,6 @@ def build_universe_manifest(
 
     # Enforce minimum coverage for a certifiable four-market model
     # We fail closed unless explicitly overridden via selection_policy allow_sparse=True
-    allow_sparse = bool(policy.get("allow_sparse", False))
     if not allow_sparse:
         for mic in (V8_EXCHANGE_MICS["NASDAQ"], V8_EXCHANGE_MICS["NYSE"], V8_EXCHANGE_MICS["LSE"]):
             count = per_exchange.get(mic, 0)
@@ -315,8 +395,17 @@ def build_universe_manifest(
         # Also require some SP500-tagged members if policy expects them
         sp500_tagged = sum(1 for m in members if any(e.get("index") == "SP500" for e in m.index_memberships))
         if sp500_tagged == 0 and not policy.get("allow_no_sp500", False):
-            # Soft warning via manifest field, but fail if strict
-            pass
+            raise ValueError("certifiable universe requires point-in-time S&P 500 membership rows")
+        required_holdouts = {
+            str(ticker).strip().upper() for ticker in policy.get("required_holdouts", ())
+        }
+        member_tickers = {member.ticker.strip().upper() for member in members}
+        missing_holdouts = sorted(required_holdouts - member_tickers)
+        if missing_holdouts:
+            raise ValueError(
+                "certifiable universe is missing required holdouts: "
+                + ", ".join(missing_holdouts)
+            )
         if len(per_sector) < V8_MIN_SECTOR_COVERAGE:
             raise ValueError(
                 f"universe has only {len(per_sector)} sectors, need >= {V8_MIN_SECTOR_COVERAGE}"
@@ -335,8 +424,13 @@ def build_universe_manifest(
         "per_type_counts": dict(sorted(per_type.items())),
         "per_sector_counts": dict(sorted(per_sector.items())),
         "source_checksums": dict(sorted((source_checksums or {}).items())),
+        "source_attestations": {
+            key: dict(sorted(value.items()))
+            for key, value in sorted((source_attestations or {}).items())
+        },
         "selection_policy": dict(sorted((selection_policy or {}).items())),
         "coverage_certifiable": not allow_sparse,
+        "coverage_reasons": evidence_reasons,
     }
     digest = _sha256_bytes(_manifest_canonical_bytes(manifest))
     manifest["sha256"] = digest
@@ -364,6 +458,7 @@ def verify_universe_manifest(payload: object) -> dict[str, Any]:
     expected = build_universe_manifest(
         members,
         source_checksums=payload.get("source_checksums"),
+        source_attestations=payload.get("source_attestations"),
         selection_policy=payload.get("selection_policy"),
         seed=int(payload.get("seed", V8_UNIVERSE_SEED)),
         protocol_version=str(payload.get("protocol_version", "")),
