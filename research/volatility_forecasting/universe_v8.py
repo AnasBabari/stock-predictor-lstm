@@ -254,6 +254,22 @@ def _validate_source_evidence(
         for field_name in required_true:
             if attestation.get(field_name) is not True:
                 reasons.append(f"{source_name}:{field_name}=false")
+        evidence_files = attestation.get("evidence_files")
+        if not isinstance(evidence_files, list) or not evidence_files:
+            reasons.append(f"{source_name}:evidence_files=missing")
+        else:
+            missing_evidence = sorted(set(evidence_files) - set(source_checksums))
+            if missing_evidence:
+                reasons.append(
+                    f"{source_name}:unhashed_evidence=" + ",".join(missing_evidence)
+                )
+
+    for member in members:
+        attestation = source_attestations.get(member.source.strip())
+        if isinstance(attestation, dict) and member.source_snapshot_id != attestation.get(
+            "source_snapshot_id"
+        ):
+            reasons.append(f"{member.ticker}:source_snapshot_id_mismatch")
 
     if require_certifiable and reasons:
         raise ValueError(
@@ -361,6 +377,7 @@ def build_universe_manifest(
     # Validate dedupe by security_id (not ticker) and per-exchange minimums
     seen_ids: set[str] = set()
     seen_isins: dict[str, str] = {}
+    seen_tickers: dict[str, str] = {}
     per_exchange: dict[str, int] = {}
     per_type: dict[str, int] = {}
     per_sector: dict[str, int] = {}
@@ -371,6 +388,14 @@ def build_universe_manifest(
         if norm_id in seen_ids:
             raise ValueError(f"duplicate security_id {m.security_id!r}")
         seen_ids.add(norm_id)
+        normalized_ticker = m.ticker.strip().upper()
+        if normalized_ticker in seen_tickers:
+            raise ValueError(
+                f"duplicate active ticker {normalized_ticker!r} for {m.security_id!r} "
+                f"and {seen_tickers[normalized_ticker]!r}; the current panel contract "
+                "requires a unique provider symbol per security"
+            )
+        seen_tickers[normalized_ticker] = m.security_id
         # Also dedupe by normalized ISIN under different forms
         if m.isin:
             norm_isin = m.isin.strip().upper()
@@ -385,6 +410,22 @@ def build_universe_manifest(
     # Enforce minimum coverage for a certifiable four-market model
     # We fail closed unless explicitly overridden via selection_policy allow_sparse=True
     if not allow_sparse:
+        low_history = sorted(
+            member.ticker for member in members if member.required_history_sessions < 756
+        )
+        if low_history:
+            raise ValueError(
+                "certifiable universe members require at least 756 history sessions: "
+                + ", ".join(low_history)
+            )
+        failed_liquidity = sorted(
+            member.ticker for member in members if not member.point_in_time_liquidity_ok
+        )
+        if failed_liquidity:
+            raise ValueError(
+                "certifiable universe members failed point-in-time liquidity: "
+                + ", ".join(failed_liquidity)
+            )
         for mic in (V8_EXCHANGE_MICS["NASDAQ"], V8_EXCHANGE_MICS["NYSE"], V8_EXCHANGE_MICS["LSE"]):
             count = per_exchange.get(mic, 0)
             if count < V8_MIN_PER_EXCHANGE:
@@ -446,6 +487,10 @@ def verify_universe_manifest(payload: object) -> dict[str, Any]:
     """
     if not isinstance(payload, dict):
         raise ValueError("universe manifest must be a JSON object")
+    # Builders may still contain tuple-valued dataclass fields in memory;
+    # manifests on disk contain the JSON-normalized list representation.
+    normalized_payload = json.loads(json.dumps(payload, sort_keys=True))
+    payload = normalized_payload
     rows = payload.get("members")
     if not isinstance(rows, list) or not rows:
         raise ValueError("universe manifest has no members")
@@ -464,7 +509,7 @@ def verify_universe_manifest(payload: object) -> dict[str, Any]:
         protocol_version=str(payload.get("protocol_version", "")),
     )
     normalized_expected = json.loads(json.dumps(expected, sort_keys=True))
-    if payload != normalized_expected:
+    if normalized_payload != normalized_expected:
         raise ValueError("universe manifest content or checksum does not match")
     return normalized_expected
 

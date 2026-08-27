@@ -53,12 +53,16 @@ from research.volatility_forecasting.candidate_v8 import (  # noqa: E402
     train_v8_numeric_ensemble,
 )
 from research.volatility_forecasting.data import build_volatility_panel_examples  # noqa: E402
+from research.volatility_forecasting.market_snapshot_v8 import (  # noqa: E402
+    verify_v8_market_snapshot,
+)
 from research.volatility_forecasting.model import (  # noqa: E402
     BaselineResidualTCNConfig,
     TorchTrainingConfig,
     VolatilityLossWeights,
 )
 from research.volatility_forecasting.split_v8 import build_v8_chronological_split  # noqa: E402
+from research.volatility_forecasting.universe_v8 import verify_universe_manifest  # noqa: E402
 from research.volatility_forecasting.v8_protocol import v8_manifest, v8_protocol  # noqa: E402
 
 
@@ -333,10 +337,19 @@ def main() -> int:
     manifest = v8_manifest(news_enabled=False)
     print(f"v8 architecture search protocol {protocol.protocol_version}")
 
-    uni = json.loads(uni_path.read_text(encoding="utf-8"))
+    uni = verify_universe_manifest(json.loads(uni_path.read_text(encoding="utf-8")))
     uni_sha = uni.get("sha256")
     if not uni_sha:
         print("universe manifest missing sha256", file=sys.stderr)
+        return 2
+    try:
+        verify_v8_market_snapshot(
+            panel_dir,
+            universe_manifest=uni,
+            require_certifiable=False,
+        )
+    except ValueError as error:
+        print(f"v8 market snapshot verification failed: {error}", file=sys.stderr)
         return 2
 
     examples, panel_fp = _load_examples(

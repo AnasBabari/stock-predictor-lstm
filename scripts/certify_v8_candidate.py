@@ -55,6 +55,9 @@ from research.volatility_forecasting.export import (  # noqa: E402
     load_prospective_v8_candidate_member,
 )
 from research.volatility_forecasting.folds import VolatilityFoldPlan  # noqa: E402
+from research.volatility_forecasting.market_snapshot_v8 import (  # noqa: E402
+    verify_v8_market_snapshot,
+)
 from research.volatility_forecasting.refit import FrozenEnsemble  # noqa: E402
 from research.volatility_forecasting.split_v8 import build_v8_chronological_split  # noqa: E402
 from research.volatility_forecasting.universe_v8 import verify_universe_manifest  # noqa: E402
@@ -226,6 +229,16 @@ def main() -> int:
         return 2
     if not uni.get("coverage_certifiable") or not cand.get("universe_certifiable"):
         print("candidate universe is diagnostic-only and cannot be certified", file=sys.stderr)
+        return 2
+
+    try:
+        verify_v8_market_snapshot(
+            panel_dir,
+            universe_manifest=uni,
+            require_certifiable=True,
+        )
+    except ValueError as error:
+        print(f"v8 market snapshot verification failed: {error}", file=sys.stderr)
         return 2
 
     panel_fp = panel_fingerprint(panel_dir)

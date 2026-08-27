@@ -1,111 +1,100 @@
 #!/usr/bin/env python3
-"""Build a v8 immutable market snapshot from a universe manifest.
-
-This is the v8 analogue of the yfinance snapshot builder, but it binds the
-universe manifest SHA into the market snapshot extra metadata and enforces
-point-in-time membership (no survivorship bias).
-
-For the initial v8 numeric certification we reuse the existing 69-ticker
-panel as a historical snapshot (it is already immutable and
-content-addressed).  This script copies it into a v8-named directory and
-enriches the manifest with v8_market fields without rewriting OHLCV files.
-"""
+"""Acquire or convert an immutable universe-bound v8 market snapshot."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import shutil
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for p in (ROOT, ROOT / "research"):
-    if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
+for path in (ROOT, ROOT / "research"):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+from volatility_forecasting.market_snapshot_v8 import (  # noqa: E402
+    fetch_v8_market_frames,
+    verify_v8_market_snapshot,
+    write_v8_market_snapshot,
+)
+from volatility_forecasting.universe_v8 import verify_universe_manifest  # noqa: E402
+from volatility_forecasting.v8_protocol import V8_PROTOCOL_VERSION_NUMERIC  # noqa: E402
 
 from backend.panel.snapshots import load_snapshot  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Build v8 market snapshot (immutable, universe-bound)")
-    p.add_argument(
+    parser = argparse.ArgumentParser(description="Build an immutable v8 market snapshot")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--download-from-universe",
+        action="store_true",
+        help="Download raw and adjusted histories for the complete universe",
+    )
+    mode.add_argument(
         "--source-panel-dir",
         type=Path,
-        required=True,
-        help="Existing immutable panel snapshot dir (e.g. prospective-v7 panel)",
+        help="Convert a legacy adjusted-only panel into a diagnostic v8 snapshot",
     )
-    p.add_argument(
-        "--universe-manifest", type=Path, required=True, help="Path to universe-v8-manifest.json"
-    )
-    p.add_argument(
-        "--out-root",
-        type=Path,
-        required=True,
-        help="Root dir where v8 snapshot will be created (e.g. /tmp/v8-market)",
-    )
-    p.add_argument(
-        "--v8-protocol-version", default="global-volatility-distribution-v8-news-transfer"
-    )
-    return p.parse_args()
+    parser.add_argument("--universe-manifest", type=Path, required=True)
+    parser.add_argument("--out-root", type=Path, required=True)
+    parser.add_argument("--years", type=int, default=10)
+    parser.add_argument("--provider", default="yfinance")
+    parser.add_argument("--provider-snapshot-id", required=True)
+    parser.add_argument("--provider-license-id", required=True)
+    parser.add_argument("--license-acknowledged", action="store_true")
+    parser.add_argument("--v8-protocol-version", default=V8_PROTOCOL_VERSION_NUMERIC)
+    return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
-    src = args.source_panel_dir.resolve()
-    uni_path = args.universe_manifest.resolve()
-    out_root = args.out_root.resolve()
-
-    if not src.exists():
-        print(f"source panel missing: {src}", file=sys.stderr)
+    if not args.license_acknowledged:
+        print("--license-acknowledged is required after reviewing provider terms", file=sys.stderr)
         return 2
-    if not uni_path.exists():
-        print(f"universe manifest missing: {uni_path}", file=sys.stderr)
+    try:
+        universe = verify_universe_manifest(
+            json.loads(args.universe_manifest.resolve().read_text(encoding="utf-8"))
+        )
+        if args.download_from_universe:
+            os.environ["PANEL_LICENSE_ACKNOWLEDGED"] = "true"
+            frames = fetch_v8_market_frames(universe, years=args.years)
+            allow_diagnostic = False
+            derived_checksum = None
+        else:
+            legacy_manifest, frames = load_snapshot(args.source_panel_dir.resolve())
+            allow_diagnostic = True
+            derived_checksum = str(legacy_manifest.get("pooled_checksum"))
+        output = write_v8_market_snapshot(
+            args.out_root.resolve(),
+            frames,
+            universe_manifest=universe,
+            provider=args.provider,
+            provider_snapshot_id=args.provider_snapshot_id,
+            provider_license_id=args.provider_license_id,
+            license_acknowledged=True,
+            v8_protocol_version=args.v8_protocol_version,
+            allow_incomplete_diagnostic=allow_diagnostic,
+            derived_from_panel_checksum=derived_checksum,
+        )
+        manifest, _ = verify_v8_market_snapshot(
+            output,
+            universe_manifest=universe,
+            require_certifiable=args.download_from_universe,
+        )
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+        print(f"v8 market build failed: {error}", file=sys.stderr)
         return 2
 
-    uni = json.loads(uni_path.read_text(encoding="utf-8"))
-    uni_sha = uni.get("sha256")
-    if not uni_sha:
-        print("universe manifest has no sha256", file=sys.stderr)
-        return 2
-
-    # Load source panel to verify checksums (fail closed)
-    manifest, _frames = load_snapshot(src)
-    pooled = manifest.get("pooled_checksum")
-    print(f"Source panel {manifest.get('panel_id')} pooled {pooled} universe {uni_sha[:12]}")
-
-    # Copy raw files into new v8-named snapshot dir (content-addressed id stays same,
-    # but we add v8_market extra). For now we reuse the same panel_id to keep
-    # pooled checksum identical; v8 binding is via extra field.
-    out_root.mkdir(parents=True, exist_ok=True)
-    dst = out_root / src.name
-    if dst.exists():
-        print(f"v8 market snapshot already exists at {dst} — immutable", file=sys.stderr)
-        return 1
-    shutil.copytree(src, dst)
-    # Enrich manifest with v8_market
-    existing = json.loads((dst / "manifest.json").read_text(encoding="utf-8"))
-    existing["v8_market"] = {
-        "schema": 1,
-        "v8_protocol_version": args.v8_protocol_version,
-        "universe_manifest_sha256": uni_sha,
-        "source_panel_pooled_checksum": pooled,
-        "note": "v8 market snapshot derived from existing immutable panel; OHLCV bytes unchanged",
-    }
-    # Keep extra for backward compat
-    existing.setdefault("extra", {})["v8_market"] = existing["v8_market"]
-    # Atomic replace
-    tmp = dst / "manifest.json.tmp"
-    tmp.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(dst / "manifest.json")
-    # Verify pooled checksum still matches files (it should, as we didn't rewrite raw)
-    manifest2, _ = load_snapshot(dst)
-    if manifest2.get("pooled_checksum") != pooled:
-        print("pooled checksum changed after v8 enrichment — abort", file=sys.stderr)
-        return 2
-    print(f"v8 market snapshot ready at {dst}")
-    print(f"  panel_id: {manifest2['panel_id']}")
-    print(f"  v8_market.universe_sha: {uni_sha}")
+    status = manifest["v8_market"]
+    print(f"v8 market snapshot: {output}")
+    print(f"pooled_checksum: {manifest['pooled_checksum']}")
+    print(f"acquired: {status['acquired_ticker_count']}/{status['requested_ticker_count']}")
+    print(f"coverage_certifiable: {status['coverage_certifiable']}")
+    if status["coverage_reasons"]:
+        print("coverage_reasons: " + ", ".join(status["coverage_reasons"]))
     return 0
 
 

@@ -78,7 +78,7 @@ def _certifiable_members() -> list[UniverseMember]:
     counters = {"XNAS": 0, "XNYS": 0, "XLON": 0}
     for mic in counters:
         for index in range(25):
-            ticker = f"{mic[-1]}{index:02d}" + (".L" if mic == "XLON" else "")
+            ticker = f"{mic[1:3]}{index:02d}" + (".L" if mic == "XLON" else "")
             if mic == "XNAS" and index == 0:
                 ticker = "MSFT"
             elif mic == "XNYS" and index == 0:
@@ -127,4 +127,38 @@ def test_certifiable_manifest_rejects_unattested_current_list() -> None:
             _certifiable_members(),
             source_checksums={"membership_archive": "sha256:" + "a" * 64},
             selection_policy=initial_v8_selection_policy(),
+        )
+
+
+def test_manifest_rejects_duplicate_provider_ticker_identity() -> None:
+    first = UniverseMember(
+        security_id="pit:first",
+        ticker="DUP",
+        company_name="First Corp",
+        isin=None,
+        figi=None,
+        cik=None,
+        primary_exchange_mic="XNAS",
+        sector="Technology",
+        source="pit-provider",
+        source_snapshot_id="pit-master-2026-08-27",
+    )
+    second = UniverseMember(
+        security_id="pit:second",
+        ticker="dup",
+        company_name="Second Corp",
+        isin=None,
+        figi=None,
+        cik=None,
+        primary_exchange_mic="XNYS",
+        sector="Energy",
+        source="pit-provider",
+        source_snapshot_id="pit-master-2026-08-27",
+    )
+    with pytest.raises(ValueError, match="duplicate active ticker"):
+        build_universe_manifest(
+            [first, second],
+            source_checksums={"membership_archive": "sha256:" + "a" * 64},
+            source_attestations={"pit-provider": _attestation()},
+            selection_policy={"allow_sparse": True},
         )
