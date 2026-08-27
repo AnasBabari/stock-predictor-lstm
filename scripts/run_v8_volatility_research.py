@@ -60,7 +60,10 @@ from research.volatility_forecasting.market_snapshot_v8 import (  # noqa: E402
 )
 from research.volatility_forecasting.model import TorchTrainingConfig  # noqa: E402
 from research.volatility_forecasting.split_v8 import build_v8_chronological_split  # noqa: E402
-from research.volatility_forecasting.universe_v8 import verify_universe_manifest  # noqa: E402
+from research.volatility_forecasting.universe_v8 import (  # noqa: E402
+    universe_identity_maps,
+    verify_universe_manifest,
+)
 from research.volatility_forecasting.v8_protocol import v8_manifest, v8_protocol  # noqa: E402
 
 
@@ -96,10 +99,14 @@ def _load_examples(
     skip_cache: bool = False,
     cache_root: Path | None = None,
 ):
-    roots = ([cache_root] if cache_root is not None else []) + ([] if skip_cache else [
-        Path(r"C:\tmp\stocklstm-volatility-panel-v1\example-cache"),
-        ROOT / "research" / ".cache" / "volatility-examples",
-    ])
+    roots = ([cache_root] if cache_root is not None else []) + (
+        []
+        if skip_cache
+        else [
+            Path(r"C:\tmp\stocklstm-volatility-panel-v1\example-cache"),
+            ROOT / "research" / ".cache" / "volatility-examples",
+        ]
+    )
     for root in roots:
         if not root.is_dir():
             continue
@@ -157,6 +164,7 @@ def main() -> int:
     if not uni_sha:
         print("universe manifest missing sha256", file=sys.stderr)
         return 2
+    exchange_map, security_id_map = universe_identity_maps(uni)
     try:
         verify_v8_market_snapshot(
             panel_dir,
@@ -187,6 +195,8 @@ def main() -> int:
         panel_checksum=panel_fp,
         news_snapshot_checksum="sha256:"
         + hashlib.sha256(b"no_news" if not args.news_enabled else b"news").hexdigest(),
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=security_id_map,
     )
     print(
         f"split train {split.manifest.train_rows} val {split.manifest.validation_rows} pooled_test {split.manifest.pooled_test_rows}"

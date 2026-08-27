@@ -236,9 +236,7 @@ def _validate_source_evidence(
         for field_name in ("source_snapshot_id", "license_id", "retrieved_at"):
             value = attestation.get(field_name)
             if not isinstance(value, str) or not value.strip():
-                raise ValueError(
-                    f"source attestation {source_name!r} has empty {field_name}"
-                )
+                raise ValueError(f"source attestation {source_name!r} has empty {field_name}")
         try:
             retrieved_at = datetime.fromisoformat(
                 str(attestation["retrieved_at"]).replace("Z", "+00:00")
@@ -260,9 +258,7 @@ def _validate_source_evidence(
         else:
             missing_evidence = sorted(set(evidence_files) - set(source_checksums))
             if missing_evidence:
-                reasons.append(
-                    f"{source_name}:unhashed_evidence=" + ",".join(missing_evidence)
-                )
+                reasons.append(f"{source_name}:unhashed_evidence=" + ",".join(missing_evidence))
 
     for member in members:
         attestation = source_attestations.get(member.source.strip())
@@ -272,9 +268,7 @@ def _validate_source_evidence(
             reasons.append(f"{member.ticker}:source_snapshot_id_mismatch")
 
     if require_certifiable and reasons:
-        raise ValueError(
-            "universe source evidence is not certifiable: " + "; ".join(reasons)
-        )
+        raise ValueError("universe source evidence is not certifiable: " + "; ".join(reasons))
     return reasons
 
 
@@ -298,7 +292,9 @@ def _validate_member(m: UniverseMember) -> None:
         )
     # Exchange MIC must be known, never SP500_PIT
     if m.primary_exchange_mic.upper().strip() == "SP500_PIT":
-        raise ValueError(f"member {m.ticker!r} uses SP500_PIT as MIC; use index_memberships instead")
+        raise ValueError(
+            f"member {m.ticker!r} uses SP500_PIT as MIC; use index_memberships instead"
+        )
     if m.primary_exchange_mic not in set(V8_EXCHANGE_MICS.values()):
         raise ValueError(f"unknown exchange MIC {m.primary_exchange_mic!r} for {m.ticker!r}")
     # Currency / timezone
@@ -327,7 +323,11 @@ def _validate_member(m: UniverseMember) -> None:
         # Check reversed dates within entry
         s_val = entry.get("membership_start")
         e_val = entry.get("membership_end")
-        if s_val is not None and e_val is not None and date.fromisoformat(str(s_val)) > date.fromisoformat(str(e_val)):
+        if (
+            s_val is not None
+            and e_val is not None
+            and date.fromisoformat(str(s_val)) > date.fromisoformat(str(e_val))
+        ):
             raise ValueError(f"index membership start after end for {m.ticker!r}")
     # Validate top-level membership dates
     for field_name in ("membership_start", "membership_end"):
@@ -341,7 +341,11 @@ def _validate_member(m: UniverseMember) -> None:
                 raise ValueError(f"invalid {field_name} {value!r} for {m.ticker!r}") from error
     s_top = m.membership_start
     e_top = m.membership_end
-    if s_top is not None and e_top is not None and date.fromisoformat(s_top) > date.fromisoformat(e_top):
+    if (
+        s_top is not None
+        and e_top is not None
+        and date.fromisoformat(s_top) > date.fromisoformat(e_top)
+    ):
         raise ValueError(f"membership_start after membership_end for {m.ticker!r}")
     # ISIN/FIGI normalization: if present must be non-whitespace
     for field_name in ("isin", "figi", "cik"):
@@ -400,7 +404,9 @@ def build_universe_manifest(
         if m.isin:
             norm_isin = m.isin.strip().upper()
             if norm_isin in seen_isins:
-                raise ValueError(f"duplicate ISIN {norm_isin!r} for {m.ticker!r} and {seen_isins[norm_isin]!r}")
+                raise ValueError(
+                    f"duplicate ISIN {norm_isin!r} for {m.ticker!r} and {seen_isins[norm_isin]!r}"
+                )
             seen_isins[norm_isin] = m.ticker
         per_exchange[m.primary_exchange_mic] = per_exchange.get(m.primary_exchange_mic, 0) + 1
         per_type[m.security_type] = per_type.get(m.security_type, 0) + 1
@@ -434,7 +440,9 @@ def build_universe_manifest(
                     f"(set selection_policy.allow_sparse=true to record non-certifiable state explicitly)"
                 )
         # Also require some SP500-tagged members if policy expects them
-        sp500_tagged = sum(1 for m in members if any(e.get("index") == "SP500" for e in m.index_memberships))
+        sp500_tagged = sum(
+            1 for m in members if any(e.get("index") == "SP500" for e in m.index_memberships)
+        )
         if sp500_tagged == 0 and not policy.get("allow_no_sp500", False):
             raise ValueError("certifiable universe requires point-in-time S&P 500 membership rows")
         required_holdouts = {
@@ -444,8 +452,7 @@ def build_universe_manifest(
         missing_holdouts = sorted(required_holdouts - member_tickers)
         if missing_holdouts:
             raise ValueError(
-                "certifiable universe is missing required holdouts: "
-                + ", ".join(missing_holdouts)
+                "certifiable universe is missing required holdouts: " + ", ".join(missing_holdouts)
             )
         if len(per_sector) < V8_MIN_SECTOR_COVERAGE:
             raise ValueError(
@@ -512,6 +519,37 @@ def verify_universe_manifest(payload: object) -> dict[str, Any]:
     if normalized_payload != normalized_expected:
         raise ValueError("universe manifest content or checksum does not match")
     return normalized_expected
+
+
+def universe_identity_maps(
+    verified_manifest: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Return ticker-to-MIC and ticker-to-security-ID maps for split binding.
+
+    The input must already have passed :func:`verify_universe_manifest`.  The
+    helper still validates its local assumptions so a caller cannot silently
+    collapse two securities onto one provider symbol before hashing sealed
+    split assignments.
+    """
+
+    rows = verified_manifest.get("members")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("verified universe manifest has no members")
+    exchange_map: dict[str, str] = {}
+    security_id_map: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("verified universe manifest contains a non-object member")
+        ticker = str(row.get("ticker", "")).strip().upper()
+        mic = str(row.get("primary_exchange_mic", "")).strip().upper()
+        security_id = str(row.get("security_id", "")).strip()
+        if not ticker or not mic or not security_id:
+            raise ValueError("verified universe member has incomplete split identity")
+        if ticker in exchange_map or ticker in security_id_map:
+            raise ValueError(f"verified universe contains duplicate ticker identity {ticker!r}")
+        exchange_map[ticker] = mic
+        security_id_map[ticker] = security_id
+    return exchange_map, security_id_map
 
 
 def write_universe_manifest(out_dir: Path, members: list[UniverseMember], **kwargs: Any) -> Path:
@@ -599,5 +637,7 @@ def initial_v8_selection_policy(seed: int = V8_UNIVERSE_SEED) -> dict[str, Any]:
     # Schema test: every exchange sub-policy must have identical field names
     exchange_keys = set(base["nasdaq"].keys())
     assert set(base["nyse"].keys()) == exchange_keys, "NYSE policy keys must match Nasdaq"
-    assert set(base["lse"].keys()).issuperset({"primary_mic", "security_type", "exclude_types", "allowed_types"})
+    assert set(base["lse"].keys()).issuperset(
+        {"primary_mic", "security_type", "exclude_types", "allowed_types"}
+    )
     return base

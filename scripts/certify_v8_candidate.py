@@ -60,7 +60,10 @@ from research.volatility_forecasting.market_snapshot_v8 import (  # noqa: E402
 )
 from research.volatility_forecasting.refit import FrozenEnsemble  # noqa: E402
 from research.volatility_forecasting.split_v8 import build_v8_chronological_split  # noqa: E402
-from research.volatility_forecasting.universe_v8 import verify_universe_manifest  # noqa: E402
+from research.volatility_forecasting.universe_v8 import (  # noqa: E402
+    universe_identity_maps,
+    verify_universe_manifest,
+)
 from research.volatility_forecasting.v8_protocol import (  # noqa: E402
     V8_PROTOCOL_VERSION_NEWS,
     V8_PROTOCOL_VERSION_NUMERIC,
@@ -78,9 +81,9 @@ def _sha256_file(p: Path) -> str:
 
 
 def _canonical_json_bytes(payload: object) -> bytes:
-    return (json.dumps(payload, indent=2, sort_keys=True, default=str, allow_nan=False) + "\n").encode(
-        "utf-8"
-    )
+    return (
+        json.dumps(payload, indent=2, sort_keys=True, default=str, allow_nan=False) + "\n"
+    ).encode("utf-8")
 
 
 def _write_json_atomic(path: Path, payload: object) -> None:
@@ -100,9 +103,7 @@ def _write_json_atomic(path: Path, payload: object) -> None:
 
 
 def _split_digest(payload: object) -> str:
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, default=str).encode()
-    ).hexdigest()
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def _v8_fold_plan(split, examples) -> VolatilityFoldPlan:
@@ -230,6 +231,11 @@ def main() -> int:
     if not uni.get("coverage_certifiable") or not cand.get("universe_certifiable"):
         print("candidate universe is diagnostic-only and cannot be certified", file=sys.stderr)
         return 2
+    try:
+        exchange_map, security_id_map = universe_identity_maps(uni)
+    except ValueError as error:
+        print(f"candidate universe identities are invalid: {error}", file=sys.stderr)
+        return 2
 
     try:
         verify_v8_market_snapshot(
@@ -257,7 +263,9 @@ def main() -> int:
     if _split_digest(candidate_split) != cand_split_sha:
         print("candidate split manifest checksum does not match", file=sys.stderr)
         return 2
-    if tuple(candidate_split.get("holdout_assets", ())) != tuple(sorted(candidate_split.get("holdout_assets", ()))):
+    if tuple(candidate_split.get("holdout_assets", ())) != tuple(
+        sorted(candidate_split.get("holdout_assets", ()))
+    ):
         print("candidate holdout assets are not canonical", file=sys.stderr)
         return 2
     if not set(holdouts).issubset(set(candidate_split.get("holdout_assets", ()))):
@@ -273,9 +281,13 @@ def main() -> int:
         return 2
 
     expected_seeds = tuple(int(value) for value in protocol.seeds)
-    member_seeds = tuple(sorted(member.get("seed") for member in members if isinstance(member, dict)))
+    member_seeds = tuple(
+        sorted(member.get("seed") for member in members if isinstance(member, dict))
+    )
     if member_seeds != expected_seeds:
-        print(f"candidate seeds {member_seeds} differ from protocol {expected_seeds}", file=sys.stderr)
+        print(
+            f"candidate seeds {member_seeds} differ from protocol {expected_seeds}", file=sys.stderr
+        )
         return 2
     try:
         loaded_members = tuple(
@@ -339,6 +351,8 @@ def main() -> int:
             universe_coverage_certifiable=True,
             panel_checksum=panel_fp,
             news_snapshot_checksum=str(news_sha),
+            asset_exchange_map=exchange_map,
+            asset_security_id_map=security_id_map,
         )
         recomputed_split = split.manifest.__dict__
         recomputed_sha = _split_digest(recomputed_split)
@@ -378,9 +392,7 @@ def main() -> int:
             model_identity=ensemble.model_identity,
             development_evidence_sha256=development_evidence_sha,
             required_asset_holdouts=holdouts,
-            eligible_horizons=tuple(
-                int(value) for value in frozen_manifest["required_horizons"]
-            ),
+            eligible_horizons=tuple(int(value) for value in frozen_manifest["required_horizons"]),
             seed=20260827,
         )
         report = {

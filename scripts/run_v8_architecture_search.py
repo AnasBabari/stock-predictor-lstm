@@ -62,7 +62,10 @@ from research.volatility_forecasting.model import (  # noqa: E402
     VolatilityLossWeights,
 )
 from research.volatility_forecasting.split_v8 import build_v8_chronological_split  # noqa: E402
-from research.volatility_forecasting.universe_v8 import verify_universe_manifest  # noqa: E402
+from research.volatility_forecasting.universe_v8 import (  # noqa: E402
+    universe_identity_maps,
+    verify_universe_manifest,
+)
 from research.volatility_forecasting.v8_protocol import v8_manifest, v8_protocol  # noqa: E402
 
 
@@ -107,10 +110,14 @@ def _load_examples(
     skip_cache: bool = False,
     cache_root: Path | None = None,
 ):
-    roots = ([cache_root] if cache_root is not None else []) + ([] if skip_cache else [
-        Path(r"C:\tmp\stocklstm-volatility-panel-v1\example-cache"),
-        ROOT / "research" / ".cache" / "volatility-examples",
-    ])
+    roots = ([cache_root] if cache_root is not None else []) + (
+        []
+        if skip_cache
+        else [
+            Path(r"C:\tmp\stocklstm-volatility-panel-v1\example-cache"),
+            ROOT / "research" / ".cache" / "volatility-examples",
+        ]
+    )
     for root in roots:
         if not root.is_dir():
             continue
@@ -159,11 +166,7 @@ def _validate_search_config(cfg: object) -> dict[str, object]:
         "baseline_regularization",
     }
     missing = sorted(required - set(cfg))
-    unknown = sorted(
-        set(cfg)
-        - required
-        - {"transformer_d_model"}
-    )
+    unknown = sorted(set(cfg) - required - {"transformer_d_model"})
     if missing:
         raise ValueError(f"search configuration is missing: {', '.join(missing)}")
     if unknown:
@@ -298,7 +301,9 @@ def _rank_candidates(results: list[dict]) -> list[dict]:
     return sorted(results, key=_result_sort_key)
 
 
-def _summarize_evidence(evidence: tuple[V8MemberEvidence, ...], required_horizons: tuple[int, ...]) -> dict:
+def _summarize_evidence(
+    evidence: tuple[V8MemberEvidence, ...], required_horizons: tuple[int, ...]
+) -> dict:
     horizons = list(required_horizons)
     qlikes: list[float] = []
     uppers: list[float] = []
@@ -342,6 +347,7 @@ def main() -> int:
     if not uni_sha:
         print("universe manifest missing sha256", file=sys.stderr)
         return 2
+    exchange_map, security_id_map = universe_identity_maps(uni)
     try:
         verify_v8_market_snapshot(
             panel_dir,
@@ -358,7 +364,9 @@ def main() -> int:
         skip_cache=args.skip_example_cache,
         cache_root=args.example_cache_root.resolve() if args.example_cache_root else None,
     )
-    print(f"examples {len(examples.features)} rows, {len(np.unique(examples.origin_dates))} origins")
+    print(
+        f"examples {len(examples.features)} rows, {len(np.unique(examples.origin_dates))} origins"
+    )
 
     holdouts = tuple(sorted({t.strip().upper() for t in args.holdouts.split(",") if t.strip()}))
     if not holdouts:
@@ -372,8 +380,9 @@ def main() -> int:
         universe_manifest_sha256=uni_sha,
         universe_coverage_certifiable=bool(uni.get("coverage_certifiable")),
         panel_checksum=panel_fp,
-        news_snapshot_checksum="sha256:"
-        + hashlib.sha256(b"no_news").hexdigest(),
+        news_snapshot_checksum="sha256:" + hashlib.sha256(b"no_news").hexdigest(),
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=security_id_map,
     )
     print(
         f"split train {split.manifest.train_rows} val {split.manifest.validation_rows} pooled_test {split.manifest.pooled_test_rows}"
@@ -404,7 +413,9 @@ def main() -> int:
             return 2
         print(f"single-config mode from {cfg_path}")
     else:
-        search_space = [_validate_search_config(cfg) for cfg in _build_search_space(args.max_configs)]
+        search_space = [
+            _validate_search_config(cfg) for cfg in _build_search_space(args.max_configs)
+        ]
     print(f"search space size {len(search_space)} configs x {len(seeds)} seeds")
 
     results: list[dict] = []

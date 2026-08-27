@@ -40,6 +40,7 @@ from research.volatility_forecasting.universe_v8 import (  # noqa: E402
     UniverseMember,
     build_universe_manifest,
     initial_v8_selection_policy,
+    universe_identity_maps,
 )
 from research.volatility_forecasting.v8_protocol import v8_manifest, v8_protocol  # noqa: E402
 
@@ -57,10 +58,14 @@ def _load_examples_cached(
     cache_root: Path | None = None,
 ):
     # Try cache first (10-100x faster)
-    roots = ([cache_root] if cache_root is not None else []) + ([] if skip_cache else [
-        Path(r"C:\tmp\stocklstm-volatility-panel-v1\example-cache"),
-        ROOT / "research" / ".cache" / "volatility-examples",
-    ])
+    roots = ([cache_root] if cache_root is not None else []) + (
+        []
+        if skip_cache
+        else [
+            Path(r"C:\tmp\stocklstm-volatility-panel-v1\example-cache"),
+            ROOT / "research" / ".cache" / "volatility-examples",
+        ]
+    )
     for root in roots:
         if not root.is_dir():
             continue
@@ -162,6 +167,7 @@ def main() -> int:
         selection_policy={**initial_v8_selection_policy(), "allow_sparse": True, "dry_run": True},
     )
     uni_sha = uni_manifest["sha256"]
+    exchange_map, security_id_map = universe_identity_maps(uni_manifest)
     panel_fp = rf_panel_fingerprint(panel_dir)
     print(f"Universe: {len(members)} members, sha {uni_sha[:12]}, panel_fp {panel_fp[:16]}")
 
@@ -174,6 +180,8 @@ def main() -> int:
         universe_coverage_certifiable=bool(uni_manifest.get("coverage_certifiable")),
         panel_checksum=panel_fp,
         news_snapshot_checksum="sha256:" + hashlib.sha256(b"no_news").hexdigest(),
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=security_id_map,
     )
     m = split.manifest
     print("Split:")

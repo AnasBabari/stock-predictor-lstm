@@ -29,7 +29,8 @@ import numpy as np
 
 from .contracts import VolatilityForecastProtocol
 from .data import VolatilityPanelExamples
-from .folds import select_asset_holdouts
+
+V8_REQUIRED_EXCHANGE_MICS = ("XLON", "XNAS", "XNYS")
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,13 @@ class V8SplitManifest:
     temporal_test_assignment_sha256: str
     asset_transfer_assignment_sha256: str
     asset_holdout_sha256: str
+    asset_identity_sha256: str
+    train_assets_per_exchange: dict[str, int]
+    holdout_assets_per_exchange: dict[str, int]
+    train_rows_per_exchange: dict[str, int]
+    validation_rows_per_exchange: dict[str, int]
+    temporal_test_rows_per_exchange: dict[str, int]
+    asset_transfer_rows_per_exchange: dict[str, int]
     universe_manifest_sha256: str | None = None
     panel_checksum: str | None = None
     news_snapshot_checksum: str | None = None
@@ -209,6 +217,8 @@ def _hash_partition_rows(
     partition: str,
     panel_checksum: str | None,
     universe_manifest_sha256: str | None,
+    asset_exchange_map: dict[str, str] | None,
+    asset_security_id_map: dict[str, str] | None,
 ) -> str:
     """Strong per-row assignment hash.
 
@@ -240,14 +250,69 @@ def _hash_partition_rows(
             te = _target_end_date_for_origin(examples.origin_dates[row], t_dates, purge_for_hash)
             if te is not None:
                 target_end = str(te)
-        # Exchange MIC approximation: if ticker in LSE list, use XLON, else XNAS/XNYS via heuristic
-        # For now we hash ticker->exchange via a placeholder that will be enriched when universe manifest is linked
-        exchange = "UNKNOWN_MIC"
+        exchange = (asset_exchange_map or {}).get(ticker, "UNKNOWN_MIC")
+        security_id = (asset_security_id_map or {}).get(ticker, "UNKNOWN_SECURITY_ID")
         h.update(
-            f"{ticker}|{origin}|{target_end}|{partition}|{exchange}|{panel_checksum or ''}".encode()
+            f"{security_id}|{ticker}|{origin}|{target_end}|{partition}|{exchange}|"
+            f"{panel_checksum or ''}".encode()
         )
         h.update(b"\n")
     return h.hexdigest()
+
+
+def _stable_asset_order(tickers: np.ndarray, seed: int) -> list[str]:
+    return sorted(
+        (str(ticker).upper() for ticker in tickers),
+        key=lambda ticker: (hashlib.sha256(f"{seed}:{ticker}".encode()).hexdigest(), ticker),
+    )
+
+
+def _select_asset_holdouts_stratified(
+    tickers: np.ndarray,
+    *,
+    fraction: float,
+    seed: int,
+    required: tuple[str, ...],
+    exchange_map: dict[str, str] | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Select a deterministic holdout with every represented venue included."""
+
+    normalized = np.asarray(sorted({str(ticker).upper() for ticker in tickers}))
+    required_set = set(required)
+    if not required_set.issubset(set(normalized)):
+        raise ValueError("required asset holdouts are absent from the panel")
+    target = max(len(required_set), int(round(len(normalized) * fraction)))
+    holdouts = set(required_set)
+    if exchange_map is not None:
+        represented = sorted({exchange_map[ticker] for ticker in normalized})
+        target = max(target, len(represented))
+        for mic in represented:
+            if any(exchange_map[ticker] == mic for ticker in holdouts):
+                continue
+            candidates = np.asarray(
+                [ticker for ticker in normalized if exchange_map[ticker] == mic]
+            )
+            holdouts.add(_stable_asset_order(candidates, seed)[0])
+    for ticker in _stable_asset_order(normalized, seed):
+        if len(holdouts) >= target:
+            break
+        holdouts.add(ticker)
+    train = np.asarray(sorted(set(normalized) - holdouts))
+    selected = np.asarray(sorted(holdouts))
+    if not len(train) or not len(selected):
+        raise ValueError("asset-transfer split leaves an empty asset population")
+    return train, selected
+
+
+def _counts_by_exchange(
+    tickers: np.ndarray,
+    exchange_map: dict[str, str],
+) -> dict[str, int]:
+    counts = {mic: 0 for mic in V8_REQUIRED_EXCHANGE_MICS}
+    for ticker in tickers:
+        mic = exchange_map[str(ticker).upper()]
+        counts[mic] = counts.get(mic, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def build_v8_chronological_split(
@@ -265,6 +330,8 @@ def build_v8_chronological_split(
     universe_coverage_certifiable: bool = False,
     panel_checksum: str | None = None,
     news_snapshot_checksum: str | None = None,
+    asset_exchange_map: dict[str, str] | None = None,
+    asset_security_id_map: dict[str, str] | None = None,
 ) -> V8SplitIndices:
     """Build the frozen v8 chronological split (pure, no I/O, no training).
 
@@ -282,14 +349,18 @@ def build_v8_chronological_split(
     if not isinstance(required_asset_holdouts, (tuple, list)) or not required_asset_holdouts:
         raise ValueError("required_asset_holdouts must be a non-empty tuple/list of tickers")
     # Normalize holdouts
-    required_asset_holdouts = tuple(sorted({str(t).upper().strip() for t in required_asset_holdouts}))
+    required_asset_holdouts = tuple(
+        sorted({str(t).upper().strip() for t in required_asset_holdouts})
+    )
     if any(not t for t in required_asset_holdouts):
         raise ValueError("holdout list contains empty ticker")
 
     # Tolerance for float sum
     import math as _math
 
-    if not _math.isclose(train_fraction + validation_fraction + test_fraction, 1.0, rel_tol=1e-9, abs_tol=1e-9):
+    if not _math.isclose(
+        train_fraction + validation_fraction + test_fraction, 1.0, rel_tol=1e-9, abs_tol=1e-9
+    ):
         raise ValueError("split fractions must sum to 1.0")
     contract = protocol or VolatilityForecastProtocol()
     purge = purge_horizon_sessions if purge_horizon_sessions is not None else max(contract.horizons)
@@ -302,12 +373,42 @@ def build_v8_chronological_split(
     if len(tickers) < 3:
         raise ValueError("v8 split requires at least 3 tickers")
 
+    normalized_exchange_map = (
+        {str(ticker).upper(): str(mic).upper() for ticker, mic in asset_exchange_map.items()}
+        if asset_exchange_map is not None
+        else None
+    )
+    normalized_security_map = (
+        {
+            str(ticker).upper(): str(security_id)
+            for ticker, security_id in asset_security_id_map.items()
+        }
+        if asset_security_id_map is not None
+        else None
+    )
+    if (normalized_exchange_map is None) != (normalized_security_map is None):
+        raise ValueError("exchange and security identity maps must be supplied together")
+    if normalized_exchange_map is not None and (
+        set(normalized_exchange_map) != set(tickers)
+        or set(normalized_security_map or {}) != set(tickers)
+    ):
+        raise ValueError("split identity maps must exactly cover panel assets")
+    if universe_coverage_certifiable:
+        if normalized_exchange_map is None or normalized_security_map is None:
+            raise ValueError("certifiable split requires exchange and security identity maps")
+        unknown_mics = sorted(
+            set(normalized_exchange_map.values()) - set(V8_REQUIRED_EXCHANGE_MICS)
+        )
+        if unknown_mics:
+            raise ValueError("certifiable split contains unknown exchange MICs")
+
     # Asset-transfer holdouts declared before any model choice (point-in-time)
-    train_tickers, holdout_tickers = select_asset_holdouts(
+    train_tickers, holdout_tickers = _select_asset_holdouts_stratified(
         tickers,
         fraction=contract.asset_holdout_fraction,
         seed=asset_split_seed,
         required=required_asset_holdouts,
+        exchange_map=normalized_exchange_map,
     )
     # Validate that the resolved holdouts exactly match the preregistered list plus deterministic remainder
     # The required list must be subset of holdout_tickers
@@ -330,7 +431,9 @@ def build_v8_chronological_split(
     val_start_pos = train_end_pos + embargo_sessions
     test_start_pos = val_end_pos + embargo_sessions
     if test_start_pos >= n:
-        raise ValueError(f"v8 split embargo leaves no test sessions: n={n} test_start_pos={test_start_pos}")
+        raise ValueError(
+            f"v8 split embargo leaves no test sessions: n={n} test_start_pos={test_start_pos}"
+        )
     train_end = unique_dates[train_end_pos - 1]
     validation_start = unique_dates[val_start_pos]
     validation_end = unique_dates[val_end_pos - 1]
@@ -338,7 +441,9 @@ def build_v8_chronological_split(
 
     # Masks by origin date
     train_mask = examples.origin_dates <= train_end
-    validation_mask = (examples.origin_dates >= validation_start) & (examples.origin_dates <= validation_end)
+    validation_mask = (examples.origin_dates >= validation_start) & (
+        examples.origin_dates <= validation_end
+    )
     test_mask = examples.origin_dates >= test_start
 
     # Asset holdout masks
@@ -377,17 +482,74 @@ def build_v8_chronological_split(
         panel_checksum is not None
         and universe_manifest_sha256 is not None
         and universe_coverage_certifiable
+        and normalized_exchange_map is not None
+        and normalized_security_map is not None
     )
-    # Per-exchange minimum handled via universe manifest, but also check here that holdouts span at least 2 exchanges
-    # (heuristic: require at least 2 distinct MICs among holdouts if universe has >=2 MICs)
+    if normalized_exchange_map is None:
+        train_assets_per_exchange: dict[str, int] = {}
+        holdout_assets_per_exchange: dict[str, int] = {}
+        train_rows_per_exchange: dict[str, int] = {}
+        validation_rows_per_exchange: dict[str, int] = {}
+        temporal_rows_per_exchange: dict[str, int] = {}
+        transfer_rows_per_exchange: dict[str, int] = {}
+    else:
+        train_assets_per_exchange = _counts_by_exchange(train_tickers, normalized_exchange_map)
+        holdout_assets_per_exchange = _counts_by_exchange(holdout_tickers, normalized_exchange_map)
+        train_rows_per_exchange = _counts_by_exchange(
+            examples.tickers[train_indices], normalized_exchange_map
+        )
+        validation_rows_per_exchange = _counts_by_exchange(
+            examples.tickers[validation_indices], normalized_exchange_map
+        )
+        temporal_rows_per_exchange = _counts_by_exchange(
+            examples.tickers[temporal_test_indices], normalized_exchange_map
+        )
+        transfer_rows_per_exchange = _counts_by_exchange(
+            examples.tickers[asset_transfer_test_indices], normalized_exchange_map
+        )
+        if coverage_certifiable:
+            tables = {
+                "train assets": train_assets_per_exchange,
+                "holdout assets": holdout_assets_per_exchange,
+                "train rows": train_rows_per_exchange,
+                "validation rows": validation_rows_per_exchange,
+                "temporal test rows": temporal_rows_per_exchange,
+                "asset-transfer rows": transfer_rows_per_exchange,
+            }
+            for label, counts in tables.items():
+                missing_mics = [mic for mic in V8_REQUIRED_EXCHANGE_MICS if counts.get(mic, 0) < 1]
+                if missing_mics:
+                    raise ValueError(
+                        f"certifiable split {label} missing exchange coverage: {missing_mics}"
+                    )
 
     # Strong assignment hashes — per-row identity with target-end and partition
     row_assignment_sha256 = _hash_partition_rows(
-        examples, np.concatenate((train_indices, validation_indices, pooled_test_indices)), "all", panel_checksum, universe_manifest_sha256
+        examples,
+        np.concatenate((train_indices, validation_indices, pooled_test_indices)),
+        "all",
+        panel_checksum,
+        universe_manifest_sha256,
+        normalized_exchange_map,
+        normalized_security_map,
     )
-    temporal_sha = _hash_partition_rows(examples, temporal_test_indices, "temporal_test", panel_checksum, universe_manifest_sha256)
+    temporal_sha = _hash_partition_rows(
+        examples,
+        temporal_test_indices,
+        "temporal_test",
+        panel_checksum,
+        universe_manifest_sha256,
+        normalized_exchange_map,
+        normalized_security_map,
+    )
     asset_transfer_sha = _hash_partition_rows(
-        examples, asset_transfer_test_indices, "asset_transfer_test", panel_checksum, universe_manifest_sha256
+        examples,
+        asset_transfer_test_indices,
+        "asset_transfer_test",
+        panel_checksum,
+        universe_manifest_sha256,
+        normalized_exchange_map,
+        normalized_security_map,
     )
 
     ah = hashlib.sha256()
@@ -395,6 +557,13 @@ def build_v8_chronological_split(
     ah.update(b"|")
     ah.update(",".join(sorted(train_tickers)).encode())
     asset_holdout_sha256 = ah.hexdigest()
+    identity_hash = hashlib.sha256()
+    for ticker in sorted(tickers):
+        identity_hash.update(
+            f"{ticker}|{(normalized_security_map or {}).get(ticker, 'UNKNOWN_SECURITY_ID')}|"
+            f"{(normalized_exchange_map or {}).get(ticker, 'UNKNOWN_MIC')}\n".encode()
+        )
+    asset_identity_sha256 = identity_hash.hexdigest()
 
     manifest = V8SplitManifest(
         split_version="v8-chronological-70-15-15-purged",
@@ -421,6 +590,13 @@ def build_v8_chronological_split(
         temporal_test_assignment_sha256=temporal_sha,
         asset_transfer_assignment_sha256=asset_transfer_sha,
         asset_holdout_sha256=asset_holdout_sha256,
+        asset_identity_sha256=asset_identity_sha256,
+        train_assets_per_exchange=train_assets_per_exchange,
+        holdout_assets_per_exchange=holdout_assets_per_exchange,
+        train_rows_per_exchange=train_rows_per_exchange,
+        validation_rows_per_exchange=validation_rows_per_exchange,
+        temporal_test_rows_per_exchange=temporal_rows_per_exchange,
+        asset_transfer_rows_per_exchange=transfer_rows_per_exchange,
         universe_manifest_sha256=universe_manifest_sha256,
         panel_checksum=panel_checksum,
         news_snapshot_checksum=news_snapshot_checksum,
@@ -476,8 +652,14 @@ def save_v8_split_manifest(out_dir: Path, indices: V8SplitIndices) -> Path:
     written = json.loads(target.read_text(encoding="utf-8"))
     if written.get("row_assignment_sha256") != indices.manifest.row_assignment_sha256:
         raise RuntimeError("v8 split manifest row_assignment checksum mismatch after write")
-    if written.get("temporal_test_assignment_sha256") != indices.manifest.temporal_test_assignment_sha256:
+    if (
+        written.get("temporal_test_assignment_sha256")
+        != indices.manifest.temporal_test_assignment_sha256
+    ):
         raise RuntimeError("v8 split manifest temporal sha mismatch after write")
-    if written.get("asset_transfer_assignment_sha256") != indices.manifest.asset_transfer_assignment_sha256:
+    if (
+        written.get("asset_transfer_assignment_sha256")
+        != indices.manifest.asset_transfer_assignment_sha256
+    ):
         raise RuntimeError("v8 split manifest asset-transfer sha mismatch after write")
     return target

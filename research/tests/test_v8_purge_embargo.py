@@ -11,11 +11,31 @@ import numpy as np
 import pytest
 
 from research.volatility_forecasting.data import VolatilityPanelExamples
-from research.volatility_forecasting.split_v8 import build_v8_chronological_split
+from research.volatility_forecasting.split_v8 import (
+    V8_REQUIRED_EXCHANGE_MICS,
+    build_v8_chronological_split,
+)
 from research.volatility_forecasting.v8_protocol import v8_protocol
 
+CERTIFIABLE_TICKERS = ("AAPL", "MSFT", "NMM", "IBM", "AZN.L", "VOD.L")
 
-def _dummy_examples(n_dates: int = 900, tickers=("AAPL", "MSFT", "NMM")) -> VolatilityPanelExamples:
+
+def _identity_maps(tickers):
+    exchange = {
+        "AAPL": "XNAS",
+        "MSFT": "XNAS",
+        "NMM": "XNYS",
+        "IBM": "XNYS",
+        "AZN.L": "XLON",
+        "VOD.L": "XLON",
+    }
+    return (
+        {ticker: exchange[ticker] for ticker in tickers},
+        {ticker: f"SECURITY-{ticker}" for ticker in tickers},
+    )
+
+
+def _dummy_examples(n_dates: int = 900, tickers=CERTIFIABLE_TICKERS) -> VolatilityPanelExamples:
     dates = np.array([np.datetime64("2018-01-01") + np.timedelta64(i, "D") for i in range(n_dates)])
     t_list = []
     d_list = []
@@ -47,6 +67,7 @@ def _dummy_examples(n_dates: int = 900, tickers=("AAPL", "MSFT", "NMM")) -> Vola
 
 def test_purge_strict_per_row_target_end():
     ex = _dummy_examples()
+    exchange_map, security_map = _identity_maps(CERTIFIABLE_TICKERS)
     # Normal split should pass
     idx = build_v8_chronological_split(
         ex,
@@ -54,6 +75,8 @@ def test_purge_strict_per_row_target_end():
         panel_checksum="sha256:abc",
         universe_manifest_sha256="sha256:def",
         universe_coverage_certifiable=True,
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=security_map,
     )
     assert len(idx.train_indices) > 0
     # Test that embargo violation is caught when we shrink embargo below max horizon
@@ -65,12 +88,15 @@ def test_purge_strict_per_row_target_end():
 
 def test_separate_temporal_vs_asset_transfer_identities():
     ex = _dummy_examples()
+    exchange_map, security_map = _identity_maps(CERTIFIABLE_TICKERS)
     idx = build_v8_chronological_split(
         ex,
         required_asset_holdouts=("MSFT", "NMM"),
         panel_checksum="a",
         universe_manifest_sha256="b",
         universe_coverage_certifiable=True,
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=security_map,
     )
     # Temporal and asset-transfer must be disjoint and non-empty
     assert len(idx.temporal_test_indices) > 0
@@ -134,7 +160,7 @@ def test_holiday_heavy_and_mixed_calendar():
         required_asset_holdouts=("MSFT", "VOD.L"),
         panel_checksum="a",
         universe_manifest_sha256="b",
-        universe_coverage_certifiable=True,
+        universe_coverage_certifiable=False,
     )
     assert len(idx.temporal_test_indices) > 0
 
@@ -149,7 +175,67 @@ def test_horizons_independently():
             # purge defaults to max_horizon (30) which covers all horizons
             panel_checksum="a",
             universe_manifest_sha256="b",
-            universe_coverage_certifiable=True,
+            universe_coverage_certifiable=False,
         )
         assert idx.manifest.purge_horizon_sessions >= horizon
         assert idx.manifest.purge_horizon_sessions == 30
+
+
+def test_certifiable_split_requires_complete_identity_maps():
+    ex = _dummy_examples()
+    with pytest.raises(ValueError, match="requires exchange and security identity maps"):
+        build_v8_chronological_split(
+            ex,
+            required_asset_holdouts=("MSFT", "NMM"),
+            panel_checksum="sha256:panel",
+            universe_manifest_sha256="sha256:universe",
+            universe_coverage_certifiable=True,
+        )
+
+
+def test_certifiable_split_proves_every_exchange_in_each_population():
+    ex = _dummy_examples()
+    exchange_map, security_map = _identity_maps(CERTIFIABLE_TICKERS)
+    idx = build_v8_chronological_split(
+        ex,
+        required_asset_holdouts=("MSFT", "NMM"),
+        panel_checksum="sha256:panel",
+        universe_manifest_sha256="sha256:universe",
+        universe_coverage_certifiable=True,
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=security_map,
+    )
+    for counts in (
+        idx.manifest.train_assets_per_exchange,
+        idx.manifest.holdout_assets_per_exchange,
+        idx.manifest.train_rows_per_exchange,
+        idx.manifest.validation_rows_per_exchange,
+        idx.manifest.temporal_test_rows_per_exchange,
+        idx.manifest.asset_transfer_rows_per_exchange,
+    ):
+        assert all(counts[mic] > 0 for mic in V8_REQUIRED_EXCHANGE_MICS)
+
+
+def test_assignment_identity_changes_when_security_identity_changes():
+    tickers = ("AAPL", "MSFT", "NMM")
+    ex = _dummy_examples(tickers=tickers)
+    exchange_map, security_map = _identity_maps(tickers)
+    first = build_v8_chronological_split(
+        ex,
+        required_asset_holdouts=("MSFT", "NMM"),
+        panel_checksum="sha256:panel",
+        universe_manifest_sha256="sha256:universe",
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=security_map,
+    )
+    changed_security_map = {**security_map, "AAPL": "REPLACEMENT-AAPL"}
+    second = build_v8_chronological_split(
+        ex,
+        required_asset_holdouts=("MSFT", "NMM"),
+        panel_checksum="sha256:panel",
+        universe_manifest_sha256="sha256:universe",
+        asset_exchange_map=exchange_map,
+        asset_security_id_map=changed_security_map,
+    )
+    assert first.manifest.row_assignment_sha256 != second.manifest.row_assignment_sha256
+    assert first.manifest.asset_identity_sha256 != second.manifest.asset_identity_sha256
