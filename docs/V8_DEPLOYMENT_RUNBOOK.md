@@ -1,165 +1,256 @@
-# v8 Deployment Runbook — historical_temporal_test_plus_asset_transfer
+# v8 training, certification, and deployment runbook
 
-This runbook is the v8 counterpart to `docs/DEPLOYMENT_GATE.md` (v7 future-prospective).
-v8 is the **primary** route for predictions *now*; v7 remains the stronger future-temporal track.
+v8 uses a historical chronological test plus unseen-asset transfer test so it can be evaluated
+without waiting for the v7 prospective window. It is not automatically stronger than v7, and it
+is not certified merely because the pipeline exists.
 
-## Evidence labels (do not mix)
+## Current state (2026-08-27)
 
-- v8 numeric (certified today): `metric_source=locked_historical_temporal_test_plus_asset_transfer`, `news_status=not_certified`, `model_version=global-volatility-v8-numeric`
-- v8 news-enhanced (when archive exists): `metric_source=locked_historical_temporal_test_plus_asset_transfer`, `news_status=certified`, `model_version=global-volatility-news-fusion-v8`
-- Never label v8 as `locked_purged_walk_forward` — that is v7 future evidence only.
+- The implementation supports numeric and point-in-time news-fusion candidates.
+- No certifiable v8 universe, market snapshot, candidate, locked result, or signed release has been
+  produced yet.
+- The existing 69-ticker panel and dry-run universe are diagnostic only. They cannot be relabelled,
+  copied, or promoted into v8 certification.
+- The sealed 15% test has not been opened.
+- Production correctly abstains until a signed release passes verification.
+- A numeric v8 release can be served after certification. A news release additionally requires a
+  production provider that reproduces the signed news schema; until then readiness reports
+  `news_input_unavailable` and forecasting returns a sanitized 503.
 
-## Prerequisites (all must be true)
+Evidence labels must remain distinct:
 
-- `docs/VOLATILITY_V8_PREREGISTRATION.md` frozen and committed before test access
-- Universe `universe-v8-manifest.json` with `sha256` and `per_exchange_counts >=25` (or `allow_sparse` explicitly)
-- Immutable v8 market snapshot with `v8_market.universe_manifest_sha256`
-- Numeric fallback news snapshot (`news_status=not_certified`) OR real historical news archive with `available_at` checks
-- Chronological split manifest `split-v8-manifest.json` with `temporal_test_rows` + `asset_transfer_test_rows` separate
-- Candidate trained only on `train` (70%), selected on `val` (15%), never opened `test` (15%)
-- One-shot certification `scripts/certify_v8_candidate.py --open-sealed-test` produced `v8-locked-certification.json` with `status=passed` and `locked_v8_certification_candidate` directory
-- ONNX parity `scripts/export_v8_onnx.py` passed (`onnx-parity.json` status passed)
-- Release signed via `scripts/package_volatility_release.py` (uses `backend/release_keys/volatility-v1.public.pem`) and `archive_sha256` recorded
-- `research/tests/test_v8_purge_embargo.py` green
+- numeric v8 after a passed one-shot certification:
+  `model_version=global-volatility-v8-numeric`,
+  `metric_source=locked_historical_temporal_test_plus_asset_transfer`,
+  `news_status=not_certified`;
+- news v8 only after paired ablation and sealed certification pass:
+  `model_version=global-volatility-news-fusion-v8`,
+  `metric_source=locked_historical_temporal_test_plus_asset_transfer`,
+  `news_status=certified`;
+- v7 prospective evidence uses a different identity and must never be used as v8 evidence.
 
-## Build v8 market snapshot (Slice 3)
+## 1. Build an attested point-in-time universe
+
+Prepare a member CSV using the schema enforced by
+`research/volatility_forecasting/universe_ingest_v8.py`. Every source needs immutable evidence and
+an operator attestation covering licensing, point-in-time membership, historical listing status,
+and delisted-security availability. The certifiable universe must include XNAS, XNYS, and XLON,
+point-in-time S&P 500 membership rows, sufficient sector/history/liquidity coverage, and the
+predeclared NMM/MSFT holdouts.
+
+```powershell
+python scripts/build_v8_universe.py `
+  --members-csv C:\v8\sources\members.csv `
+  --source-attestations C:\v8\sources\source-attestations.json `
+  --evidence-file security-master=C:\v8\sources\security-master.csv `
+  --evidence-file sp500-history=C:\v8\sources\sp500-membership.csv `
+  --selection-policy C:\v8\sources\selection-policy.json `
+  --out-dir C:\v8\universe
+```
+
+Do not use `--diagnostic-allow-sparse` for a candidate intended for certification. Verify
+`coverage_certifiable=true`, all source checksums, and the manifest SHA before acquisition.
+
+## 2. Acquire the immutable raw-plus-adjusted market snapshot
+
+The certifiable path downloads the complete universe with raw OHLC, adjusted OHLC, volume,
+dividends, and splits. Review the provider terms before acknowledging the license.
 
 ```powershell
 python scripts/build_v8_market_snapshot.py `
-  --source-panel-dir C:\path\to\panel-69-ticker `
-  --universe-manifest universe-v8-manifest.json `
-  --out-root C:\path\to\v8-market-root
+  --download-from-universe `
+  --universe-manifest C:\v8\universe\universe-v8-manifest.json `
+  --out-root C:\v8\market `
+  --years 10 `
+  --provider <provider-id> `
+  --provider-snapshot-id <immutable-provider-snapshot-id> `
+  --provider-license-id <reviewed-license-id> `
+  --license-acknowledged `
+  --v8-protocol-version global-volatility-distribution-v8-numeric
 ```
 
-Verify `manifest.json` contains `v8_market.universe_manifest_sha256` and `pooled_checksum` unchanged.
+`--source-panel-dir` is intentionally diagnostic: legacy adjusted-only panels do not preserve the
+raw corporate-action evidence required for certification. Verify exact universe coverage, per-
+security ID/MIC/currency/timezone identity, minimum history, and `v8_market.coverage_certifiable`.
 
-## Dry-run (proves pipeline runnable today)
+## 3. Choose the numeric or news research route
+
+The numeric route is the shortest certifiable route and should be run first. It uses a content-
+addressed no-news identity and does not claim news evidence.
+
+For the news route, first build an immutable point-in-time event lake (for example with the GDELT
+snapshot tools), complete the exact ticker alias and exposure maps for the frozen universe, then
+bind the archive:
 
 ```powershell
-python scripts/run_v8_certification_dry_run.py `
-  --panel-dir C:\path\to\v8-market-snapshot `
-  --out research/results/v8-dry-run.json
-# Expected: train 70748 val 13585 pooled 16974 (temporal 13530 asset_transfer 3444) with explicit holdouts
+python scripts/prepare_v8_news_snapshot.py `
+  --news-snapshot-dir C:\v8\news\events `
+  --universe-manifest C:\v8\universe\universe-v8-manifest.json `
+  --market-manifest C:\v8\market\<panel-id>\manifest.json `
+  --ticker-aliases C:\v8\news\ticker-aliases.json `
+  --provider-license-id <reviewed-news-license-id> `
+  --out-dir C:\v8\news\binding
 ```
 
-## Train (Slice 9, RTX required for TCN)
+The archive must cover the market period plus the full initial lookback with no silent provider
+gaps. `snapshot_ready_uncertified` means the archive is eligible for paired experiments, not that a
+news model is certified. `--allow-provider-gaps` is diagnostic only.
+
+## 4. Generate and review the frozen split
+
+The research runner constructs the chronological 70/15/15 split. Assignment hashes bind every row
+to its stable security ID and exchange MIC. A certifiable split proves XNAS/XNYS/XLON coverage in
+development assets, holdout assets, train rows, validation rows, temporal-test rows, and transfer-
+test rows. NMM and MSFT remain unseen asset-transfer holdouts.
+
+Before GPU work, run the split/provenance tests and archive the universe, market, news (if used),
+and split checksums. Never inspect test labels, metrics, or predictions at this stage.
+
+## 5. Run validation-only GPU research
+
+Use the dedicated CUDA environment and write candidates outside Git.
+
+Numeric candidate:
 
 ```powershell
-python scripts/run_v8_volatility_research.py `
-  --panel-dir C:\path\to\v8-market-snapshot `
-  --universe-manifest universe-v8-manifest.json `
-  --out C:\path\to\v8-candidate `
-  --news-enabled false   # true only when historical archive exists
-# Output: prospective_v8_development_candidate with seeds 41,42,43
+$env:PYTHONPATH='research;backend;scripts'
+C:\Users\Babar\Documents\Coding\OpenSource\autoresearch-win-rtx\.venv-stocklstm\Scripts\python.exe `
+  scripts\run_v8_volatility_research.py `
+  --panel-dir C:\v8\market\<panel-id> `
+  --universe-manifest C:\v8\universe\universe-v8-manifest.json `
+  --out C:\v8\candidates\numeric-001 `
+  --news-enabled false `
+  --device cuda
 ```
 
-Record GPU model, driver, CUDA, torch, python, split SHA, duration, peak VRAM.
+News-fusion candidate:
 
-## Certify (Slice 12, one-shot)
+```powershell
+$env:PYTHONPATH='research;backend;scripts'
+C:\Users\Babar\Documents\Coding\OpenSource\autoresearch-win-rtx\.venv-stocklstm\Scripts\python.exe `
+  scripts\run_v8_volatility_research.py `
+  --panel-dir C:\v8\market\<panel-id> `
+  --universe-manifest C:\v8\universe\universe-v8-manifest.json `
+  --out C:\v8\candidates\news-001 `
+  --news-enabled true `
+  --news-snapshot-dir C:\v8\news\events `
+  --news-manifest C:\v8\news\binding\news-v8-manifest.json `
+  --ticker-aliases C:\v8\news\ticker-aliases.json `
+  --news-exposures C:\v8\news\ticker-exposures.json `
+  --device cuda
+```
+
+The news path first runs matched market-only and market-plus-news five-fold evaluations for every
+seed. It requires incremental QLIKE, block-bootstrap, DM/Holm, fold-count, worst-fold, and matched-
+HAR evidence before `validation_selected` can be true. Training completion alone never promotes a
+model. Record GPU, driver, CUDA, Python, Torch, duration, peak VRAM, and every immutable input SHA.
+
+## 6. Review development evidence before test access
+
+The candidate must have all of the following:
+
+- `artifact_role=prospective_v8_development_candidate`;
+- `release_eligible=false` (only certification may change this);
+- seeds 41, 42, and 43 with real `.pt` weights and checksums;
+- strict validation selection on required horizons 1, 3, 5, and 7;
+- exact split, universe, market, and news identities;
+- for news, a train-only scaler, ordered news feature names, matrix checksum, and all paired ablation
+  evidence;
+- no placeholder, diagnostic universe, missing venue, or stale schema.
+
+If the role is `rejected_v8_development_evidence`, do not open the test to rescue it. Change the
+preregistered model protocol, create a new development cycle, and keep the prior evidence immutable.
+
+## 7. Open the sealed test exactly once
+
+Numeric:
 
 ```powershell
 python scripts/certify_v8_candidate.py `
-  --candidate-dir C:\path\to\v8-candidate `
-  --panel-dir C:\path\to\v8-market-snapshot `
-  --universe-manifest universe-v8-manifest.json `
-  --out C:\path\to\v8-cert `
-  --open-sealed-test `
-  --holdouts NMM,MSFT
-# Must create v8-holdout-opened.json BEFORE evaluation (fail-closed)
-# On passed: candidate/ locked_v8_certification_candidate
+  --candidate-dir C:\v8\candidates\numeric-001 `
+  --panel-dir C:\v8\market\<panel-id> `
+  --universe-manifest C:\v8\universe\universe-v8-manifest.json `
+  --out C:\v8\certification\numeric-001 `
+  --holdouts NMM,MSFT `
+  --open-sealed-test
 ```
 
-Verify `v8-locked-certification.json` has `metric_source=locked_historical_temporal_test_plus_asset_transfer` and `release_eligible` true.
+For news, add the same four news/alias/exposure inputs used during training. The certifier verifies
+provenance before access, writes `v8-holdout-opened.json` before loading derived examples,
+recomputes the causal news matrix after that marker, and compares its identity to the candidate.
 
-## ONNX parity (Slice 13)
+Certification is one-shot. A failed result is evidence, not permission to tune against the test.
+Only `status=passed`, `release_eligible=true`, complete temporal and asset-transfer decisions, and a
+materialized `locked_v8_certification_candidate` may proceed.
+
+## 8. Export ONNX and prove parity
 
 ```powershell
 python scripts/export_v8_onnx.py `
-  --candidate-dir C:\path\to\v8-cert\candidate `
-  --out C:\path\to\v8-onnx
-# Requires parity passed before signing
+  --candidate-dir C:\v8\certification\numeric-001\candidate `
+  --out C:\v8\onnx\numeric-001
 ```
 
-## Sign & package (Slice 14)
+Every seed must pass PyTorch-to-ONNX parity. A news graph has a third `news_features` input; its
+ordered names and count are included in signed runtime metadata. Do not omit a failed member or
+replace it with another seed after certification.
+
+## 9. Assemble, sign, and package an immutable release
 
 ```powershell
 python scripts/assemble_volatility_release.py `
-  --candidate-dir C:\path\to\v8-cert\candidate `
-  --output-dir C:\path\to\v8-release `
+  --candidate-dir C:\v8\certification\numeric-001\candidate `
+  --output-dir C:\v8\release\numeric-001 `
   --private-key-path C:\secure\volatility-v1.private.pem `
   --public-key-path backend\release_keys\volatility-v1.public.pem
 
 python scripts/package_volatility_release.py `
-  --release-dir C:\path\to\v8-release `
+  --release-dir C:\v8\release\numeric-001 `
   --public-key-path backend\release_keys\volatility-v1.public.pem `
-  --output C:\path\to\stocklstm-volatility-v8.zip
-# Record archive_sha256, do not use mutable latest URL
+  --output C:\v8\archives\stocklstm-volatility-v8-numeric-001.zip
 ```
 
-## Render (Slice 15, inference only)
+Store the archive outside Git at an immutable URL and record its SHA-256. The signed bundle binds
+the certification report, universe, split, feature schemas, ensemble membership, ONNX files, and
+parity evidence.
 
-Set in Render dashboard (never in Git):
+## 10. Deploy and smoke-test Render/Vercel
 
-```
-VOLATILITY_SERVING_REQUIRED=true
-VOLATILITY_RELEASE_ARCHIVE_URL=<immutable https URL to stocklstm-volatility-v8.zip>
-VOLATILITY_RELEASE_ARCHIVE_SHA256=<exact sha256>
-VOLATILITY_PUBLIC_KEY_PATH=backend/release_keys/volatility-v1.public.pem
-```
+Configure Render with the immutable archive URL/SHA and public key. The service must start without
+training or PyTorch. Verify `/health`, `/ready`, `/models`, and `/api/v2/forecast` for MSFT, NMM, a
+Nasdaq security, a NYSE security, and an LSE security. Also test a tampered archive, wrong SHA,
+unsupported horizon, invalid ticker, CORS, cache partitioning by model ID, and rollback.
 
-Render verifies signature, checksums, schema, `global-volatility-distribution-v8-*` protocol, and `feature_schema_version` before caching. No training on request.
+A numeric release can become ready immediately after these gates. A news release must additionally
+have a live point-in-time provider that reproduces the signed feature schema. Without it, the
+correct production result is `news_input_unavailable`; never feed zero news or silently switch the
+model family.
 
-Verify:
+Enable `VITE_VOLATILITY_SERVING_ENABLED=true` only after the backend smoke passes. The UI must show
+the signed model version and metric source and must not describe volatility bands as directional
+price predictions.
 
-```
-GET /health
-GET /ready          # 200 only when v8 release verified
-GET /models         # global_volatility.status=ready, model_version, metric_source, news_status
-GET /api/v2/forecast?ticker=MSFT&horizon=7
-GET /api/v2/forecast?ticker=NMM&horizon=7
-GET /api/v2/forecast?ticker=AAPL&horizon=7
-GET /api/v2/forecast?ticker=VOD.L&horizon=7  # LSE example where available
-```
+## 11. Retention and rollback
 
-Expected evidence:
+Inventory and dry-run retention before deletion:
 
-```json
-{
-  "execution_mode": "server_artifact_loaded",
-  "model_version": "global-volatility-v8-numeric",
-  "metric_source": "locked_historical_temporal_test_plus_asset_transfer",
-  "certification_scope": "historical_temporal_test_plus_asset_transfer",
-  "news_enabled": false,
-  "news_status": "not_certified"
-}
+```powershell
+python scripts/gc_v8_releases.py --root C:\v8\release --list-inventory
+python scripts/gc_v8_releases.py `
+  --root C:\v8\release `
+  --active-release-id <active> `
+  --previous-release-id <previous> `
+  --audit-log C:\v8\release-gc.jsonl
 ```
 
-## Vercel (Slice 16)
+Only add `--execute` after reviewing the plan. Active, previous, in-use leases, the audit window,
+and minimum newest releases remain protected; staged debris and deletion are checksummed, locked,
+race-rechecked, path-safe, and audited. Rollback changes the immutable archive pointer and SHA, then
+forces release-state reload and repeats the smoke suite.
 
-Only after Render smoke passes:
+## Stop conditions
 
-```
-VITE_VOLATILITY_SERVING_ENABLED=true
-```
-
-UI must show `Certified v8 global volatility model — Historical temporal test + asset-transfer, News: not certified` with correct `metric_source`, never `locked_purged_walk_forward`.
-
-## Smoke (Slice 17)
-
-`scripts/verify_release.ps1` plus:
-
-- invalid ticker → 400
-- invalid horizon → 400
-- tampered archive → 503
-- wrong sha → 503
-- CORS from Vercel → ok
-- repeat request → cache hit
-- rollback `VOLATILITY_SERVING_REQUIRED=false` → abstention
-
-## Retention (Slice 18)
-
-Active + previous + audit retention protected, generation-aware GC, dry-run mode, audit logs. See `docs/VOLATILITY_V8_PREREGISTRATION.md: retention` and GitHub issue #2.
-
-## Contingency
-
-If historical news unavailable: certify `global-volatility-v8-numeric` now, keep news branch as uncertified experiment, add live news only as context. Do not claim `news_enabled=true` without archive.
+Stop without certification or deployment when any provenance, licensing, coverage, leakage,
+identity, validation, ablation, parity, signature, resource, or production-input condition fails.
+The accepted outcomes are a genuinely certified release or an explicit abstention—never a hidden
+baseline, fabricated news vector, or relabelled diagnostic artifact.

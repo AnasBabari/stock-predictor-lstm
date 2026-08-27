@@ -2,6 +2,14 @@
 
 Status: **preregistered; no v8 candidate trained, no certification opened, no release.**
 
+Implementation note (2026-08-27): the repository now contains fail-closed universe/market/news
+provenance builders, security-ID/MIC-bound splits, paired five-fold news ablation, GPU candidate
+training, one-shot numeric/news certification, ONNX parity, signed release packaging, and release
+retention. This is implementation readiness only. No real attested input cohort or v8 model evidence
+exists yet, and the sealed 15% test remains unopened. The legacy 69-ticker panel is diagnostic-only.
+A certified news release also requires a production point-in-time provider capable of reproducing
+the signed news feature schema; otherwise serving must abstain.
+
 This document freezes the v8 research cycle **before** any sealed test rows are inspected. It must be read together with [VOLATILITY_V7_PREREGISTRATION.md](VOLATILITY_V7_PREREGISTRATION.md) and [GLOBAL_MODELS.md](GLOBAL_MODELS.md). v7 remains a separate future-prospective experiment and is not modified.
 
 ## Why v8 exists
@@ -33,7 +41,8 @@ Never label a v8 result `locked_purged_walk_forward` or `locked_v7_prospective_w
 
 ## Universe definition (point-in-time, no survivorship bias)
 
-v8 is not single-ticker. Four market groups, each with point-in-time membership, MIC, currency, and listing calendar:
+v8 is not single-ticker. It covers three listing MICs (XNAS, XNYS, XLON) plus point-in-time S&P 500
+index membership as a cohort tag; S&P 500 is not a fourth exchange.
 
 ### S&P 500
 - Historical constituent list with `membership_start`, `membership_end`, source snapshot ID.
