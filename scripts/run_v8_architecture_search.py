@@ -82,6 +82,15 @@ def _parse_args() -> argparse.Namespace:
         help="Comma-separated holdouts, must match universe policy",
     )
     ap.add_argument("--max-configs", type=int, default=12, help="Maximum configs to evaluate")
+    ap.add_argument(
+        "--config-json",
+        type=Path,
+        default=None,
+        help=(
+            "Optional path to a single config JSON (same schema as search-report best_config). "
+            "When supplied the random search space is skipped and only this config is run."
+        ),
+    )
     return ap.parse_args()
 
 
@@ -295,7 +304,15 @@ def main() -> int:
 
     required_horizons = tuple(int(value) for value in manifest["required_horizons"])
     seeds = tuple(int(v) for v in protocol.seeds)
-    search_space = _build_search_space(args.max_configs)
+    if args.config_json is not None:
+        cfg_path = args.config_json.resolve()
+        if not cfg_path.is_file():
+            print(f"--config-json not found: {cfg_path}", file=sys.stderr)
+            return 2
+        search_space = [json.loads(cfg_path.read_text(encoding="utf-8"))]
+        print(f"single-config mode from {cfg_path}")
+    else:
+        search_space = _build_search_space(args.max_configs)
     print(f"search space size {len(search_space)} configs x {len(seeds)} seeds")
 
     results: list[dict] = []

@@ -243,6 +243,42 @@ Bundle retention/GC before open beta (active + previous + audit protection, dry-
 
 If historical news unavailable: certify numeric v8 now, keep news branch as uncrowned experiment, add live news only as context – never claim `news_enabled=true` without sealed historical archive. Labels then `global-volatility-v8-numeric`, `news_status=not_certified`.
 
+## Architecture selection (validation-only, sealed-test-safe)
+
+The numeric v8 candidate is selected by `scripts/run_v8_architecture_search.py`
+(a validation-only sweep that never opens the sealed test partition). The
+script is intentionally narrower than the preregistered research cycle:
+
+- **Search space**: encoder family (`tcn` / `patch_transformer`),
+  channels, dropout, learning rate, weight decay, baseline
+  regularization. Only train + validation rows enter training; the
+  search report is bound to the chronological 70/15/15 split manifest.
+- **Ranking**: eligible candidates first, then by worst required-
+  horizon relative QLIKE (lower-is-better). Mean and worst QLIKE
+  ratio upper 95% are reported alongside the point estimate.
+- **Winner path**: the search winner is materialized as a
+  `prospective_v8_development_candidate` only if its validation gates
+  pass **and** the universe manifest's `coverage_certifiable=true`
+  flag is set. Otherwise the search report stays a
+  `rejected_v8_development_evidence` artifact, never signed for
+  release.
+- **Sealed-test guarantee**: the search script accepts
+  `train_indices` and `validation_indices` only — never
+  `temporal_test_indices`, `asset_transfer_test_indices`, or
+  `pooled_test_indices`. A fail-closed fingerprint test in
+  `research/tests/test_v8_architecture_search.py` enforces this
+  invariant.
+- **Architecture-evidence reference**: the current best validation-
+  only architecture is recorded in the latest
+  `arch-search-cuda-*/best-config.json` and detailed in the matching
+  `search-report.json` plus `docs/SUMMARY.md`. The dev panel used for
+  the published search (a sparse 69-ticker U.S. snapshot without the
+  LSE cohort) cannot itself produce a certifiable v8 — the moving-
+  block bootstrap CIs on the small validation selection region do not
+  shrink below the 1.0 ratio gate — so all dev artifacts remain
+  `rejected_v8_development_evidence` until the four-market panel is
+  acquired.
+
 ## Permitted claims before v8 certification
 
 May say v8 is preregistered historical+transfer program with clearly labelled development metrics. Must not claim v8 is certified, must not claim future prospective evidence, must not present baseline as learned, must not present price accuracy for volatility regression. Production API stays abstaining until signed v8 passes.
