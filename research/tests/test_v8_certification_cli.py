@@ -21,6 +21,8 @@ def test_one_shot_marker_precedes_any_sealed_example_load() -> None:
     panel_build = source.index("examples = build_volatility_panel_examples", marker)
     assert marker < cache_load
     assert marker < panel_build
+    news_matrix_build = source.index("aligned_news = build_v8_aligned_news_matrix", marker)
+    assert marker < news_matrix_build
 
 
 def test_atomic_json_writer_emits_strict_json(tmp_path) -> None:

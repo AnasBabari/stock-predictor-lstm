@@ -58,6 +58,12 @@ from research.volatility_forecasting.folds import VolatilityFoldPlan  # noqa: E4
 from research.volatility_forecasting.market_snapshot_v8 import (  # noqa: E402
     verify_v8_market_snapshot,
 )
+from research.volatility_forecasting.news_matrix_v8 import (  # noqa: E402
+    build_v8_aligned_news_matrix,
+)
+from research.volatility_forecasting.news_snapshot_v8 import (  # noqa: E402
+    verify_v8_news_manifest,
+)
 from research.volatility_forecasting.refit import FrozenEnsemble  # noqa: E402
 from research.volatility_forecasting.split_v8 import build_v8_chronological_split  # noqa: E402
 from research.volatility_forecasting.universe_v8 import (  # noqa: E402
@@ -124,6 +130,9 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--panel-dir", type=Path, required=True)
     ap.add_argument("--universe-manifest", type=Path, required=True)
     ap.add_argument("--news-manifest", type=Path, default=None)
+    ap.add_argument("--news-snapshot-dir", type=Path, default=None)
+    ap.add_argument("--ticker-aliases", type=Path, default=None)
+    ap.add_argument("--news-exposures", type=Path, default=None)
     ap.add_argument("--out", type=Path, required=True, help="Empty output dir for certification")
     ap.add_argument("--holdouts", type=str, default="NMM,MSFT")
     ap.add_argument(
@@ -208,12 +217,21 @@ def main() -> int:
     if cand.get("protocol") != frozen_manifest:
         print("candidate protocol payload differs from the frozen v8 manifest", file=sys.stderr)
         return 2
-    if news_enabled:
+    news_paths = (
+        args.news_manifest,
+        args.news_snapshot_dir,
+        args.ticker_aliases,
+        args.news_exposures,
+    )
+    if news_enabled and any(path is None for path in news_paths):
         print(
-            "news-enabled certification requires the real aligned historical news matrix; "
-            "only the numeric v8 path is currently certifiable",
+            "news candidate certification requires --news-manifest, --news-snapshot-dir, "
+            "--ticker-aliases, and --news-exposures",
             file=sys.stderr,
         )
+        return 2
+    if not news_enabled and any(path is not None for path in news_paths):
+        print("numeric certification cannot accept news inputs", file=sys.stderr)
         return 2
 
     try:
@@ -238,7 +256,7 @@ def main() -> int:
         return 2
 
     try:
-        verify_v8_market_snapshot(
+        market_manifest, _market_frames = verify_v8_market_snapshot(
             panel_dir,
             universe_manifest=uni,
             require_certifiable=True,
@@ -276,7 +294,32 @@ def main() -> int:
         "sha256:" + hashlib.sha256(b"no_news").hexdigest()
     )
     expected_numeric_news_sha = "sha256:" + hashlib.sha256(b"no_news").hexdigest()
-    if news_sha != expected_numeric_news_sha:
+    persisted_news_manifest = None
+    if news_enabled:
+        assert args.news_manifest is not None
+        assert args.news_snapshot_dir is not None
+        assert args.ticker_aliases is not None
+        try:
+            persisted_news_manifest = json.loads(
+                args.news_manifest.resolve().read_text(encoding="utf-8")
+            )
+            verified_news = verify_v8_news_manifest(
+                persisted_news_manifest,
+                news_snapshot_dir=args.news_snapshot_dir.resolve(),
+                universe_manifest=uni,
+                market_manifest=market_manifest,
+                ticker_aliases_path=args.ticker_aliases.resolve(),
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            print(f"v8 news snapshot verification failed: {error}", file=sys.stderr)
+            return 2
+        expected_news_sha = "sha256:" + str(verified_news["sha256"])
+        if news_sha != expected_news_sha:
+            print(
+                "news candidate snapshot identity does not match verified evidence", file=sys.stderr
+            )
+            return 2
+    elif news_sha != expected_numeric_news_sha:
         print("numeric candidate has an unexpected news snapshot identity", file=sys.stderr)
         return 2
 
@@ -363,12 +406,40 @@ def main() -> int:
         if json.loads(json.dumps(recomputed_split, default=str)) != candidate_split:
             raise ValueError("recomputed split content differs from the frozen candidate")
 
+        aligned_news = None
+        if news_enabled:
+            assert persisted_news_manifest is not None
+            assert args.news_snapshot_dir is not None
+            assert args.ticker_aliases is not None
+            assert args.news_exposures is not None
+            aligned_news = build_v8_aligned_news_matrix(
+                examples,
+                news_snapshot_dir=args.news_snapshot_dir.resolve(),
+                news_manifest=persisted_news_manifest,
+                universe_manifest=uni,
+                market_manifest=market_manifest,
+                ticker_aliases_path=args.ticker_aliases.resolve(),
+                exposure_map_path=args.news_exposures.resolve(),
+            )
+            if cand.get("news_matrix_sha256") != aligned_news.matrix_sha256:
+                raise ValueError("recomputed news matrix identity differs from candidate")
+            if tuple(cand.get("news_feature_names", ())) != aligned_news.feature_names:
+                raise ValueError("recomputed news feature schema differs from candidate")
+
         fold_plan = _v8_fold_plan(split, examples)
-        temporal_predictions = ensemble.predict(examples, split.temporal_test_indices)
+        temporal_predictions = ensemble.predict(
+            examples,
+            split.temporal_test_indices,
+            news_features=aligned_news.values if aligned_news is not None else None,
+        )
         temporal_baseline, temporal_return_baseline = ensemble.matched_baselines(
             examples, split.temporal_test_indices
         )
-        transfer_predictions = ensemble.predict(examples, split.asset_transfer_test_indices)
+        transfer_predictions = ensemble.predict(
+            examples,
+            split.asset_transfer_test_indices,
+            news_features=aligned_news.values if aligned_news is not None else None,
+        )
         transfer_baseline, transfer_return_baseline = ensemble.matched_baselines(
             examples, split.asset_transfer_test_indices
         )
@@ -407,6 +478,10 @@ def main() -> int:
             "candidate_manifest_sha256": marker["candidate_manifest_sha256"],
             "holdout_opened": str(out / "v8-holdout-opened.json"),
             "release_eligible": certification.status == "passed",
+            "news_snapshot_checksum": news_sha,
+            "news_matrix_sha256": (
+                aligned_news.matrix_sha256 if aligned_news is not None else None
+            ),
         }
     except Exception as error:
         report = {
@@ -419,6 +494,7 @@ def main() -> int:
             "panel_checksum": panel_fp,
             "universe_sha256": uni_sha,
             "candidate_manifest_sha256": marker["candidate_manifest_sha256"],
+            "news_snapshot_checksum": news_sha,
             "holdout_opened": str(out / "v8-holdout-opened.json"),
             "failure": str(error),
         }
