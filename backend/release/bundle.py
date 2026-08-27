@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -54,6 +55,7 @@ def build_release(
     metadata: dict,
     *,
     private_key_path: Path,
+    created_at_utc: datetime | None = None,
 ) -> Path:
     """Assemble + sign a release bundle. Overwrites are refused."""
     try:
@@ -81,8 +83,12 @@ def build_release(
         target_path.write_bytes(data)
         file_checksums[name] = _sha256_bytes(data)
 
+    created_at = created_at_utc or datetime.now(UTC)
+    if created_at.tzinfo is None:
+        raise ValueError("release creation timestamp must be timezone-aware")
     manifest = {
         "schema_version": RELEASE_SCHEMA_VERSION,
+        "created_at_utc": created_at.astimezone(UTC).isoformat(),
         "metadata": metadata,
         "files": file_checksums,
     }
