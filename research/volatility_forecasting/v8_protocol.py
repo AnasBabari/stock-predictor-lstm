@@ -29,6 +29,7 @@ V8_MODEL_VERSION_NUMERIC = "global-volatility-v8-numeric"
 
 V8_SPLIT_VERSION = "v8-chronological-70-15-15-purged"
 V8_NEWS_SCHEMA_VERSION = "news-v1"
+V8_NEWS_TAXONOMY_VERSION = "v1"
 V8_FEATURE_SCHEMA_VERSION = "deployable_v5+news-v1"
 V8_TARGET_VERSION = "future-rv-total-v1"
 V8_NEWS_TARGET_VERSION = "future-rv-total-v1-news-v8"
@@ -75,7 +76,7 @@ class V8ProtocolSettings:
     early_stopping_sessions: int = 63
     seeds: tuple[int, ...] = (41, 42, 43)
     news_windows: tuple[str, ...] = ("1h", "4h", "1d", "3d", "5d", "20d")
-    news_taxonomy_version: str = "v1"
+    news_taxonomy_version: str = V8_NEWS_TAXONOMY_VERSION
     realized_variance_proxy: str = "overnight_plus_rogers_satchell"
     baseline_family: str = "causal_log_har"
     comparison_baseline_family: str = "adaptive_calibrated_har_c2c_v1"
