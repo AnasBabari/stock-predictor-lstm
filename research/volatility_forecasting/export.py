@@ -36,6 +36,29 @@ class ProductionVolatilityGraph(nn.Module):
         super().__init__()
         self.model = candidate.training.model.eval()
         self.news_feature_count = candidate.architecture.news_feature_count
+        self.market_clip = float(candidate.training.scaler.clip)
+        self.register_buffer(
+            "market_median",
+            torch.from_numpy(np.asarray(candidate.training.scaler.median, dtype=np.float32)),
+        )
+        self.register_buffer(
+            "market_iqr",
+            torch.from_numpy(np.asarray(candidate.training.scaler.iqr, dtype=np.float32)),
+        )
+        news_scaler = candidate.training.news_scaler
+        self.news_clip = float(news_scaler.clip) if news_scaler is not None else 0.0
+        self.register_buffer(
+            "news_median",
+            torch.from_numpy(
+                np.asarray(news_scaler.median if news_scaler is not None else (), dtype=np.float32)
+            ),
+        )
+        self.register_buffer(
+            "news_iqr",
+            torch.from_numpy(
+                np.asarray(news_scaler.iqr if news_scaler is not None else (), dtype=np.float32)
+            ),
+        )
         self.register_buffer(
             "variance_scale",
             torch.from_numpy(np.asarray(candidate.variance_scale, dtype=np.float32)),
@@ -51,10 +74,24 @@ class ProductionVolatilityGraph(nn.Module):
         baseline_variance: torch.Tensor,
         news_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        scaled_features = torch.clamp(
+            (features - self.market_median) / self.market_iqr,
+            min=-self.market_clip,
+            max=self.market_clip,
+        )
+        scaled_news = news_features
+        if self.news_feature_count:
+            if news_features is None:
+                raise ValueError("news-enabled graph requires news features")
+            scaled_news = torch.clamp(
+                (news_features - self.news_median) / self.news_iqr,
+                min=-self.news_clip,
+                max=self.news_clip,
+            )
         variance, location, logits, _residual = self.model(
-            features,
+            scaled_features,
             baseline_variance,
-            news_features,
+            scaled_news,
         )
         calibrated_variance = variance * self.variance_scale
         return_variance = calibrated_variance * self.return_variance_scale

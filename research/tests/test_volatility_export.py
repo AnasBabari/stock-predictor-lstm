@@ -108,6 +108,37 @@ def test_production_graph_embeds_calibration_and_normalized_probabilities() -> N
     assert tuple(location.shape) == (3, 2)
 
 
+def test_production_graph_embeds_train_only_feature_scaling() -> None:
+    candidate = _candidate()
+    scaler = RobustSequenceScaler(
+        median=np.full(4, 2.0),
+        iqr=np.full(4, 4.0),
+        clip=3.0,
+    )
+    training = TrainingResult(
+        **{**candidate.training.__dict__, "scaler": scaler}
+    )
+    candidate = FrozenCandidate(**{**candidate.__dict__, "training": training})
+    graph = production_graph(candidate)
+    raw_features = torch.full((2, 60, 4), 2.0)
+    baseline = torch.ones(2, 2)
+    with torch.no_grad():
+        actual = graph(raw_features, baseline)
+        variance, location, logits, _residual = candidate.training.model(
+            torch.zeros_like(raw_features), baseline
+        )
+    expected = (
+        variance * torch.tensor(candidate.variance_scale, dtype=torch.float32),
+        location,
+        torch.softmax(logits, dim=-1),
+        variance
+        * torch.tensor(candidate.variance_scale, dtype=torch.float32)
+        * torch.tensor(candidate.return_variance_scale, dtype=torch.float32),
+    )
+    for actual_values, expected_values in zip(actual, expected, strict=True):
+        torch.testing.assert_close(actual_values, expected_values)
+
+
 def test_export_signature_is_explicit_about_news_input() -> None:
     market = ProductionVolatilityGraph(_candidate())
     with pytest.raises(ValueError, match="news-enabled"):
