@@ -107,9 +107,16 @@ def _fit_member(
     patience: int,
     batch_size: int,
     loss_weights: VolatilityLossWeights,
+    training_config: TorchTrainingConfig | None = None,
 ) -> FrozenCandidate:
     train = np.asarray(train_indices, dtype=np.int64)
     calibration = partitions.calibration_indices
+    settings = training_config or TorchTrainingConfig(
+        maximum_epochs=maximum_epochs,
+        patience=patience,
+        batch_size=batch_size,
+        use_amp=device == "cuda",
+    )
     training = train_baseline_residual_tcn(
         train_features=examples.features[train],
         train_baseline_variance=examples.baseline_variance[train],
@@ -122,12 +129,7 @@ def _fit_member(
         validation_cumulative_returns=examples.cumulative_returns[calibration],
         validation_direction_classes=examples.direction_classes[calibration],
         model_config=architecture,
-        training_config=TorchTrainingConfig(
-            maximum_epochs=maximum_epochs,
-            patience=patience,
-            batch_size=batch_size,
-            use_amp=device == "cuda",
-        ),
+        training_config=settings,
         loss_weights=loss_weights,
         seed=seed,
         device=device,
@@ -259,14 +261,17 @@ def train_v8_numeric_ensemble(
     maximum_epochs: int = 60,
     patience: int = 8,
     batch_size: int = 512,
+    architecture: BaselineResidualTCNConfig | None = None,
+    loss_weights: VolatilityLossWeights | None = None,
+    training_config: TorchTrainingConfig | None = None,
 ) -> tuple[FrozenEnsemble, tuple[V8MemberEvidence, ...], V8ValidationPartitions]:
     partitions = split_validation_for_selection(examples, validation_indices)
-    architecture = BaselineResidualTCNConfig(
+    architecture = architecture or BaselineResidualTCNConfig(
         feature_count=examples.features.shape[-1],
         horizon_count=len(examples.horizons),
         window_size=examples.features.shape[1],
     )
-    weights = VolatilityLossWeights()
+    weights = loss_weights or VolatilityLossWeights()
     members: list[FrozenCandidate] = []
     evidence: list[V8MemberEvidence] = []
     for seed in seeds:
@@ -281,6 +286,7 @@ def train_v8_numeric_ensemble(
             patience=patience,
             batch_size=batch_size,
             loss_weights=weights,
+            training_config=training_config,
         )
         members.append(member)
         evidence.append(
