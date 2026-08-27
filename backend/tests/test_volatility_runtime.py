@@ -160,11 +160,19 @@ def test_prepare_feed_batches_and_validates_inputs() -> None:
         contract.prepare_feed(np.zeros((60, 26)) + np.nan, baseline)
     with pytest.raises(ValueError, match="strictly positive"):
         contract.prepare_feed(features, baseline * 0)
-    news_contract = _contract(news_feature_count=4)
+    news_contract = _contract(
+        news_feature_count=4,
+        news_feature_names=("sentiment", "intensity", "novelty", "missing"),
+    )
     with pytest.raises(ValueError, match="requires news"):
         news_contract.prepare_feed(features, baseline)
     with pytest.raises(ValueError, match="cannot receive news"):
         contract.prepare_feed(features, baseline, news_features=np.ones(4))
+    signed_news = np.asarray([-0.5, 0.0, 1.25, 1.0])
+    news_feed = news_contract.prepare_feed(features, baseline, news_features=signed_news)
+    np.testing.assert_allclose(news_feed["news_features"], signed_news[np.newaxis, :])
+    with pytest.raises(ValueError, match="exactly 4"):
+        news_contract.prepare_feed(features, baseline, news_features=np.ones(3))
 
 
 def test_runtime_ensemble_mean_is_deterministic_in_seed_order() -> None:

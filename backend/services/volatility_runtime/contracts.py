@@ -66,6 +66,7 @@ class VolatilityRuntimeContract:
     horizons: tuple[int, ...] = VOLATILITY_HORIZONS
     window_size: int = VOLATILITY_WINDOW_SIZE
     news_feature_count: int = 0
+    news_feature_names: tuple[str, ...] = ()
     certified_horizons: tuple[int, ...] | None = None
     certification_metrics: Mapping[int, Mapping[str, Any]] | None = None
     model_version: str | None = None
@@ -91,6 +92,13 @@ class VolatilityRuntimeContract:
             or not 0 <= self.news_feature_count <= MAX_NEWS_FEATURE_COUNT
         ):
             raise ValueError("news feature count is out of bounds")
+        if (
+            not isinstance(self.news_feature_names, tuple)
+            or len(self.news_feature_names) != self.news_feature_count
+            or len(set(self.news_feature_names)) != len(self.news_feature_names)
+            or any(not isinstance(name, str) or not name for name in self.news_feature_names)
+        ):
+            raise ValueError("news feature names do not match the signed input contract")
         members = (self.member_seeds, self.member_files)
         if any(not isinstance(group, tuple) for group in members):
             raise ValueError("ensemble membership must be declared as tuples")
@@ -168,6 +176,7 @@ class VolatilityRuntimeContract:
         horizons = metadata.get("horizons")
         window_size = metadata.get("window_size")
         news_feature_count = metadata.get("news_feature_count", 0)
+        news_feature_names = metadata.get("news_feature_names", [])
         model_version = metadata.get("model_version")
         protocol_version = metadata.get("protocol_version")
         metric_source = metadata.get("metric_source", "locked_purged_walk_forward")
@@ -215,6 +224,10 @@ class VolatilityRuntimeContract:
             raise ValueError("release window size is malformed")
         if not isinstance(news_feature_count, int) or isinstance(news_feature_count, bool):
             raise ValueError("release news feature count is malformed")
+        if not isinstance(news_feature_names, list) or not all(
+            isinstance(name, str) for name in news_feature_names
+        ):
+            raise ValueError("release news feature names are malformed")
         if not isinstance(raw_members, list):
             raise ValueError("release ensemble membership is missing")
         seeds: list[int] = []
@@ -238,6 +251,7 @@ class VolatilityRuntimeContract:
             horizons=tuple(horizons),
             window_size=int(window_size),
             news_feature_count=int(news_feature_count),
+            news_feature_names=tuple(news_feature_names),
             certified_horizons=certified_horizons,
             certification_metrics=certification_metrics,
             model_version=model_version,
@@ -287,13 +301,21 @@ class VolatilityRuntimeContract:
                 "feature window",
             ),
             MODEL_INPUT_BASELINE: self._prepare_vector(
-                baseline_variance, "causal baseline variance"
+                baseline_variance,
+                "causal baseline variance",
+                expected_size=self.horizon_count,
+                strictly_positive=True,
             ),
         }
         if self.news_feature_count:
             if news_features is None:
                 raise ValueError("this release requires news features at inference")
-            prepared[MODEL_INPUT_NEWS] = self._prepare_vector(news_features, "news features")
+            prepared[MODEL_INPUT_NEWS] = self._prepare_vector(
+                news_features,
+                "news features",
+                expected_size=self.news_feature_count,
+                strictly_positive=False,
+            )
         elif news_features is not None:
             raise ValueError("market-only release cannot receive news features")
         return prepared
@@ -308,12 +330,21 @@ class VolatilityRuntimeContract:
         return array[np.newaxis, ...]
 
     @classmethod
-    def _prepare_vector(cls, values: np.ndarray, label: str) -> np.ndarray:
+    def _prepare_vector(
+        cls,
+        values: np.ndarray,
+        label: str,
+        *,
+        expected_size: int,
+        strictly_positive: bool,
+    ) -> np.ndarray:
         array = np.asarray(values, dtype=np.float32)
-        if array.ndim != 1 or array.size == 0:
-            raise ValueError(f"{label} must be a non-empty vector")
-        if not np.isfinite(array).all() or (array <= 0).any():
-            raise ValueError(f"{label} must be finite and strictly positive")
+        if array.ndim != 1 or array.size != expected_size:
+            raise ValueError(f"{label} must contain exactly {expected_size} values")
+        if not np.isfinite(array).all():
+            raise ValueError(f"{label} must be finite")
+        if strictly_positive and (array <= 0).any():
+            raise ValueError(f"{label} must be strictly positive")
         return np.ascontiguousarray(array[np.newaxis, :])
 
     def validate_outputs(self, outputs: Mapping[str, np.ndarray]) -> None:

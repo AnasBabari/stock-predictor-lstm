@@ -446,8 +446,7 @@ def load_locked_v8_certification(
         report.get("status") != "passed"
         or report.get("release_eligible") is not True
         or report.get("model_identity") != manifest.get("model_identity")
-        or report.get("metric_source")
-        != "locked_historical_temporal_test_plus_asset_transfer"
+        or report.get("metric_source") != "locked_historical_temporal_test_plus_asset_transfer"
     ):
         raise ValueError("locked certification report does not authorize this ensemble")
     return report, expected_digest
@@ -544,16 +543,28 @@ def assemble_release_bundle(
         "horizons": [int(value) for value in horizons],
         "feature_names": list(DEPLOYABLE_FEATURE_COLUMNS_V5),
         "news_feature_count": int(architecture.news_feature_count),
+        "news_feature_names": (
+            list(manifest.get("news_feature_names", ()))
+            if int(architecture.news_feature_count) > 0
+            else []
+        ),
         "members": [{"seed": seed, "file": f"members/seed-{seed}.onnx"} for seed in seeds],
     }
     if is_v8:
+        if int(architecture.news_feature_count) > 0 and len(metadata["news_feature_names"]) != int(
+            architecture.news_feature_count
+        ):
+            raise ValueError("v8 news release feature schema is missing or inconsistent")
         certification, certification_digest = load_locked_v8_certification(directory, manifest)
         certified_horizons = certification.get("certified_horizons")
         decisions = certification.get("decisions")
         if (
             not isinstance(certified_horizons, list)
             or not certified_horizons
-            or any(isinstance(value, bool) or not isinstance(value, int) for value in certified_horizons)
+            or any(
+                isinstance(value, bool) or not isinstance(value, int)
+                for value in certified_horizons
+            )
             or not isinstance(decisions, list)
         ):
             raise ValueError("v8 certification evidence is malformed")
@@ -583,9 +594,7 @@ def assemble_release_bundle(
                 "certified_horizons": sorted(certified_horizons),
                 "certification_metrics": grouped,
                 "news_status": (
-                    "certified"
-                    if int(architecture.news_feature_count) > 0
-                    else "not_certified"
+                    "certified" if int(architecture.news_feature_count) > 0 else "not_certified"
                 ),
             }
         )
