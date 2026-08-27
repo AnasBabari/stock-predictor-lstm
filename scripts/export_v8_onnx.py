@@ -24,6 +24,7 @@ from research.volatility_forecasting.candidate_v8 import v8_ensemble_identity  #
 from research.volatility_forecasting.export import (  # noqa: E402
     export_candidate_onnx,
     load_locked_v8_candidate_member,
+    load_locked_v8_certification,
     verify_onnx_parity,
 )
 from research.volatility_forecasting.v8_protocol import v8_manifest  # noqa: E402
@@ -38,27 +39,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _load_verified_certification(candidate_dir: Path, manifest: dict) -> tuple[dict, str]:
-    certification_path = candidate_dir / "v8-locked-certification.json"
-    expected_digest = manifest.get("certification_report_sha256")
-    if (
-        not certification_path.is_file()
-        or not isinstance(expected_digest, str)
-        or _sha256_file(certification_path) != expected_digest
-    ):
-        raise ValueError("locked certification report is missing or its checksum differs")
-    try:
-        certification = json.loads(certification_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError("locked certification report is invalid") from error
-    if (
-        certification.get("status") != "passed"
-        or certification.get("release_eligible") is not True
-        or certification.get("model_identity") != manifest.get("model_identity")
-        or certification.get("metric_source")
-        != "locked_historical_temporal_test_plus_asset_transfer"
-    ):
-        raise ValueError("locked certification report does not authorize this ensemble")
-    return certification, expected_digest
+    return load_locked_v8_certification(candidate_dir, manifest)
 
 
 def _parse_args() -> argparse.Namespace:

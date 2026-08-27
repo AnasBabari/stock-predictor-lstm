@@ -27,6 +27,7 @@ from volatility_forecasting.model import (
     VolatilityLossWeights,
 )
 from volatility_forecasting.refit import FrozenCandidate, candidate_identity
+from volatility_forecasting.v8_protocol import v8_manifest
 
 
 def _candidate(*, news_features: int = 0) -> FrozenCandidate:
@@ -398,6 +399,78 @@ def test_assemble_release_bundle_signs_verified_runtime_metadata(tmp_path) -> No
     assert len(metadata["feature_names"]) == 26
     assert [row["seed"] for row in metadata["members"]] == [41, 42]
     assert set(manifest["files"]) == {"members/seed-41.onnx", "members/seed-42.onnx"}
+
+
+def test_assemble_release_bundle_preserves_locked_v8_evidence(tmp_path) -> None:
+    pytest.importorskip("onnxruntime")
+    from volatility_forecasting.candidate_v8 import v8_ensemble_identity
+    from volatility_forecasting.export import (
+        assemble_release_bundle,
+        load_locked_v8_candidate_member,
+    )
+
+    candidate_dir = tmp_path / "locked-v8"
+    _write_candidate_directory(candidate_dir, (41, 42, 43))
+    manifest_path = candidate_dir / "candidate-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        {
+            "artifact_role": "locked_v8_certification_candidate",
+            "release_eligible": True,
+            "protocol": v8_manifest(news_enabled=False),
+            "protocol_version": "global-volatility-distribution-v8-numeric",
+            "model_version": "global-volatility-v8-numeric",
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    loaded = tuple(
+        load_locked_v8_candidate_member(candidate_dir, seed) for seed in (41, 42, 43)
+    )
+    model_identity = v8_ensemble_identity(loaded)
+    manifest["model_identity"] = model_identity
+    decisions = [
+        {
+            "population": population,
+            "horizon": horizon,
+            "decision": "pass",
+            "relative_qlike": 0.90,
+        }
+        for horizon in (1, 3, 5, 7)
+        for population in ("temporal", "asset_transfer")
+    ]
+    certification = {
+        "status": "passed",
+        "release_eligible": True,
+        "model_identity": model_identity,
+        "metric_source": "locked_historical_temporal_test_plus_asset_transfer",
+        "certification_scope": "historical_temporal_test_plus_asset_transfer",
+        "certified_horizons": [1, 3, 5, 7],
+        "decisions": decisions,
+    }
+    certification_path = candidate_dir / "v8-locked-certification.json"
+    certification_path.write_text(json.dumps(certification), encoding="utf-8")
+    manifest["certification_report_sha256"] = hashlib.sha256(
+        certification_path.read_bytes()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    private_key, public_key = _signing_keys(tmp_path)
+    summary = assemble_release_bundle(
+        candidate_dir,
+        tmp_path / "release-v8",
+        private_key_path=private_key,
+        public_key_path=public_key,
+        parity_rows=2,
+    )
+    metadata = summary["signed_release_metadata"]
+    assert metadata["model_id"] == model_identity
+    assert metadata["model_version"] == "global-volatility-v8-numeric"
+    assert metadata["metric_source"] == "locked_historical_temporal_test_plus_asset_transfer"
+    assert metadata["certified_horizons"] == [1, 3, 5, 7]
+    assert set(metadata["certification_metrics"]["7"]) == {
+        "temporal",
+        "asset_transfer",
+    }
 
 
 def test_assemble_refuses_candidates_off_the_certified_schema(tmp_path) -> None:

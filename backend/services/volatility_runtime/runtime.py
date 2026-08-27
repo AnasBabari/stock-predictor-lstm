@@ -90,6 +90,22 @@ class VolatilityOnnxRuntime:
     def member_seeds(self) -> tuple[int, ...]:
         return self.contract.member_seeds
 
+    @property
+    def metric_source(self) -> str:
+        return self.contract.metric_source
+
+    @property
+    def certification_scope(self) -> str:
+        return self.contract.certification_scope
+
+    @property
+    def model_version(self) -> str | None:
+        return self.contract.model_version
+
+    @property
+    def news_status(self) -> str:
+        return self.contract.news_status
+
     def is_certified_horizon(self, horizon: int) -> bool:
         return self.contract.is_certified_horizon(horizon)
 

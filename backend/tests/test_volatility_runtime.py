@@ -106,6 +106,35 @@ def test_release_metadata_round_trips_json_certification_keys() -> None:
     assert contract.certification_summary(7)["decision"] == "pass"
 
 
+def test_release_metadata_preserves_signed_v8_evidence_identity() -> None:
+    metadata = {
+        "runtime_schema": "volatility-runtime-v1",
+        "model_id": "global-volatility-v8-numeric:fixture",
+        "model_version": "global-volatility-v8-numeric",
+        "protocol_version": "global-volatility-distribution-v8-numeric",
+        "metric_source": "locked_historical_temporal_test_plus_asset_transfer",
+        "certification_scope": "historical_temporal_test_plus_asset_transfer",
+        "news_status": "not_certified",
+        "horizons": [1, 3, 5, 7, 14, 30],
+        "window_size": 60,
+        "news_feature_count": 0,
+        "feature_names": list(DEPLOYABLE_FEATURE_COLUMNS_V5),
+        "members": [{"seed": 41, "file": "members/seed-41.onnx"}],
+        "certified_horizons": [1, 3, 5, 7],
+    }
+    contract = VolatilityRuntimeContract.from_release_metadata(metadata, {"members/seed-41.onnx"})
+    assert contract.model_version == "global-volatility-v8-numeric"
+    assert contract.metric_source == "locked_historical_temporal_test_plus_asset_transfer"
+    assert contract.certification_scope == "historical_temporal_test_plus_asset_transfer"
+    assert contract.news_status == "not_certified"
+
+    with pytest.raises(ValueError, match="metric source"):
+        VolatilityRuntimeContract.from_release_metadata(
+            {**metadata, "metric_source": "made_up_evidence"},
+            {"members/seed-41.onnx"},
+        )
+
+
 def test_contract_rejects_invalid_membership() -> None:
     with pytest.raises(ValueError, match="unique and ascending"):
         _contract(member_seeds=(42, 41))

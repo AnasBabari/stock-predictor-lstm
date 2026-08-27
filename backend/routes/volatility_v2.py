@@ -156,6 +156,10 @@ def volatility_release_readiness() -> dict[str, Any]:
         "configured": True,
         "status": "ready",
         "model_id": runtime.model_id,
+        "model_version": runtime.model_version,
+        "metric_source": runtime.metric_source,
+        "certification_scope": runtime.certification_scope,
+        "news_status": runtime.news_status,
         "certified_horizons": list(runtime.certified_horizon_list()),
     }
 
@@ -258,25 +262,15 @@ async def volatility_forecast_v2(
                 "reason": "future trading dates could not be generated for this forecast",
             },
         )
-    # v8 vs v7 evidence labeling: v8 uses historical+transfer, v7 uses prospective walk-forward
-    # The model_id is the canonical release identity (e.g. global-volatility-v8-numeric or global-volatility-news-fusion-v8)
-    is_v8 = "v8" in runtime.model_id.lower() or "news-fusion" in runtime.model_id.lower()
-    metric_source = (
-        "locked_historical_temporal_test_plus_asset_transfer"
-        if is_v8
-        else "locked_purged_walk_forward"
-    )
-    certification_scope = (
-        "historical_temporal_test_plus_asset_transfer" if is_v8 else "prospective_walk_forward"
-    )
     evidence = {
         "model_id": runtime.model_id,
+        "model_version": runtime.model_version,
         "member_seeds": list(runtime.member_seeds),
         "snapshot_id": snapshot.snapshot_id,
-        "metric_source": metric_source,
-        "certification_scope": certification_scope,
-        "news_enabled": is_v8 and "news" in runtime.model_id.lower(),
-        "news_status": "not_certified" if is_v8 else None,
+        "metric_source": runtime.metric_source,
+        "certification_scope": runtime.certification_scope,
+        "news_enabled": runtime.news_status == "certified",
+        "news_status": runtime.news_status,
         "quantile_model": (
             "zero_location_volatility_cone: bands derive from the certified "
             "variance around the unchanged close; no learned direction claim"

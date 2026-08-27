@@ -18,7 +18,11 @@ QUANTILE_KEYS = ("p05", "p10", "p25", "p50", "p75", "p90", "p95")
 
 class _FakeRuntime:
     model_id = "global-volatility-tcn-v1"
+    model_version = "global-volatility-tcn-v1"
     member_seeds = (41, 42, 43)
+    metric_source = "locked_purged_walk_forward"
+    certification_scope = "prospective_walk_forward"
+    news_status = "not_certified"
 
     def __init__(self, variance: float = 4e-4) -> None:
         self.variance = variance

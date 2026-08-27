@@ -423,6 +423,36 @@ def load_locked_v8_candidate_member(candidate_dir: Path, seed: int) -> FrozenCan
     )
 
 
+def load_locked_v8_certification(
+    candidate_dir: Path,
+    manifest: dict[str, object],
+) -> tuple[dict[str, object], str]:
+    """Verify the passing report that authorizes one locked v8 directory."""
+    directory = candidate_dir.resolve()
+    path = directory / "v8-locked-certification.json"
+    expected_digest = manifest.get("certification_report_sha256")
+    if not path.is_file() or not isinstance(expected_digest, str):
+        raise ValueError("locked certification report is missing or its checksum differs")
+    actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_digest != expected_digest:
+        raise ValueError("locked certification report is missing or its checksum differs")
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("locked certification report is invalid") from error
+    if not isinstance(report, dict):
+        raise ValueError("locked certification report is invalid")
+    if (
+        report.get("status") != "passed"
+        or report.get("release_eligible") is not True
+        or report.get("model_identity") != manifest.get("model_identity")
+        or report.get("metric_source")
+        != "locked_historical_temporal_test_plus_asset_transfer"
+    ):
+        raise ValueError("locked certification report does not authorize this ensemble")
+    return report, expected_digest
+
+
 def assemble_release_bundle(
     candidate_dir: Path,
     output_dir: Path,
@@ -444,8 +474,15 @@ def assemble_release_bundle(
         manifest = json.loads((directory / "candidate-manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("candidate manifest is missing or invalid") from error
-    if manifest.get("artifact_role") != "locked_certification_candidate":
+    artifact_role = manifest.get("artifact_role")
+    is_v8 = artifact_role == "locked_v8_certification_candidate"
+    if artifact_role not in {
+        "locked_certification_candidate",
+        "locked_v8_certification_candidate",
+    }:
         raise ValueError("only locked-certification candidates may be released")
+    if manifest.get("release_eligible") is False:
+        raise ValueError("candidate is not release eligible")
     model_id = manifest.get("model_identity")
     if not isinstance(model_id, str) or not model_id or len(model_id) > 128:
         raise ValueError("candidate model identity cannot serve as a release model id")
@@ -487,7 +524,11 @@ def assemble_release_bundle(
     with tempfile.TemporaryDirectory(prefix="volatility-release-") as temp:
         temp_dir = Path(temp)
         for seed in seeds:
-            candidate = load_frozen_candidate_member(directory, seed)
+            candidate = (
+                load_locked_v8_candidate_member(directory, seed)
+                if is_v8
+                else load_frozen_candidate_member(directory, seed)
+            )
             onnx_path = export_candidate_onnx(
                 candidate,
                 temp_dir / f"seed-{seed}.onnx",
@@ -505,8 +546,62 @@ def assemble_release_bundle(
         "news_feature_count": int(architecture.news_feature_count),
         "members": [{"seed": seed, "file": f"members/seed-{seed}.onnx"} for seed in seeds],
     }
+    if is_v8:
+        certification, certification_digest = load_locked_v8_certification(directory, manifest)
+        certified_horizons = certification.get("certified_horizons")
+        decisions = certification.get("decisions")
+        if (
+            not isinstance(certified_horizons, list)
+            or not certified_horizons
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in certified_horizons)
+            or not isinstance(decisions, list)
+        ):
+            raise ValueError("v8 certification evidence is malformed")
+        grouped: dict[str, dict[str, object]] = {}
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                raise ValueError("v8 certification decision is malformed")
+            horizon = decision.get("horizon")
+            population = decision.get("population")
+            if (
+                isinstance(horizon, bool)
+                or not isinstance(horizon, int)
+                or population not in {"temporal", "asset_transfer"}
+            ):
+                raise ValueError("v8 certification decision identity is malformed")
+            grouped.setdefault(str(horizon), {})[str(population)] = decision
+        if any(set(summary) != {"temporal", "asset_transfer"} for summary in grouped.values()):
+            raise ValueError("v8 certification decisions do not cover both populations")
+        metadata.update(
+            {
+                "artifact_role": artifact_role,
+                "protocol_version": manifest.get("protocol_version"),
+                "model_version": manifest.get("model_version"),
+                "metric_source": certification.get("metric_source"),
+                "certification_scope": certification.get("certification_scope"),
+                "certification_report_sha256": certification_digest,
+                "certified_horizons": sorted(certified_horizons),
+                "certification_metrics": grouped,
+                "news_status": (
+                    "certified"
+                    if int(architecture.news_feature_count) > 0
+                    else "not_certified"
+                ),
+            }
+        )
+    else:
+        metadata.update(
+            {
+                "artifact_role": artifact_role,
+                "protocol_version": manifest.get("protocol_version"),
+                "model_version": manifest.get("model_version", model_id),
+                "metric_source": "locked_purged_walk_forward",
+                "certification_scope": "prospective_walk_forward",
+                "news_status": "not_certified",
+            }
+        )
     locked = manifest.get("locked_certification")
-    if isinstance(locked, dict):
+    if not is_v8 and isinstance(locked, dict):
         certified_horizons = locked.get("certified_horizons")
         if isinstance(certified_horizons, list) and all(
             isinstance(value, int) and not isinstance(value, bool) for value in certified_horizons

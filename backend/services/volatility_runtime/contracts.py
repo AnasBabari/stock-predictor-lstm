@@ -68,6 +68,11 @@ class VolatilityRuntimeContract:
     news_feature_count: int = 0
     certified_horizons: tuple[int, ...] | None = None
     certification_metrics: Mapping[int, Mapping[str, Any]] | None = None
+    model_version: str | None = None
+    protocol_version: str | None = None
+    metric_source: str = "locked_purged_walk_forward"
+    certification_scope: str = "prospective_walk_forward"
+    news_status: str = "not_certified"
 
     def __post_init__(self) -> None:
         if not isinstance(self.model_id, str) or not self.model_id or len(self.model_id) > 128:
@@ -120,6 +125,32 @@ class VolatilityRuntimeContract:
             for horizon, summary in self.certification_metrics.items():
                 if horizon not in self.horizons or not isinstance(summary, Mapping):
                     raise ValueError("certification metrics keys must be serving horizons")
+        if self.model_version is not None and (
+            not isinstance(self.model_version, str)
+            or not self.model_version
+            or len(self.model_version) > 128
+        ):
+            raise ValueError("release model version is invalid")
+        if self.protocol_version is not None and (
+            not isinstance(self.protocol_version, str)
+            or not self.protocol_version
+            or len(self.protocol_version) > 160
+        ):
+            raise ValueError("release protocol version is invalid")
+        if self.metric_source not in {
+            "locked_purged_walk_forward",
+            "locked_historical_temporal_test_plus_asset_transfer",
+        }:
+            raise ValueError("release metric source is unsupported")
+        if self.certification_scope not in {
+            "prospective_walk_forward",
+            "historical_temporal_test_plus_asset_transfer",
+        }:
+            raise ValueError("release certification scope is unsupported")
+        if self.news_status not in {"not_certified", "certified"}:
+            raise ValueError("release news status is unsupported")
+        if self.news_status == "certified" and self.news_feature_count == 0:
+            raise ValueError("news certification requires a non-empty news input")
 
     @classmethod
     def from_release_metadata(
@@ -137,6 +168,11 @@ class VolatilityRuntimeContract:
         horizons = metadata.get("horizons")
         window_size = metadata.get("window_size")
         news_feature_count = metadata.get("news_feature_count", 0)
+        model_version = metadata.get("model_version")
+        protocol_version = metadata.get("protocol_version")
+        metric_source = metadata.get("metric_source", "locked_purged_walk_forward")
+        certification_scope = metadata.get("certification_scope", "prospective_walk_forward")
+        news_status = metadata.get("news_status", "not_certified")
         raw_members = metadata.get("members")
         certified_horizons_raw = metadata.get("certified_horizons")
         if certified_horizons_raw is not None:
@@ -204,6 +240,11 @@ class VolatilityRuntimeContract:
             news_feature_count=int(news_feature_count),
             certified_horizons=certified_horizons,
             certification_metrics=certification_metrics,
+            model_version=model_version,
+            protocol_version=protocol_version,
+            metric_source=metric_source,
+            certification_scope=certification_scope,
+            news_status=news_status,
         )
 
     @property
