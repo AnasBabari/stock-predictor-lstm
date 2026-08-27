@@ -402,6 +402,9 @@ def save_v8_development_candidate(
     news_snapshot_checksum: str,
     universe_certifiable: bool,
     training_config: dict[str, object] | None = None,
+    news_matrix_sha256: str | None = None,
+    news_feature_names: tuple[str, ...] = (),
+    news_ablation_evidence: tuple[dict[str, object], ...] | None = None,
 ) -> dict[str, object]:
     if output.exists():
         raise FileExistsError("candidate output must be a new immutable directory")
@@ -439,7 +442,18 @@ def save_v8_development_candidate(
                 "validation_evidence": asdict(evidence_by_seed[member.seed]),
             }
         )
-    eligible = universe_certifiable and all(row.eligible for row in evidence)
+    is_news_candidate = ensemble.members[0].architecture.news_feature_count > 0
+    if is_news_candidate:
+        if not news_matrix_sha256 or not news_feature_names or not news_ablation_evidence:
+            raise ValueError(
+                "news candidate requires matrix identity, schema, and ablation evidence"
+            )
+        news_promoted = all(row.get("promoted") is True for row in news_ablation_evidence)
+    else:
+        if news_matrix_sha256 or news_feature_names or news_ablation_evidence:
+            raise ValueError("market-only candidate cannot persist news evidence")
+        news_promoted = True
+    eligible = universe_certifiable and all(row.eligible for row in evidence) and news_promoted
     role = (
         "prospective_v8_development_candidate" if eligible else "rejected_v8_development_evidence"
     )
@@ -456,10 +470,13 @@ def save_v8_development_candidate(
         "panel_checksum": panel_checksum,
         "universe_manifest_sha256": universe_manifest_sha256,
         "news_snapshot_checksum": news_snapshot_checksum,
+        "news_matrix_sha256": news_matrix_sha256,
+        "news_feature_names": list(news_feature_names),
+        "news_ablation_evidence": news_ablation_evidence,
         "split_manifest": split_manifest,
         "split_manifest_sha256": split_manifest_sha256,
         "universe_certifiable": universe_certifiable,
-        "validation_selected": all(row.eligible for row in evidence),
+        "validation_selected": all(row.eligible for row in evidence) and news_promoted,
         "strict_release_policy": {
             "unsigned": True,
             "sealed_test_required": True,

@@ -25,7 +25,7 @@ import hashlib
 import json
 import os
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
@@ -52,14 +52,27 @@ from research.volatility_forecasting.cache import (  # noqa: E402
 )
 from research.volatility_forecasting.candidate_v8 import (  # noqa: E402
     save_v8_development_candidate,
+    train_v8_ensemble,
     train_v8_numeric_ensemble,
 )
 from research.volatility_forecasting.data import build_volatility_panel_examples  # noqa: E402
 from research.volatility_forecasting.market_snapshot_v8 import (  # noqa: E402
     verify_v8_market_snapshot,
 )
-from research.volatility_forecasting.model import TorchTrainingConfig  # noqa: E402
-from research.volatility_forecasting.split_v8 import build_v8_chronological_split  # noqa: E402
+from research.volatility_forecasting.model import (  # noqa: E402
+    BaselineResidualTCNConfig,
+    TorchTrainingConfig,
+)
+from research.volatility_forecasting.news_candidate_v8 import (  # noqa: E402
+    evaluate_v8_news_ablation,
+)
+from research.volatility_forecasting.news_matrix_v8 import (  # noqa: E402
+    build_v8_aligned_news_matrix,
+)
+from research.volatility_forecasting.split_v8 import (  # noqa: E402
+    build_v8_chronological_split,
+    build_v8_development_fold_plan,
+)
 from research.volatility_forecasting.universe_v8 import (  # noqa: E402
     universe_identity_maps,
     verify_universe_manifest,
@@ -73,6 +86,10 @@ def _parse_args() -> argparse.Namespace:
     ap.add_argument("--universe-manifest", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True, help="Empty output dir for candidate")
     ap.add_argument("--news-enabled", type=lambda x: str(x).lower() == "true", default=False)
+    ap.add_argument("--news-snapshot-dir", type=Path)
+    ap.add_argument("--news-manifest", type=Path)
+    ap.add_argument("--ticker-aliases", type=Path)
+    ap.add_argument("--news-exposures", type=Path)
     ap.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     ap.add_argument("--maximum-epochs", type=int, default=60)
     ap.add_argument("--patience", type=int, default=8)
@@ -141,12 +158,21 @@ def main() -> int:
     if args.maximum_epochs < 1 or args.patience < 1 or args.batch_size < 1:
         print("epoch, patience, and batch size must be positive", file=sys.stderr)
         return 2
-    if args.news_enabled:
+    news_paths = (
+        args.news_snapshot_dir,
+        args.news_manifest,
+        args.ticker_aliases,
+        args.news_exposures,
+    )
+    if args.news_enabled and any(path is None for path in news_paths):
         print(
-            "news-enabled v8 requires a real aligned historical news matrix; "
-            "numeric training is the only implemented candidate path",
+            "news-enabled v8 requires --news-snapshot-dir, --news-manifest, "
+            "--ticker-aliases, and --news-exposures",
             file=sys.stderr,
         )
+        return 2
+    if not args.news_enabled and any(path is not None for path in news_paths):
+        print("news inputs are only valid with --news-enabled true", file=sys.stderr)
         return 2
 
     holdouts = tuple(sorted({t.strip().upper() for t in args.holdouts.split(",") if t.strip()}))
@@ -166,7 +192,7 @@ def main() -> int:
         return 2
     exchange_map, security_id_map = universe_identity_maps(uni)
     try:
-        verify_v8_market_snapshot(
+        market_manifest, _market_frames = verify_v8_market_snapshot(
             panel_dir,
             universe_manifest=uni,
             require_certifiable=False,
@@ -185,6 +211,21 @@ def main() -> int:
         f"examples {len(examples.features)} rows, {len(np.unique(examples.origin_dates))} origins"
     )
 
+    aligned_news = None
+    if args.news_enabled:
+        assert all(path is not None for path in news_paths)
+        news_manifest = json.loads(args.news_manifest.resolve().read_text(encoding="utf-8"))
+        aligned_news = build_v8_aligned_news_matrix(
+            examples,
+            news_snapshot_dir=args.news_snapshot_dir.resolve(),
+            news_manifest=news_manifest,
+            universe_manifest=uni,
+            market_manifest=market_manifest,
+            ticker_aliases_path=args.ticker_aliases.resolve(),
+            exposure_map_path=args.news_exposures.resolve(),
+        )
+        print(f"news matrix {aligned_news.values.shape} {aligned_news.matrix_sha256[:24]}")
+
     # Build chronological split — explicit holdouts, no test access beyond manifest
     split = build_v8_chronological_split(
         examples,
@@ -193,8 +234,11 @@ def main() -> int:
         universe_manifest_sha256=uni_sha,
         universe_coverage_certifiable=bool(uni.get("coverage_certifiable")),
         panel_checksum=panel_fp,
-        news_snapshot_checksum="sha256:"
-        + hashlib.sha256(b"no_news" if not args.news_enabled else b"news").hexdigest(),
+        news_snapshot_checksum=(
+            aligned_news.snapshot_sha256
+            if aligned_news is not None
+            else "sha256:" + hashlib.sha256(b"no_news").hexdigest()
+        ),
         asset_exchange_map=exchange_map,
         asset_security_id_map=security_id_map,
     )
@@ -223,18 +267,57 @@ def main() -> int:
         batch_size=args.batch_size,
         use_amp=args.device == "cuda",
     )
-    ensemble, evidence, partitions = train_v8_numeric_ensemble(
-        examples=examples,
-        train_indices=split.train_indices,
-        validation_indices=split.validation_indices,
-        seeds=protocol.seeds,
-        required_horizons=tuple(int(value) for value in manifest["required_horizons"]),
-        device=args.device,
-        maximum_epochs=args.maximum_epochs,
-        patience=args.patience,
-        batch_size=args.batch_size,
-        training_config=training_config,
+    architecture = BaselineResidualTCNConfig(
+        feature_count=examples.features.shape[-1],
+        horizon_count=len(examples.horizons),
+        window_size=examples.features.shape[1],
     )
+    ablation_payload = None
+    if aligned_news is not None:
+        fold_plan = build_v8_development_fold_plan(examples, split, protocol)
+        ablation = evaluate_v8_news_ablation(
+            examples=examples,
+            fold_plan=fold_plan,
+            protocol=protocol,
+            news_features=aligned_news.values,
+            seeds=protocol.seeds,
+            market_architecture=architecture,
+            training_config=training_config,
+            device=args.device,
+        )
+        ablation_payload = tuple(asdict(row) for row in ablation)
+        architecture = replace(
+            architecture,
+            news_feature_count=aligned_news.values.shape[1],
+        )
+        ensemble, evidence, partitions = train_v8_ensemble(
+            examples=examples,
+            train_indices=split.train_indices,
+            validation_indices=split.validation_indices,
+            seeds=protocol.seeds,
+            required_horizons=tuple(int(value) for value in manifest["required_horizons"]),
+            device=args.device,
+            maximum_epochs=args.maximum_epochs,
+            patience=args.patience,
+            batch_size=args.batch_size,
+            architecture=architecture,
+            training_config=training_config,
+            news_features=aligned_news.values,
+        )
+    else:
+        ensemble, evidence, partitions = train_v8_numeric_ensemble(
+            examples=examples,
+            train_indices=split.train_indices,
+            validation_indices=split.validation_indices,
+            seeds=protocol.seeds,
+            required_horizons=tuple(int(value) for value in manifest["required_horizons"]),
+            device=args.device,
+            maximum_epochs=args.maximum_epochs,
+            patience=args.patience,
+            batch_size=args.batch_size,
+            architecture=architecture,
+            training_config=training_config,
+        )
     split_payload = split.manifest.__dict__
     split_digest = hashlib.sha256(
         json.dumps(split_payload, sort_keys=True, default=str).encode()
@@ -255,6 +338,9 @@ def main() -> int:
         news_snapshot_checksum=news_checksum,
         universe_certifiable=universe_certifiable,
         training_config=asdict(training_config),
+        news_matrix_sha256=(aligned_news.matrix_sha256 if aligned_news is not None else None),
+        news_feature_names=(aligned_news.feature_names if aligned_news is not None else ()),
+        news_ablation_evidence=ablation_payload,
     )
     (out / "split-v8-manifest.json").write_text(
         json.dumps(split_payload, indent=2, sort_keys=True, default=str) + "\n",
@@ -280,6 +366,7 @@ def main() -> int:
             }
             for row in evidence
         ],
+        "news_ablation": ablation_payload,
         "sealed_test_opened": False,
     }
     (out / "development-report.json").write_text(
