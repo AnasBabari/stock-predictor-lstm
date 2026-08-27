@@ -162,7 +162,7 @@ def _fit_member(
         training,
         architecture=architecture,
         seed=seed,
-        epoch_budget=maximum_epochs,
+        epoch_budget=settings.maximum_epochs,
         variance_scale=variance_scale,
         return_variance_scale=return_variance_scale,
         comparison_baseline=comparison,
@@ -174,7 +174,7 @@ def _fit_member(
         architecture=architecture,
         fit_split=fit_split,
         seed=seed,
-        epoch_budget=maximum_epochs,
+        epoch_budget=settings.maximum_epochs,
         variance_scale=variance_scale,
         return_variance_scale=return_variance_scale,
         comparison_baseline=comparison,
@@ -327,6 +327,7 @@ def save_v8_development_candidate(
     universe_manifest_sha256: str,
     news_snapshot_checksum: str,
     universe_certifiable: bool,
+    training_config: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if output.exists():
         raise FileExistsError("candidate output must be a new immutable directory")
@@ -374,6 +375,7 @@ def save_v8_development_candidate(
         "protocol_version": protocol["protocol_version"],
         "protocol": protocol,
         "architecture": asdict(ensemble.members[0].architecture),
+        "training_config": training_config,
         "members": member_rows,
         "panel_checksum": panel_checksum,
         "universe_manifest_sha256": universe_manifest_sha256,

@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -54,6 +55,7 @@ from research.volatility_forecasting.candidate_v8 import (  # noqa: E402
     train_v8_numeric_ensemble,
 )
 from research.volatility_forecasting.data import build_volatility_panel_examples  # noqa: E402
+from research.volatility_forecasting.model import TorchTrainingConfig  # noqa: E402
 from research.volatility_forecasting.split_v8 import build_v8_chronological_split  # noqa: E402
 from research.volatility_forecasting.v8_protocol import v8_manifest, v8_protocol  # noqa: E402
 
@@ -192,6 +194,12 @@ def main() -> int:
         f"epochs<={args.maximum_epochs} batch={args.batch_size}",
         flush=True,
     )
+    training_config = TorchTrainingConfig(
+        maximum_epochs=args.maximum_epochs,
+        patience=args.patience,
+        batch_size=args.batch_size,
+        use_amp=args.device == "cuda",
+    )
     ensemble, evidence, partitions = train_v8_numeric_ensemble(
         examples=examples,
         train_indices=split.train_indices,
@@ -202,6 +210,7 @@ def main() -> int:
         maximum_epochs=args.maximum_epochs,
         patience=args.patience,
         batch_size=args.batch_size,
+        training_config=training_config,
     )
     split_payload = split.manifest.__dict__
     split_digest = hashlib.sha256(
@@ -222,6 +231,7 @@ def main() -> int:
         universe_manifest_sha256=str(uni_sha),
         news_snapshot_checksum=news_checksum,
         universe_certifiable=universe_certifiable,
+        training_config=asdict(training_config),
     )
     (out / "split-v8-manifest.json").write_text(
         json.dumps(split_payload, indent=2, sort_keys=True, default=str) + "\n",

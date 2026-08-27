@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
@@ -36,6 +37,7 @@ from run_v8_architecture_search import (  # noqa: E402
     _loss_weights_for_config,
     _rank_candidates,
     _summarize_evidence,
+    _validate_search_config,
 )
 
 
@@ -72,11 +74,15 @@ def test_summarize_evidence_reports_finite_values() -> None:
     assert summary["worst_required_ratio_upper_95"] == 1.04
 
 
-def test_summarize_evidence_empty_evidence_yields_infinity() -> None:
-    summary = _summarize_evidence(tuple(), required_horizons=(1,))
-    assert summary["worst_required_relative_qlike"] == float("inf")
-    assert summary["mean_required_relative_qlike"] == float("inf")
-    assert summary["worst_required_ratio_upper_95"] == float("inf")
+def test_summarize_evidence_empty_evidence_fails_closed() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        _summarize_evidence(tuple(), required_horizons=(1,))
+
+
+def test_summarize_evidence_non_finite_fails_closed() -> None:
+    evidence = (_FakeEvidence(seed=41, rel=[float("nan")], upper=[1.0]),)
+    with pytest.raises(ValueError, match="non-finite"):
+        _summarize_evidence(evidence, required_horizons=(1,))
 
 
 def test_config_label_handles_tcn_without_transformer_d_model() -> None:
@@ -148,6 +154,23 @@ def test_search_space_label_uniqueness_holds_for_default_budget() -> None:
 def test_search_space_caps_at_max_configs() -> None:
     configs = _build_search_space(max_configs=4)
     assert len(configs) == 4
+
+
+def test_replay_config_rejects_unknown_and_non_finite_values() -> None:
+    valid = {
+        "encoder_family": "patch_transformer",
+        "channels": 48,
+        "transformer_d_model": 64,
+        "dropout": 0.15,
+        "learning_rate": 1e-3,
+        "weight_decay": 1e-3,
+        "baseline_regularization": 0.05,
+    }
+    assert _validate_search_config(valid) == valid
+    with pytest.raises(ValueError, match="unknown fields"):
+        _validate_search_config({**valid, "surprise": 1})
+    with pytest.raises(ValueError, match="finite"):
+        _validate_search_config({**valid, "learning_rate": float("nan")})
 
 
 def test_search_script_signature_has_no_test_partition_access() -> None:

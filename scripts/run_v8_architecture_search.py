@@ -21,8 +21,10 @@ import argparse
 import hashlib
 import itertools
 import json
+import math
 import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -140,6 +142,63 @@ def _config_label(cfg: dict) -> str:
     return "-".join(str(p) for p in parts)
 
 
+def _validate_search_config(cfg: object) -> dict[str, object]:
+    """Validate one replayable configuration before starting any GPU work."""
+    if not isinstance(cfg, dict):
+        raise ValueError("search configuration must be a JSON object")
+    required = {
+        "encoder_family",
+        "channels",
+        "dropout",
+        "learning_rate",
+        "weight_decay",
+        "baseline_regularization",
+    }
+    missing = sorted(required - set(cfg))
+    unknown = sorted(
+        set(cfg)
+        - required
+        - {"transformer_d_model"}
+    )
+    if missing:
+        raise ValueError(f"search configuration is missing: {', '.join(missing)}")
+    if unknown:
+        raise ValueError(f"search configuration has unknown fields: {', '.join(unknown)}")
+    family = cfg["encoder_family"]
+    if family not in {"tcn", "patch_transformer"}:
+        raise ValueError("encoder_family must be tcn or patch_transformer")
+    numeric_fields = (
+        "channels",
+        "dropout",
+        "learning_rate",
+        "weight_decay",
+        "baseline_regularization",
+    )
+    for field in numeric_fields:
+        value = cfg[field]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field} must be numeric")
+        if not math.isfinite(float(value)):
+            raise ValueError(f"{field} must be finite")
+    if int(cfg["channels"]) < 4 or float(cfg["channels"]) != int(cfg["channels"]):
+        raise ValueError("channels must be an integer >= 4")
+    if not 0 <= float(cfg["dropout"]) < 1:
+        raise ValueError("dropout must be in [0, 1)")
+    if float(cfg["learning_rate"]) <= 0 or float(cfg["weight_decay"]) < 0:
+        raise ValueError("learning_rate must be positive and weight_decay non-negative")
+    if not 0 <= float(cfg["baseline_regularization"]) <= 0.60:
+        raise ValueError("baseline_regularization must be in [0, 0.60]")
+    if family == "patch_transformer":
+        d_model = cfg.get("transformer_d_model")
+        if isinstance(d_model, bool) or not isinstance(d_model, int) or d_model < 8:
+            raise ValueError("patch_transformer requires integer transformer_d_model >= 8")
+        if d_model % 4:
+            raise ValueError("transformer_d_model must be divisible by four heads")
+    normalized = dict(cfg)
+    normalized["channels"] = int(cfg["channels"])
+    return normalized
+
+
 def _loss_weights_for_config(cfg: dict) -> VolatilityLossWeights:
     regularization = float(cfg["baseline_regularization"])
     return VolatilityLossWeights(
@@ -211,18 +270,28 @@ def _build_search_space(max_configs: int) -> list[dict]:
     return unique[:max_configs]
 
 
+def _finite_or_inf(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return float("inf")
+    numeric = float(value)
+    return numeric if math.isfinite(numeric) else float("inf")
+
+
+def _result_sort_key(row: dict) -> tuple[object, ...]:
+    eligible = row.get("eligible", False) is True
+    return (
+        not eligible,
+        _finite_or_inf(row.get("worst_required_relative_qlike")),
+        _finite_or_inf(row.get("mean_required_relative_qlike")),
+        _finite_or_inf(row.get("worst_required_ratio_upper_95")),
+        str(row.get("label", "")),
+    )
+
+
 def _rank_candidates(results: list[dict]) -> list[dict]:
     """Sort candidates: eligible first, then by worst required-horizon relative QLIKE."""
 
-    def sort_key(row: dict):
-        eligible = row.get("eligible", False)
-        worst_qlike = row.get("worst_required_relative_qlike", float("inf"))
-        mean_qlike = row.get("mean_required_relative_qlike", float("inf"))
-        worst_upper = row.get("worst_required_ratio_upper_95", float("inf"))
-        # Eligible first (True > False), then lower-is-better metrics
-        return (not eligible, worst_qlike, mean_qlike, worst_upper, row["label"])
-
-    return sorted(results, key=sort_key)
+    return sorted(results, key=_result_sort_key)
 
 
 def _summarize_evidence(evidence: tuple[V8MemberEvidence, ...], required_horizons: tuple[int, ...]) -> dict:
@@ -233,11 +302,15 @@ def _summarize_evidence(evidence: tuple[V8MemberEvidence, ...], required_horizon
         for h_idx, _h in enumerate(horizons):
             qlikes.append(float(member.metrics[h_idx]["relative_qlike"]))
             uppers.append(float(member.ratio_upper_95[h_idx]))
+    if not qlikes or not uppers:
+        raise ValueError("candidate evidence is empty")
+    if not np.isfinite(qlikes).all() or not np.isfinite(uppers).all():
+        raise ValueError("candidate evidence contains non-finite values")
     return {
-        "worst_required_relative_qlike": float(np.max(qlikes)) if qlikes else float("inf"),
-        "mean_required_relative_qlike": float(np.mean(qlikes)) if qlikes else float("inf"),
-        "worst_required_ratio_upper_95": float(np.max(uppers)) if uppers else float("inf"),
-        "mean_required_ratio_upper_95": float(np.mean(uppers)) if uppers else float("inf"),
+        "worst_required_relative_qlike": float(np.max(qlikes)),
+        "mean_required_relative_qlike": float(np.mean(qlikes)),
+        "worst_required_ratio_upper_95": float(np.max(uppers)),
+        "mean_required_ratio_upper_95": float(np.mean(uppers)),
     }
 
 
@@ -309,13 +382,20 @@ def main() -> int:
         if not cfg_path.is_file():
             print(f"--config-json not found: {cfg_path}", file=sys.stderr)
             return 2
-        search_space = [json.loads(cfg_path.read_text(encoding="utf-8"))]
+        try:
+            search_space = [
+                _validate_search_config(json.loads(cfg_path.read_text(encoding="utf-8")))
+            ]
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            print(f"invalid --config-json: {error}", file=sys.stderr)
+            return 2
         print(f"single-config mode from {cfg_path}")
     else:
-        search_space = _build_search_space(args.max_configs)
+        search_space = [_validate_search_config(cfg) for cfg in _build_search_space(args.max_configs)]
     print(f"search space size {len(search_space)} configs x {len(seeds)} seeds")
 
     results: list[dict] = []
+    best_trained = None
     for idx, cfg in enumerate(search_space, start=1):
         label = _config_label(cfg)
         print(f"[{idx}/{len(search_space)}] {label} ...", flush=True)
@@ -380,6 +460,11 @@ def main() -> int:
                 "status": "ok",
             }
             results.append(row)
+            if best_trained is None or _result_sort_key(row) < _result_sort_key(best_trained[0]):
+                # Retain only the exact current winner. This avoids retraining a
+                # nominally identical configuration whose weights/evidence may
+                # differ across GPU runtimes.
+                best_trained = (row, ensemble, evidence, partitions, training_config)
             print(
                 f"  -> eligible={eligible} worst_rel_qlike={summary['worst_required_relative_qlike']:.6f} "
                 f"worst_upper95={summary['worst_required_ratio_upper_95']:.6f}",
@@ -391,10 +476,10 @@ def main() -> int:
                 "config": cfg,
                 "eligible": False,
                 "members": [],
-                "worst_required_relative_qlike": float("inf"),
-                "mean_required_relative_qlike": float("inf"),
-                "worst_required_ratio_upper_95": float("inf"),
-                "mean_required_ratio_upper_95": float("inf"),
+                "worst_required_relative_qlike": None,
+                "mean_required_relative_qlike": None,
+                "worst_required_ratio_upper_95": None,
+                "mean_required_ratio_upper_95": None,
                 "status": f"error: {exc}",
             }
             results.append(row)
@@ -406,6 +491,12 @@ def main() -> int:
     # Save full search report
     report = {
         "protocol_version": protocol.protocol_version,
+        "panel_checksum": panel_fp,
+        "universe_manifest_sha256": uni_sha,
+        "split_manifest_sha256": hashlib.sha256(
+            json.dumps(split.manifest.__dict__, sort_keys=True, default=str).encode()
+        ).hexdigest(),
+        "sealed_test_opened": False,
         "seeds": list(seeds),
         "required_horizons": list(required_horizons),
         "baseline_metrics": baselines,
@@ -420,13 +511,13 @@ def main() -> int:
         "best_eligible": ranked[0]["eligible"] if ranked else False,
     }
     (out / "search-report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True, default=str) + "\n",
+        json.dumps(report, indent=2, sort_keys=True, default=str, allow_nan=False) + "\n",
         encoding="utf-8",
     )
 
     # Save best config
     best = ranked[0] if ranked else None
-    if best:
+    if best and best.get("status") == "ok":
         (out / "best-config.json").write_text(
             json.dumps(best["config"], indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -438,47 +529,9 @@ def main() -> int:
         best_row = eligible[0]
         label = best_row["label"]
         print(f"saving best eligible candidate: {label}", flush=True)
-        # Reconstruct architecture/loss_weights/training_config from stored config
-        cfg = best_row["config"]
-        architecture = BaselineResidualTCNConfig(
-            feature_count=examples.features.shape[-1],
-            horizon_count=len(examples.horizons),
-            window_size=examples.features.shape[1],
-            encoder_family=cfg["encoder_family"],
-            channels=cfg["channels"],
-            dropout=cfg["dropout"],
-            transformer_d_model=cfg.get("transformer_d_model", 64),
-            transformer_heads=4,
-            transformer_layers=2,
-            transformer_feedforward=128,
-            patch_length=10,
-            patch_stride=5,
-        )
-        loss_weights = _loss_weights_for_config(cfg)
-        training_config = TorchTrainingConfig(
-            maximum_epochs=args.max_epochs,
-            patience=args.patience,
-            batch_size=args.batch_size,
-            learning_rate=cfg["learning_rate"],
-            weight_decay=cfg["weight_decay"],
-            use_amp=args.device == "cuda",
-        )
-        # We need to re-train to get the ensemble object for saving.
-        # This is the only place we duplicate training, and only for the winner.
-        ensemble, evidence, partitions = train_v8_numeric_ensemble(
-            examples=examples,
-            train_indices=split.train_indices,
-            validation_indices=split.validation_indices,
-            seeds=seeds,
-            required_horizons=required_horizons,
-            device=args.device,
-            maximum_epochs=args.max_epochs,
-            patience=args.patience,
-            batch_size=args.batch_size,
-            architecture=architecture,
-            loss_weights=loss_weights,
-            training_config=training_config,
-        )
+        if best_trained is None or best_trained[0]["label"] != label:
+            raise RuntimeError("exact winning ensemble was not retained")
+        _winner_row, ensemble, evidence, partitions, training_config = best_trained
         split_payload = split.manifest.__dict__
         split_digest = hashlib.sha256(
             json.dumps(split_payload, sort_keys=True, default=str).encode()
@@ -490,7 +543,7 @@ def main() -> int:
         best_out = out / "best-candidate"
         if best_out.exists():
             raise FileExistsError(f"best candidate output already exists: {best_out}")
-        save_v8_development_candidate(
+        candidate_manifest = save_v8_development_candidate(
             best_out,
             ensemble=ensemble,
             evidence=evidence,
@@ -501,6 +554,7 @@ def main() -> int:
             universe_manifest_sha256=str(uni_sha),
             news_snapshot_checksum=news_checksum,
             universe_certifiable=universe_certifiable,
+            training_config=asdict(training_config),
         )
         (best_out / "split-v8-manifest.json").write_text(
             json.dumps(split_payload, indent=2, sort_keys=True, default=str) + "\n",
@@ -511,8 +565,9 @@ def main() -> int:
             encoding="utf-8",
         )
         best_report = {
-            "artifact_role": "rejected_v8_development_evidence",
-            "model_identity": "search-winner-" + label,
+            "artifact_role": candidate_manifest["artifact_role"],
+            "model_identity": candidate_manifest["model_identity"],
+            "search_label": label,
             "baseline_metrics": baselines,
             "validation_calibration_end": str(partitions.calibration_end),
             "validation_selection_start": str(partitions.selection_start),
