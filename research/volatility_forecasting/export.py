@@ -368,6 +368,24 @@ def load_prospective_candidate_member(candidate_dir: Path, seed: int) -> FrozenC
     )
 
 
+def load_prospective_v8_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
+    """Reconstruct one unsigned v8 member for prediction-only certification."""
+    return _load_candidate_member(
+        candidate_dir,
+        seed,
+        expected_role="prospective_v8_development_candidate",
+    )
+
+
+def load_locked_v8_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
+    """Reconstruct one locked v8 member for ONNX release conversion."""
+    return _load_candidate_member(
+        candidate_dir,
+        seed,
+        expected_role="locked_v8_certification_candidate",
+    )
+
+
 def assemble_release_bundle(
     candidate_dir: Path,
     output_dir: Path,

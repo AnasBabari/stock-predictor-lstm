@@ -58,6 +58,18 @@ class V8MemberEvidence:
     reasons: tuple[str, ...]
 
 
+def v8_ensemble_identity(members: tuple[FrozenCandidate, ...]) -> str:
+    """Content identity for one ordered v8 fixed-seed ensemble."""
+    ordered = tuple(sorted(members, key=lambda member: member.seed))
+    if not ordered or len({member.seed for member in ordered}) != len(ordered):
+        raise ValueError("v8 ensemble members must have unique seeds")
+    identity_payload = json.dumps(
+        [(member.seed, member.model_identity) for member in ordered],
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"global-volatility-v8-numeric:{hashlib.sha256(identity_payload).hexdigest()}"
+
+
 def split_validation_for_selection(
     examples: VolatilityPanelExamples,
     validation_indices: np.ndarray,
@@ -298,11 +310,7 @@ def train_v8_numeric_ensemble(
             )
         )
     ordered = tuple(sorted(members, key=lambda member: member.seed))
-    identity_payload = json.dumps(
-        [(member.seed, member.model_identity) for member in ordered],
-        separators=(",", ":"),
-    ).encode("utf-8")
-    model_identity = f"global-volatility-v8-numeric:{hashlib.sha256(identity_payload).hexdigest()}"
+    model_identity = v8_ensemble_identity(ordered)
     ensemble = FrozenEnsemble(members=ordered, model_identity=model_identity)
     return ensemble, tuple(evidence), partitions
 

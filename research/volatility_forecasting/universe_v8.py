@@ -343,6 +343,37 @@ def build_universe_manifest(
     return manifest
 
 
+def verify_universe_manifest(payload: object) -> dict[str, Any]:
+    """Rebuild and verify a persisted universe manifest, failing closed.
+
+    A caller must not trust the embedded ``sha256`` alone: every member and
+    coverage count is reconstructed through the same validation path used at
+    creation time, then the complete canonical payload is compared.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("universe manifest must be a JSON object")
+    rows = payload.get("members")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("universe manifest has no members")
+    try:
+        members = [UniverseMember(**row) for row in rows if isinstance(row, dict)]
+    except (TypeError, ValueError) as error:
+        raise ValueError("universe manifest member table is invalid") from error
+    if len(members) != len(rows):
+        raise ValueError("universe manifest contains a non-object member")
+    expected = build_universe_manifest(
+        members,
+        source_checksums=payload.get("source_checksums"),
+        selection_policy=payload.get("selection_policy"),
+        seed=int(payload.get("seed", V8_UNIVERSE_SEED)),
+        protocol_version=str(payload.get("protocol_version", "")),
+    )
+    normalized_expected = json.loads(json.dumps(expected, sort_keys=True))
+    if payload != normalized_expected:
+        raise ValueError("universe manifest content or checksum does not match")
+    return normalized_expected
+
+
 def write_universe_manifest(out_dir: Path, members: list[UniverseMember], **kwargs: Any) -> Path:
     """Atomically write ``universe-v8-manifest.json``; refuses overwrites (fsync+replace)."""
     manifest = build_universe_manifest(members, **kwargs)
