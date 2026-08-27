@@ -91,8 +91,50 @@ If Playwright is not installed, local browser E2E is skipped. CI runs it only wh
 
 This procedure is forbidden until the locked certification outcome has overall `status = passed`.
 
-1. Assemble the signed ONNX release with `scripts/assemble_volatility_release.py`; keep the private Ed25519 key off Git and off Render.
-2. Verify the bundle locally with the pinned public key and package it without extra files:
+1. After the future panel contains 252 target-complete origins on or after
+   2026-08-27, open the v7 reserve once. Use a new, empty output directory; a
+   failed run is immutable evidence and must never be deleted and repeated.
+
+   ```powershell
+   python scripts/certify_prospective_volatility_candidate.py `
+     --candidate-dir C:\path\to\prospective-v7-candidate `
+     --development-report C:\path\to\prospective-development-report.json `
+     --development-panel-dir C:\path\to\panel-ending-2026-08-21 `
+     --certification-panel-dir C:\path\to\future-immutable-panel `
+     --example-cache-root C:\path\to\volatility-example-cache `
+     --output-dir C:\path\to\v7-locked-certification `
+     --open-locked-holdout
+   ```
+
+   Continue only when `locked-certification.json` has overall
+   `status = passed` and the command created `candidate/`. Prefix drift,
+   insufficient future sessions, a failed horizon, NMM/MSFT degradation, or a
+   repeated non-empty output directory must stop the release.
+
+   If a passed report exists but candidate promotion was interrupted, recover
+   materialization without reopening the reserve:
+
+   ```powershell
+   python scripts/materialize_prospective_certification.py `
+     --candidate-dir C:\path\to\prospective-v7-candidate `
+     --development-report C:\path\to\prospective-development-report.json `
+     --development-panel-dir C:\path\to\panel-ending-2026-08-21 `
+     --certification-dir C:\path\to\v7-locked-certification
+   ```
+
+2. Assemble the signed ONNX release from that exact materialized candidate
+   with `scripts/assemble_volatility_release.py`; keep the private Ed25519 key
+   off Git and off Render.
+
+   ```powershell
+   python scripts/assemble_volatility_release.py `
+     --candidate-dir C:\path\to\v7-locked-certification\candidate `
+     --output-dir C:\path\to\signed-release `
+     --private-key-path C:\secure\volatility-v1.private.pem `
+     --public-key-path backend\release_keys\volatility-v1.public.pem
+   ```
+
+3. Verify the bundle locally with the pinned public key and package it without extra files:
 
    ```powershell
    python scripts/package_volatility_release.py `
@@ -101,12 +143,12 @@ This procedure is forbidden until the locked certification outcome has overall `
      --output C:\path\to\stocklstm-volatility-v7.zip
    ```
 
-3. Upload the ZIP to an immutable HTTPS object or GitHub Release asset. Record the command's exact `archive_sha256`; do not use a mutable `latest` URL.
-4. Confirm the Blueprint supplies
+4. Upload the ZIP to an immutable HTTPS object or GitHub Release asset. Record the command's exact `archive_sha256`; do not use a mutable `latest` URL.
+5. Confirm the Blueprint supplies
    `VOLATILITY_PUBLIC_KEY_PATH=backend/release_keys/volatility-v1.public.pem`.
    The public key may be distributed; the matching private key must remain off
    Git, Render, release archives, and build logs.
-5. Set the immutable archive URL and SHA-256, then enable `VOLATILITY_SERVING_REQUIRED=true` in the same deployment change.
-6. Require `/ready`, `/models`, a certified MSFT request, a certified NMM request, and a deliberately incorrect digest smoke test before declaring the deployment complete.
+6. Set the immutable archive URL and SHA-256, then enable `VOLATILITY_SERVING_REQUIRED=true` in the same deployment change.
+7. Require `/ready`, `/models`, a certified MSFT request, a certified NMM request, and a deliberately incorrect digest smoke test before declaring the deployment complete.
 
 The backend downloads into a digest-named directory under `VOLATILITY_RELEASE_CACHE_DIR` (default platform temp storage). Restarts may download again; requests never train and never write model state. URL credentials, private signing keys, failed candidates, and unsigned prospective candidates must not enter the service configuration.

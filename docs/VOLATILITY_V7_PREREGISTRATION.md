@@ -187,6 +187,27 @@ Future certification must:
 There is no partial release. Only a future result with overall status `passed`
 may enter materialization, signing, release verification, and deployment.
 
+The canonical one-shot opener is
+`scripts/certify_prospective_volatility_candidate.py`. It accepts the frozen
+development report, unsigned prospective candidate, original development
+snapshot, and one later immutable certification snapshot. Before creating the
+durable `holdout-opened.json` marker it verifies the exact protocol,
+architecture, objective, report digest, candidate content identities, panel
+provider contract, and byte-canonical OHLCV prefix through 2026-08-21. It then
+locks only the first 252 target-complete forecast origins on or after
+2026-08-27. Because the example builder withholds origins lacking the 30-day
+target, this is equivalent to requiring the complete 252 + 30 session reserve.
+
+The command emits `locked-certification.json` on either outcome. It creates a
+`locked_certification_candidate` directory only when every required temporal
+and asset-transfer decision passes. A failed or partial report leaves no
+release-role candidate, and the non-empty one-shot output directory prevents
+the reserve from being reopened. If the process is interrupted after writing a
+passed report but before the atomic candidate-directory promotion,
+`scripts/materialize_prospective_certification.py` may recover the exact
+verified source bytes from the immutable evidence without predicting on or
+reopening the reserve.
+
 ## News boundary
 
 The matched point-in-time GDELT ablation did not demonstrate incremental value

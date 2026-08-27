@@ -46,6 +46,8 @@ A locked certification holdout is consumed exactly once after the winner decisio
 
 Because the v6 reserve is already consumed, v7 development uses no certification rows. A new reserve begins with observations on or after 2026-08-27 and cannot be complete until the required 252 holdout sessions plus the 30-session maximum target have matured. Development selection may create only an unsigned prospective candidate; it is not a release artifact.
 
+When that reserve matures, `scripts/certify_prospective_volatility_candidate.py` is the only v7 opener. It reconstructs and checksum-verifies the already-frozen three-seed ensemble rather than fitting another model, proves the later panel preserves every development row, and deterministically uses the first 252 target-complete future origins. It writes the one-shot marker before prediction and materializes the exact verified weight bytes under the release-compatible role only after an overall pass.
+
 ## Release bundle
 
 backend/release/bundle.py signs a directory containing ONNX members and manifest.json. The manifest binds runtime schema, feature order, window, horizon list, model id, member seeds/files, certified horizon decisions, certification metrics, and SHA-256 checksums. The serving runtime verifies Ed25519, checksums, paths, input/output names, feature schema, model size, and CPU inference before caching the runtime.
