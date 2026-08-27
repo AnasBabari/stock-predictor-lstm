@@ -6,6 +6,7 @@ from volatility_forecasting.contracts import VolatilityForecastProtocol
 from volatility_forecasting.data import VolatilityPanelExamples
 from volatility_forecasting.folds import (
     build_inner_training_split,
+    build_prospective_certification_fold_plan,
     build_prospective_development_fold_plan,
     build_volatility_fold_plan,
     select_asset_holdouts,
@@ -48,6 +49,24 @@ def _protocol() -> VolatilityForecastProtocol:
         early_stopping_sessions=5,
         temporal_holdout_sessions=10,
         asset_holdout_fraction=0.25,
+    )
+
+
+def _subset_examples(
+    examples: VolatilityPanelExamples,
+    mask: np.ndarray,
+) -> VolatilityPanelExamples:
+    return VolatilityPanelExamples(
+        features=examples.features[mask],
+        baseline_variance=examples.baseline_variance[mask],
+        realized_variance=examples.realized_variance[mask],
+        cumulative_returns=examples.cumulative_returns[mask],
+        direction_classes=examples.direction_classes[mask],
+        tickers=examples.tickers[mask],
+        origin_dates=examples.origin_dates[mask],
+        origin_closes=examples.origin_closes[mask],
+        horizons=examples.horizons,
+        feature_names=examples.feature_names,
     )
 
 
@@ -131,6 +150,59 @@ def test_prospective_plan_rejects_present_or_pre_cutoff_certification_rows() -> 
             protocol,
             development_cutoff=cutoff - np.timedelta64(10, "D"),
             prospective_certification_start=cutoff - np.timedelta64(5, "D"),
+        )
+
+
+def test_prospective_certification_uses_first_complete_future_reserve_only() -> None:
+    examples = _examples()
+    protocol = _protocol()
+    unique_dates = np.unique(examples.origin_dates)
+    cutoff = unique_dates[69]
+    prospective_start = unique_dates[75]
+    plan = build_prospective_certification_fold_plan(
+        examples,
+        protocol,
+        development_cutoff=cutoff,
+        prospective_certification_start=prospective_start,
+    )
+
+    expected_locked_dates = unique_dates[75:85]
+    temporal_dates = np.unique(examples.origin_dates[plan.temporal_certification_indices])
+    transfer_dates = np.unique(examples.origin_dates[plan.asset_transfer_certification_indices])
+    assert np.array_equal(temporal_dates, expected_locked_dates)
+    assert np.array_equal(transfer_dates, expected_locked_dates)
+    assert plan.folds[-1].validation_end == cutoff
+    assert plan.certification_start == prospective_start
+    assert {"NMM", "MSFT"}.issubset(
+        set(examples.tickers[plan.asset_transfer_certification_indices])
+    )
+
+
+def test_prospective_certification_rejects_an_unmatured_future_reserve() -> None:
+    examples = _examples()
+    protocol = _protocol()
+    unique_dates = np.unique(examples.origin_dates)
+    with pytest.raises(ValueError, match="not mature"):
+        build_prospective_certification_fold_plan(
+            examples,
+            protocol,
+            development_cutoff=unique_dates[69],
+            prospective_certification_start=unique_dates[85],
+        )
+
+
+def test_prospective_certification_requires_complete_required_ticker_dates() -> None:
+    examples = _examples()
+    protocol = _protocol()
+    unique_dates = np.unique(examples.origin_dates)
+    missing_nmm_date = (examples.tickers == "NMM") & (examples.origin_dates == unique_dates[80])
+    incomplete = _subset_examples(examples, ~missing_nmm_date)
+    with pytest.raises(ValueError, match="incomplete NMM date coverage"):
+        build_prospective_certification_fold_plan(
+            incomplete,
+            protocol,
+            development_cutoff=unique_dates[69],
+            prospective_certification_start=unique_dates[75],
         )
 
 

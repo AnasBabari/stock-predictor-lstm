@@ -217,8 +217,8 @@ def build_prospective_development_fold_plan(
     The caller must separately prove that target observations were also
     bounded by the immutable panel cutoff.
     """
-    cutoff = np.datetime64(development_cutoff, "D")
-    certification_start = np.datetime64(prospective_certification_start, "D")
+    cutoff = np.datetime64(str(development_cutoff), "D")
+    certification_start = np.datetime64(str(prospective_certification_start), "D")
     if np.isnat(cutoff) or np.isnat(certification_start):
         raise ValueError("prospective fold dates must be finite")
     if certification_start <= cutoff:
@@ -281,5 +281,134 @@ def build_prospective_development_fold_plan(
         asset_holdout_tickers=holdout_tickers,
         temporal_certification_indices=np.empty(0, dtype=np.int64),
         asset_transfer_certification_indices=np.empty(0, dtype=np.int64),
+        certification_start=certification_start,
+    )
+
+
+def build_prospective_certification_fold_plan(
+    examples: VolatilityPanelExamples,
+    protocol: VolatilityForecastProtocol,
+    *,
+    development_cutoff: np.datetime64,
+    prospective_certification_start: np.datetime64,
+    asset_split_seed: int = 42,
+    required_asset_holdouts: tuple[str, ...] = ("NMM", "MSFT"),
+) -> VolatilityFoldPlan:
+    """Reconstruct frozen development folds and the first matured future reserve.
+
+    The certification reserve is the first ``temporal_holdout_sessions`` unique
+    forecast origins on or after the preregistered start.  ``examples`` only
+    contains origins whose maximum-horizon target is already observable, so
+    requiring the full origin count also enforces target maturity without
+    admitting a partial terminal horizon.
+    """
+    cutoff = np.datetime64(str(development_cutoff), "D")
+    certification_start = np.datetime64(str(prospective_certification_start), "D")
+    if np.isnat(cutoff) or np.isnat(certification_start):
+        raise ValueError("prospective fold dates must be finite")
+    if certification_start <= cutoff:
+        raise ValueError("prospective certification must start after the development cutoff")
+
+    unique_dates = np.unique(examples.origin_dates)
+    unique_dates.sort()
+    development_dates = unique_dates[unique_dates <= cutoff]
+    future_dates = unique_dates[unique_dates >= certification_start]
+    required_development_sessions = (
+        protocol.minimum_train_sessions
+        + protocol.embargo_sessions
+        + protocol.folds * protocol.validation_sessions
+    )
+    if len(development_dates) < required_development_sessions:
+        raise ValueError(
+            f"need at least {required_development_sessions} prospective development sessions, "
+            f"got {len(development_dates)}"
+        )
+    if len(future_dates) < protocol.temporal_holdout_sessions:
+        raise ValueError(
+            "prospective certification is not mature: need "
+            f"{protocol.temporal_holdout_sessions} target-complete origin sessions on or after "
+            f"{certification_start}, got {len(future_dates)}"
+        )
+
+    train_tickers, holdout_tickers = select_asset_holdouts(
+        examples.tickers,
+        fraction=protocol.asset_holdout_fraction,
+        seed=asset_split_seed,
+        required=required_asset_holdouts,
+    )
+    first_validation_position = len(development_dates) - (
+        protocol.folds * protocol.validation_sessions
+    )
+    training_ticker_mask = np.isin(examples.tickers, train_tickers)
+    holdout_ticker_mask = np.isin(examples.tickers, holdout_tickers)
+    folds: list[VolatilityFold] = []
+    for fold in range(protocol.folds):
+        validation_start_position = first_validation_position + fold * protocol.validation_sessions
+        validation_end_position = validation_start_position + protocol.validation_sessions
+        train_end_position = validation_start_position - protocol.embargo_sessions
+        if train_end_position < protocol.minimum_train_sessions:
+            raise ValueError("prospective fold plan does not satisfy minimum training history")
+
+        train_end = development_dates[train_end_position - 1]
+        validation_start = development_dates[validation_start_position]
+        validation_end = development_dates[validation_end_position - 1]
+        train_mask = training_ticker_mask & (examples.origin_dates <= train_end)
+        validation_mask = (
+            training_ticker_mask
+            & (examples.origin_dates >= validation_start)
+            & (examples.origin_dates <= validation_end)
+        )
+        folds.append(
+            VolatilityFold(
+                fold=fold + 1,
+                train_indices=np.flatnonzero(train_mask),
+                validation_indices=np.flatnonzero(validation_mask),
+                train_end=train_end,
+                validation_start=validation_start,
+                validation_end=validation_end,
+            )
+        )
+
+    locked_dates = future_dates[: protocol.temporal_holdout_sessions]
+    locked_start = locked_dates[0]
+    locked_end = locked_dates[-1]
+    temporal_mask = (
+        training_ticker_mask
+        & (examples.origin_dates >= locked_start)
+        & (examples.origin_dates <= locked_end)
+    )
+    asset_transfer_mask = (
+        holdout_ticker_mask
+        & (examples.origin_dates >= locked_start)
+        & (examples.origin_dates <= locked_end)
+    )
+    temporal_indices = np.flatnonzero(temporal_mask)
+    transfer_indices = np.flatnonzero(asset_transfer_mask)
+    if len(temporal_indices) == 0 or len(transfer_indices) == 0:
+        raise ValueError("prospective certification reserves must both be non-empty")
+    temporal_dates = np.unique(examples.origin_dates[temporal_indices])
+    transfer_dates = np.unique(examples.origin_dates[transfer_indices])
+    if not np.array_equal(temporal_dates, locked_dates) or not np.array_equal(
+        transfer_dates,
+        locked_dates,
+    ):
+        raise ValueError("prospective certification populations do not cover every locked date")
+    if not set(required_asset_holdouts).issubset(
+        {str(value).upper() for value in examples.tickers[transfer_indices]}
+    ):
+        raise ValueError("prospective certification is missing a required asset holdout")
+    for ticker in required_asset_holdouts:
+        ticker_dates = np.unique(
+            examples.origin_dates[transfer_indices][examples.tickers[transfer_indices] == ticker]
+        )
+        if not np.array_equal(ticker_dates, locked_dates):
+            raise ValueError(f"prospective certification has incomplete {ticker} date coverage")
+
+    return VolatilityFoldPlan(
+        folds=tuple(folds),
+        train_tickers=train_tickers,
+        asset_holdout_tickers=holdout_tickers,
+        temporal_certification_indices=temporal_indices,
+        asset_transfer_certification_indices=transfer_indices,
         certification_start=certification_start,
     )

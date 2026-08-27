@@ -210,17 +210,19 @@ def verify_onnx_parity(
     return maximum_errors
 
 
-def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
-    """Reconstruct and verify one local candidate member for release conversion."""
+def _load_candidate_member(
+    candidate_dir: Path,
+    seed: int,
+    *,
+    expected_role: str,
+) -> FrozenCandidate:
+    """Reconstruct one member while enforcing the caller's exact artifact role."""
     directory = candidate_dir.resolve()
     try:
         manifest = json.loads((directory / "candidate-manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("candidate manifest is missing or invalid") from error
-    if (
-        not isinstance(manifest, dict)
-        or manifest.get("artifact_role") != "locked_certification_candidate"
-    ):
+    if not isinstance(manifest, dict) or manifest.get("artifact_role") != expected_role:
         raise ValueError("candidate manifest role is incompatible")
     architecture_payload = manifest.get("architecture")
     protocol_payload = manifest.get("protocol")
@@ -346,6 +348,24 @@ def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandid
     if candidate.model_identity != actual_identity:
         raise ValueError("candidate content identity does not match weights and metadata")
     return candidate
+
+
+def load_frozen_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
+    """Reconstruct and verify one locked-certification member for release conversion."""
+    return _load_candidate_member(
+        candidate_dir,
+        seed,
+        expected_role="locked_certification_candidate",
+    )
+
+
+def load_prospective_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
+    """Reconstruct one unsigned prospective member for one-shot certification only."""
+    return _load_candidate_member(
+        candidate_dir,
+        seed,
+        expected_role="prospective_development_candidate",
+    )
 
 
 def assemble_release_bundle(

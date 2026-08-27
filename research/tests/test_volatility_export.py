@@ -14,6 +14,7 @@ from volatility_forecasting.export import (
     NewsProductionGraph,
     ProductionVolatilityGraph,
     load_frozen_candidate_member,
+    load_prospective_candidate_member,
     production_graph,
 )
 from volatility_forecasting.model import (
@@ -147,10 +148,19 @@ def test_candidate_loader_verifies_weights_metadata_and_content_identity(tmp_pat
     loaded = load_frozen_candidate_member(tmp_path, 41)
     assert loaded.model_identity == candidate.model_identity
     assert loaded.training.scaler.to_dict() == candidate.training.scaler.to_dict()
+    with pytest.raises(ValueError, match="role"):
+        load_prospective_candidate_member(tmp_path, 41)
+
+    manifest["artifact_role"] = "prospective_development_candidate"
+    (tmp_path / "candidate-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    prospective = load_prospective_candidate_member(tmp_path, 41)
+    assert prospective.model_identity == candidate.model_identity
+    with pytest.raises(ValueError, match="role"):
+        load_frozen_candidate_member(tmp_path, 41)
 
     weights.write_bytes(weights.read_bytes() + b"tampered")
     with pytest.raises(ValueError, match="checksum"):
-        load_frozen_candidate_member(tmp_path, 41)
+        load_prospective_candidate_member(tmp_path, 41)
 
 
 def test_candidate_identity_binds_explicit_loss_weights() -> None:
