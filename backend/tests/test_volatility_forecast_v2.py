@@ -165,6 +165,21 @@ def test_abstains_on_horizons_that_failed_the_guardrail(monkeypatch) -> None:
     assert "guardrails" in detail["reason"]
 
 
+def test_news_release_abstains_until_matching_live_provider_is_configured(monkeypatch) -> None:
+    runtime = _FakeRuntime()
+    runtime.news_status = "certified"
+    _install_release(monkeypatch, runtime=runtime)
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["status"] == "abstain_no_certified_model"
+    assert "live point-in-time news vector" in detail["reason"]
+    assert runtime.calls == 0
+    readiness = volatility_v2.volatility_release_readiness()
+    assert readiness["status"] == "news_input_unavailable"
+    assert readiness["certified_horizons"] == []
+
+
 def test_repeated_requests_reuse_the_response_cache(monkeypatch) -> None:
     runtime = _FakeRuntime()
     _install_release(monkeypatch, runtime=runtime)

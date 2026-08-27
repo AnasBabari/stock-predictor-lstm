@@ -152,6 +152,17 @@ def volatility_release_readiness() -> dict[str, Any]:
             "status": "integrity_failure" if failure and "integrity" in failure else "unavailable",
             "certified_horizons": [],
         }
+    if runtime.news_status == "certified":
+        return {
+            "configured": True,
+            "status": "news_input_unavailable",
+            "model_id": runtime.model_id,
+            "model_version": runtime.model_version,
+            "metric_source": runtime.metric_source,
+            "certification_scope": runtime.certification_scope,
+            "news_status": runtime.news_status,
+            "certified_horizons": [],
+        }
     return {
         "configured": True,
         "status": "ready",
@@ -215,6 +226,11 @@ async def volatility_forecast_v2(
         raise _abstain(load_failure or "no certified volatility model is available")
     if not runtime.is_certified_horizon(horizon):
         raise _abstain(f"the certified ensemble did not clear the {horizon}-session guardrails")
+    if runtime.news_status == "certified":
+        raise _abstain(
+            "the signed release requires a live point-in-time news vector, but no "
+            "production provider with the certified schema is configured"
+        )
     # Include the signed model id so a promoted release cannot serve a prior
     # bundle's response until the generic TTL expires.
     cache_key = (runtime.model_id, symbol, horizon)
