@@ -14,7 +14,13 @@ is not certified merely because the pipeline exists.
 - The sealed 15% test has not been opened.
 - Production correctly abstains until a signed release passes verification.
 - A numeric v8 release can be served after certification. A news release additionally requires a
-  production provider that reproduces the signed news schema; until then readiness reports
+  production provider that reproduces the signed news schema. The serving-side provider exists
+  (`backend/services/news_aggregator.py`): it aggregates live per-ticker headlines into the
+  certified news feature vector with strict cutoff, conservative availability delay, and
+  fail-closed semantics, and is gated behind `VOLATILITY_NEWS_PROVIDER_ENABLED=true`. Features
+  that require a market-wide point-in-time event stream (exposure, market, and macro aggregates)
+  are deliberately unsupported by the live provider and force a structured 503 abstention rather
+  than fabricated values. With the provider disabled, readiness reports
   `news_input_unavailable` and forecasting returns a sanitized 503.
 
 Evidence labels must remain distinct:
@@ -156,6 +162,9 @@ The candidate must have all of the following:
 - exact split, universe, market, and news identities;
 - for news, a train-only scaler, ordered news feature names, matrix checksum, and all paired ablation
   evidence;
+- for news, the predeclared frozen market-only numeric companion (`numeric-seed-<seed>.pt` weights,
+  manifest key `numeric_companion` with `role=predeclared_numeric_fallback_companion`) trained with
+  the same seeds and the same split boundaries;
 - no placeholder, diagnostic universe, missing venue, or stale schema.
 
 If the role is `rejected_v8_development_evidence`, do not open the test to rescue it. Change the

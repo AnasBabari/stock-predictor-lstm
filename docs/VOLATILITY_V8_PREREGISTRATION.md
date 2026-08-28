@@ -213,6 +213,12 @@ News is useful **only if**: beats numeric-only on sealed test **and** preregiste
 
 Otherwise the honestly certified release is `global-volatility-v8-numeric` with `news_status=not_certified`.
 
+Every prospective v8 news-fusion development candidate is persisted together with a frozen
+market-only numeric companion: same seeds, same split boundaries, zero news features. The companion
+members are stored as `numeric-seed-<seed>.pt` under the manifest key `numeric_companion` with
+`role=predeclared_numeric_fallback_companion`. It is trained and frozen before the sealed test
+opens, so the news challenger always ships alongside its numeric fallback baseline.
+
 ## Selection rule
 
 Use train+validation only, QLIKE primary vs `adaptive_calibrated_har_c2c_v1` (`research/volatility_forecasting/contracts.py:40`).
