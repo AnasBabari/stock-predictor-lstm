@@ -37,7 +37,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^6.0.4",
     "jsdom": "^25.0.1",
-    "react-doctor": "^0.1.0",
+    "react-doctor": "^0.9.12",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
   }
