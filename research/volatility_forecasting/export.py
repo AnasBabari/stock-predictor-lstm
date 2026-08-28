@@ -252,6 +252,7 @@ def _load_candidate_member(
     seed: int,
     *,
     expected_role: str,
+    manifest_section: str | None = None,
 ) -> FrozenCandidate:
     """Reconstruct one member while enforcing the caller's exact artifact role."""
     directory = candidate_dir.resolve()
@@ -261,9 +262,12 @@ def _load_candidate_member(
         raise ValueError("candidate manifest is missing or invalid") from error
     if not isinstance(manifest, dict) or manifest.get("artifact_role") != expected_role:
         raise ValueError("candidate manifest role is incompatible")
-    architecture_payload = manifest.get("architecture")
+    section = manifest.get(manifest_section) if manifest_section is not None else manifest
+    if not isinstance(section, dict):
+        raise ValueError("candidate manifest section is missing")
+    architecture_payload = section.get("architecture")
     protocol_payload = manifest.get("protocol")
-    members = manifest.get("members")
+    members = section.get("members")
     if (
         not isinstance(architecture_payload, dict)
         or not isinstance(protocol_payload, dict)
@@ -331,7 +335,7 @@ def _load_candidate_member(
     candidate = FrozenCandidate(
         training=training,
         architecture=architecture,
-        fit_split=None,  # type: ignore[arg-type] -- release conversion does not retrain
+        fit_split=None,  # type: ignore[arg-type]  # release conversion does not retrain
         seed=seed,
         epoch_budget=int(row.get("epoch_budget", 0)),
         variance_scale=np.asarray(row.get("variance_scale"), dtype=np.float64),
@@ -412,6 +416,21 @@ def load_prospective_v8_candidate_member(candidate_dir: Path, seed: int) -> Froz
         seed,
         expected_role="prospective_v8_development_candidate",
     )
+
+
+def load_prospective_v8_numeric_companion_member(
+    candidate_dir: Path, seed: int
+) -> FrozenCandidate:
+    """Reconstruct the predeclared market-only companion of a v8 news candidate."""
+    candidate = _load_candidate_member(
+        candidate_dir,
+        seed,
+        expected_role="prospective_v8_development_candidate",
+        manifest_section="numeric_companion",
+    )
+    if candidate.architecture.news_feature_count:
+        raise ValueError("v8 numeric companion unexpectedly requires news features")
+    return candidate
 
 
 def load_locked_v8_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
@@ -504,7 +523,11 @@ def assemble_release_bundle(
     if architecture.horizon_count != len(horizons):
         raise ValueError("architecture horizon count does not match the certified protocol")
     seeds = sorted(
-        int(row.get("seed")) for row in members_payload if isinstance(row, dict) and "seed" in row
+        int(row["seed"])
+        for row in members_payload
+        if isinstance(row, dict)
+        and isinstance(row.get("seed"), int)
+        and not isinstance(row.get("seed"), bool)
     )
     if (
         len(seeds) != len(members_payload)

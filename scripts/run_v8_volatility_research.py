@@ -273,6 +273,8 @@ def main() -> int:
         window_size=examples.features.shape[1],
     )
     ablation_payload = None
+    numeric_companion_ensemble = None
+    numeric_companion_evidence = None
     if aligned_news is not None:
         fold_plan = build_v8_development_fold_plan(examples, split, protocol)
         ablation = evaluate_v8_news_ablation(
@@ -290,6 +292,23 @@ def main() -> int:
             architecture,
             news_feature_count=aligned_news.values.shape[1],
         )
+        numeric_companion_ensemble, numeric_companion_evidence, companion_partitions = (
+            train_v8_numeric_ensemble(
+                examples=examples,
+                train_indices=split.train_indices,
+                validation_indices=split.validation_indices,
+                seeds=protocol.seeds,
+                required_horizons=tuple(
+                    int(value) for value in manifest["required_horizons"]
+                ),
+                device=args.device,
+                maximum_epochs=args.maximum_epochs,
+                patience=args.patience,
+                batch_size=args.batch_size,
+                architecture=replace(architecture, news_feature_count=0),
+                training_config=training_config,
+            )
+        )
         ensemble, evidence, partitions = train_v8_ensemble(
             examples=examples,
             train_indices=split.train_indices,
@@ -304,6 +323,11 @@ def main() -> int:
             training_config=training_config,
             news_features=aligned_news.values,
         )
+        if (
+            partitions.calibration_end != companion_partitions.calibration_end
+            or partitions.selection_start != companion_partitions.selection_start
+        ):
+            raise RuntimeError("news and numeric companion validation partitions differ")
     else:
         ensemble, evidence, partitions = train_v8_numeric_ensemble(
             examples=examples,
@@ -341,6 +365,8 @@ def main() -> int:
         news_matrix_sha256=(aligned_news.matrix_sha256 if aligned_news is not None else None),
         news_feature_names=(aligned_news.feature_names if aligned_news is not None else ()),
         news_ablation_evidence=ablation_payload,
+        numeric_companion_ensemble=numeric_companion_ensemble,
+        numeric_companion_evidence=numeric_companion_evidence,
     )
     (out / "split-v8-manifest.json").write_text(
         json.dumps(split_payload, indent=2, sort_keys=True, default=str) + "\n",

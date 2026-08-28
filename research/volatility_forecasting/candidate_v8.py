@@ -389,33 +389,23 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def save_v8_development_candidate(
+def _persist_member_rows(
     output: Path,
     *,
     ensemble: FrozenEnsemble,
     evidence: tuple[V8MemberEvidence, ...],
-    protocol: dict[str, object],
-    split_manifest: dict[str, object],
-    split_manifest_sha256: str,
-    panel_checksum: str,
-    universe_manifest_sha256: str,
-    news_snapshot_checksum: str,
-    universe_certifiable: bool,
-    training_config: dict[str, object] | None = None,
-    news_matrix_sha256: str | None = None,
-    news_feature_names: tuple[str, ...] = (),
-    news_ablation_evidence: tuple[dict[str, object], ...] | None = None,
-) -> dict[str, object]:
-    if output.exists():
-        raise FileExistsError("candidate output must be a new immutable directory")
-    output.mkdir(parents=True)
-    member_rows: list[dict[str, object]] = []
+    filename_prefix: str = "",
+) -> list[dict[str, object]]:
     evidence_by_seed = {row.seed: row for row in evidence}
+    member_seeds = {member.seed for member in ensemble.members}
+    if member_seeds != set(evidence_by_seed):
+        raise ValueError("candidate members and validation evidence have different seeds")
+    rows: list[dict[str, object]] = []
     for member in ensemble.members:
-        weights_name = f"seed-{member.seed}.pt"
+        weights_name = f"{filename_prefix}seed-{member.seed}.pt"
         weights_path = output / weights_name
         torch.save(member.training.model.state_dict(), weights_path)
-        member_rows.append(
+        rows.append(
             {
                 "seed": member.seed,
                 "model_identity": member.model_identity,
@@ -442,18 +432,87 @@ def save_v8_development_candidate(
                 "validation_evidence": asdict(evidence_by_seed[member.seed]),
             }
         )
+    return rows
+
+
+def save_v8_development_candidate(
+    output: Path,
+    *,
+    ensemble: FrozenEnsemble,
+    evidence: tuple[V8MemberEvidence, ...],
+    protocol: dict[str, object],
+    split_manifest: dict[str, object],
+    split_manifest_sha256: str,
+    panel_checksum: str,
+    universe_manifest_sha256: str,
+    news_snapshot_checksum: str,
+    universe_certifiable: bool,
+    training_config: dict[str, object] | None = None,
+    news_matrix_sha256: str | None = None,
+    news_feature_names: tuple[str, ...] = (),
+    news_ablation_evidence: tuple[dict[str, object], ...] | None = None,
+    numeric_companion_ensemble: FrozenEnsemble | None = None,
+    numeric_companion_evidence: tuple[V8MemberEvidence, ...] | None = None,
+) -> dict[str, object]:
+    if output.exists():
+        raise FileExistsError("candidate output must be a new immutable directory")
     is_news_candidate = ensemble.members[0].architecture.news_feature_count > 0
     if is_news_candidate:
         if not news_matrix_sha256 or not news_feature_names or not news_ablation_evidence:
             raise ValueError(
                 "news candidate requires matrix identity, schema, and ablation evidence"
             )
+        if numeric_companion_ensemble is None or numeric_companion_evidence is None:
+            raise ValueError("news candidate requires a frozen numeric companion")
+        if any(
+            member.architecture.news_feature_count
+            for member in numeric_companion_ensemble.members
+        ):
+            raise ValueError("numeric companion cannot contain news features")
+        if {member.seed for member in numeric_companion_ensemble.members} != {
+            member.seed for member in ensemble.members
+        }:
+            raise ValueError("news and numeric companion seeds must match")
         news_promoted = all(row.get("promoted") is True for row in news_ablation_evidence)
     else:
-        if news_matrix_sha256 or news_feature_names or news_ablation_evidence:
+        if (
+            news_matrix_sha256
+            or news_feature_names
+            or news_ablation_evidence
+            or numeric_companion_ensemble is not None
+            or numeric_companion_evidence is not None
+        ):
             raise ValueError("market-only candidate cannot persist news evidence")
         news_promoted = True
-    eligible = universe_certifiable and all(row.eligible for row in evidence) and news_promoted
+    # All argument validation completes before the first filesystem mutation so
+    # a rejected candidate never leaves a partially populated artifact directory.
+    output.mkdir(parents=True)
+    member_rows = _persist_member_rows(output, ensemble=ensemble, evidence=evidence)
+    companion_ensemble = numeric_companion_ensemble if is_news_candidate else None
+    companion_evidence = numeric_companion_evidence if is_news_candidate else None
+    companion_payload = None
+    companion_selected = True
+    if companion_ensemble is not None and companion_evidence is not None:
+        companion_rows = _persist_member_rows(
+            output,
+            ensemble=companion_ensemble,
+            evidence=companion_evidence,
+            filename_prefix="numeric-",
+        )
+        companion_selected = all(row.eligible for row in companion_evidence)
+        companion_payload = {
+            "model_identity": companion_ensemble.model_identity,
+            "architecture": asdict(companion_ensemble.members[0].architecture),
+            "members": companion_rows,
+            "validation_selected": companion_selected,
+            "role": "predeclared_numeric_fallback_companion",
+        }
+    eligible = (
+        universe_certifiable
+        and all(row.eligible for row in evidence)
+        and news_promoted
+        and companion_selected
+    )
     role = (
         "prospective_v8_development_candidate" if eligible else "rejected_v8_development_evidence"
     )
@@ -473,10 +532,13 @@ def save_v8_development_candidate(
         "news_matrix_sha256": news_matrix_sha256,
         "news_feature_names": list(news_feature_names),
         "news_ablation_evidence": news_ablation_evidence,
+        "numeric_companion": companion_payload,
         "split_manifest": split_manifest,
         "split_manifest_sha256": split_manifest_sha256,
         "universe_certifiable": universe_certifiable,
-        "validation_selected": all(row.eligible for row in evidence) and news_promoted,
+        "validation_selected": (
+            all(row.eligible for row in evidence) and news_promoted and companion_selected
+        ),
         "strict_release_policy": {
             "unsigned": True,
             "sealed_test_required": True,
