@@ -92,6 +92,14 @@ def print_results(
     """Print the shared benchmark result without reimplementing model logic."""
     actuals = history.loc[list(TARGET_DAYS), "close"]
     train_history = history.loc[history.index <= TRAIN_END]
+    # A synthetic benchmark must be impossible to misread as market evidence,
+    # so the banner is printed unconditionally before any number.
+    print(
+        "SYNTHETIC SOFTWARE REGRESSION — NOT MARKET PERFORMANCE\n"
+        "This run uses generated data. These metrics say nothing about\n"
+        "forecasting skill on real markets and must never be cited as such."
+    )
+    print()
     print(f"evidence role: {evidence_role}")
     print(f"target week: {TARGET_DAYS[0].date()}..{TARGET_DAYS[-1].date()}")
     print(f"last training close ({TRAIN_END.date()}): {float(train_history['close'].iloc[-1]):.2f}")

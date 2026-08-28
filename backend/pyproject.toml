@@ -39,6 +39,17 @@ dev = [
     "pytest-cov>=5.0.0,<6.0.0",
     "ruff>=0.4.0,<1.0.0",
     "psutil>=5.9.0,<8.0.0",
+    # Research modules import this directly (research/ndx100/universe.py and
+    # research/ndx100/csco_fixture.py). It previously arrived only
+    # transitively, which is not a declaration of intent: a resolver change
+    # could drop it and break the research job. Declared explicitly here
+    # because the research tests run under the default (dev) group.
+    "exchange-calendars>=4.13.0,<5.0.0",
+    # Imported by research/ndx100/csco_fixture.py to pin BLAS thread counts
+    # for reproducible neural training.
+    "threadpoolctl>=3.5.0,<4.0.0",
+    # scripts/check_ci_policy.py parses workflow YAML.
+    "pyyaml>=6.0.0,<7.0.0",
 ]
 
 

@@ -27,6 +27,20 @@ The API returns a p05–p95 lognormal cone derived from certified cumulative var
 
 \`GET /api/v1/training-data\` remains a bounded diagnostic/research snapshot. It rejects client matrices, non-finite values, invalid chronology, invalid tickers, and oversized responses. It is not used to train models in the Render request process.
 
+## Data provenance and certification eligibility
+
+Three data inputs exist and they have **different** evidentiary standing. Conflating them is the single easiest way to manufacture a false result.
+
+| Input | Provenance | Certification eligible |
+| --- | --- | --- |
+| `data/fixtures/synthetic_csco_like_golden_v1.csv` | Deterministically generated, CC0-1.0, hash-pinned in source | **No** — software regression only |
+| `research/ndx100` point-in-time universe | Secondary development reconstruction | **No** — not an attested constituent source |
+| Local market panel caches | `yfinance` development download | **No** — redistribution and training rights not cleared |
+
+The synthetic fixture exists so the CSCO code path stays deterministic in CI. It contains **no** market observation. Every CLI run against it prints `SYNTHETIC SOFTWARE REGRESSION — NOT MARKET PERFORMANCE` before printing any number, and its metrics must never be cited as forecasting skill. See [data/fixtures/README.md](../data/fixtures/README.md).
+
+A certified market model additionally requires an attested point-in-time constituent source and a licensed panel that permits training and derived-model distribution. Until both are held, every v9 artifact carries `evidence_role=development_diagnostic_only` and `certification_eligible=false`, and the v9 protocol records this in `configs/volatility_v9_protocol.json` under `data_eligibility`.
+
 ## Offline research boundary
 
 The RTX workstation runs the research harness in \`research/volatility_forecasting\`:

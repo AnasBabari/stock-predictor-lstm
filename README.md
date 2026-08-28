@@ -68,6 +68,19 @@ Live Yahoo Finance headlines remain context-only for the legacy v1 paths. Histor
 
 The offline global-model pipeline builds immutable snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs only an overall passing release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the full contract and [docs/VOLATILITY_V7_PREREGISTRATION.md](docs/VOLATILITY_V7_PREREGISTRATION.md) for the fresh cycle created after v6 strict rejection. Legacy browser TFJS remains only in the isolated methodology build; the normal Vercel production bundle compiles it out and CI verifies that no worker or TFJS model code is shipped.
 
+## Volatility v9 (preregistered)
+
+v9 freezes the research question **before** any v9 model is trained, so it cannot be revised after an inconvenient result appears. The machine-readable protocol is [`configs/volatility_v9_protocol.json`](configs/volatility_v9_protocol.json) and the reasoning is in [docs/VOLATILITY_V9_PREREGISTRATION.md](docs/VOLATILITY_V9_PREREGISTRATION.md). Primary metric is QLIKE (`qlike_losses(forecast, realized)`); a candidate must show skill at **every** required horizon (1, 3, 5, 7) — a losing horizon cannot be hidden inside an average.
+
+> [!IMPORTANT]
+> **v9 has no certifiable data yet.** The point-in-time universe is a development reconstruction and the market panel is a `yfinance` development cache. Neither is certification-eligible. Every v9 artifact produced while this is true carries `evidence_role=development_diagnostic_only` and `certification_eligible=false`. No v9 number may be cited as evidence of forecasting skill on real markets.
+
+## Test data contains no market data
+
+`data/fixtures/` holds a **synthetic, generated** regression fixture used to keep the CSCO code path deterministic in CI. It is not a market dataset, it was derived from no real prices, and it is dedicated to the public domain under CC0-1.0. See [data/fixtures/README.md](data/fixtures/README.md).
+
+Every CLI run against it prints a banner stating that the run is a synthetic software regression and says nothing about forecasting skill. The fixture is verified by a SHA-256 pinned **in source code** before any parsing happens, so a modified fixture fails closed.
+
 ## Docker Compose
 
 ```bash

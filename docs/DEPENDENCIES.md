@@ -14,6 +14,18 @@ This inventory records a local baseline captured on 2026-07-28. It separates sec
 
 The raw command output was kept outside the repository during the review. The backend runtime dependency tree intentionally excludes TensorFlow; TensorFlow is available only through the opt-in `training` group for offline research. The frontend ships TensorFlow.js for browser-side training. `pip-audit` reported no advisory for the resolved environment.
 
+### Declaration change (2026-08-28)
+
+Three packages that research code imported **directly** but that were declared only transitively have been added to the backend `dev` dependency group:
+
+| Package | Constraint | Why it is now declared |
+| --- | --- | --- |
+| `exchange-calendars` | `>=4.13.0,<5.0.0` | Imported directly by research calendar code; previously satisfied only via `pandas-market-calendars` |
+| `threadpoolctl` | `>=3.5.0,<4.0.0` | Required to pin thread counts for reproducible neural runs |
+| `pyyaml` | `>=6.0.0,<7.0.0` | Imported directly by research configuration code |
+
+This is a **declaration** change, not a version change: `uv lock` was regenerated and the resolved package count was unchanged at 120, confirming all three were already in the tree. A clean `uv sync --frozen` into an empty environment was verified. `pip-audit` still reports no advisory. The drift detector in `scripts/check_ci_policy.py` requires these names to also appear in `backend/requirements-dev.txt`; they do.
+
 ## Classified findings
 
 | Package and version | Category | Reachability | Advisory/severity | Action |

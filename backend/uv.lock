@@ -2345,6 +2345,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "bandit" },
+    { name = "exchange-calendars" },
     { name = "httpx" },
     { name = "mypy" },
     { name = "pip" },
@@ -2352,7 +2353,9 @@ dev = [
     { name = "psutil" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
     { name = "ruff" },
+    { name = "threadpoolctl" },
 ]
 training = [
     { name = "tensorflow" },
@@ -2383,6 +2386,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "bandit", specifier = ">=1.7.5,<2.0.0" },
+    { name = "exchange-calendars", specifier = ">=4.13.0,<5.0.0" },
     { name = "httpx", specifier = ">=0.27.0,<1.0.0" },
     { name = "mypy", specifier = ">=1.10.0,<2.0.0" },
     { name = "pip", specifier = ">=26.2,<27.0" },
@@ -2390,7 +2394,9 @@ dev = [
     { name = "psutil", specifier = ">=5.9.0,<8.0.0" },
     { name = "pytest", specifier = ">=9.0.3,<10.0.0" },
     { name = "pytest-cov", specifier = ">=5.0.0,<6.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.0,<7.0.0" },
     { name = "ruff", specifier = ">=0.4.0,<1.0.0" },
+    { name = "threadpoolctl", specifier = ">=3.5.0,<4.0.0" },
 ]
 training = [{ name = "tensorflow", specifier = ">=2.16.0,<3.0.0" }]
 

@@ -21,7 +21,7 @@ frontend/.npm-cache/
 
 *.csv
 !data/ndx100/membership_changes.csv
-!data/fixtures/csco_golden_2015_2026.csv
+!data/fixtures/synthetic_csco_like_golden_v1.csv
 *.dat
 
 # Generated data
