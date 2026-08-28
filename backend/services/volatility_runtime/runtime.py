@@ -106,6 +106,10 @@ class VolatilityOnnxRuntime:
     def news_status(self) -> str:
         return self.contract.news_status
 
+    @property
+    def news_feature_names(self) -> tuple[str, ...]:
+        return self.contract.news_feature_names
+
     def is_certified_horizon(self, horizon: int) -> bool:
         return self.contract.is_certified_horizon(horizon)
 
