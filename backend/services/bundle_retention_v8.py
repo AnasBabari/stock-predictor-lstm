@@ -264,12 +264,12 @@ def plan_release_gc(
             )
         )
     staged_cutoff = reference - timedelta(hours=policy.staged_retention_hours)
-    for record in staged:
-        expired = record.modified_at_utc < staged_cutoff
+    for staged_record in staged:
+        expired = staged_record.modified_at_utc < staged_cutoff
         decisions.append(
             RetentionDecision(
-                release_id=record.stage_id,
-                path=record.path.name,
+                release_id=staged_record.stage_id,
+                path=staged_record.path.name,
                 action="delete" if expired else "keep",
                 reason=("expired_staged_object" if expired else "staged_retention_window"),
             )
