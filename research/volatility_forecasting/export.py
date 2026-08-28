@@ -36,6 +36,29 @@ class ProductionVolatilityGraph(nn.Module):
         super().__init__()
         self.model = candidate.training.model.eval()
         self.news_feature_count = candidate.architecture.news_feature_count
+        self.market_clip = float(candidate.training.scaler.clip)
+        self.register_buffer(
+            "market_median",
+            torch.from_numpy(np.asarray(candidate.training.scaler.median, dtype=np.float32)),
+        )
+        self.register_buffer(
+            "market_iqr",
+            torch.from_numpy(np.asarray(candidate.training.scaler.iqr, dtype=np.float32)),
+        )
+        news_scaler = candidate.training.news_scaler
+        self.news_clip = float(news_scaler.clip) if news_scaler is not None else 0.0
+        self.register_buffer(
+            "news_median",
+            torch.from_numpy(
+                np.asarray(news_scaler.median if news_scaler is not None else (), dtype=np.float32)
+            ),
+        )
+        self.register_buffer(
+            "news_iqr",
+            torch.from_numpy(
+                np.asarray(news_scaler.iqr if news_scaler is not None else (), dtype=np.float32)
+            ),
+        )
         self.register_buffer(
             "variance_scale",
             torch.from_numpy(np.asarray(candidate.variance_scale, dtype=np.float32)),
@@ -51,10 +74,24 @@ class ProductionVolatilityGraph(nn.Module):
         baseline_variance: torch.Tensor,
         news_features: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        scaled_features = torch.clamp(
+            (features - self.market_median) / self.market_iqr,
+            min=-self.market_clip,
+            max=self.market_clip,
+        )
+        scaled_news = news_features
+        if self.news_feature_count:
+            if news_features is None:
+                raise ValueError("news-enabled graph requires news features")
+            scaled_news = torch.clamp(
+                (news_features - self.news_median) / self.news_iqr,
+                min=-self.news_clip,
+                max=self.news_clip,
+            )
         variance, location, logits, _residual = self.model(
-            features,
+            scaled_features,
             baseline_variance,
-            news_features,
+            scaled_news,
         )
         calibrated_variance = variance * self.variance_scale
         return_variance = calibrated_variance * self.return_variance_scale
@@ -215,6 +252,7 @@ def _load_candidate_member(
     seed: int,
     *,
     expected_role: str,
+    manifest_section: str | None = None,
 ) -> FrozenCandidate:
     """Reconstruct one member while enforcing the caller's exact artifact role."""
     directory = candidate_dir.resolve()
@@ -224,9 +262,12 @@ def _load_candidate_member(
         raise ValueError("candidate manifest is missing or invalid") from error
     if not isinstance(manifest, dict) or manifest.get("artifact_role") != expected_role:
         raise ValueError("candidate manifest role is incompatible")
-    architecture_payload = manifest.get("architecture")
+    section = manifest.get(manifest_section) if manifest_section is not None else manifest
+    if not isinstance(section, dict):
+        raise ValueError("candidate manifest section is missing")
+    architecture_payload = section.get("architecture")
     protocol_payload = manifest.get("protocol")
-    members = manifest.get("members")
+    members = section.get("members")
     if (
         not isinstance(architecture_payload, dict)
         or not isinstance(protocol_payload, dict)
@@ -294,7 +335,7 @@ def _load_candidate_member(
     candidate = FrozenCandidate(
         training=training,
         architecture=architecture,
-        fit_split=None,  # type: ignore[arg-type] -- release conversion does not retrain
+        fit_split=None,  # type: ignore[arg-type]  # release conversion does not retrain
         seed=seed,
         epoch_budget=int(row.get("epoch_budget", 0)),
         variance_scale=np.asarray(row.get("variance_scale"), dtype=np.float64),
@@ -368,6 +409,68 @@ def load_prospective_candidate_member(candidate_dir: Path, seed: int) -> FrozenC
     )
 
 
+def load_prospective_v8_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
+    """Reconstruct one unsigned v8 member for prediction-only certification."""
+    return _load_candidate_member(
+        candidate_dir,
+        seed,
+        expected_role="prospective_v8_development_candidate",
+    )
+
+
+def load_prospective_v8_numeric_companion_member(
+    candidate_dir: Path, seed: int
+) -> FrozenCandidate:
+    """Reconstruct the predeclared market-only companion of a v8 news candidate."""
+    candidate = _load_candidate_member(
+        candidate_dir,
+        seed,
+        expected_role="prospective_v8_development_candidate",
+        manifest_section="numeric_companion",
+    )
+    if candidate.architecture.news_feature_count:
+        raise ValueError("v8 numeric companion unexpectedly requires news features")
+    return candidate
+
+
+def load_locked_v8_candidate_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
+    """Reconstruct one locked v8 member for ONNX release conversion."""
+    return _load_candidate_member(
+        candidate_dir,
+        seed,
+        expected_role="locked_v8_certification_candidate",
+    )
+
+
+def load_locked_v8_certification(
+    candidate_dir: Path,
+    manifest: dict[str, object],
+) -> tuple[dict[str, object], str]:
+    """Verify the passing report that authorizes one locked v8 directory."""
+    directory = candidate_dir.resolve()
+    path = directory / "v8-locked-certification.json"
+    expected_digest = manifest.get("certification_report_sha256")
+    if not path.is_file() or not isinstance(expected_digest, str):
+        raise ValueError("locked certification report is missing or its checksum differs")
+    actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_digest != expected_digest:
+        raise ValueError("locked certification report is missing or its checksum differs")
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("locked certification report is invalid") from error
+    if not isinstance(report, dict):
+        raise ValueError("locked certification report is invalid")
+    if (
+        report.get("status") != "passed"
+        or report.get("release_eligible") is not True
+        or report.get("model_identity") != manifest.get("model_identity")
+        or report.get("metric_source") != "locked_historical_temporal_test_plus_asset_transfer"
+    ):
+        raise ValueError("locked certification report does not authorize this ensemble")
+    return report, expected_digest
+
+
 def assemble_release_bundle(
     candidate_dir: Path,
     output_dir: Path,
@@ -389,8 +492,15 @@ def assemble_release_bundle(
         manifest = json.loads((directory / "candidate-manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("candidate manifest is missing or invalid") from error
-    if manifest.get("artifact_role") != "locked_certification_candidate":
+    artifact_role = manifest.get("artifact_role")
+    is_v8 = artifact_role == "locked_v8_certification_candidate"
+    if artifact_role not in {
+        "locked_certification_candidate",
+        "locked_v8_certification_candidate",
+    }:
         raise ValueError("only locked-certification candidates may be released")
+    if manifest.get("release_eligible") is False:
+        raise ValueError("candidate is not release eligible")
     model_id = manifest.get("model_identity")
     if not isinstance(model_id, str) or not model_id or len(model_id) > 128:
         raise ValueError("candidate model identity cannot serve as a release model id")
@@ -413,7 +523,11 @@ def assemble_release_bundle(
     if architecture.horizon_count != len(horizons):
         raise ValueError("architecture horizon count does not match the certified protocol")
     seeds = sorted(
-        int(row.get("seed")) for row in members_payload if isinstance(row, dict) and "seed" in row
+        int(row["seed"])
+        for row in members_payload
+        if isinstance(row, dict)
+        and isinstance(row.get("seed"), int)
+        and not isinstance(row.get("seed"), bool)
     )
     if (
         len(seeds) != len(members_payload)
@@ -432,7 +546,11 @@ def assemble_release_bundle(
     with tempfile.TemporaryDirectory(prefix="volatility-release-") as temp:
         temp_dir = Path(temp)
         for seed in seeds:
-            candidate = load_frozen_candidate_member(directory, seed)
+            candidate = (
+                load_locked_v8_candidate_member(directory, seed)
+                if is_v8
+                else load_frozen_candidate_member(directory, seed)
+            )
             onnx_path = export_candidate_onnx(
                 candidate,
                 temp_dir / f"seed-{seed}.onnx",
@@ -448,10 +566,74 @@ def assemble_release_bundle(
         "horizons": [int(value) for value in horizons],
         "feature_names": list(DEPLOYABLE_FEATURE_COLUMNS_V5),
         "news_feature_count": int(architecture.news_feature_count),
+        "news_feature_names": (
+            list(manifest.get("news_feature_names", ()))
+            if int(architecture.news_feature_count) > 0
+            else []
+        ),
         "members": [{"seed": seed, "file": f"members/seed-{seed}.onnx"} for seed in seeds],
     }
+    if is_v8:
+        if int(architecture.news_feature_count) > 0 and len(metadata["news_feature_names"]) != int(
+            architecture.news_feature_count
+        ):
+            raise ValueError("v8 news release feature schema is missing or inconsistent")
+        certification, certification_digest = load_locked_v8_certification(directory, manifest)
+        certified_horizons = certification.get("certified_horizons")
+        decisions = certification.get("decisions")
+        if (
+            not isinstance(certified_horizons, list)
+            or not certified_horizons
+            or any(
+                isinstance(value, bool) or not isinstance(value, int)
+                for value in certified_horizons
+            )
+            or not isinstance(decisions, list)
+        ):
+            raise ValueError("v8 certification evidence is malformed")
+        grouped: dict[str, dict[str, object]] = {}
+        for decision in decisions:
+            if not isinstance(decision, dict):
+                raise ValueError("v8 certification decision is malformed")
+            horizon = decision.get("horizon")
+            population = decision.get("population")
+            if (
+                isinstance(horizon, bool)
+                or not isinstance(horizon, int)
+                or population not in {"temporal", "asset_transfer"}
+            ):
+                raise ValueError("v8 certification decision identity is malformed")
+            grouped.setdefault(str(horizon), {})[str(population)] = decision
+        if any(set(summary) != {"temporal", "asset_transfer"} for summary in grouped.values()):
+            raise ValueError("v8 certification decisions do not cover both populations")
+        metadata.update(
+            {
+                "artifact_role": artifact_role,
+                "protocol_version": manifest.get("protocol_version"),
+                "model_version": manifest.get("model_version"),
+                "metric_source": certification.get("metric_source"),
+                "certification_scope": certification.get("certification_scope"),
+                "certification_report_sha256": certification_digest,
+                "certified_horizons": sorted(certified_horizons),
+                "certification_metrics": grouped,
+                "news_status": (
+                    "certified" if int(architecture.news_feature_count) > 0 else "not_certified"
+                ),
+            }
+        )
+    else:
+        metadata.update(
+            {
+                "artifact_role": artifact_role,
+                "protocol_version": manifest.get("protocol_version"),
+                "model_version": manifest.get("model_version", model_id),
+                "metric_source": "locked_purged_walk_forward",
+                "certification_scope": "prospective_walk_forward",
+                "news_status": "not_certified",
+            }
+        )
     locked = manifest.get("locked_certification")
-    if isinstance(locked, dict):
+    if not is_v8 and isinstance(locked, dict):
         certified_horizons = locked.get("certified_horizons")
         if isinstance(certified_horizons, list) and all(
             isinstance(value, int) and not isinstance(value, bool) for value in certified_horizons

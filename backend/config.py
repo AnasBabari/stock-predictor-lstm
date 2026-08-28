@@ -115,6 +115,7 @@ class Settings(BaseSettings):
     volatility_release_download_timeout_seconds: int = Field(default=45, ge=5, le=300)
     volatility_serving_required: bool = False
     volatility_forecast_cache_ttl: int = Field(default=900, ge=0, le=86400)
+    volatility_news_provider_enabled: bool = False
     s3_endpoint_url: str | None = None
     s3_bucket: str | None = None
     s3_key_prefix: str = "artifacts"

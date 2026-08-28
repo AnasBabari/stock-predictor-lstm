@@ -152,10 +152,37 @@ def volatility_release_readiness() -> dict[str, Any]:
             "status": "integrity_failure" if failure and "integrity" in failure else "unavailable",
             "certified_horizons": [],
         }
+    if runtime.news_status == "certified":
+        if not settings.volatility_news_provider_enabled:
+            return {
+                "configured": True,
+                "status": "news_input_unavailable",
+                "model_id": runtime.model_id,
+                "model_version": runtime.model_version,
+                "metric_source": runtime.metric_source,
+                "certification_scope": runtime.certification_scope,
+                "news_status": runtime.news_status,
+                "certified_horizons": [],
+            }
+        return {
+            "configured": True,
+            "status": "ready",
+            "model_id": runtime.model_id,
+            "model_version": runtime.model_version,
+            "metric_source": runtime.metric_source,
+            "certification_scope": runtime.certification_scope,
+            "news_status": runtime.news_status,
+            "news_provider_enabled": True,
+            "certified_horizons": list(runtime.certified_horizon_list()),
+        }
     return {
         "configured": True,
         "status": "ready",
         "model_id": runtime.model_id,
+        "model_version": runtime.model_version,
+        "metric_source": runtime.metric_source,
+        "certification_scope": runtime.certification_scope,
+        "news_status": runtime.news_status,
         "certified_horizons": list(runtime.certified_horizon_list()),
     }
 
@@ -191,6 +218,43 @@ def _abstain(detail: str) -> HTTPException:
     )
 
 
+def _live_news_vector(
+    runtime: Any,
+    symbol: str,
+    origin_date: str,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Fetch the schema-exact live news vector at the origin-session cutoff.
+
+    The cutoff is the origin session's official close (20:00 UTC): the
+    inference snapshot is complete only after that close, and later events
+    belong to future sessions. The provider additionally applies its own
+    conservative availability delay. Any provider failure is a structured,
+    fail-closed abstention.
+    """
+    import pandas as pd
+
+    from services.news_aggregator import NewsProviderUnavailable, get_news_provider
+
+    feature_names = tuple(getattr(runtime, "news_feature_names", ()) or ())
+    if not feature_names:
+        raise _abstain("the certified news release does not declare its news feature schema")
+    cutoff = pd.Timestamp(origin_date, tz="UTC") + pd.Timedelta(hours=20)
+    try:
+        vector = get_news_provider().features_for(
+            symbol,
+            cutoff_at=cutoff,
+            feature_names=feature_names,
+        )
+    except NewsProviderUnavailable as error:
+        raise _abstain(f"live point-in-time news vector unavailable: {error}") from error
+    evidence = {
+        "provider_cutoff_utc": vector.cutoff_at,
+        "eligible_article_count": int(vector.eligible_article_count),
+        "news_feature_count": int(vector.values.size),
+    }
+    return vector.values, evidence
+
+
 @router.get("/api/v2/forecast", response_model=VolatilityForecastResponse)
 @limiter.limit("30/minute")
 async def volatility_forecast_v2(
@@ -211,6 +275,11 @@ async def volatility_forecast_v2(
         raise _abstain(load_failure or "no certified volatility model is available")
     if not runtime.is_certified_horizon(horizon):
         raise _abstain(f"the certified ensemble did not clear the {horizon}-session guardrails")
+    if runtime.news_status == "certified" and not settings.volatility_news_provider_enabled:
+        raise _abstain(
+            "the signed release requires a live point-in-time news vector, but no "
+            "production provider with the certified schema is configured"
+        )
     # Include the signed model id so a promoted release cannot serve a prior
     # bundle's response until the generic TTL expires.
     cache_key = (runtime.model_id, symbol, horizon)
@@ -234,8 +303,16 @@ async def volatility_forecast_v2(
             detail="upstream market data is temporarily unavailable",
         ) from error
 
+    news_features: np.ndarray | None = None
+    news_input: dict[str, Any] | None = None
+    if runtime.news_status == "certified":
+        news_features, news_input = _live_news_vector(runtime, symbol, snapshot.origin_date)
+
     try:
-        forecast = runtime.forecast(snapshot)
+        if news_features is None:
+            forecast = runtime.forecast(snapshot)
+        else:
+            forecast = runtime.forecast(snapshot, news_features=news_features)
     except RuntimeError as error:
         logger.error("certified inference failed for %s: %s", symbol, error)
         raise HTTPException(
@@ -260,9 +337,14 @@ async def volatility_forecast_v2(
         )
     evidence = {
         "model_id": runtime.model_id,
+        "model_version": runtime.model_version,
         "member_seeds": list(runtime.member_seeds),
         "snapshot_id": snapshot.snapshot_id,
-        "metric_source": "locked_purged_walk_forward",
+        "metric_source": runtime.metric_source,
+        "certification_scope": runtime.certification_scope,
+        "news_enabled": runtime.news_status == "certified",
+        "news_status": runtime.news_status,
+        "news_input": news_input,
         "quantile_model": (
             "zero_location_volatility_cone: bands derive from the certified "
             "variance around the unchanged close; no learned direction claim"

@@ -68,6 +68,7 @@ def list_models():
                 else "No verified signed global volatility release is ready; requests abstain."
             ),
             "model_id": release.get("model_id"),
+            "model_version": release.get("model_version"),
             "certified_horizons": release.get("certified_horizons", []),
             "model_family": "baseline_residual_tcn_ensemble",
             "endpoint": "/api/v2/forecast",
@@ -77,7 +78,9 @@ def list_models():
                 "return_distribution": False,
                 "direction": False,
             },
-            "metric_source": "locked_purged_walk_forward",
+            "metric_source": release.get("metric_source", "locked_purged_walk_forward"),
+            "certification_scope": release.get("certification_scope", "prospective_walk_forward"),
+            "news_status": release.get("news_status", "not_certified"),
             "training": "offline RTX workstation",
         },
         "browser_training": {

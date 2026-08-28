@@ -66,8 +66,14 @@ class VolatilityRuntimeContract:
     horizons: tuple[int, ...] = VOLATILITY_HORIZONS
     window_size: int = VOLATILITY_WINDOW_SIZE
     news_feature_count: int = 0
+    news_feature_names: tuple[str, ...] = ()
     certified_horizons: tuple[int, ...] | None = None
     certification_metrics: Mapping[int, Mapping[str, Any]] | None = None
+    model_version: str | None = None
+    protocol_version: str | None = None
+    metric_source: str = "locked_purged_walk_forward"
+    certification_scope: str = "prospective_walk_forward"
+    news_status: str = "not_certified"
 
     def __post_init__(self) -> None:
         if not isinstance(self.model_id, str) or not self.model_id or len(self.model_id) > 128:
@@ -86,6 +92,13 @@ class VolatilityRuntimeContract:
             or not 0 <= self.news_feature_count <= MAX_NEWS_FEATURE_COUNT
         ):
             raise ValueError("news feature count is out of bounds")
+        if (
+            not isinstance(self.news_feature_names, tuple)
+            or len(self.news_feature_names) != self.news_feature_count
+            or len(set(self.news_feature_names)) != len(self.news_feature_names)
+            or any(not isinstance(name, str) or not name for name in self.news_feature_names)
+        ):
+            raise ValueError("news feature names do not match the signed input contract")
         members = (self.member_seeds, self.member_files)
         if any(not isinstance(group, tuple) for group in members):
             raise ValueError("ensemble membership must be declared as tuples")
@@ -120,6 +133,32 @@ class VolatilityRuntimeContract:
             for horizon, summary in self.certification_metrics.items():
                 if horizon not in self.horizons or not isinstance(summary, Mapping):
                     raise ValueError("certification metrics keys must be serving horizons")
+        if self.model_version is not None and (
+            not isinstance(self.model_version, str)
+            or not self.model_version
+            or len(self.model_version) > 128
+        ):
+            raise ValueError("release model version is invalid")
+        if self.protocol_version is not None and (
+            not isinstance(self.protocol_version, str)
+            or not self.protocol_version
+            or len(self.protocol_version) > 160
+        ):
+            raise ValueError("release protocol version is invalid")
+        if self.metric_source not in {
+            "locked_purged_walk_forward",
+            "locked_historical_temporal_test_plus_asset_transfer",
+        }:
+            raise ValueError("release metric source is unsupported")
+        if self.certification_scope not in {
+            "prospective_walk_forward",
+            "historical_temporal_test_plus_asset_transfer",
+        }:
+            raise ValueError("release certification scope is unsupported")
+        if self.news_status not in {"not_certified", "certified"}:
+            raise ValueError("release news status is unsupported")
+        if self.news_status == "certified" and self.news_feature_count == 0:
+            raise ValueError("news certification requires a non-empty news input")
 
     @classmethod
     def from_release_metadata(
@@ -137,6 +176,12 @@ class VolatilityRuntimeContract:
         horizons = metadata.get("horizons")
         window_size = metadata.get("window_size")
         news_feature_count = metadata.get("news_feature_count", 0)
+        news_feature_names = metadata.get("news_feature_names", [])
+        model_version = metadata.get("model_version")
+        protocol_version = metadata.get("protocol_version")
+        metric_source = metadata.get("metric_source", "locked_purged_walk_forward")
+        certification_scope = metadata.get("certification_scope", "prospective_walk_forward")
+        news_status = metadata.get("news_status", "not_certified")
         raw_members = metadata.get("members")
         certified_horizons_raw = metadata.get("certified_horizons")
         if certified_horizons_raw is not None:
@@ -179,6 +224,10 @@ class VolatilityRuntimeContract:
             raise ValueError("release window size is malformed")
         if not isinstance(news_feature_count, int) or isinstance(news_feature_count, bool):
             raise ValueError("release news feature count is malformed")
+        if not isinstance(news_feature_names, list) or not all(
+            isinstance(name, str) for name in news_feature_names
+        ):
+            raise ValueError("release news feature names are malformed")
         if not isinstance(raw_members, list):
             raise ValueError("release ensemble membership is missing")
         seeds: list[int] = []
@@ -202,8 +251,14 @@ class VolatilityRuntimeContract:
             horizons=tuple(horizons),
             window_size=int(window_size),
             news_feature_count=int(news_feature_count),
+            news_feature_names=tuple(news_feature_names),
             certified_horizons=certified_horizons,
             certification_metrics=certification_metrics,
+            model_version=model_version,
+            protocol_version=protocol_version,
+            metric_source=metric_source,
+            certification_scope=certification_scope,
+            news_status=news_status,
         )
 
     @property
@@ -246,13 +301,21 @@ class VolatilityRuntimeContract:
                 "feature window",
             ),
             MODEL_INPUT_BASELINE: self._prepare_vector(
-                baseline_variance, "causal baseline variance"
+                baseline_variance,
+                "causal baseline variance",
+                expected_size=self.horizon_count,
+                strictly_positive=True,
             ),
         }
         if self.news_feature_count:
             if news_features is None:
                 raise ValueError("this release requires news features at inference")
-            prepared[MODEL_INPUT_NEWS] = self._prepare_vector(news_features, "news features")
+            prepared[MODEL_INPUT_NEWS] = self._prepare_vector(
+                news_features,
+                "news features",
+                expected_size=self.news_feature_count,
+                strictly_positive=False,
+            )
         elif news_features is not None:
             raise ValueError("market-only release cannot receive news features")
         return prepared
@@ -267,12 +330,21 @@ class VolatilityRuntimeContract:
         return array[np.newaxis, ...]
 
     @classmethod
-    def _prepare_vector(cls, values: np.ndarray, label: str) -> np.ndarray:
+    def _prepare_vector(
+        cls,
+        values: np.ndarray,
+        label: str,
+        *,
+        expected_size: int,
+        strictly_positive: bool,
+    ) -> np.ndarray:
         array = np.asarray(values, dtype=np.float32)
-        if array.ndim != 1 or array.size == 0:
-            raise ValueError(f"{label} must be a non-empty vector")
-        if not np.isfinite(array).all() or (array <= 0).any():
-            raise ValueError(f"{label} must be finite and strictly positive")
+        if array.ndim != 1 or array.size != expected_size:
+            raise ValueError(f"{label} must contain exactly {expected_size} values")
+        if not np.isfinite(array).all():
+            raise ValueError(f"{label} must be finite")
+        if strictly_positive and (array <= 0).any():
+            raise ValueError(f"{label} must be strictly positive")
         return np.ascontiguousarray(array[np.newaxis, :])
 
     def validate_outputs(self, outputs: Mapping[str, np.ndarray]) -> None:

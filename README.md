@@ -61,7 +61,7 @@ The legacy per-ticker server-bundle routes are disabled for production. Their op
 
 ## News and event context
 
-Live Yahoo Finance headlines remain context-only. Historical GDELT event data is available as an immutable, point-in-time research snapshot with topic exposures, decay/coverage metadata, checksums, and explicit provider archive gaps. Its matched ablation did not demonstrate incremental value, so news is excluded from v7. It may return only in a separately preregistered future cycle that demonstrates incremental QLIKE/coverage value on identical origins and then clears locked certification.
+Live Yahoo Finance headlines remain context-only for the legacy v1 paths. Historical GDELT event data is available as an immutable, point-in-time research snapshot with topic exposures, decay/coverage metadata, checksums, and explicit provider archive gaps. Its matched ablation did not demonstrate incremental value, so news is excluded from v7. It may return only in a separately preregistered future cycle that demonstrates incremental QLIKE/coverage value on identical origins and then clears locked certification. For that future cycle, the certified-serving path (`/api/v2/forecast`) already supports a live news feature provider (`VOLATILITY_NEWS_PROVIDER_ENABLED=true`): a news-certified signed release is then served with a schema-exact, causally aggregated live news vector, and it still abstains (503) whenever the provider is disabled, the provider fails, or the certified schema demands features the live provider cannot honestly reproduce.
 
 
 ## Global model pipeline

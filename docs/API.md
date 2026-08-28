@@ -54,6 +54,8 @@ Example response (abbreviated):
 
 The quantile bands are the learned/certified volatility head. The p50 value is the disclosed unchanged-close distribution assumption, not a learned expected price. The frontend deliberately suppresses that flat center line and shows the certified range and expected volatility instead. The endpoint makes no claim that direction or expected price level was learned.
 
+When a signed release is news-certified, the evidence additionally reports `news_input` telemetry when the live news provider is enabled (`VOLATILITY_NEWS_PROVIDER_ENABLED=true`): `provider_cutoff_utc` (the origin-session close, 20:00 UTC), `eligible_article_count` (causally eligible articles), and `news_feature_count` (certified schema size). With the provider disabled, a news-certified release answers with a structured 503 abstention instead of a forecast.
+
 ## GET /models
 
 The response contains:

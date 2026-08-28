@@ -18,7 +18,11 @@ QUANTILE_KEYS = ("p05", "p10", "p25", "p50", "p75", "p90", "p95")
 
 class _FakeRuntime:
     model_id = "global-volatility-tcn-v1"
+    model_version = "global-volatility-tcn-v1"
     member_seeds = (41, 42, 43)
+    metric_source = "locked_purged_walk_forward"
+    certification_scope = "prospective_walk_forward"
+    news_status = "not_certified"
 
     def __init__(self, variance: float = 4e-4) -> None:
         self.variance = variance
@@ -159,6 +163,117 @@ def test_abstains_on_horizons_that_failed_the_guardrail(monkeypatch) -> None:
     detail = response.json()["detail"]
     assert detail["status"] == "abstain_no_certified_model"
     assert "guardrails" in detail["reason"]
+
+
+def test_news_release_abstains_until_matching_live_provider_is_configured(monkeypatch) -> None:
+    runtime = _FakeRuntime()
+    runtime.news_status = "certified"
+    _install_release(monkeypatch, runtime=runtime)
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["status"] == "abstain_no_certified_model"
+    assert "live point-in-time news vector" in detail["reason"]
+    assert runtime.calls == 0
+    readiness = volatility_v2.volatility_release_readiness()
+    assert readiness["status"] == "news_input_unavailable"
+    assert readiness["certified_horizons"] == []
+
+
+class _NewsRuntime(_FakeRuntime):
+    news_status = "certified"
+    news_feature_names = ("News_Ticker_Intensity_1D", "News_Ticker_Missing_1D")
+
+    def __init__(self, variance: float = 4e-4) -> None:
+        super().__init__(variance)
+        self.news_vectors: list[np.ndarray | None] = []
+
+    def certified_horizon_list(self):
+        return (1, 5, 7)
+
+    def forecast(self, snapshot, *, news_features=None):  # noqa: ANN001
+        self.news_vectors.append(news_features)
+        return super().forecast(snapshot)
+
+
+def _install_news_provider(monkeypatch, provider) -> None:
+    monkeypatch.setattr(settings, "volatility_news_provider_enabled", True)
+    monkeypatch.setattr("services.news_aggregator.get_news_provider", lambda: provider)
+
+
+def test_news_release_serves_the_live_news_vector_when_provider_is_enabled(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from services.news_aggregator import NewsFeatureVector
+
+    runtime = _NewsRuntime()
+    _install_release(monkeypatch, runtime=runtime)
+    monkeypatch.setattr(
+        "services.volatility_snapshot.build_volatility_inference_snapshot",
+        lambda ticker: _fake_snapshot(ticker),
+    )
+
+    def provider(ticker, *, cutoff_at, feature_names):
+        assert ticker == "MSFT"
+        assert str(cutoff_at).startswith("2026-08-21 20:00:00")
+        assert feature_names == _NewsRuntime.news_feature_names
+        return NewsFeatureVector(
+            values=np.asarray([1.5, 0.0], dtype=np.float32),
+            feature_names=tuple(feature_names),
+            cutoff_at="2026-08-21T20:00:00+00:00",
+            eligible_article_count=3,
+        )
+
+    _install_news_provider(
+        monkeypatch,
+        SimpleNamespace(features_for=provider),
+    )
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
+    assert response.status_code == 200
+    evidence = response.json()["evidence"]
+    assert evidence["news_enabled"] is True
+    assert evidence["news_input"] == {
+        "provider_cutoff_utc": "2026-08-21T20:00:00+00:00",
+        "eligible_article_count": 3,
+        "news_feature_count": 2,
+    }
+    assert len(runtime.news_vectors) == 1
+    assert np.array_equal(runtime.news_vectors[0], np.asarray([1.5, 0.0], dtype=np.float32))
+    readiness = volatility_v2.volatility_release_readiness()
+    assert readiness["status"] == "ready"
+    assert readiness["news_provider_enabled"] is True
+
+
+def test_news_release_abstains_when_the_live_provider_fails(monkeypatch) -> None:
+    from services.news_aggregator import NewsProviderUnavailable
+
+    def broken(ticker, *, cutoff_at, feature_names):
+        raise NewsProviderUnavailable("live news ingestion failed: upstream down")
+
+    runtime = _NewsRuntime()
+    _install_release(monkeypatch, runtime=runtime)
+    _install_news_provider(monkeypatch, SimpleNamespace(features_for=broken))
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["status"] == "abstain_no_certified_model"
+    assert "live point-in-time news vector unavailable" in detail["reason"]
+    assert runtime.calls == 0
+
+
+def test_news_release_abstains_without_a_declared_feature_schema(monkeypatch) -> None:
+    class _SchemalessRuntime(_NewsRuntime):
+        news_feature_names = ()
+
+    runtime = _SchemalessRuntime()
+    _install_release(monkeypatch, runtime=runtime)
+    _install_news_provider(
+        monkeypatch,
+        SimpleNamespace(features_for=lambda *args, **kwargs: None),
+    )
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
+    assert response.status_code == 503
+    assert "does not declare its news feature schema" in response.json()["detail"]["reason"]
 
 
 def test_repeated_requests_reuse_the_response_cache(monkeypatch) -> None:
