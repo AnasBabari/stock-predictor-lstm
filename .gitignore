@@ -20,6 +20,7 @@ backend/saved_models/
 frontend/.npm-cache/
 
 *.csv
+!data/ndx100/membership_changes.csv
 *.dat
 
 # Generated data

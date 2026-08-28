@@ -1,9 +1,20 @@
-"""v8 feature/target schema — deployable_v5 + news-v1 (numeric fallback certified today).
+"""v8 feature/target schema — deployable_v5 + news-v1 (NEITHER branch is certified yet).
 
 This module is the frozen record of what the v8 serving runtime will expect.
 No feature engineering code belongs here beyond schema declaration; the
 actual builders remain in ``backend.panel.features`` and
 ``research/volatility_forecasting/news*.py``.
+
+CERTIFICATION STATUS (repository truth at the time this wording was corrected):
+
+    no certifiable v8 inputs
+    no certified v8 candidate
+    no opened v8 sealed test
+    no signed v8 release
+
+The numeric fallback described below is a *declared schema*, not a certified
+artifact.  Nothing in this module should be read as evidence that the
+numeric-only path has passed any promotion or certification gate.
 """
 
 from __future__ import annotations
@@ -11,8 +22,8 @@ from __future__ import annotations
 from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
 
 # News-v1 adds causal aggregated features on top of deployable_v5.
-# For the numeric fallback (certified today) these are absent and the
-# runtime must treat missing news as a zero-vector with a missing_news_indicator.
+# On the numeric-only path these are absent and the runtime must treat
+# missing news as a zero-vector with a missing_news_indicator.
 NEWS_V1_FEATURES: tuple[str, ...] = (
     "News_Article_Count_1d",
     "News_Unique_Source_Count_1d",
@@ -39,8 +50,20 @@ NEWS_V1_FEATURES: tuple[str, ...] = (
     "Market_TNX_Change_1d",
 )
 
+# The authoritative frozen schema counts.
+#
+#   26 numeric (deployable_v5) + 22 news/macro (news-v1) = 48 total
+#
+# ``V8_NEWS_FEATURE_COUNT`` historically held the *total* (48) rather than the
+# news-only count, which is what its name implies.  It is retained as an alias
+# so existing callers keep working, but new code must use the unambiguous
+# ``V8_TOTAL_FEATURE_COUNT`` / ``V8_NEWS_ONLY_FEATURE_COUNT`` pair.
 V8_NUMERIC_FEATURE_COUNT = len(DEPLOYABLE_FEATURE_COLUMNS_V5)  # 26
-V8_NEWS_FEATURE_COUNT = len(DEPLOYABLE_FEATURE_COLUMNS_V5) + len(NEWS_V1_FEATURES)
+V8_NEWS_ONLY_FEATURE_COUNT = len(NEWS_V1_FEATURES)  # 22
+V8_TOTAL_FEATURE_COUNT = len(DEPLOYABLE_FEATURE_COLUMNS_V5) + len(NEWS_V1_FEATURES)  # 48
+
+# Backwards-compatible alias.  NOTE: this value is the TOTAL, not the news count.
+V8_NEWS_FEATURE_COUNT = V8_TOTAL_FEATURE_COUNT
 
 V8_FEATURE_SCHEMA_VERSION = "deployable_v5+news-v1"
 V8_TARGET_VERSION = "future-rv-total-v1"
@@ -57,3 +80,8 @@ V8_EPSILON = 1e-8
 assert len(set(DEPLOYABLE_FEATURE_COLUMNS_V5)) == len(DEPLOYABLE_FEATURE_COLUMNS_V5)
 assert len(set(NEWS_V1_FEATURES)) == len(NEWS_V1_FEATURES)
 assert not set(DEPLOYABLE_FEATURE_COLUMNS_V5).intersection(NEWS_V1_FEATURES)
+
+# Validation: the declared schema counts must match the source-of-truth tuples.
+assert V8_NUMERIC_FEATURE_COUNT == 26
+assert V8_NEWS_ONLY_FEATURE_COUNT == 22
+assert V8_TOTAL_FEATURE_COUNT == 48

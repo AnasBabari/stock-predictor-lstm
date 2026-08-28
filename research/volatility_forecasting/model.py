@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import numpy as np
@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader, TensorDataset
 class BaselineResidualTCNConfig:
     feature_count: int
     horizon_count: int
-    encoder_family: Literal["tcn", "patch_transformer"] = "tcn"
+    encoder_family: Literal["tcn", "patch_transformer", "lstm", "gru"] = "tcn"
     window_size: int = 60
     news_feature_count: int = 0
     news_channels: int = 24
@@ -39,12 +39,14 @@ class BaselineResidualTCNConfig:
     transformer_feedforward: int = 128
     patch_length: int = 10
     patch_stride: int = 5
+    lstm_layers: int = 2
+    lstm_hidden: int = 48
 
     def __post_init__(self) -> None:
         if self.feature_count < 1 or self.horizon_count < 1:
             raise ValueError("feature_count and horizon_count must be positive")
-        if self.encoder_family not in {"tcn", "patch_transformer"}:
-            raise ValueError("encoder family must be tcn or patch_transformer")
+        if self.encoder_family not in {"tcn", "patch_transformer", "lstm", "gru"}:
+            raise ValueError("encoder family must be tcn, patch_transformer, lstm, or gru")
         if self.window_size < 2:
             raise ValueError("window size must be at least two")
         if self.news_feature_count < 0 or self.news_channels < 1:
@@ -67,10 +69,15 @@ class BaselineResidualTCNConfig:
             raise ValueError("patch length must be in [2, window_size]")
         if not 1 <= self.patch_stride <= self.patch_length:
             raise ValueError("patch stride must be in [1, patch_length]")
+        if self.lstm_layers < 1 or self.lstm_hidden < 4:
+            raise ValueError("lstm_layers must be >= 1 and lstm_hidden >= 4")
 
     @property
     def patch_count(self) -> int:
         return 1 + (self.window_size - self.patch_length) // self.patch_stride
+
+
+BaselineResidualLSTMConfig = BaselineResidualTCNConfig
 
 
 @dataclass(frozen=True)
@@ -191,18 +198,28 @@ class ResidualTemporalBlock(nn.Module):
 
 
 class BaselineResidualTCN(nn.Module):
-    """Shared residual forecaster with a TCN or patch-transformer encoder."""
+    """Shared residual forecaster with TCN, patch-transformer, LSTM, or GRU encoder."""
 
     def __init__(self, config: BaselineResidualTCNConfig) -> None:
         super().__init__()
         self.config = config
+        self.input_projection: nn.Module | None = None
+        self.blocks: nn.ModuleList | None = None
+        self.patch_projection: nn.Module | None = None
+        self.patch_encoder: nn.Module | None = None
+        self.patch_pool: nn.Module | None = None
+        self.positional_embedding: nn.Parameter | None = None
+        self.lstm_encoder: nn.Module | None = None
+        self.gru_encoder: nn.Module | None = None
+        self.recurrent_pool: nn.Module | None = None
+
         if config.encoder_family == "tcn":
-            self.input_projection: nn.Module | None = nn.Conv1d(
+            self.input_projection = nn.Conv1d(
                 config.feature_count,
                 config.channels,
                 kernel_size=1,
             )
-            self.blocks: nn.ModuleList | None = nn.ModuleList(
+            self.blocks = nn.ModuleList(
                 [
                     ResidualTemporalBlock(
                         config.channels,
@@ -213,13 +230,7 @@ class BaselineResidualTCN(nn.Module):
                     for dilation in config.dilations
                 ]
             )
-            self.patch_projection: nn.Module | None = None
-            self.patch_encoder: nn.Module | None = None
-            self.patch_pool: nn.Module | None = None
-            self.positional_embedding: nn.Parameter | None = None
-        else:
-            self.input_projection = None
-            self.blocks = None
+        elif config.encoder_family == "patch_transformer":
             self.patch_projection = nn.Linear(
                 config.patch_length * config.feature_count,
                 config.transformer_d_model,
@@ -247,6 +258,31 @@ class BaselineResidualTCN(nn.Module):
                 torch.zeros(1, config.patch_count, config.transformer_d_model)
             )
             nn.init.normal_(self.positional_embedding, mean=0.0, std=0.02)
+        elif config.encoder_family == "lstm":
+            self.lstm_encoder = nn.LSTM(
+                config.feature_count,
+                config.lstm_hidden,
+                num_layers=config.lstm_layers,
+                batch_first=True,
+                dropout=config.dropout if config.lstm_layers > 1 else 0.0,
+            )
+            self.recurrent_pool = nn.Sequential(
+                nn.Linear(config.lstm_hidden, config.channels),
+                nn.SiLU(),
+            )
+        elif config.encoder_family == "gru":
+            self.gru_encoder = nn.GRU(
+                config.feature_count,
+                config.lstm_hidden,
+                num_layers=config.lstm_layers,
+                batch_first=True,
+                dropout=config.dropout if config.lstm_layers > 1 else 0.0,
+            )
+            self.recurrent_pool = nn.Sequential(
+                nn.Linear(config.lstm_hidden, config.channels),
+                nn.SiLU(),
+            )
+
         self.final_norm = nn.LayerNorm(config.channels)
         if config.news_feature_count:
             self.news_projection: nn.Module | None = nn.Sequential(
@@ -277,26 +313,41 @@ class BaselineResidualTCN(nn.Module):
                 values = block(values)
             return values[:, :, -1]
 
-        if features.shape[1] != self.config.window_size:
-            raise ValueError(
-                f"patch transformer requires window {self.config.window_size}, "
-                f"got {features.shape[1]}"
+        if self.config.encoder_family == "patch_transformer":
+            if features.shape[1] != self.config.window_size:
+                raise ValueError(
+                    f"patch transformer requires window {self.config.window_size}, "
+                    f"got {features.shape[1]}"
+                )
+            if (
+                self.patch_projection is None
+                or self.patch_encoder is None
+                or self.patch_pool is None
+                or self.positional_embedding is None
+            ):
+                raise RuntimeError("patch transformer encoder was not initialized")
+            patches = features.unfold(1, self.config.patch_length, self.config.patch_stride)
+            patches = patches.permute(0, 1, 3, 2).reshape(
+                len(features),
+                self.config.patch_count,
+                self.config.patch_length * self.config.feature_count,
             )
-        if (
-            self.patch_projection is None
-            or self.patch_encoder is None
-            or self.patch_pool is None
-            or self.positional_embedding is None
-        ):
-            raise RuntimeError("patch transformer encoder was not initialized")
-        patches = features.unfold(1, self.config.patch_length, self.config.patch_stride)
-        patches = patches.permute(0, 1, 3, 2).reshape(
-            len(features),
-            self.config.patch_count,
-            self.config.patch_length * self.config.feature_count,
-        )
-        tokens = self.patch_projection(patches) + self.positional_embedding
-        return self.patch_pool(self.patch_encoder(tokens))
+            tokens = self.patch_projection(patches) + self.positional_embedding
+            return self.patch_pool(self.patch_encoder(tokens))
+
+        if self.config.encoder_family == "lstm":
+            if self.lstm_encoder is None or self.recurrent_pool is None:
+                raise RuntimeError("LSTM encoder was not initialized")
+            output, _ = self.lstm_encoder(features)
+            return self.recurrent_pool(output[:, -1, :])
+
+        if self.config.encoder_family == "gru":
+            if self.gru_encoder is None or self.recurrent_pool is None:
+                raise RuntimeError("GRU encoder was not initialized")
+            output, _ = self.gru_encoder(features)
+            return self.recurrent_pool(output[:, -1, :])
+
+        raise RuntimeError(f"Unsupported encoder family: {self.config.encoder_family}")
 
     def _initialize_baseline_heads(self) -> None:
         # Zero variance/mean heads make the initial model exactly match the
@@ -348,6 +399,15 @@ class BaselineResidualTCN(nn.Module):
             3,
         )
         return forecast_variance, return_location, direction_logits, log_residual
+
+
+class BaselineResidualLSTM(BaselineResidualTCN):
+    """Baseline-residual recurrent neural forecaster with LSTM encoder."""
+
+    def __init__(self, config: BaselineResidualTCNConfig) -> None:
+        if config.encoder_family != "lstm":
+            config = replace(config, encoder_family="lstm")
+        super().__init__(config)
 
 
 def volatility_multitask_loss(
