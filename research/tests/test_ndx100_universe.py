@@ -9,9 +9,11 @@ from research.ndx100.universe import (
     BASE_CONSTITUENTS_2021_12_31,
     assert_survivorship_bias_resistant,
     get_membership_changes,
+    get_ndx100_constituent_union,
     get_ndx100_constituents,
     get_ndx100_membership_timeline,
     get_weekly_origins,
+    point_in_time_membership_mask,
     verify_membership_source,
 )
 
@@ -50,6 +52,16 @@ def test_fiserv_uses_historical_symbol_until_nasdaq_removal() -> None:
     after = get_ndx100_constituents("2023-06-07")
     assert "FISV" in before and "FI" not in before
     assert "FISV" not in after and "FI" not in after
+
+
+def test_point_in_time_row_mask_excludes_pre_addition_and_post_removal_rows() -> None:
+    mask = point_in_time_membership_mask(
+        ["ODFL", "ODFL", "PTON", "PTON"],
+        ["2022-01-21", "2022-01-24", "2022-01-21", "2022-01-24"],
+    )
+    assert mask.tolist() == [False, True, True, False]
+    symbols = get_ndx100_constituent_union()
+    assert "PTON" in symbols and "ODFL" in symbols and "META" in symbols and "FB" in symbols
 
 
 def test_point_in_time_constituents_early_2022() -> None:

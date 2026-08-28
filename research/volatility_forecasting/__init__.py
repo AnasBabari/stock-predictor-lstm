@@ -10,7 +10,11 @@ from .contracts import (
     VOLATILITY_PROTOCOL_VERSION,
     VolatilityForecastProtocol,
 )
-from .data import VolatilityPanelExamples, build_volatility_panel_examples
+from .data import (
+    VolatilityPanelExamples,
+    build_volatility_panel_examples,
+    subset_volatility_panel_examples,
+)
 from .gdelt import GdeltEventRow, gdelt_row_to_news_event, parse_gdelt_v2_export_line
 from .model import (
     BaselineResidualLSTM,
@@ -33,6 +37,7 @@ __all__ = [
     "save_example_cache",
     "VolatilityPanelExamples",
     "build_volatility_panel_examples",
+    "subset_volatility_panel_examples",
     "BaselineResidualLSTM",
     "BaselineResidualLSTMConfig",
     "BaselineResidualTCN",

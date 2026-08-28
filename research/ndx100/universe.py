@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import exchange_calendars as ecals
+import numpy as np
 import pandas as pd
 
 DEFAULT_CHANGES_CSV = (
@@ -303,6 +304,55 @@ def get_ndx100_membership_timeline(
             }
         )
     return pd.DataFrame(records)
+
+
+def get_ndx100_constituent_union(
+    csv_path: Path | str | None = None,
+    base_constituents: Sequence[str] = BASE_CONSTITUENTS_2021_12_31,
+) -> tuple[str, ...]:
+    """Return every symbol needed to reconstruct the development history."""
+    changes = get_membership_changes(csv_path)
+    symbols = set(str(value).upper() for value in base_constituents)
+    symbols.update(changes["ticker"])
+    symbols.update(value for value in changes["related_ticker"] if value)
+    return tuple(sorted(symbols))
+
+
+def point_in_time_membership_mask(
+    tickers: Sequence[str] | np.ndarray,
+    origin_dates: Sequence[object] | np.ndarray,
+    csv_path: Path | str | None = None,
+    base_constituents: Sequence[str] = BASE_CONSTITUENTS_2021_12_31,
+) -> np.ndarray:
+    """Return a row mask that excludes observations outside index membership."""
+    ticker_values = np.asarray(tickers, dtype=str)
+    dates = np.asarray(origin_dates, dtype="datetime64[D]")
+    if ticker_values.ndim != 1 or dates.ndim != 1 or len(ticker_values) != len(dates):
+        raise ValueError("membership mask requires matched one-dimensional row identities")
+    if np.isnat(dates).any():
+        raise ValueError("membership mask origin dates must be finite")
+    changes = get_membership_changes(csv_path)
+    change_dates = changes["effective_date"].to_numpy(dtype="datetime64[D]")
+    active = set(str(value).upper() for value in base_constituents)
+    cursor = 0
+    active_by_date: dict[np.datetime64, set[str]] = {}
+    for date in np.sort(np.unique(dates)):
+        while cursor < len(changes) and change_dates[cursor] <= date:
+            row = changes.iloc[cursor]
+            ticker = str(row["ticker"])
+            if row["action"] == "ADD":
+                active.add(ticker)
+            elif row["action"] == "REMOVE":
+                active.discard(ticker)
+            else:
+                active.discard(ticker)
+                active.add(str(row["related_ticker"]))
+            cursor += 1
+        active_by_date[date] = set(active)
+    return np.asarray(
+        [ticker.upper() in active_by_date[date] for ticker, date in zip(ticker_values, dates, strict=True)],
+        dtype=bool,
+    )
 
 
 def get_weekly_origins(

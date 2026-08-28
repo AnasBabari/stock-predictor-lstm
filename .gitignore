@@ -44,5 +44,15 @@ data/snapshots/
 *.parquet
 *.jsonl
 
+# Local research outputs. These are diagnostic only and are never evidence, so
+# they must never be committed. The quarantine marker below is re-included on
+# purpose: it documents why a previously generated artifact is invalid.
+artifacts/*
+!artifacts/_quarantine_invalid_numeric_companion_v9/
+artifacts/_quarantine_invalid_numeric_companion_v9/*
+!artifacts/_quarantine_invalid_numeric_companion_v9/QUARANTINE.md
+!artifacts/_quarantine_invalid_numeric_companion_v9/numeric_companion_freeze.json
+research/results/ndx100-v9/
+
 # Vitest/Node caches that may appear at repo root
 node_modules/

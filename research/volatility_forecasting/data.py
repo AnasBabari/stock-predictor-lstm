@@ -73,6 +73,38 @@ class VolatilityPanelExamples:
             raise ValueError("direction class must be down=0, neutral=1, or up=2")
 
 
+def subset_volatility_panel_examples(
+    examples: VolatilityPanelExamples,
+    rows: np.ndarray,
+) -> VolatilityPanelExamples:
+    """Return an identity-preserving row subset without changing feature/target semantics."""
+    mask = np.asarray(rows)
+    if mask.dtype == bool:
+        if mask.ndim != 1 or len(mask) != len(examples.features):
+            raise ValueError("boolean example subset must match source rows")
+        indices = np.flatnonzero(mask)
+    else:
+        indices = np.asarray(rows, dtype=np.int64)
+        if indices.ndim != 1 or len(np.unique(indices)) != len(indices):
+            raise ValueError("example subset indices must be one-dimensional and unique")
+        if len(indices) and (indices.min() < 0 or indices.max() >= len(examples.features)):
+            raise ValueError("example subset index is out of bounds")
+    if not len(indices):
+        raise ValueError("example subset cannot be empty")
+    return VolatilityPanelExamples(
+        features=examples.features[indices],
+        baseline_variance=examples.baseline_variance[indices],
+        realized_variance=examples.realized_variance[indices],
+        cumulative_returns=examples.cumulative_returns[indices],
+        direction_classes=examples.direction_classes[indices],
+        tickers=examples.tickers[indices],
+        origin_dates=examples.origin_dates[indices],
+        origin_closes=examples.origin_closes[indices],
+        horizons=examples.horizons,
+        feature_names=examples.feature_names,
+    )
+
+
 def _direction_class(cumulative_return: float, baseline_variance: float) -> int:
     threshold = max(0.0005, 0.10 * float(np.sqrt(max(baseline_variance, 0.0))))
     if cumulative_return < -threshold:
