@@ -1,0 +1,69 @@
+{
+  "manifest_version": "1.0",
+  "fixture_id": "csco_golden_2015_2026",
+  "purpose": "Deterministic synthetic software-regression golden case for the CSCO five-session retrospective benchmark covering 2026-07-20 through 2026-07-24.",
+  "evidence_role": "synthetic_software_regression_fixture",
+  "certification_eligible": false,
+  "canonical_format": "csv",
+  "canonical_file": "csco_golden_2015_2026.csv",
+  "canonical_sha256": "afc432dead9a7352e78d27e9e031685f0dae994de1d8ac461037bead8d19cf25",
+  "canonical_size_bytes": 78215,
+  "row_count": 2906,
+  "date_range": {
+    "first_session": "2015-01-02",
+    "last_session": "2026-07-24"
+  },
+  "columns": {
+    "close": "float64",
+    "volume": "int64"
+  },
+  "index_name": "date",
+  "index_dtype": "datetime64[ns]",
+  "target_contract": {
+    "ticker": "CSCO",
+    "train_end": "2026-07-17",
+    "last_train_close": 42.57,
+    "target_sessions": [
+      "2026-07-20",
+      "2026-07-21",
+      "2026-07-22",
+      "2026-07-23",
+      "2026-07-24"
+    ],
+    "actual_closes": [
+      43.3,
+      44.42,
+      44.62,
+      45.36,
+      45.99
+    ],
+    "horizon": 5
+  },
+  "provenance": {
+    "generator": "research/ndx100/csco_fixture.py::generate_synthetic_csco_fixture",
+    "generator_seed": 20260828,
+    "process": "Deterministic geometric simulation with cyclical macro trend, regime-switching volatility, AR(1) return dynamics, and volume-volatility coupling across 2,906 NYSE trading sessions.",
+    "license": "CC0-1.0 / Public Domain Synthetic Data. No external market data redistribution rights required."
+  },
+  "limitations": [
+    "This fixture is a synthetic software-regression golden case for testing and CI sanity.",
+    "It contains NO real market data and MUST NOT be used to claim forecasting accuracy or certify any model.",
+    "All price movements and volume patterns are synthetically generated."
+  ],
+  "reproducibility": {
+    "seed": 41,
+    "deterministic_algorithms_required": true,
+    "cpu_threads": 1,
+    "reference_environment": {
+      "python": "3.11.9",
+      "numpy": "2.3.5",
+      "pandas": "2.3.3",
+      "torch": "2.13.0+cpu",
+      "scikit_learn": "1.9.0",
+      "platform": "Windows-10-10.0.26200-SP0"
+    },
+    "neural_output_portability": "LSTM outputs are implementation-sensitive across PyTorch versions, CPU kernels and thread counts. Golden neural predictions are validated with a loose tolerance and are NOT asserted as exact cross-platform values."
+  },
+  "generated_by": "research/ndx100/csco_fixture.py",
+  "sealed_test_opened": false
+}
