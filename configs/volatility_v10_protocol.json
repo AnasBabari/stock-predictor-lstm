@@ -1,0 +1,129 @@
+{
+  "protocol_version": "volatility-v10",
+  "protocol_status": "frozen",
+  "frozen_at_utc": "2026-08-29T21:20:00Z",
+  "preregistered_at_utc": "2026-08-29T21:20:00Z",
+  "statement": "V10 protocol is frozen prior to execution. All target definitions, 70/15/15 origin partitions, independent per-horizon selection rules, candidate bounds, and fail-closed certification gates are cryptographically bound.",
+  "builds_on": [
+    "volatility-v8",
+    "volatility-v9"
+  ],
+  "historical_context": {
+    "v9_diagnostic_observed": true,
+    "v9_certification_valid": false,
+    "v10_design_informed_by_v9": true,
+    "v10_test_created": false,
+    "v10_test_opened": false,
+    "notes": "V10 design choices were informed by V9 development diagnostics (e.g., horizon heterogeneity). No V9 diagnostic result is reused as V10 certification evidence."
+  },
+  "task": {
+    "primary_target": "future_cumulative_realized_variance",
+    "objective": "Forecast cumulative total variance over multi-step horizons h in {1, 3, 5, 7, 14, 30}.",
+    "unit": "raw_cumulative_variance",
+    "display_unit": "annualized_volatility_percentage"
+  },
+  "target": {
+    "target_contract_version": "future-rv-total-v1",
+    "realized_variance_proxy": "overnight_plus_rogers_satchell",
+    "daily_proxy_formula": "log(Open_t/Close_{t-1})^2 + max(RogersSatchell_t, 0)",
+    "future_target_formula": "sum_{k=1}^h daily_proxy_{t+k}",
+    "neural_residual_formula": "log(V(t,h) + eps) - log(B(t,h) + eps)",
+    "display_transformation": "sqrt((252 / h) * V_hat)",
+    "epsilon": 1e-08,
+    "annualization_basis": 252
+  },
+  "horizons": [
+    1,
+    3,
+    5,
+    7,
+    14,
+    30
+  ],
+  "independent_per_horizon_selection": true,
+  "feature_schema": {
+    "feature_contract_version": "deployable-schema-v5",
+    "ordered_feature_count": 26,
+    "ordered_numeric_features_sha256": "7abcd33ff1f24b3afea85928932f9af733073ab6ac4d13c3a418d4d5ec6146fb",
+    "window_size": 60
+  },
+  "split": {
+    "split_contract_version": "unique-origin-70-15-15-v1",
+    "partition_by": "unique_forecast_origin_session",
+    "train_fraction": 0.7,
+    "validation_fraction": 0.15,
+    "test_fraction": 0.15,
+    "embargo_sessions": 30,
+    "folds": 5
+  },
+  "asset_transfer_policy": {
+    "transfer_securities_excluded_from_training_and_selection": true,
+    "required_asset_holdouts": [
+      "GOOGL",
+      "MSFT",
+      "NVDA",
+      "PEP",
+      "TXN"
+    ]
+  },
+  "candidate_families": [
+    "har",
+    "ewma",
+    "garch",
+    "gjr",
+    "ridge",
+    "elasticnet",
+    "tcn",
+    "lstm",
+    "gru",
+    "patch_transformer"
+  ],
+  "seeding": {
+    "neural_seeds": [
+      41,
+      42,
+      43
+    ],
+    "deterministic_seed": 0,
+    "bootstrap_resamples": 2000
+  },
+  "metrics": {
+    "primary_metric": "qlike",
+    "qlike_formula": "realized/forecast - log(realized/forecast) - 1",
+    "secondary_metrics": [
+      "log_variance_mae",
+      "log_variance_rmse",
+      "interval_coverage_80"
+    ]
+  },
+  "promotion_gates": {
+    "maximum_relative_qlike": 1.0,
+    "maximum_ratio_upper_95": 1.0,
+    "maximum_required_ticker_relative_qlike": 1.05,
+    "significance_level": 0.05,
+    "multiple_testing_correction": "holm_bonferroni"
+  },
+  "news_controls": {
+    "historical_lake_required": true,
+    "availability_timestamp_formula": "max(published_at, first_seen_at, delivery_time)",
+    "exchange_close_causality_required": true,
+    "negative_controls": [
+      "shuffled_news",
+      "delayed_news",
+      "count_only",
+      "sentiment_only",
+      "entity_shuffled"
+    ]
+  },
+  "data_eligibility": {
+    "universe_certification_eligible": false,
+    "market_panel_certification_eligible": false,
+    "strict_gate_action": "fail_closed_and_stop_if_ineligible",
+    "blocker": "A certified market model requires an attested point-in-time constituent source and a licensed market panel permitting training and derived-model use. Until then all results are development evidence only."
+  },
+  "terminal_outcomes": [
+    "A: learned numeric or news model passes all per-horizon gates on sealed test and is exported to signed ONNX release",
+    "B: no learned model passes, an explicitly certified baseline is deployed and negative result published",
+    "C: no candidate meets gates, production retains explicit 503 abstention and result is published"
+  ]
+}
