@@ -1,13 +1,14 @@
-"""Tests for GPU harness status and independent per-horizon selection."""
+"""Tests for GPU harness status and training execution."""
 
 from __future__ import annotations
 
+import numpy as np
+
 from research.volatility_forecasting.gpu_harness_v10 import (
+    TrainingExecutionConfig,
     check_gpu_runtime,
     cleanup_gpu_memory,
-)
-from research.volatility_forecasting.horizon_selection_v10 import (
-    select_champions_by_horizon,
+    train_candidate_fold,
 )
 
 
@@ -18,28 +19,45 @@ def test_gpu_runtime_check_and_cleanup_run_safely() -> None:
     cleanup_gpu_memory()
 
 
-def test_select_champions_by_horizon_selects_learned_when_eligible_and_baseline_otherwise() -> None:
-    # Synthetic ledger where TCN wins on h=1, but fails on h=3 and h=5
+def test_train_candidate_fold_runs_classical_and_neural_candidates() -> None:
+    rng = np.random.default_rng(42)
+    X_train = rng.normal(size=(60, 26))
+    y_train = np.maximum(0.0004 + 0.0001 * X_train[:, 0], 1e-6)
+    X_val = rng.normal(size=(20, 26))
+    y_val = np.maximum(0.0004 + 0.0001 * X_val[:, 0], 1e-6)
+
+    # 1. Ridge
+    cfg_ridge = TrainingExecutionConfig(candidate_family="ridge", horizon=1, fold_idx=0)
+    res_ridge = train_candidate_fold(cfg_ridge, X_train, y_train, X_val, y_val)
+    assert res_ridge["status"] == "success"
+    assert res_ridge["val_qlike"] > 0.0
+
+    # 2. ElasticNet
+    cfg_enet = TrainingExecutionConfig(candidate_family="elasticnet", horizon=3, fold_idx=0)
+    res_enet = train_candidate_fold(cfg_enet, X_train, y_train, X_val, y_val)
+    assert res_enet["status"] == "success"
+    assert res_enet["val_qlike"] > 0.0
+
+    # 3. Neural (TCN/LSTM)
+    cfg_tcn = TrainingExecutionConfig(candidate_family="tcn", horizon=1, fold_idx=0, max_epochs=5)
+    res_tcn = train_candidate_fold(cfg_tcn, X_train, y_train, X_val, y_val)
+    assert res_tcn["status"] in ("success", "fallback_success")
+    assert res_tcn["val_qlike"] > 0.0
+
+
+def test_select_champions_by_horizon_role_naming() -> None:
+    from research.volatility_forecasting.horizon_selection_v10 import (
+        select_champions_by_horizon,
+    )
+
     ledger = [
-        # h=1 records
         {"horizon": 1, "family": "tcn", "relative_qlike": 0.90, "ratio_upper_95": 0.98},
-        {"horizon": 1, "family": "gru", "relative_qlike": 0.95, "ratio_upper_95": 0.99},
-        {"horizon": 1, "family": "har", "relative_qlike": 1.00, "ratio_upper_95": 1.00},
-        # h=3 records: TCN degrades, ElasticNet is close, none beat baseline upper 95
-        {"horizon": 3, "family": "tcn", "relative_qlike": 1.05, "ratio_upper_95": 1.15},
-        {"horizon": 3, "family": "har", "relative_qlike": 1.00, "ratio_upper_95": 1.00},
-        # h=5 records: all neural degrade
-        {"horizon": 5, "family": "tcn", "relative_qlike": 1.18, "ratio_upper_95": 1.30},
-        {"horizon": 5, "family": "har", "relative_qlike": 1.00, "ratio_upper_95": 1.00},
+        {"horizon": 3, "family": "tcn", "relative_qlike": 1.15, "ratio_upper_95": 1.25},
     ]
-
-    champions = select_champions_by_horizon(ledger, horizons=[1, 3, 5], baseline_family="har")
-
+    champions = select_champions_by_horizon(ledger, horizons=[1, 3], baseline_family="har")
     assert champions[1]["champion_family"] == "tcn"
     assert champions[1]["role"] == "learned_candidate"
 
+    # Degraded horizon falls back to development_baseline_candidate
     assert champions[3]["champion_family"] == "har"
-    assert champions[3]["role"] == "certified_baseline_fallback"
-
-    assert champions[5]["champion_family"] == "har"
-    assert champions[5]["role"] == "certified_baseline_fallback"
+    assert champions[3]["role"] == "development_baseline_candidate"

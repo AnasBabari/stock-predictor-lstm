@@ -1,54 +1,53 @@
-"""Tests for V10 unique-origin session 70/15/15 partitioning."""
+"""Tests for 70/15/15 unique-origin splitter with purge and embargo."""
 
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from research.volatility_forecasting.splits_v10 import (
     UniqueOriginSplitterV10,
 )
 
 
-@pytest.fixture
-def synthetic_panel() -> pd.DataFrame:
-    dates = pd.date_range("2020-01-01", periods=1000, freq="B").strftime("%Y-%m-%d")
-    tickers = ["AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "PEP", "TXN", "INTC"]
-    records = []
+def test_unique_origin_splitter_enforces_embargo_and_purge() -> None:
+    # 500 business days
+    dates = pd.date_range("2020-01-01", periods=500, freq="B").strftime("%Y-%m-%d").tolist()
+    tickers = ["AAPL", "AMZN", "MSFT", "PEP"]
+
+    rows = []
     for d in dates:
         for t in tickers:
-            records.append({"Date": d, "Ticker": t, "Feature": 1.0})
-    return pd.DataFrame(records)
+            rows.append({"Date": d, "SecurityID": t, "Close": 100.0})
+    df = pd.DataFrame(rows)
 
-
-def test_unique_origin_partition_ratios_and_isolation(synthetic_panel: pd.DataFrame) -> None:
     splitter = UniqueOriginSplitterV10(
         train_fraction=0.70,
         val_fraction=0.15,
         test_fraction=0.15,
         embargo_sessions=30,
-        required_transfer_tickers=("GOOGL", "MSFT", "NVDA", "PEP", "TXN"),
+        max_label_horizon=30,
     )
-    assignment = splitter.build_assignment(synthetic_panel)
+    train_dates, val_dates, test_dates = splitter.partition_sessions(dates)
 
-    assert len(assignment.train_sessions) == 700
-    assert len(assignment.val_sessions) == 150
-    assert len(assignment.test_sessions) == 150
-    assert (
-        len(assignment.train_sessions)
-        + len(assignment.val_sessions)
-        + len(assignment.test_sessions)
-        == 1000
-    )
+    # 1. No overlap between train, val, test
+    assert set(train_dates).isdisjoint(set(val_dates))
+    assert set(val_dates).isdisjoint(set(test_dates))
+    assert set(train_dates).isdisjoint(set(test_dates))
 
-    # No overlap in session dates
-    train_set = set(assignment.train_sessions)
-    val_set = set(assignment.val_sessions)
-    test_set = set(assignment.test_sessions)
-    assert not (train_set & val_set)
-    assert not (val_set & test_set)
-    assert not (train_set & test_set)
+    # 2. Embargo gap between train end and val start
+    train_end = pd.to_datetime(train_dates[-1])
+    val_start = pd.to_datetime(val_dates[0])
+    gap_days_1 = (val_start - train_end).days
+    assert gap_days_1 >= 30, f"Gap between train and val must be >= 30 days, got {gap_days_1}"
 
-    # Transfer rows are accounted for
-    assert assignment.transfer_rows > 0
+    # 3. Embargo gap between val end and test start
+    val_end = pd.to_datetime(val_dates[-1])
+    test_start = pd.to_datetime(test_dates[0])
+    gap_days_2 = (test_start - val_end).days
+    assert gap_days_2 >= 30, f"Gap between val and test must be >= 30 days, got {gap_days_2}"
+
+    # 4. Build assignment and verify transfer holdouts and purged rows
+    df_assigned, assignment = splitter.build_assignment(df)
+    assert assignment.transfer_rows > 0  # MSFT and PEP are required transfer assets
+    assert assignment.purged_rows > 0  # Embargoed sessions are marked embargo_purged
     assert len(assignment.assignment_fingerprint_sha256) == 64

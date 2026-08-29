@@ -84,6 +84,8 @@ def get_protected_fingerprints(repo_root: Path) -> dict[str, str]:
             fingerprints[prohibited] = _hash_file(target)
         elif target.is_dir():
             for p in target.rglob("*"):
+                if any(part in ("node_modules", ".git", "dist", "__pycache__", ".pytest_cache") for part in p.parts):
+                    continue
                 if p.is_file():
                     rel = p.relative_to(repo_root).as_posix()
                     fingerprints[rel] = _hash_file(p)
@@ -194,7 +196,7 @@ print("JSON_RESULT_END")
     try:
         while True:
             try:
-                stdout, stderr = proc.communicate(timeout=0.1)
+                stdout, stderr = proc.communicate(timeout=0.25)
                 if proc.returncode == 0:
                     raw_status = "success"
                 else:
@@ -233,6 +235,7 @@ print("JSON_RESULT_END")
         kill_process_tree(proc.pid)
         with contextlib.suppress(Exception):
             proc.kill()
+            stdout, stderr = proc.communicate()
     finally:
         kill_process_tree(proc.pid)
         with contextlib.suppress(Exception):

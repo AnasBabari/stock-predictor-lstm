@@ -3,7 +3,7 @@
 Evaluates candidates independently at each horizon h in {1, 3, 5, 7, 14, 30}.
 If a neural candidate passes on short horizons (e.g. h=1) but degrades on longer
 horizons, the short horizon candidate can be promoted while long horizons fall
-back to certified causal baselines (e.g. HAR).
+back to development baseline candidates (e.g. HAR).
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ def select_champions_by_horizon(
     baseline_family: str = "har",
     max_relative_qlike: float = 1.0,
     max_ratio_upper_95: float = 1.0,
+    expected_folds: int = 1,
 ) -> dict[int, dict[str, Any]]:
     """Select the best performing candidate for each horizon independently."""
     champions: dict[int, dict[str, Any]] = {}
@@ -33,7 +34,7 @@ def select_champions_by_horizon(
             champions[h] = {
                 "horizon": h,
                 "champion_family": baseline_family,
-                "role": "certified_baseline_fallback",
+                "role": "development_baseline_candidate",
                 "relative_qlike": 1.0,
                 "reason": "no_records_for_horizon",
             }
@@ -49,16 +50,26 @@ def select_champions_by_horizon(
         for fam, records in families.items():
             if fam == baseline_family:
                 continue
-            mean_rel_qlike = float(np.mean([r.get("relative_qlike", 1.0) for r in records]))
-            max_upper_95 = float(np.max([r.get("ratio_upper_95", 1.0) for r in records]))
+            if len(records) < expected_folds:
+                continue
+
+            rel_qlikes = [float(r.get("relative_qlike", 1.0)) for r in records]
+            mean_rel_qlike = float(np.mean(rel_qlikes))
+            max_upper_95 = float(np.max([float(r.get("ratio_upper_95", 1.0)) for r in records]))
+            worst_fold_rel_qlike = float(np.max(rel_qlikes))
 
             # Check promotion gates
-            if mean_rel_qlike < max_relative_qlike and max_upper_95 < max_ratio_upper_95:
+            if (
+                mean_rel_qlike < max_relative_qlike
+                and max_upper_95 < max_ratio_upper_95
+                and worst_fold_rel_qlike <= 1.05
+            ):
                 eligible_candidates.append(
                     {
                         "family": fam,
                         "mean_relative_qlike": mean_rel_qlike,
                         "max_upper_95": max_upper_95,
+                        "worst_fold": worst_fold_rel_qlike,
                         "record_count": len(records),
                     }
                 )
@@ -79,7 +90,7 @@ def select_champions_by_horizon(
             champions[h] = {
                 "horizon": h,
                 "champion_family": baseline_family,
-                "role": "certified_baseline_fallback",
+                "role": "development_baseline_candidate",
                 "relative_qlike": 1.0,
                 "reason": "no_learned_candidate_cleared_gates",
             }

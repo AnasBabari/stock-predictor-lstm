@@ -47,6 +47,7 @@ def test_canonical_protocol_hashing_is_deterministic(protocol: dict) -> None:
     h2 = protocol_sha256(json.loads(json.dumps(protocol)))
     assert h1 == h2
     assert len(h1) == 64
+    assert h1 == "2a2ddc6531062eca75e965e3edec7476009db4659344d103b52fb835cf29dc90"
 
 
 def test_prereg_doc_matches_v10_protocol_identities(protocol: dict, prereg_doc: str) -> None:

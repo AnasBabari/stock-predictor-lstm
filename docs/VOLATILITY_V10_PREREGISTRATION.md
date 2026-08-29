@@ -3,9 +3,9 @@
 ## 1. Scientific Protocol Identity
 - **Protocol ID:** `volatility-v10`
 - **Protocol Status:** Frozen
-- **Target Contract:** `future-rv-total-v1`
+- **Target Contract:** `future-rv-total-v2`
 - **Feature Schema:** `deployable-schema-v5` (26 features)
-- **Split Contract:** `unique-origin-70-15-15-v1`
+- **Split Contract:** `unique-origin-70-15-15-v2`
 
 ---
 

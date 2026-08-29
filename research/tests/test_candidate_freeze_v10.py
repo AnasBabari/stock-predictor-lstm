@@ -1,4 +1,4 @@
-"""Tests for V10 candidate package freeze and pre-certification audit."""
+"""Tests for V10 candidate package freeze and atomic creation."""
 
 from __future__ import annotations
 
@@ -15,9 +15,7 @@ from research.volatility_forecasting.candidate_freeze_v10 import (
 
 
 @pytest.fixture
-def sample_package(tmp_path: Path) -> FrozenCandidatePackageV10:
-    weight_file = tmp_path / "tcn_h1.bin"
-    weight_file.write_bytes(b"dummy_weights_h1")
+def sample_package() -> FrozenCandidatePackageV10:
     w_sha = hashlib.sha256(b"dummy_weights_h1").hexdigest()
 
     h1 = FrozenHorizonCandidate(
@@ -34,7 +32,7 @@ def sample_package(tmp_path: Path) -> FrozenCandidatePackageV10:
     h3 = FrozenHorizonCandidate(
         horizon=3,
         family="har",
-        role="certified_baseline",
+        role="development_baseline_candidate",
         config={},
         selected_seed=0,
         scaler_parameters={},
@@ -55,12 +53,18 @@ def sample_package(tmp_path: Path) -> FrozenCandidatePackageV10:
     )
 
 
-def test_package_roundtrip_and_weights_verification(
+def test_package_atomic_creation_and_reopening(
     sample_package: FrozenCandidatePackageV10, tmp_path: Path
 ) -> None:
-    pkg_dir = sample_package.save_package(tmp_path)
-    # Copy dummy weight file into saved directory
-    (pkg_dir / "tcn_h1.bin").write_bytes(b"dummy_weights_h1")
+    weights_map = {"tcn_h1.bin": b"dummy_weights_h1"}
+    pkg_dir = sample_package.save_package_atomic(tmp_path, weights_map=weights_map)
+
+    assert (pkg_dir / "candidate_manifest.json").exists()
+    assert (pkg_dir / "tcn_h1.bin").exists()
+
+    # Re-saving to the same directory must fail with FreezeIntegrityError
+    with pytest.raises(FreezeIntegrityError, match="already exists"):
+        sample_package.save_package_atomic(tmp_path, weights_map=weights_map)
 
     reloaded = FrozenCandidatePackageV10.from_package_dir(pkg_dir)
     assert reloaded.package_id == sample_package.package_id
@@ -71,8 +75,10 @@ def test_package_roundtrip_and_weights_verification(
 def test_tampered_weights_fail_audit(
     sample_package: FrozenCandidatePackageV10, tmp_path: Path
 ) -> None:
-    pkg_dir = sample_package.save_package(tmp_path)
-    # Write tampered weight file
+    weights_map = {"tcn_h1.bin": b"dummy_weights_h1"}
+    pkg_dir = sample_package.save_package_atomic(tmp_path, weights_map=weights_map)
+
+    # Tamper with the weight file
     (pkg_dir / "tcn_h1.bin").write_bytes(b"tampered_weights")
 
     reloaded = FrozenCandidatePackageV10.from_package_dir(pkg_dir)

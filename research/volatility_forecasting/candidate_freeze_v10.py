@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -22,7 +24,7 @@ class FreezeIntegrityError(ValueError):
 class FrozenHorizonCandidate:
     horizon: int
     family: str
-    role: str
+    role: str  # "learned_candidate" | "development_baseline_candidate"
     config: dict[str, Any]
     selected_seed: int
     scaler_parameters: dict[str, Any]
@@ -63,12 +65,37 @@ class FrozenCandidatePackageV10:
     def package_sha256(self) -> str:
         return hashlib.sha256(self.canonical_bytes()).hexdigest()
 
-    def save_package(self, base_dir: Path) -> Path:
+    def save_package_atomic(
+        self,
+        base_dir: Path,
+        weights_map: dict[str, bytes] | None = None,
+    ) -> Path:
+        """Atomically create and write the candidate package directory."""
         target_dir = Path(base_dir) / self.package_id
-        target_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = target_dir / "candidate_manifest.json"
-        manifest_path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
-        return target_dir
+        if target_dir.exists():
+            raise FreezeIntegrityError(
+                f"Candidate package {self.package_id} already exists at {target_dir}. Overwrite strictly forbidden."
+            )
+
+        # Write to temporary directory first
+        tmp_dir = Path(tempfile.mkdtemp(prefix="pkg_atomic_", dir=base_dir))
+        try:
+            manifest_path = tmp_dir / "candidate_manifest.json"
+            manifest_path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+
+            if weights_map:
+                for rel_path, w_bytes in weights_map.items():
+                    w_file = tmp_dir / rel_path
+                    w_file.parent.mkdir(parents=True, exist_ok=True)
+                    w_file.write_bytes(w_bytes)
+
+            # Atomic directory rename
+            tmp_dir.rename(target_dir)
+            return target_dir
+        except Exception:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
 
     @classmethod
     def from_package_dir(cls, package_dir: Path) -> FrozenCandidatePackageV10:

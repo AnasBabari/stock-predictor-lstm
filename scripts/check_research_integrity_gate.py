@@ -15,6 +15,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.extend([str(ROOT), str(ROOT / "research"), str(ROOT / "backend")])
+
+from research.volatility_forecasting.protocol_hashing import protocol_sha256  # noqa: E402
+
+EXPECTED_V10_CANONICAL_SHA = "2a2ddc6531062eca75e965e3edec7476009db4659344d103b52fb835cf29dc90"
 
 
 def check_research_integrity() -> list[str]:
@@ -57,6 +62,17 @@ def check_research_integrity() -> list[str]:
             if v10_proto.get("historical_context", {}).get("v9_diagnostic_observed") is not True:
                 errors.append(
                     "V10 historical_context must truthfully disclose v9_diagnostic_observed=True"
+                )
+            if v10_proto.get("target", {}).get("target_contract_version") != "future-rv-total-v2":
+                errors.append("V10 target contract version must be 'future-rv-total-v2'")
+            if v10_proto.get("feature_schema", {}).get("ordered_feature_count") != 26:
+                errors.append("V10 feature schema must declare exactly 26 ordered features")
+
+            # Check canonical SHA
+            actual_canonical_sha = protocol_sha256(v10_proto)
+            if actual_canonical_sha != EXPECTED_V10_CANONICAL_SHA:
+                errors.append(
+                    f"V10 canonical protocol digest mismatch: expected {EXPECTED_V10_CANONICAL_SHA}, got {actual_canonical_sha}"
                 )
         except Exception as exc:
             errors.append(f"Malformed V10 protocol: {exc}")

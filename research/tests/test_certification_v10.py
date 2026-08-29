@@ -1,17 +1,16 @@
-"""Tests for V10 single-use sealed test certification."""
+"""Tests for V10 atomic single-use sealed test certification and real evaluation."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from research.volatility_forecasting.certification_v10 import (
-    CertificationReportV10,
-    HorizonCertificationDecision,
     SealedTestOpeningRecordV10,
     SealedTestReopenError,
+    evaluate_horizon_certification,
     verify_certification_prerequisites,
 )
 from research.volatility_forecasting.market_snapshot_v10 import DataIneligibilityError
@@ -39,50 +38,41 @@ def test_test_opening_record_refuses_duplicate_opening(tmp_path: Path) -> None:
         operator="ci_runner",
         attempt=1,
     )
-    rec1.save(tmp_path)
+    rec1.save_atomic(tmp_path)
 
-    # Second attempt to save must fail with SealedTestReopenError
+    # Second atomic attempt must fail with SealedTestReopenError
     with pytest.raises(SealedTestReopenError, match="already exists"):
-        rec1.save(tmp_path)
+        rec1.save_atomic(tmp_path)
 
 
-def test_certification_report_serialization(tmp_path: Path) -> None:
-    d1 = HorizonCertificationDecision(
+def test_evaluate_horizon_certification_passes_superior_candidate() -> None:
+    actuals = np.array([0.0004] * 50)
+    cand_preds = np.array([0.000401] * 50)  # Near perfect
+    base_preds = np.array([0.000600] * 50)  # Worse
+
+    dec, _ = evaluate_horizon_certification(
         horizon=1,
-        family="tcn",
-        outcome="certified_learned_model",
-        relative_qlike=0.90,
-        ratio_upper_95=0.98,
-        dm_p_value=0.01,
-        holm_adjusted_p_value=0.03,
-        transfer_relative_qlike=0.95,
-        passed_all_gates=True,
-        reason="Cleared all certification gates",
+        candidate_family="tcn",
+        cand_preds=cand_preds,
+        base_preds=base_preds,
+        actuals=actuals,
     )
-    d3 = HorizonCertificationDecision(
+    assert dec.outcome == "certified_learned_model"
+    assert dec.relative_qlike < 1.0
+    assert dec.passed_all_gates is True
+
+
+def test_evaluate_horizon_certification_abstains_on_inferior_candidate() -> None:
+    actuals = np.array([0.0004] * 50)
+    cand_preds = np.array([0.000800] * 50)  # Worse
+    base_preds = np.array([0.000401] * 50)  # Near perfect
+
+    dec, _ = evaluate_horizon_certification(
         horizon=3,
-        family="har",
-        outcome="certified_baseline",
-        relative_qlike=1.00,
-        ratio_upper_95=1.00,
-        dm_p_value=0.50,
-        holm_adjusted_p_value=1.00,
-        transfer_relative_qlike=1.00,
-        passed_all_gates=True,
-        reason="Certified baseline fallback",
+        candidate_family="tcn",
+        cand_preds=cand_preds,
+        base_preds=base_preds,
+        actuals=actuals,
     )
-    report = CertificationReportV10(
-        report_id="cert-v10-001",
-        protocol_id="volatility-v10",
-        protocol_sha256="0" * 64,
-        candidate_package_sha256="1" * 64,
-        data_snapshot_sha256="2" * 64,
-        evaluated_at_utc="2026-08-29T21:00:00Z",
-        decisions=(d1, d3),
-        certified_horizons=(1, 3),
-    )
-    report_file = report.save(tmp_path)
-    assert report_file.exists()
-    reloaded = json.loads(report_file.read_text(encoding="utf-8"))
-    assert reloaded["report_id"] == "cert-v10-001"
-    assert reloaded["certified_horizons"] == [1, 3]
+    assert dec.outcome == "abstention"
+    assert dec.passed_all_gates is False

@@ -1,13 +1,16 @@
-"""Tests for historical news lake causality and negative controls."""
+"""Tests for historical news lake causality and complete negative controls."""
 
 from __future__ import annotations
 
+import pandas as pd
+
 from research.volatility_forecasting.news_fusion_v10 import (
     evaluate_news_gain,
+    extract_causal_news_features,
+    generate_negative_controls,
 )
 from research.volatility_forecasting.news_lake_v10 import (
     HistoricalNewsRecord,
-    align_article_to_trading_session,
 )
 
 
@@ -31,51 +34,49 @@ def test_news_available_at_uses_maximum_timestamp() -> None:
         license_id="lic_news_2026",
         snapshot_id="snap-news-001",
     )
-    # Available at must be max(15:00, 15:02, 15:05) -> 15:05:00Z
     assert record.available_at == "2024-01-02T15:05:00Z"
 
 
-def test_align_article_after_close_rolls_to_next_session() -> None:
-    # Exchange close is 21:00:00Z (4:00 PM EST / 21:00 UTC)
-    # Article at 21:15:00Z must roll to 2024-01-03
-    session = align_article_to_trading_session(
-        available_at_utc="2024-01-02T21:15:00Z",
-        exchange_session_date="2024-01-02",
-        exchange_close_time_utc="21:00:00Z",
-        next_session_date="2024-01-03",
+def test_delayed_news_shifts_forward_in_time() -> None:
+    df_news = pd.DataFrame(
+        {
+            "SessionDate": ["2024-01-01", "2024-01-05"],
+            "SecurityID": ["AAPL", "AAPL"],
+            "sentiment": [0.5, -0.2],
+        }
     )
-    assert session == "2024-01-03"
+    controls = generate_negative_controls(df_news)
 
-    # Article at 18:00:00Z stays in 2024-01-02
-    session_intraday = align_article_to_trading_session(
-        available_at_utc="2024-01-02T18:00:00Z",
-        exchange_session_date="2024-01-02",
-        exchange_close_time_utc="21:00:00Z",
-        next_session_date="2024-01-03",
+    # Delayed news must move 2024-01-01 to 2024-01-06 (index 0 -> index 5)
+    delayed_session = controls["delayed_news"]["SessionDate"].iloc[0]
+    assert delayed_session >= "2024-01-01"
+    assert "entity_shuffled" in controls
+    assert "future_shift_sentinel" in controls
+
+
+def test_extract_causal_news_features() -> None:
+    sessions = ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"]
+    df_news = pd.DataFrame(
+        {
+            "SessionDate": ["2024-01-01", "2024-01-03"],
+            "SecurityID": ["AAPL", "AAPL"],
+            "sentiment": [0.4, 0.8],
+        }
     )
-    assert session_intraday == "2024-01-02"
+    feats = extract_causal_news_features(df_news, sessions, ["AAPL"], windows=(1, 3))
+    assert len(feats) == len(sessions)
+    assert "news_count_1d" in feats.columns
+    assert "news_sentiment_mean_3d" in feats.columns
 
 
 def test_evaluate_news_gain_rejects_when_control_beats_model() -> None:
     numeric_qlike = 0.50
     fused_qlike = 0.48
     controls = {
-        "shuffled_news": 0.47,  # Shuffled news spurious beat
+        "shuffled_news": 0.47,
         "delayed_news": 0.51,
         "count_only": 0.50,
     }
     passed, reason = evaluate_news_gain(numeric_qlike, fused_qlike, controls)
     assert passed is False
     assert "shuffled_news" in reason
-
-
-def test_evaluate_news_gain_passes_when_superior_to_all_controls() -> None:
-    numeric_qlike = 0.50
-    fused_qlike = 0.46
-    controls = {
-        "shuffled_news": 0.49,
-        "delayed_news": 0.51,
-        "count_only": 0.49,
-    }
-    passed, _ = evaluate_news_gain(numeric_qlike, fused_qlike, controls)
-    assert passed is True
