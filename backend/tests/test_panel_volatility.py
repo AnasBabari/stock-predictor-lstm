@@ -114,6 +114,7 @@ def test_garch_recovers_plausible_persistence_and_forecasts_positive() -> None:
     var = np.empty(n)
     var[0] = omega / (1 - alpha - beta)
     rets = np.empty(n)
+    rets[0] = np.sqrt(var[0]) * rng.standard_normal()
     for i in range(1, n):
         sigma2 = omega + alpha * rets[i - 1] ** 2 + beta * var[i - 1]
         rets[i] = np.sqrt(sigma2) * rng.standard_normal()
