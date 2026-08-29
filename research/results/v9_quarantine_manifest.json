@@ -1,0 +1,102 @@
+{
+  "quarantine_schema_version": "v9_diagnostic_quarantine_v1",
+  "protocol": "volatility-v9",
+  "status": "quarantined_development_diagnostic_only",
+  "quarantine_reason": "V9 outputs were generated against secondary-source historical constituents and an unverified yfinance market data cache (both carrying certification_eligible=false). The diagnostic holdout was evaluated as an exploratory diagnostic rather than a single-use sealed test. No V9 output is eligible for model certification, signing, or production deployment.",
+  "source_git_commit": "4b2018fb7ec3fa9c31cd41691459e5d9696a841f",
+  "quarantined_at_utc": "2026-08-29T21:16:00Z",
+  "entries": [
+    {
+      "path": "research/results/ndx100-v9/ablation_summary.json",
+      "artifact_role": "development_diagnostic_ablation_summary",
+      "size_bytes": 7140,
+      "sha256": "2e1f76f5e1ed92273a727fe2c83f2d7b5b5f68278d0b6dca7cec8079676bd5da",
+      "certification_eligible": false,
+      "reason": "Development fold evaluation summary on unverified data."
+    },
+    {
+      "path": "research/results/ndx100-v9/certification_record.json",
+      "artifact_role": "development_diagnostic_evaluation_record",
+      "original_label": "certification_record.json",
+      "relabelled_role": "development_diagnostic_holdout_record",
+      "size_bytes": 20990,
+      "sha256": "397e045cee450ab46e2255babcbef0294bc960ec4d0c5919367b5c614bf518b3",
+      "certification_eligible": false,
+      "reason": "Diagnostic holdout evaluated against ineligible market cache. Misnamed as certification record in initial run; relabelled as diagnostic."
+    },
+    {
+      "path": "research/results/ndx100-v9/development_evaluation_ledger.json",
+      "artifact_role": "development_evaluation_ledger",
+      "size_bytes": 206839,
+      "sha256": "19eff30c52a72809c78045db87933cf818ab4e399b64ee3d9e5a30abadc6d635",
+      "certification_eligible": false,
+      "reason": "540-record development fold ledger across 10 families and 3 seeds on diagnostic dataset."
+    },
+    {
+      "path": "research/results/ndx100-v9/predictions.parquet",
+      "artifact_role": "development_diagnostic_predictions",
+      "size_bytes": 50396,
+      "sha256": "82d77aad9e87ebf0746971e1d820700fee4d62e76b345e991e62191bf47e5838",
+      "certification_eligible": false,
+      "reason": "Model predictions on diagnostic holdout."
+    },
+    {
+      "path": "research/results/ndx100-v9/split_manifest.json",
+      "artifact_role": "development_split_manifest",
+      "size_bytes": 2473,
+      "sha256": "4d3475d26fa1e278c5bf4e62048f203cacad5cae70117ce73922392dc4106b56",
+      "certification_eligible": false,
+      "reason": "Partition manifest marking evidence_role=development_diagnostic_only and certification_eligible=false."
+    },
+    {
+      "path": "research/results/ndx100-v9/summary.json",
+      "artifact_role": "legacy_price_benchmark_summary",
+      "size_bytes": 1740,
+      "sha256": "08a660c48ebf370268031b7e77d550b8c9e3867653162ef440c2106315309c37",
+      "certification_eligible": false,
+      "reason": "Older price benchmark output quarantined to prevent namespace collision."
+    },
+    {
+      "path": "artifacts/candidates/global-volatility-v9-numeric/candidate-manifest.json",
+      "artifact_role": "development_diagnostic_candidate_manifest",
+      "original_label": "locked_certification_candidate",
+      "relabelled_role": "development_diagnostic_candidate",
+      "size_bytes": 14261,
+      "sha256": "151ce68e4ca0f4f0fdd267fe8d0f964ec73069aa3824ca8cc928bc35fe7488bc",
+      "certification_eligible": false,
+      "reason": "TCN ensemble weights manifest trained on diagnostic development data."
+    },
+    {
+      "path": "artifacts/candidates/global-volatility-v9-numeric/seed-41.pt",
+      "artifact_role": "development_diagnostic_weights",
+      "size_bytes": 428645,
+      "sha256": "03893ec538a6969da8e500ddce0505b760ebcd557ab8236623f3bf0e13886fe3",
+      "certification_eligible": false,
+      "reason": "Seed 41 weights on diagnostic development split."
+    },
+    {
+      "path": "artifacts/candidates/global-volatility-v9-numeric/seed-42.pt",
+      "artifact_role": "development_diagnostic_weights",
+      "size_bytes": 428645,
+      "sha256": "a4aec6d55e216a79ce76417aa640d1287fb98b563a24fa500ba45a8e6b911073",
+      "certification_eligible": false,
+      "reason": "Seed 42 weights on diagnostic development split."
+    },
+    {
+      "path": "artifacts/candidates/global-volatility-v9-numeric/seed-43.pt",
+      "artifact_role": "development_diagnostic_weights",
+      "size_bytes": 428645,
+      "sha256": "2cee4c52d14492ca0d2a85d1fed833810f565b84b52f76b6d6efedd78451ea75",
+      "certification_eligible": false,
+      "reason": "Seed 43 weights on diagnostic development split."
+    },
+    {
+      "path": "reports/V9_FULL_CYCLE_REPORT.md",
+      "artifact_role": "development_diagnostic_report",
+      "size_bytes": 3579,
+      "sha256": "e5420bbb7dde79a6e7ca5ca7f40385ed5bf86c0e85cd45300573158f3549710a",
+      "certification_eligible": false,
+      "reason": "V9 full cycle report summarizing diagnostic multi-fold evaluation."
+    }
+  ]
+}

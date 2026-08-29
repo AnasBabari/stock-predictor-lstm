@@ -15,6 +15,7 @@ split rule, and the sealed-test flag.  Those are pinned below.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -281,6 +282,42 @@ def test_integrity_flags_track_the_full_cycle(protocol: dict) -> None:
     assert integrity["v8_sealed_test_opened"] is False
     assert integrity["v7_modified"] is False
     assert integrity["numeric_companion_frozen"] is False
+    assert integrity["preregistered_before_any_v9_training"] is False
+    assert integrity["preregistered_before_protocol_conforming_cycle"] is True
+    assert integrity["development_diagnostic_holdout_opened"] is True
+    assert integrity["certification_test_created"] is False
+    assert integrity["certification_test_opened"] is False
+    assert integrity["certified_model"] is None
+
+
+def test_v9_quarantine_manifest_exists_and_hashes_all_artifacts() -> None:
+    manifest_path = REPO_ROOT / "research" / "results" / "v9_quarantine_manifest.json"
+    assert manifest_path.exists(), "v9 quarantine manifest must exist"
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert data["quarantine_schema_version"] == "v9_diagnostic_quarantine_v1"
+    assert data["status"] == "quarantined_development_diagnostic_only"
+    assert len(data["entries"]) >= 10
+    for entry in data["entries"]:
+        assert entry["certification_eligible"] is False
+        p = REPO_ROOT / entry["path"]
+        assert p.exists(), f"quarantined path {p} must exist"
+        content = p.read_bytes()
+        assert len(content) == entry["size_bytes"]
+        assert hashlib.sha256(content).hexdigest() == entry["sha256"]
+
+
+def test_ineligible_data_forbids_certification_and_release(protocol: dict) -> None:
+    eligibility = protocol["data_eligibility"]
+    assert eligibility["universe_certification_eligible"] is False
+    assert eligibility["market_panel_certification_eligible"] is False
+    # Verify that no release bundle exists for v9
+    v9_release_dir = REPO_ROOT / "artifacts" / "releases" / "volatility-v9"
+    if v9_release_dir.exists():
+        files = list(v9_release_dir.glob("*"))
+        assert len(files) == 0, f"no release artifacts permitted for ineligible v9: {files}"
+    # Verify that no private key is stored in repository
+    private_keys = list((REPO_ROOT / "backend" / "release_keys").glob("*.private.pem"))
+    assert len(private_keys) == 0, f"no private keys allowed in repository: {private_keys}"
 
 
 def test_terminal_outcomes_include_a_credible_negative(protocol: dict) -> None:

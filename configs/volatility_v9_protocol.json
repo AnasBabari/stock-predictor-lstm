@@ -3,8 +3,9 @@
   "protocol_status": "frozen",
   "frozen_at_utc": "2026-08-29T14:50:00+00:00",
   "preregistered_at_utc": "2026-08-28T21:30:00+00:00",
-  "preregistered_before_any_v9_training": true,
-  "v9_experiment_status": "protocol_frozen_ready_for_training",
+  "preregistered_before_any_v9_training": false,
+  "preregistered_before_protocol_conforming_cycle": true,
+  "v9_experiment_status": "diagnostic_cycle_quarantined_ineligible",
   "statement": "The v9 protocol is frozen before multi-seed execution. All evaluation contracts, feature schemas, missing-data thresholds, candidate bounds, and promotion criteria are immutable. If the honest outcome is that HAR beats every neural candidate, that outcome is deployed and published as the result.",
   "builds_on": [
     "volatility-v8"
@@ -369,6 +370,11 @@
     "labelling_requirement": "Every artifact produced under this protocol while data is ineligible must carry evidence_role=development_diagnostic_only and certification_eligible=false."
   },
   "integrity": {
+    "preregistered_before_any_v9_training": false,
+    "preregistered_before_protocol_conforming_cycle": true,
+    "development_diagnostic_holdout_opened": true,
+    "certification_test_created": false,
+    "certification_test_opened": false,
     "sealed_test_opened": false,
     "numeric_companion_frozen": false,
     "news_candidate_frozen": false,
