@@ -66,7 +66,7 @@ Live Yahoo Finance headlines remain context-only for the legacy v1 paths. Histor
 
 ## Global model pipeline
 
-The offline global-model pipeline builds immutable snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs only an overall passing release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the full contract and [docs/VOLATILITY_V7_PREREGISTRATION.md](docs/VOLATILITY_V7_PREREGISTRATION.md) for the fresh cycle created after v6 strict rejection. Legacy browser TFJS remains only in the isolated methodology build; the normal Vercel production bundle compiles it out and CI verifies that no worker or TFJS model code is shipped.
+The offline global-model pipeline builds immutable snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs only an overall passing release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the full contract and [docs/VOLATILITY_V7_PREREGISTRATION.md](docs/VOLATILITY_V7_PREREGISTRATION.md) for the fresh cycle created after v6 strict rejection. Legacy browser training has been retired; the frontend purely interfaces with the verified server global forecasting contract, and CI verifies that the production bundle is TFJS-free.
 
 ## Volatility v9 (preregistered)
 
