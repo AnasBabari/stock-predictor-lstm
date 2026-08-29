@@ -174,11 +174,9 @@ def validate(text: str, run_git=None) -> list[str]:
             f"methodology evidence is stale: {len(drifted)} guarded file(s) changed "
             f"since recorded_sha {recorded}."
         )
-        errors.append("Rerun the full battery and update docs/METHODOLOGY_GATE.md:")
         errors.append("  npx vitest run && npm run build (frontend)")
+        errors.append("  npm run check:production-bundle")
         errors.append("  npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js")
-        errors.append("  npx playwright test e2e/browser-real-training.spec.js --workers=1")
-        errors.append("  npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1")
         errors.append(
             "Then bump recorded_sha to the verified HEAD and let the follow-up "
             "commit pin freeze_record_commit."
