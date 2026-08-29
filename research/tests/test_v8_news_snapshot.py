@@ -121,9 +121,7 @@ def _snapshot_and_aliases(
         json.dumps(
             {
                 member["ticker"]: [
-                    member["company_name"]
-                    if len(member["company_name"]) >= 3
-                    else member["ticker"]
+                    member["company_name"] if len(member["company_name"]) >= 3 else member["ticker"]
                 ]
                 for member in universe["members"]
             }
@@ -158,21 +156,22 @@ def test_complete_event_lake_is_ready_for_ablation_not_certified(tmp_path: Path)
     assert manifest["news_status"] == V8_NEWS_STATUS_READY
     assert manifest["model_certified"] is False
     assert manifest["available_at_policy"].startswith("max(published_at,first_seen_at)")
-    assert verify_v8_news_manifest(
-        json.loads(json.dumps(manifest)),
-        news_snapshot_dir=snapshot,
-        universe_manifest=universe,
-        market_manifest=market,
-        ticker_aliases_path=aliases,
-    ) == manifest
+    assert (
+        verify_v8_news_manifest(
+            json.loads(json.dumps(manifest)),
+            news_snapshot_dir=snapshot,
+            universe_manifest=universe,
+            market_manifest=market,
+            ticker_aliases_path=aliases,
+        )
+        == manifest
+    )
 
 
 def test_provider_gap_fails_closed_or_is_explicitly_diagnostic(tmp_path: Path) -> None:
     universe = _universe()
     market = _market(universe)
-    snapshot, aliases = _snapshot_and_aliases(
-        tmp_path, universe, missing_dates=["2020-05-01"]
-    )
+    snapshot, aliases = _snapshot_and_aliases(tmp_path, universe, missing_dates=["2020-05-01"])
     kwargs = {
         "news_snapshot_dir": snapshot,
         "universe_manifest": universe,

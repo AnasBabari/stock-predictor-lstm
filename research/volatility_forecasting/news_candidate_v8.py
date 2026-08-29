@@ -181,10 +181,7 @@ def evaluate_v8_news_ablation(
             if not np.array_equal(fused.oof_indices, control.oof_indices):
                 raise RuntimeError("news negative control produced different OOF identities")
             control_fold_relative = np.asarray(
-                [
-                    [float(row["relative_qlike"]) for row in fold.metrics]
-                    for fold in control.folds
-                ],
+                [[float(row["relative_qlike"]) for row in fold.metrics] for fold in control.folds],
                 dtype=np.float64,
             )
             control_decisions = assess_news_ablation(

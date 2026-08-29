@@ -28,7 +28,10 @@ def main() -> int:
         "--out-dir", type=Path, default=Path("data/panel_snapshot"), help="Output directory"
     )
     parser.add_argument(
-        "--universe-file", type=Path, default=None, help="Text file containing universe tickers (one per line)"
+        "--universe-file",
+        type=Path,
+        default=None,
+        help="Text file containing universe tickers (one per line)",
     )
     parser.add_argument("--tickers", type=str, default=None, help="Comma-separated ticker list")
     parser.add_argument("--years", type=int, default=8, help="Years of daily history to fetch")
@@ -46,17 +49,23 @@ def main() -> int:
 
     if args.synthetic:
         tickers = [f"TICK{i:02d}" for i in range(args.n_tickers)]
-        print(f"Generating synthetic fixture panel ({args.n_tickers} tickers, {args.n_sessions} sessions)...")
+        print(
+            f"Generating synthetic fixture panel ({args.n_tickers} tickers, {args.n_sessions} sessions)..."
+        )
         universe = generate_synthetic_universe(tickers, n_sessions=args.n_sessions)
         out_path = write_snapshot(args.out_dir, universe, license_acknowledged=True)
         manifest = build_snapshot(universe, license_acknowledged=True)
-        print(f"Synthetic panel snapshot created successfully at {out_path} (ID: {manifest['panel_id']})")
+        print(
+            f"Synthetic panel snapshot created successfully at {out_path} (ID: {manifest['panel_id']})"
+        )
         return 0
 
     ticker_list: list[str] = []
     if args.universe_file and args.universe_file.exists():
         lines = args.universe_file.read_text(encoding="utf-8").splitlines()
-        ticker_list = [line.strip().upper() for line in lines if line.strip() and not line.startswith("#")]
+        ticker_list = [
+            line.strip().upper() for line in lines if line.strip() and not line.startswith("#")
+        ]
     elif args.tickers:
         ticker_list = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
 

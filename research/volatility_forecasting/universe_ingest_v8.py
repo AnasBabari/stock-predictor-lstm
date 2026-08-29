@@ -115,9 +115,7 @@ def load_universe_members_csv(path: Path) -> list[UniverseMember]:
                     f"row {row_number}: required_history_sessions must be an integer"
                 ) from error
             if required_history_sessions < 60:
-                raise ValueError(
-                    f"row {row_number}: required_history_sessions must be at least 60"
-                )
+                raise ValueError(f"row {row_number}: required_history_sessions must be at least 60")
             liquidity_value = row.get("point_in_time_liquidity_ok")
             liquidity_ok = (
                 True
@@ -136,9 +134,7 @@ def load_universe_members_csv(path: Path) -> list[UniverseMember]:
                     isin=_optional_text(row.get("isin")),
                     figi=_optional_text(row.get("figi")),
                     cik=_optional_text(row.get("cik")),
-                    primary_exchange_mic=(row.get("primary_exchange_mic") or "")
-                    .strip()
-                    .upper(),
+                    primary_exchange_mic=(row.get("primary_exchange_mic") or "").strip().upper(),
                     index_memberships=_parse_memberships(
                         row.get("index_memberships_json"), row_number=row_number
                     ),
@@ -168,9 +164,7 @@ def load_source_attestations(path: Path) -> dict[str, dict[str, Any]]:
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("source attestation file is missing or invalid JSON") from error
     if not isinstance(payload, dict) or payload.get("schema_version") != V8_UNIVERSE_SOURCE_SCHEMA:
-        raise ValueError(
-            f"source attestation schema_version must be {V8_UNIVERSE_SOURCE_SCHEMA}"
-        )
+        raise ValueError(f"source attestation schema_version must be {V8_UNIVERSE_SOURCE_SCHEMA}")
     sources = payload.get("sources")
     if not isinstance(sources, dict) or not sources:
         raise ValueError("source attestation file must contain a non-empty sources object")

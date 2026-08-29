@@ -56,7 +56,9 @@ def build_examples(
     if end <= window:
         raise ValueError("snapshot does not contain enough rows")
     x = np.stack([features[i - window : i] for i in range(window, end)])
-    y = np.log(close[window + horizon : window + horizon + len(x)] / close[window : window + len(x)])
+    y = np.log(
+        close[window + horizon : window + horizon + len(x)] / close[window : window + len(x)]
+    )
     origins = np.arange(window, window + len(x), dtype=np.int64)
     return x, y, origins
 

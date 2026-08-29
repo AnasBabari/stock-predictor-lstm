@@ -209,9 +209,7 @@ def build_v8_market_snapshot(
         reasons.append("raw_and_adjusted_history_not_preserved")
     coverage_certifiable = not reasons
     if reasons and not allow_incomplete_diagnostic:
-        raise PanelValidationError(
-            "v8 market snapshot is not certifiable: " + "; ".join(reasons)
-        )
+        raise PanelValidationError("v8 market snapshot is not certifiable: " + "; ".join(reasons))
 
     pooled_digest = pooled.hexdigest()
     return {
@@ -262,9 +260,7 @@ def write_v8_market_snapshot(
     try:
         raw_dir = temporary / "raw"
         raw_dir.mkdir()
-        normalized_frames = {
-            str(ticker).strip().upper(): frame for ticker, frame in frames.items()
-        }
+        normalized_frames = {str(ticker).strip().upper(): frame for ticker, frame in frames.items()}
         for ticker, metadata in sorted(manifest["tickers"].items()):
             frame = normalized_frames[ticker]
             text = (

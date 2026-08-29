@@ -118,9 +118,7 @@ def freeze_global_v3(
     fit_data_max_date = "unknown"
     if dev_data_sliced and train_tickers:
         v5_features = {
-            t: build_features_v5(dev_data_sliced[t])
-            for t in train_tickers
-            if t in dev_data_sliced
+            t: build_features_v5(dev_data_sliced[t]) for t in train_tickers if t in dev_data_sliced
         }
         dev_ranked = compute_cross_sectional_ranks(v5_features, dev_tickers=train_tickers)
         all_dates = [d for df in dev_data_sliced.values() for d in df.index]
@@ -133,8 +131,7 @@ def freeze_global_v3(
                 )
 
     has_selected_horizons = any(
-        isinstance(d, dict) and d.get("status") == "selected"
-        for d in selection_data.values()
+        isinstance(d, dict) and d.get("status") == "selected" for d in selection_data.values()
     )
 
     if has_selected_horizons and (not dev_data_sliced or not dev_ranked):
@@ -271,11 +268,27 @@ def freeze_global_v3(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Freeze Protocol V3 development run into immutable config.")
-    parser.add_argument("--run-dir", type=Path, required=True, help="Path to completed V3 development run directory")
-    parser.add_argument("--output-config", type=Path, default=ROOT / "configs" / "global-v3-frozen.json", help="Path to write frozen config")
-    parser.add_argument("--dev-config", type=Path, default=ROOT / "configs" / "global-v3-development.json", help="Original development config")
-    parser.add_argument("--panel-dir", type=Path, default=None, help="Optional path to panel data directory")
+    parser = argparse.ArgumentParser(
+        description="Freeze Protocol V3 development run into immutable config."
+    )
+    parser.add_argument(
+        "--run-dir", type=Path, required=True, help="Path to completed V3 development run directory"
+    )
+    parser.add_argument(
+        "--output-config",
+        type=Path,
+        default=ROOT / "configs" / "global-v3-frozen.json",
+        help="Path to write frozen config",
+    )
+    parser.add_argument(
+        "--dev-config",
+        type=Path,
+        default=ROOT / "configs" / "global-v3-development.json",
+        help="Original development config",
+    )
+    parser.add_argument(
+        "--panel-dir", type=Path, default=None, help="Optional path to panel data directory"
+    )
 
     args = parser.parse_args()
     freeze_global_v3(

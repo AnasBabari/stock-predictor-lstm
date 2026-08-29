@@ -116,9 +116,7 @@ def test_production_graph_embeds_train_only_feature_scaling() -> None:
         iqr=np.full(4, 4.0),
         clip=3.0,
     )
-    training = TrainingResult(
-        **{**candidate.training.__dict__, "scaler": scaler}
-    )
+    training = TrainingResult(**{**candidate.training.__dict__, "scaler": scaler})
     candidate = FrozenCandidate(**{**candidate.__dict__, "training": training})
     graph = production_graph(candidate)
     raw_features = torch.full((2, 60, 4), 2.0)
@@ -194,7 +192,10 @@ def test_candidate_loader_verifies_weights_metadata_and_content_identity(tmp_pat
 
     manifest["artifact_role"] = "prospective_v8_development_candidate"
     (tmp_path / "candidate-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    assert load_prospective_v8_candidate_member(tmp_path, 41).model_identity == candidate.model_identity
+    assert (
+        load_prospective_v8_candidate_member(tmp_path, 41).model_identity
+        == candidate.model_identity
+    )
     with pytest.raises(ValueError, match="role"):
         load_locked_v8_candidate_member(tmp_path, 41)
 
@@ -423,9 +424,7 @@ def test_assemble_release_bundle_preserves_locked_v8_evidence(tmp_path) -> None:
         }
     )
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    loaded = tuple(
-        load_locked_v8_candidate_member(candidate_dir, seed) for seed in (41, 42, 43)
-    )
+    loaded = tuple(load_locked_v8_candidate_member(candidate_dir, seed) for seed in (41, 42, 43))
     model_identity = v8_ensemble_identity(loaded)
     manifest["model_identity"] = model_identity
     decisions = [

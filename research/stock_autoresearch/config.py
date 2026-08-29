@@ -25,7 +25,6 @@ class RuntimeBudget:
     max_parameters: int = 20_000_000
 
 
-
 @dataclass(frozen=True)
 class EvaluationPolicy:
     window: int = DEFAULT_WINDOW

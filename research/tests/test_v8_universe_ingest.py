@@ -37,7 +37,7 @@ def test_csv_ingestion_preserves_point_in_time_identity(tmp_path: Path) -> None:
         "security_id,ticker,company_name,primary_exchange_mic,currency,timezone,"
         "sector,security_type,source,source_snapshot_id,index_memberships_json,"
         "point_in_time_liquidity_ok\n"
-        'figi:MSFT,msft,Microsoft Corp,XNAS,USD,America/New_York,Technology,COMMON,'
+        "figi:MSFT,msft,Microsoft Corp,XNAS,USD,America/New_York,Technology,COMMON,"
         'pit-provider,pit-2026,"[{""index"":""SP500"",""membership_start"":""1994-06-01"",""membership_end"":null}]",true\n',
         encoding="utf-8",
     )
@@ -93,7 +93,13 @@ def _certifiable_members() -> list[UniverseMember]:
                     cik=None,
                     primary_exchange_mic=mic,
                     index_memberships=(
-                        ({"index": "SP500", "membership_start": "2020-01-01", "membership_end": None},)
+                        (
+                            {
+                                "index": "SP500",
+                                "membership_start": "2020-01-01",
+                                "membership_end": None,
+                            },
+                        )
                         if mic != "XLON" and index < 5
                         else ()
                     ),

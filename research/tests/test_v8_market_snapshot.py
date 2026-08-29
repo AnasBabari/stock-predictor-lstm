@@ -52,8 +52,7 @@ def _member(ticker: str, mic: str = "XNAS") -> UniverseMember:
 
 def _diagnostic_universe(*tickers: str) -> dict:
     members = [
-        _member(ticker, ("XNAS", "XNYS", "XLON")[index % 3])
-        for index, ticker in enumerate(tickers)
+        _member(ticker, ("XNAS", "XNYS", "XLON")[index % 3]) for index, ticker in enumerate(tickers)
     ]
     return build_universe_manifest(
         members,
@@ -129,9 +128,7 @@ def test_normalization_preserves_raw_and_adjusted_prices() -> None:
     assert tuple(normalized.columns) == V8_MARKET_COLUMNS
     np.testing.assert_allclose(normalized["RawClose"], raw["Close"])
     np.testing.assert_allclose(normalized["Close"], raw["Adj Close"])
-    np.testing.assert_allclose(
-        normalized["Open"], raw["Open"] * raw["Adj Close"] / raw["Close"]
-    )
+    np.testing.assert_allclose(normalized["Open"], raw["Open"] * raw["Adj Close"] / raw["Close"])
     assert "RawClose" in canonical_v8_market_csv(normalized).splitlines()[0]
 
 
@@ -177,9 +174,7 @@ def test_legacy_adjusted_only_panel_cannot_be_certifiable() -> None:
     )
 
     assert manifest["v8_market"]["coverage_certifiable"] is False
-    assert "raw_and_adjusted_history_not_preserved" in manifest["v8_market"][
-        "coverage_reasons"
-    ]
+    assert "raw_and_adjusted_history_not_preserved" in manifest["v8_market"]["coverage_reasons"]
 
 
 def test_complete_attested_four_market_snapshot_is_certifiable() -> None:
@@ -216,6 +211,4 @@ def test_snapshot_rejects_universe_identity_tampering(tmp_path: Path) -> None:
     tampered = json.loads(json.dumps(universe))
     tampered["members"][0]["security_id"] = "different"
     with pytest.raises(ValueError, match="content or checksum"):
-        verify_v8_market_snapshot(
-            output, universe_manifest=tampered, require_certifiable=False
-        )
+        verify_v8_market_snapshot(output, universe_manifest=tampered, require_certifiable=False)

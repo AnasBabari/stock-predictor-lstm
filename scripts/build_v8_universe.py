@@ -83,9 +83,7 @@ def main() -> int:
             policy = json.loads(args.selection_policy.read_text(encoding="utf-8"))
             if not isinstance(policy, dict):
                 raise ValueError("selection policy must be a JSON object")
-            source_checksums["selection_policy"] = sha256_file(
-                args.selection_policy.resolve()
-            )
+            source_checksums["selection_policy"] = sha256_file(args.selection_policy.resolve())
         else:
             policy = initial_v8_selection_policy()
         if args.diagnostic_allow_sparse:

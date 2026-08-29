@@ -242,11 +242,23 @@ def generate_markdown_report(
         status = r.get("status", "-")
         decision = r.get("decision", "-")
         certification = _AUDITED if _is_audited(r) else _UNAUDITED
-        rel_mae = f"{r.get('relative_mae'):.4f}" if isinstance(r.get("relative_mae"), (int, float)) else "-"
-        rel_rmse = f"{r.get('relative_rmse'):.4f}" if isinstance(r.get("relative_rmse"), (int, float)) else "-"
+        rel_mae = (
+            f"{r.get('relative_mae'):.4f}"
+            if isinstance(r.get("relative_mae"), (int, float))
+            else "-"
+        )
+        rel_rmse = (
+            f"{r.get('relative_rmse'):.4f}"
+            if isinstance(r.get("relative_rmse"), (int, float))
+            else "-"
+        )
         vram = f"{r.get('peak_vram_mb')} MB" if r.get("peak_vram_mb") else "-"
         rss = f"{r.get('peak_rss_mb')} MB" if r.get("peak_rss_mb") else "-"
-        t_sec = f"{r.get('training_seconds'):.1f}s" if isinstance(r.get("training_seconds"), (int, float)) else "-"
+        t_sec = (
+            f"{r.get('training_seconds'):.1f}s"
+            if isinstance(r.get("training_seconds"), (int, float))
+            else "-"
+        )
         reason = str(r.get("decision_reason") or r.get("failure_reason") or "")
         reason = reason.replace("|", "\\|")
         lines.append(

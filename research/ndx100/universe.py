@@ -350,7 +350,10 @@ def point_in_time_membership_mask(
             cursor += 1
         active_by_date[date] = set(active)
     return np.asarray(
-        [ticker.upper() in active_by_date[date] for ticker, date in zip(ticker_values, dates, strict=True)],
+        [
+            ticker.upper() in active_by_date[date]
+            for ticker, date in zip(ticker_values, dates, strict=True)
+        ],
         dtype=bool,
     )
 

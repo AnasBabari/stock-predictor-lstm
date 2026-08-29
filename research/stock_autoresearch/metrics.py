@@ -20,7 +20,9 @@ def rmse(actual: np.ndarray, predicted: np.ndarray) -> float:
     return math.sqrt(mse(actual, predicted))
 
 
-def regression_metrics(actual: np.ndarray, predicted: np.ndarray, baseline: np.ndarray) -> dict[str, float]:
+def regression_metrics(
+    actual: np.ndarray, predicted: np.ndarray, baseline: np.ndarray
+) -> dict[str, float]:
     model_mae = mae(actual, predicted)
     model_rmse = rmse(actual, predicted)
     baseline_mae = mae(actual, baseline)
@@ -37,7 +39,9 @@ def regression_metrics(actual: np.ndarray, predicted: np.ndarray, baseline: np.n
     }
 
 
-def classification_metrics(actual_returns: np.ndarray, predicted_probs: np.ndarray) -> dict[str, Any]:
+def classification_metrics(
+    actual_returns: np.ndarray, predicted_probs: np.ndarray
+) -> dict[str, Any]:
     """Metrics for direction classification: balanced accuracy, brier score, precision/recall/F1."""
     actual_labels = (np.asarray(actual_returns).ravel() > 0).astype(int)
     probs = np.clip(np.asarray(predicted_probs).ravel(), 0.0, 1.0)

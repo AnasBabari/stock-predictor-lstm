@@ -120,9 +120,7 @@ def build_v8_news_manifest(
 
     events, base = load_news_snapshot(news_snapshot_dir)
     aliases = load_ticker_aliases(ticker_aliases_path)
-    universe_tickers = {
-        str(member["ticker"]).strip().upper() for member in universe["members"]
-    }
+    universe_tickers = {str(member["ticker"]).strip().upper() for member in universe["members"]}
     missing_aliases = sorted(universe_tickers - set(aliases))
     extra_aliases = sorted(set(aliases) - universe_tickers)
     if missing_aliases or extra_aliases:
@@ -130,12 +128,7 @@ def build_v8_news_manifest(
             f"ticker alias coverage mismatch: missing={missing_aliases}, extra={extra_aliases}"
         )
     unknown_event_tickers = sorted(
-        {
-            ticker
-            for event in events
-            for ticker in event.tickers
-            if ticker not in universe_tickers
-        }
+        {ticker for event in events for ticker in event.tickers if ticker not in universe_tickers}
     )
     if unknown_event_tickers:
         raise ValueError(
@@ -202,9 +195,7 @@ def build_v8_news_manifest(
         "feature_lookback_days": V8_NEWS_FEATURE_LOOKBACK_DAYS,
         "available_at_policy": "max(published_at,first_seen_at); date_only_next_utc_day",
     }
-    manifest["snapshot_id"] = news_snapshot_id(
-        str(base["provider"]), str(base["events_sha256"])
-    )
+    manifest["snapshot_id"] = news_snapshot_id(str(base["provider"]), str(base["events_sha256"]))
     manifest["sha256"] = _canonical_digest(manifest)
     return manifest
 

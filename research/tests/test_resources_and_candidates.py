@@ -47,7 +47,6 @@ def test_sample_process_tree_memory_rss_thresholds() -> None:
     assert safe_sample.exceeded is False
 
 
-
 def test_elastic_net_candidate_matches_ridge_contract() -> None:
     rng = np.random.default_rng(7)
     x = rng.normal(size=(24, 8, 3)).astype(np.float64)

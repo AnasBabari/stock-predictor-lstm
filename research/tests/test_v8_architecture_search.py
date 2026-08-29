@@ -50,14 +50,34 @@ class _FakeEvidence:
 
 def test_rank_eligible_first_then_worst_relative_qlike() -> None:
     rows = [
-        {"label": "a", "eligible": False, "worst_required_relative_qlike": 0.99,
-         "mean_required_relative_qlike": 0.95, "worst_required_ratio_upper_95": 1.05},
-        {"label": "b", "eligible": True, "worst_required_relative_qlike": 1.00,
-         "mean_required_relative_qlike": 0.96, "worst_required_ratio_upper_95": 1.06},
-        {"label": "c", "eligible": True, "worst_required_relative_qlike": 0.95,
-         "mean_required_relative_qlike": 0.90, "worst_required_ratio_upper_95": 1.02},
-        {"label": "d", "eligible": False, "worst_required_relative_qlike": 0.97,
-         "mean_required_relative_qlike": 0.93, "worst_required_ratio_upper_95": 1.03},
+        {
+            "label": "a",
+            "eligible": False,
+            "worst_required_relative_qlike": 0.99,
+            "mean_required_relative_qlike": 0.95,
+            "worst_required_ratio_upper_95": 1.05,
+        },
+        {
+            "label": "b",
+            "eligible": True,
+            "worst_required_relative_qlike": 1.00,
+            "mean_required_relative_qlike": 0.96,
+            "worst_required_ratio_upper_95": 1.06,
+        },
+        {
+            "label": "c",
+            "eligible": True,
+            "worst_required_relative_qlike": 0.95,
+            "mean_required_relative_qlike": 0.90,
+            "worst_required_ratio_upper_95": 1.02,
+        },
+        {
+            "label": "d",
+            "eligible": False,
+            "worst_required_relative_qlike": 0.97,
+            "mean_required_relative_qlike": 0.93,
+            "worst_required_ratio_upper_95": 1.03,
+        },
     ]
     ranked = _rank_candidates(rows)
     assert [row["label"] for row in ranked] == ["c", "b", "d", "a"]
@@ -147,8 +167,14 @@ def test_search_space_label_uniqueness_holds_for_default_budget() -> None:
     assert len(labels) == len(set(labels)), "duplicate labels in search space"
     # Every config has the required keys for downstream consumption
     for cfg in configs:
-        assert {"encoder_family", "channels", "dropout", "learning_rate",
-                "weight_decay", "baseline_regularization"} <= set(cfg)
+        assert {
+            "encoder_family",
+            "channels",
+            "dropout",
+            "learning_rate",
+            "weight_decay",
+            "baseline_regularization",
+        } <= set(cfg)
 
 
 def test_search_space_caps_at_max_configs() -> None:

@@ -465,8 +465,7 @@ def save_v8_development_candidate(
         if numeric_companion_ensemble is None or numeric_companion_evidence is None:
             raise ValueError("news candidate requires a frozen numeric companion")
         if any(
-            member.architecture.news_feature_count
-            for member in numeric_companion_ensemble.members
+            member.architecture.news_feature_count for member in numeric_companion_ensemble.members
         ):
             raise ValueError("numeric companion cannot contain news features")
         if {member.seed for member in numeric_companion_ensemble.members} != {

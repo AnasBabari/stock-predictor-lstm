@@ -280,7 +280,9 @@ class GlobalPipelineRunner:
             return json.loads(out_file.read_text(encoding="utf-8"))
 
         manifest = build_snapshot(
-            universe_data, license_acknowledged=self.config.license_acknowledged or (self.config.mode == "fixture")
+            universe_data,
+            license_acknowledged=self.config.license_acknowledged
+            or (self.config.mode == "fixture"),
         )
         out_file.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
         return manifest
@@ -344,8 +346,20 @@ class GlobalPipelineRunner:
 
         master_cal = master_session_calendar(universe_data, union=True)
         # Split out temporal certification holdout
-        holdout_sessions = min(self.config.temporal_holdout_sessions, max(0, len(master_cal) - self.config.min_train_sessions - max(self.config.horizons) - self.config.embargo - 10))
-        dev_cal, temporal_holdout_cal = reserve_temporal_holdout(master_cal, holdout_sessions=holdout_sessions)
+        holdout_sessions = min(
+            self.config.temporal_holdout_sessions,
+            max(
+                0,
+                len(master_cal)
+                - self.config.min_train_sessions
+                - max(self.config.horizons)
+                - self.config.embargo
+                - 10,
+            ),
+        )
+        dev_cal, temporal_holdout_cal = reserve_temporal_holdout(
+            master_cal, holdout_sessions=holdout_sessions
+        )
 
         folds = calendar_folds(
             len(dev_cal),
@@ -365,8 +379,12 @@ class GlobalPipelineRunner:
             "total_master_sessions": len(master_cal),
             "development_sessions": len(dev_cal),
             "temporal_holdout_sessions": len(temporal_holdout_cal),
-            "temporal_holdout_start": str(temporal_holdout_cal[0]) if len(temporal_holdout_cal) > 0 else None,
-            "temporal_holdout_end": str(temporal_holdout_cal[-1]) if len(temporal_holdout_cal) > 0 else None,
+            "temporal_holdout_start": str(temporal_holdout_cal[0])
+            if len(temporal_holdout_cal) > 0
+            else None,
+            "temporal_holdout_end": str(temporal_holdout_cal[-1])
+            if len(temporal_holdout_cal) > 0
+            else None,
             "n_folds": len(folds),
             "folds": [asdict(f) for f in folds],
             "train_tickers": train_tickers,
@@ -385,7 +403,9 @@ class GlobalPipelineRunner:
         out_file = self.stages_dir / "05_evaluate.json"
 
         if self.config.is_v3():
-            v3_evidence: dict[int, list[V3CandidateEvidence]] = {h: [] for h in self.config.horizons}
+            v3_evidence: dict[int, list[V3CandidateEvidence]] = {
+                h: [] for h in self.config.horizons
+            }
             candidate_names = self.config.candidate_families
             train_tickers = set(folds_meta["train_tickers"])
 
@@ -470,7 +490,9 @@ class GlobalPipelineRunner:
                         folds_v3,
                         ranked_features,
                         rel_targets,
-                        min_daily_asset_count=self.config.selection.get("min_daily_asset_count", 30),
+                        min_daily_asset_count=self.config.selection.get(
+                            "min_daily_asset_count", 30
+                        ),
                         resamples=self.config.resamples,
                         seed=self.config.seeds[0],
                     )
@@ -479,7 +501,9 @@ class GlobalPipelineRunner:
             evidence_json = {
                 h: [ev.to_dict() for ev in ev_list] for h, ev_list in v3_evidence.items()
             }
-            out_file.write_text(json.dumps(evidence_json, indent=2, sort_keys=True), encoding="utf-8")
+            out_file.write_text(
+                json.dumps(evidence_json, indent=2, sort_keys=True), encoding="utf-8"
+            )
             return v3_evidence, {}
 
         # Build features in memory for V1/V2
@@ -505,13 +529,17 @@ class GlobalPipelineRunner:
         for horizon in self.config.horizons:
             evidence_by_horizon[horizon] = []
             best_rmse = float("inf")
-            print(f"\n--- Evaluating Forecast Horizon: {horizon}d ({len(folds)} expanding folds) ---")
+            print(
+                f"\n--- Evaluating Forecast Horizon: {horizon}d ({len(folds)} expanding folds) ---"
+            )
 
             for cand_name in self.config.candidate_families:
                 if cand_name not in REGISTRY:
                     continue
 
-                is_neural = cand_name in NEURAL_CANDIDATE_NAMES or getattr(REGISTRY[cand_name], "is_neural", False)
+                is_neural = cand_name in NEURAL_CANDIDATE_NAMES or getattr(
+                    REGISTRY[cand_name], "is_neural", False
+                )
                 seeds_to_run = self.config.seeds if is_neural else [self.config.seeds[0]]
 
                 seed_rmses: list[float] = []
@@ -520,7 +548,9 @@ class GlobalPipelineRunner:
                 seed_base_losses: list[list[float]] = []
 
                 for seed in seeds_to_run:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Horizon {horizon}d | Candidate '{cand_name}' (seed {seed})...")
+                    print(
+                        f"[{datetime.now().strftime('%H:%M:%S')}] Horizon {horizon}d | Candidate '{cand_name}' (seed {seed})..."
+                    )
                     fold_rmses: list[float] = []
                     cand_losses_all: list[float] = []
                     base_losses_all: list[float] = []
@@ -547,7 +577,9 @@ class GlobalPipelineRunner:
                                 if np.isfinite(tgt) and np.isfinite(w).all():
                                     x_train_rows.append(w)
                                     y_train_rows.append(float(tgt))
-                                    d_train_rows.append(1 if abs(tgt) < 0.005 else (2 if tgt > 0 else 0))
+                                    d_train_rows.append(
+                                        1 if abs(tgt) < 0.005 else (2 if tgt > 0 else 0)
+                                    )
 
                             # Validation rows
                             for t in range(fold.validation_start, fold.validation_end - horizon):
@@ -556,7 +588,9 @@ class GlobalPipelineRunner:
                                 if np.isfinite(tgt) and np.isfinite(w).all():
                                     x_val_rows.append(w)
                                     y_val_rows.append(float(tgt))
-                                    d_val_rows.append(1 if abs(tgt) < 0.005 else (2 if tgt > 0 else 0))
+                                    d_val_rows.append(
+                                        1 if abs(tgt) < 0.005 else (2 if tgt > 0 else 0)
+                                    )
 
                         if not x_train_rows or not x_val_rows:
                             continue
@@ -567,11 +601,17 @@ class GlobalPipelineRunner:
                         X_va = np.stack(x_val_rows)
                         y_va = np.asarray(y_val_rows, dtype=np.float32)
 
-                        targets_tr = CandidateTargets(cumulative_returns=y_tr, direction_classes=d_tr)
+                        targets_tr = CandidateTargets(
+                            cumulative_returns=y_tr, direction_classes=d_tr
+                        )
                         model = REGISTRY[cand_name](seed)
                         model.fit(X_tr, targets_tr)
                         pred = model.predict(X_va)
-                        pt = pred.return_point if pred.return_point is not None else np.zeros(len(y_va))
+                        pt = (
+                            pred.return_point
+                            if pred.return_point is not None
+                            else np.zeros(len(y_va))
+                        )
 
                         c_loss = np.abs(pt - y_va)
                         b_loss = np.abs(y_va)
@@ -587,9 +627,12 @@ class GlobalPipelineRunner:
                         cand_arr = np.asarray(cand_losses_all, dtype=float)
                         base_arr = np.asarray(base_losses_all, dtype=float)
                         rel_rmse_seed = float(
-                            np.sqrt(np.mean(cand_arr**2)) / max(1e-12, float(np.sqrt(np.mean(base_arr**2))))
+                            np.sqrt(np.mean(cand_arr**2))
+                            / max(1e-12, float(np.sqrt(np.mean(base_arr**2))))
                         )
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}]   -> '{cand_name}' (seed {seed}) rel-RMSE: {rel_rmse_seed:.4f} (folds: {[round(r, 4) for r in fold_rmses]})")
+                        print(
+                            f"[{datetime.now().strftime('%H:%M:%S')}]   -> '{cand_name}' (seed {seed}) rel-RMSE: {rel_rmse_seed:.4f} (folds: {[round(r, 4) for r in fold_rmses]})"
+                        )
                         seed_rmses.append(rel_rmse_seed)
                         seed_fold_rmses.append(fold_rmses)
                         seed_cand_losses.append(cand_losses_all)
@@ -603,19 +646,39 @@ class GlobalPipelineRunner:
                         cand_losses_final = seed_cand_losses[0]
                         base_losses_final = seed_base_losses[0]
                     else:
-                        fold_rmses_final = [float(np.mean([seed_fold_rmses[s][f] for s in range(len(seed_fold_rmses))])) for f in range(len(folds))]
-                        cand_losses_final = [float(np.mean([seed_cand_losses[s][i] for s in range(len(seed_cand_losses))])) for i in range(len(seed_cand_losses[0]))]
+                        fold_rmses_final = [
+                            float(
+                                np.mean(
+                                    [seed_fold_rmses[s][f] for s in range(len(seed_fold_rmses))]
+                                )
+                            )
+                            for f in range(len(folds))
+                        ]
+                        cand_losses_final = [
+                            float(
+                                np.mean(
+                                    [seed_cand_losses[s][i] for s in range(len(seed_cand_losses))]
+                                )
+                            )
+                            for i in range(len(seed_cand_losses[0]))
+                        ]
                         base_losses_final = seed_base_losses[0]
 
                     cand_arr_final = np.asarray(cand_losses_final, dtype=float)
                     base_arr_final = np.asarray(base_losses_final, dtype=float)
-                    rel_mae = float(np.mean(cand_arr_final) / max(1e-12, float(np.mean(base_arr_final))))
+                    rel_mae = float(
+                        np.mean(cand_arr_final) / max(1e-12, float(np.mean(base_arr_final)))
+                    )
                     rel_rmse = float(
-                        np.sqrt(np.mean(cand_arr_final**2)) / max(1e-12, float(np.sqrt(np.mean(base_arr_final**2))))
+                        np.sqrt(np.mean(cand_arr_final**2))
+                        / max(1e-12, float(np.sqrt(np.mean(base_arr_final**2))))
                     )
                     _, dm_p = diebold_mariano_hac(cand_arr_final, base_arr_final)
                     upper = compute_bootstrap_ratio_upper_bound(
-                        cand_arr_final**2, base_arr_final**2, resamples=self.config.resamples, seed=self.config.seeds[0]
+                        cand_arr_final**2,
+                        base_arr_final**2,
+                        resamples=self.config.resamples,
+                        seed=self.config.seeds[0],
                     )
 
                     ev = HorizonEvidence(
@@ -638,7 +701,9 @@ class GlobalPipelineRunner:
         evidence_json_v2 = {
             h: [asdict(ev) for ev in ev_list] for h, ev_list in evidence_by_horizon.items()
         }
-        out_file.write_text(json.dumps(evidence_json_v2, indent=2, sort_keys=True), encoding="utf-8")
+        out_file.write_text(
+            json.dumps(evidence_json_v2, indent=2, sort_keys=True), encoding="utf-8"
+        )
 
         # Save loss arrays for downstream selection stages
         loss_dict = {}
@@ -665,7 +730,9 @@ class GlobalPipelineRunner:
                         v3_evidence_dict[(h, ev.candidate_name)] = ev
 
             candidate_objs = {
-                c: V3_CANDIDATE_REGISTRY[c]() for c in self.config.candidate_families if c in V3_CANDIDATE_REGISTRY
+                c: V3_CANDIDATE_REGISTRY[c]()
+                for c in self.config.candidate_families
+                if c in V3_CANDIDATE_REGISTRY
             }
 
             v3_decisions = select_v3_champions(
@@ -674,13 +741,17 @@ class GlobalPipelineRunner:
                 self.config.candidate_families,
                 self.config.horizons,
                 alpha=self.config.inference.get("family_alpha", 0.05),
-                min_positive_fold_fraction=self.config.selection.get("min_positive_fold_fraction", 0.80),
+                min_positive_fold_fraction=self.config.selection.get(
+                    "min_positive_fold_fraction", 0.80
+                ),
                 min_prediction_coverage=self.config.selection.get("min_prediction_coverage", 0.90),
                 min_ic_session_coverage=self.config.selection.get("min_ic_session_coverage", 0.90),
                 min_daily_asset_count=self.config.selection.get("min_daily_asset_count", 30),
             )
             selection_manifest_v3 = {h: d.to_dict() for h, d in v3_decisions.items()}
-            out_file.write_text(json.dumps(selection_manifest_v3, indent=2, sort_keys=True), encoding="utf-8")
+            out_file.write_text(
+                json.dumps(selection_manifest_v3, indent=2, sort_keys=True), encoding="utf-8"
+            )
             return v3_decisions
 
         decisions: dict[int, SelectionDecision] = {}
@@ -716,7 +787,9 @@ class GlobalPipelineRunner:
                 decisions[horizon] = dec
 
         selection_manifest = {h: d.to_manifest() for h, d in decisions.items()}
-        out_file.write_text(json.dumps(selection_manifest, indent=2, sort_keys=True), encoding="utf-8")
+        out_file.write_text(
+            json.dumps(selection_manifest, indent=2, sort_keys=True), encoding="utf-8"
+        )
         return decisions
 
     def run_stage_certify(
@@ -750,7 +823,10 @@ class GlobalPipelineRunner:
                 )
 
             train_tickers = list(self.config.train_tickers or folds_meta.get("train_tickers", []))
-            transfer_tickers = list(self.config.asset_transfer_holdout_tickers or folds_meta.get("asset_transfer_holdout_tickers", []))
+            transfer_tickers = list(
+                self.config.asset_transfer_holdout_tickers
+                or folds_meta.get("asset_transfer_holdout_tickers", [])
+            )
 
             # Build selection decisions strictly from frozen configuration
             v3_selection_decisions: dict[int, V3SelectionDecision] = {}
@@ -767,7 +843,9 @@ class GlobalPipelineRunner:
                     h_cfg = self.config.selected_candidates.get(str(h), {})
                     artifact_meta = h_cfg.get("model_artifact")
                     if not artifact_meta:
-                        raise ValueError(f"Selected horizon {h} is missing 'model_artifact' in frozen config.")
+                        raise ValueError(
+                            f"Selected horizon {h} is missing 'model_artifact' in frozen config."
+                        )
 
                     artifact_rel_dir = artifact_meta.get("directory", f"frozen_models/h{h}")
                     artifact_dir = self.run_dir / artifact_rel_dir
@@ -798,7 +876,9 @@ class GlobalPipelineRunner:
                 gate_config=v3_gate_cfg,
                 open_locked_holdout=self.open_locked_certification_holdout,
             )
-            out_file.write_text(json.dumps(v3_cert_result, indent=2, sort_keys=True), encoding="utf-8")
+            out_file.write_text(
+                json.dumps(v3_cert_result, indent=2, sort_keys=True), encoding="utf-8"
+            )
             return v3_cert_result
 
         if not self.open_locked_certification_holdout:
@@ -808,7 +888,9 @@ class GlobalPipelineRunner:
                 "certified_horizons": [],
                 "decisions": {},
             }
-            out_file.write_text(json.dumps(locked_result, indent=2, sort_keys=True), encoding="utf-8")
+            out_file.write_text(
+                json.dumps(locked_result, indent=2, sort_keys=True), encoding="utf-8"
+            )
             return locked_result
 
         features_by_ticker = {t: build_features_v5(f) for t, f in universe_data.items()}
@@ -839,9 +921,7 @@ class GlobalPipelineRunner:
             "certification_protocol_version": gate_cfg.protocol_version,
             "status": "holdout_opened",
             "decision": (
-                "pass"
-                if len(passed_horizons) == len(decisions) and len(decisions) > 0
-                else "fail"
+                "pass" if len(passed_horizons) == len(decisions) and len(decisions) > 0 else "fail"
             ),
             "certified_horizons": passed_horizons,
             "gate_config": gate_cfg.to_dict(),
@@ -861,7 +941,10 @@ class GlobalPipelineRunner:
         out_file = self.stages_dir / "08_release.json"
 
         if self.config.is_v3():
-            if cert_result.get("status") != "holdout_opened" or cert_result.get("decision") != "pass":
+            if (
+                cert_result.get("status") != "holdout_opened"
+                or cert_result.get("decision") != "pass"
+            ):
                 unreleased_summary = {
                     "status": "not_released",
                     "protocol_version": self.config.protocol_version,
@@ -869,7 +952,9 @@ class GlobalPipelineRunner:
                     "certified_horizons": cert_result.get("certified_horizons", []),
                     "cert_decision": cert_result.get("decision", "fail"),
                 }
-                out_file.write_text(json.dumps(unreleased_summary, indent=2, sort_keys=True), encoding="utf-8")
+                out_file.write_text(
+                    json.dumps(unreleased_summary, indent=2, sort_keys=True), encoding="utf-8"
+                )
                 return unreleased_summary
 
             release_dir = self.run_dir / "release"
@@ -906,6 +991,7 @@ class GlobalPipelineRunner:
             if self.config.private_key_path and Path(self.config.private_key_path).exists():
                 if release_dir.exists():
                     import shutil
+
                     shutil.rmtree(release_dir)
                 build_release(
                     release_dir,
@@ -928,10 +1014,14 @@ class GlobalPipelineRunner:
                 "certified_horizons": certified_h,
                 "released_artifacts": released_artifacts,
                 "certification_digest": cert_digest,
-                "signed_release": bool(self.config.private_key_path and Path(self.config.private_key_path).exists()),
+                "signed_release": bool(
+                    self.config.private_key_path and Path(self.config.private_key_path).exists()
+                ),
                 "released_at_utc": datetime.now(UTC).isoformat(),
             }
-            out_file.write_text(json.dumps(release_summary_v3, indent=2, sort_keys=True), encoding="utf-8")
+            out_file.write_text(
+                json.dumps(release_summary_v3, indent=2, sort_keys=True), encoding="utf-8"
+            )
             return release_summary_v3
 
         features_by_ticker = {t: build_features_v5(f) for t, f in universe_data.items()}
@@ -1066,7 +1156,9 @@ class GlobalPipelineRunner:
                                     candidate_name=item["candidate_name"],
                                     horizon=item["horizon"],
                                     overall_metrics=SessionICMetrics(**item["overall_metrics"]),
-                                    fold_metrics=[V3CandidateFoldResult(**f) for f in item["fold_metrics"]],
+                                    fold_metrics=[
+                                        V3CandidateFoldResult(**f) for f in item["fold_metrics"]
+                                    ],
                                     positive_fold_count=item["positive_fold_count"],
                                     positive_fold_fraction=item["positive_fold_fraction"],
                                     daily_ic=item.get("daily_ic", {}),
@@ -1075,7 +1167,10 @@ class GlobalPipelineRunner:
                             ]
                         val_losses = {}
                     else:
-                        ev_by_h = {int(h): [HorizonEvidence(**item) for item in items] for h, items in ev_data.items()}
+                        ev_by_h = {
+                            int(h): [HorizonEvidence(**item) for item in items]
+                            for h, items in ev_data.items()
+                        }
                         val_losses = {}
                         if losses_file.exists():
                             npz = np.load(losses_file)
@@ -1094,12 +1189,22 @@ class GlobalPipelineRunner:
                     ev_by_h, val_losses = self.run_stage_evaluate(universe_data, folds_meta)
 
             # Stage 5: Select
-            if stage in ("select", "all-development", "all", "certify", "refit", "release", "verify"):
+            if stage in (
+                "select",
+                "all-development",
+                "all",
+                "certify",
+                "refit",
+                "release",
+                "verify",
+            ):
                 decisions = self.run_stage_selection(ev_by_h, val_losses)
                 if self.config.is_v3():
                     results["stages"]["selection"] = {h: d.to_dict() for h, d in decisions.items()}
                 else:
-                    results["stages"]["selection"] = {h: d.to_manifest() for h, d in decisions.items()}
+                    results["stages"]["selection"] = {
+                        h: d.to_manifest() for h, d in decisions.items()
+                    }
                 if stage == "select":
                     self._save_manifest(results)
                     return results
@@ -1166,7 +1271,9 @@ def main() -> int:
         default="development",
         help="Pipeline execution mode",
     )
-    parser.add_argument("--panel-dir", type=Path, default=None, help="Path to market panel directory")
+    parser.add_argument(
+        "--panel-dir", type=Path, default=None, help="Path to market panel directory"
+    )
     parser.add_argument(
         "--stage",
         type=str,
@@ -1214,7 +1321,9 @@ def main() -> int:
     if args.license_acknowledged:
         cfg.license_acknowledged = True
 
-    print(f"Starting global pipeline run: '{cfg.run_id}' [mode={cfg.mode}, stage={args.stage}] in {args.run_dir}")
+    print(
+        f"Starting global pipeline run: '{cfg.run_id}' [mode={cfg.mode}, stage={args.stage}] in {args.run_dir}"
+    )
     try:
         results = run_pipeline(
             config=cfg,

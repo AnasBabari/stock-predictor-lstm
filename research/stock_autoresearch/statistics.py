@@ -85,9 +85,7 @@ def dm_style_statistic(
     n = len(difference)
     mean_diff = float(np.mean(difference))
     lag_max = (
-        max(1, int(max_lag))
-        if max_lag is not None
-        else math.floor(4 * ((n / 100) ** (2 / 9)))
+        max(1, int(max_lag)) if max_lag is not None else math.floor(4 * ((n / 100) ** (2 / 9)))
     )
     variance = float(np.var(difference, ddof=0))
     for lag in range(1, min(lag_max, n - 1) + 1):

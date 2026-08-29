@@ -298,9 +298,7 @@ def main() -> int:
                 train_indices=split.train_indices,
                 validation_indices=split.validation_indices,
                 seeds=protocol.seeds,
-                required_horizons=tuple(
-                    int(value) for value in manifest["required_horizons"]
-                ),
+                required_horizons=tuple(int(value) for value in manifest["required_horizons"]),
                 device=args.device,
                 maximum_epochs=args.maximum_epochs,
                 patience=args.patience,

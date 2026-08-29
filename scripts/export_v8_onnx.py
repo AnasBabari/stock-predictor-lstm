@@ -44,7 +44,9 @@ def _load_verified_certification(candidate_dir: Path, manifest: dict) -> tuple[d
 
 def _parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Export v8 members to ONNX + parity")
-    ap.add_argument("--candidate-dir", type=Path, required=True, help="Prospective v8 candidate dir")
+    ap.add_argument(
+        "--candidate-dir", type=Path, required=True, help="Prospective v8 candidate dir"
+    )
     ap.add_argument("--out", type=Path, required=True, help="Output dir for ONNX members")
     ap.add_argument("--opset", type=int, default=18)
     ap.add_argument("--parity-rows", type=int, default=7)

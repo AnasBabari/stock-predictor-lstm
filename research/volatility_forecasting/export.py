@@ -418,9 +418,7 @@ def load_prospective_v8_candidate_member(candidate_dir: Path, seed: int) -> Froz
     )
 
 
-def load_prospective_v8_numeric_companion_member(
-    candidate_dir: Path, seed: int
-) -> FrozenCandidate:
+def load_prospective_v8_numeric_companion_member(candidate_dir: Path, seed: int) -> FrozenCandidate:
     """Reconstruct the predeclared market-only companion of a v8 news candidate."""
     candidate = _load_candidate_member(
         candidate_dir,

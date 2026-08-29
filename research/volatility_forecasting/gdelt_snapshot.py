@@ -411,9 +411,7 @@ def build_gdelt_daily_snapshot(
             "source_first_date": str(first.archive_date),
             "source_last_date": str(last.archive_date),
             "ticker_alias_count": len(ticker_aliases),
-            "missing_archive_dates": [
-                str(value) for value in sorted(observed_missing_dates)
-            ],
+            "missing_archive_dates": [str(value) for value in sorted(observed_missing_dates)],
             **totals,
         },
     )

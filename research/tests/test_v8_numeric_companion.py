@@ -208,9 +208,7 @@ def test_numeric_companion_round_trip_and_missing_section(tmp_path: Path) -> Non
         **_save_kwargs(),  # type: ignore[arg-type]
         **_news_extra_kwargs(),  # type: ignore[arg-type]
     )
-    companion = load_prospective_v8_numeric_companion_member(
-        tmp_path / "news-candidate", SEED
-    )
+    companion = load_prospective_v8_numeric_companion_member(tmp_path / "news-candidate", SEED)
     assert companion.seed == SEED
     assert companion.architecture.news_feature_count == 0
     news_member = load_prospective_v8_candidate_member(tmp_path / "news-candidate", SEED)
