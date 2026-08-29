@@ -51,8 +51,10 @@ def realized_variance_proxies(df: pd.DataFrame) -> pd.DataFrame:
     out["RV_C2C"] = ret.pow(2)
     out["RV_Overnight"] = overnight.pow(2)
     out["RV_RS_Intraday"] = rs
-    # Free-data total: overnight gap + intraday RS (positive daily sum).
-    out["RV_Total"] = out["RV_Overnight"] + out["RV_RS_Intraday"]
+    # Free-data total: overnight gap + max(intraday RS, 0) (positive daily sum).
+    out["RV_Total"] = out["RV_Overnight"] + np.maximum(
+        out["RV_RS_Intraday"].to_numpy(dtype=float), 0.0
+    )
     parkinson = np.log(df["High"].where(df["High"] > 0) / df["Low"].where(df["Low"] > 0)).pow(2)
     out["RV_Parkinson"] = parkinson / (4 * np.log(2))
     return out[["RV_C2C", "RV_Overnight", "RV_RS_Intraday", "RV_Total", "RV_Parkinson"]]
@@ -86,10 +88,11 @@ def cumulative_variance_target(
     valid = in_range & (starts < len(prefix))
     if origin_index is not None:
         valid &= ends <= origin_index + 1
-    # A window containing NaN cannot be honestly summed.
-    nan_counts = pd.Series(~finite).rolling(h).sum().to_numpy()
+    # A forward window containing NaN cannot be honestly summed.
+    nan_prefix = np.concatenate(([0], np.cumsum(~finite)))
+    future_nan_counts = nan_prefix[safe_end] - nan_prefix[starts]
     sums[~finite] = np.nan
-    sums[(nan_counts > 0) & valid] = np.nan
+    sums[(future_nan_counts > 0) & valid] = np.nan
     sums[~valid] = np.nan
     return pd.Series(sums, index=rv_daily.index, name=f"CV_Target_{h}")
 
