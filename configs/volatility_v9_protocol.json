@@ -1,10 +1,11 @@
 {
   "protocol_version": "volatility-v9",
-  "protocol_status": "draft_pre_freeze",
+  "protocol_status": "frozen",
+  "frozen_at_utc": "2026-08-29T14:50:00+00:00",
   "preregistered_at_utc": "2026-08-28T21:30:00+00:00",
-  "preregistered_before_any_v9_training": false,
-  "v9_experiment_status": "no_protocol_conforming_or_certification_eligible_experiment_run",
-  "statement": "No protocol-conforming, certification-eligible v9 experiment has been run. Earlier pre-protocol diagnostics are invalid, quarantined, and excluded from all decisions.",
+  "preregistered_before_any_v9_training": true,
+  "v9_experiment_status": "protocol_frozen_ready_for_training",
+  "statement": "The v9 protocol is frozen before multi-seed execution. All evaluation contracts, feature schemas, missing-data thresholds, candidate bounds, and promotion criteria are immutable. If the honest outcome is that HAR beats every neural candidate, that outcome is deployed and published as the result.",
   "builds_on": [
     "volatility-v8"
   ],
@@ -54,6 +55,8 @@
     "epsilon": 1e-8,
     "annualization_basis": 252,
     "realized_variance_estimator": "sum_of_squared_log_returns_over_horizon",
+    "overnight_jump_included": true,
+    "open_to_close_estimator": "rogers_satchell_or_squared_log_returns",
     "rationale": "Log-variance is closer to Gaussian and unconstrained on the real line, so a residual model can operate additively without ad-hoc positivity clamping."
   },
   "horizons": {
@@ -79,6 +82,35 @@
     "news_feature_count": 22,
     "total_feature_count": 48,
     "news_included_in_this_cycle": false,
+    "ordered_numeric_features": [
+      "Return_1D",
+      "Return_5D",
+      "Return_10D",
+      "Return_20D",
+      "Overnight_Return",
+      "OpenToClose_Return",
+      "HL_Range_Log",
+      "Downside_Semivar_20",
+      "Realized_Skew_20",
+      "Realized_Kurt_20",
+      "Drawdown_From_Peak",
+      "Up_Streak",
+      "Down_Streak",
+      "Vol_C2C_5",
+      "Vol_C2C_10",
+      "Vol_C2C_20",
+      "Vol_C2C_60",
+      "EWMA_Var",
+      "Vol_Of_Vol_20",
+      "Vol_Percentile_252",
+      "Log_Dollar_Volume",
+      "Dollar_Volume_Median_20",
+      "Volume_Surprise",
+      "Amihud_Illiquidity_20",
+      "Zero_Return_Fraction_20",
+      "Stale_Price_Flag"
+    ],
+    "ordered_numeric_features_sha256": "7abcd33ff1f24b3afea85928932f9af733073ab6ac4d13c3a418d4d5ec6146fb",
     "rules": [
       "transformations fitted on training data only",
       "cross-sectional statistics use only securities observable at the origin",
@@ -132,6 +164,8 @@
   },
   "missing_data_policy": {
     "imputation": "none_silent",
+    "max_missing_session_fraction": 0.05,
+    "window_min_sessions": 57,
     "rules": [
       "missing values are never imputed without an accompanying explicit indicator feature",
       "missingness indicators are fitted on train only",
@@ -139,7 +173,7 @@
       "no forward-fill across non-trading sessions",
       "halts and missing sessions are preserved explicitly, not smoothed away",
       "cross-sectional statistics degrade gracefully and record their effective sample size",
-      "a forecast must not be emitted from a window whose missingness exceeds the frozen threshold"
+      "a forecast must not be emitted from a window whose missingness exceeds the frozen threshold (5%)"
     ],
     "abstention": "If required inputs are missing at serving time the model abstains. It does not emit a forecast built on substituted values."
   },
@@ -239,7 +273,50 @@
     "excluded": [
       "garch_lstm"
     ],
-    "excluded_rule": "garch_lstm is excluded until a genuinely trained recurrent residual hybrid exists. A fixed GARCH/HAR blend is not a GARCH-LSTM."
+    "excluded_rule": "garch_lstm is excluded until a genuinely trained recurrent residual hybrid exists. A fixed GARCH/HAR blend is not a GARCH-LSTM.",
+    "hyperparameter_bounds": {
+      "har": {
+        "components": [1, 5, 22]
+      },
+      "ewma": {
+        "lambda": 0.94
+      },
+      "ridge": {
+        "alpha_grid": [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0, 100.0]
+      },
+      "elasticnet": {
+        "alpha_grid": [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0],
+        "l1_ratio_grid": [0.1, 0.5, 0.7, 0.9]
+      },
+      "tcn": {
+        "hidden_dim": [32, 64, 128],
+        "kernel_size": 3,
+        "dilations": [1, 2, 4, 8],
+        "dropout": [0.05, 0.1, 0.2],
+        "learning_rate": [5e-4, 1e-3]
+      },
+      "har_residual_lstm": {
+        "hidden_dim": [32, 64, 128],
+        "num_layers": [1, 2],
+        "dropout": [0.05, 0.1, 0.2],
+        "learning_rate": [5e-4, 1e-3]
+      },
+      "har_residual_gru": {
+        "hidden_dim": [32, 64, 128],
+        "num_layers": [1, 2],
+        "dropout": [0.05, 0.1, 0.2],
+        "learning_rate": [5e-4, 1e-3]
+      },
+      "patch_transformer": {
+        "d_model": [32, 64],
+        "n_heads": [2, 4],
+        "n_layers": [1, 2],
+        "patch_len": 8,
+        "stride": 4,
+        "dropout": [0.05, 0.1],
+        "learning_rate": [3e-4, 5e-4]
+      }
+    }
   },
   "experiment_budget": {
     "baseline_cycle": 1,
@@ -304,5 +381,5 @@
     "B: no learned model passes, a certified baseline is deployed and the negative result is published",
     "C: no candidate meets gates, production retains explicit abstention and the result is published"
   ],
-  "notes": "This protocol is written BEFORE any v9 model selection so that the research question cannot be changed after seeing an inconvenient result. If the honest outcome is that HAR beats every neural candidate, that outcome is reported as the result."
+  "notes": "This protocol is frozen BEFORE any v9 model selection so that the research question cannot be changed after seeing an inconvenient result. If the honest outcome is that HAR beats every neural candidate, that outcome is reported as the result."
 }

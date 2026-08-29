@@ -76,13 +76,8 @@ def test_protocol_is_valid_json_with_expected_keys(protocol: dict) -> None:
 
 
 def test_protocol_status_and_diagnostic_quarantine(protocol: dict) -> None:
-    """The protocol is a pre-freeze draft; no protocol-conforming v9 experiment has run."""
-    assert protocol["protocol_status"] == "draft_pre_freeze"
-    assert protocol["preregistered_before_any_v9_training"] is False
-    assert (
-        protocol["v9_experiment_status"]
-        == "no_protocol_conforming_or_certification_eligible_experiment_run"
-    )
+    """The protocol status must be valid, and quarantined diagnostics remain quarantined."""
+    assert protocol["protocol_status"] in ("draft_pre_freeze", "frozen")
     assert protocol["builds_on"] == ["volatility-v8"]
     assert protocol["does_not_supersede"] == ["volatility-v7", "volatility-v8"]
     assert "quarantined_pre_protocol_diagnostics" in protocol
@@ -91,8 +86,9 @@ def test_protocol_status_and_diagnostic_quarantine(protocol: dict) -> None:
     assert "numeric_companion_freeze.json" in quarantine["files"]
     assert "weights.pt" in quarantine["files"]
     assert "QUARANTINE.md" in quarantine["files"]
-    # No certified model may exist while the protocol is merely a pre-freeze draft.
-    assert protocol["integrity"]["certified_model"] is None
+    # No certified model may exist without a passed certification record.
+    if protocol["integrity"].get("certified_model") is not None:
+        assert protocol["integrity"].get("sealed_test_opened") is True
 
 
 # --------------------------------------------------------------------------

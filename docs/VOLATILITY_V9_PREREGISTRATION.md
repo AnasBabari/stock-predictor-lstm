@@ -1,6 +1,7 @@
 # Volatility v9 preregistration — global equity volatility forecasting
 
-Status: **draft pre-freeze; no protocol-conforming v9 candidate trained, no sealed test opened, no certification, no release.**
+Status: **frozen; all evaluation contracts, feature schemas, missing-data thresholds, candidate bounds, and promotion criteria immutable.**
+Protocol Canonical SHA-256: `d205b6394cc39e0e63e6d5c5bf1f6d4a8ca20ceea8a4917f3963ed44f78523b1`
 
 Machine-readable companion: [`configs/volatility_v9_protocol.json`](../configs/volatility_v9_protocol.json).
 Where this document and that file disagree, **the JSON is authoritative** — it is the artifact that
@@ -8,7 +9,7 @@ code reads at runtime. This document supplies the reasoning, the definitions, an
 that the JSON can only assert.
 
 No protocol-conforming, certification-eligible v9 experiment has been run. Earlier pre-protocol
-diagnostics are invalid, quarantined, and excluded from all decisions. This protocol is drafted
+diagnostics are invalid, quarantined, and excluded from all decisions. This protocol is frozen
 **before** any protocol-conforming v9 model is trained or selected. Its purpose is to make the
 research question unchangeable after an inconvenient result appears. If the honest outcome is that
 HAR beats every neural candidate, that is the reported result.
