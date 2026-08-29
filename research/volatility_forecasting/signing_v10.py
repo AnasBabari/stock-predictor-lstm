@@ -8,10 +8,6 @@ CRITICAL SECURITY INVARIANTS:
 
 from __future__ import annotations
 
-import hashlib
-import json
-from pathlib import Path
-from typing import Any
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 

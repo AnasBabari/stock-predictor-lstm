@@ -13,15 +13,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import ElasticNet, Ridge
-
-from backend.panel.volatility import (
-    GarchParams,
-    fit_garch,
-    garch_forecast_cumulative,
-    qlike_loss,
-    realized_variance_proxies,
-)
 
 
 class CausalHARBaseline:

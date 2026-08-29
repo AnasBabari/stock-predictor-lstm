@@ -15,78 +15,63 @@ import json
 import logging
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.extend([str(ROOT_DIR), str(ROOT_DIR / "research"), str(ROOT_DIR / "backend")])
 
-import numpy as np
-import pandas as pd
-import torch
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import torch  # noqa: E402
+from cryptography.hazmat.primitives import serialization  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ed25519  # noqa: E402
 
-from backend.services.volatility_runtime.runtime import VolatilityOnnxRuntime
-from research.ndx100.data import load_ticker_history
-from research.volatility_forecasting.architecture_ablation import (
-    EVALUATED_NEURAL_FAMILIES,
-    REQUIRED_HORIZONS,
+from backend.services.volatility_runtime.runtime import VolatilityOnnxRuntime  # noqa: E402
+from research.ndx100.data import load_ticker_history  # noqa: E402
+from research.volatility_forecasting.architecture_ablation import (  # noqa: E402
     classify_regimes,
     compute_block_bootstrap_ratio_bounds,
     evaluate_classical_model,
-    garch_coverage_diagnostics,
     reset_garch_diagnostics,
     select_numeric_champion,
     train_and_eval_neural_candidate,
 )
-from research.volatility_forecasting.baselines import (
+from research.volatility_forecasting.baselines import (  # noqa: E402
     fit_adaptive_variance_baseline,
     predict_adaptive_variance_baseline,
 )
-from research.volatility_forecasting.certification import (
+from research.volatility_forecasting.certification import (  # noqa: E402
     LockedCertificationGate,
     LockedPopulationInput,
     certify_locked_predictions,
 )
-from research.volatility_forecasting.contracts import (
-    DEPLOYABLE_FEATURE_COLUMNS_V5,
+from research.volatility_forecasting.contracts import (  # noqa: E402
     VolatilityForecastProtocol,
 )
-from research.volatility_forecasting.data import (
+from research.volatility_forecasting.data import (  # noqa: E402
     VolatilityPanelExamples,
     build_volatility_panel_examples,
 )
-from research.volatility_forecasting.export import (
+from research.volatility_forecasting.export import (  # noqa: E402
     assemble_release_bundle,
-    export_candidate_onnx,
     load_frozen_candidate_member,
-    verify_onnx_parity,
 )
-from research.volatility_forecasting.folds import (
-    VolatilityFold,
+from research.volatility_forecasting.folds import (  # noqa: E402
     VolatilityFoldPlan,
     build_inner_training_split,
     build_volatility_fold_plan,
 )
-from research.volatility_forecasting.metrics import (
+from research.volatility_forecasting.metrics import (  # noqa: E402
     DistributionPredictions,
-    fit_crps_variance_scale,
-    fit_qlike_variance_scale,
     qlike_losses,
 )
-from research.volatility_forecasting.model import (
-    BaselineResidualTCN,
+from research.volatility_forecasting.model import (  # noqa: E402
     BaselineResidualTCNConfig,
-    RobustSequenceScaler,
-    TorchTrainingConfig,
-    TrainingResult,
-    VolatilityLossWeights,
-    train_baseline_residual_tcn,
 )
-from research.volatility_forecasting.refit import (
+from research.volatility_forecasting.refit import (  # noqa: E402
     FrozenCandidate,
-    candidate_identity,
     fit_frozen_candidate,
 )
 
@@ -127,7 +112,9 @@ EVAL_HORIZONS = (1, 3, 5, 7, 14, 30)
 NEURAL_SEEDS = (41, 42, 43)
 
 
-def run_phase_3(tickers: tuple[str, ...]) -> tuple[VolatilityPanelExamples, VolatilityFoldPlan, dict[str, Any]]:
+def run_phase_3(
+    tickers: tuple[str, ...],
+) -> tuple[VolatilityPanelExamples, VolatilityFoldPlan, dict[str, Any]]:
     logger.info("=== PHASE 3: Data Ingest & Partitioning ===")
     panel: dict[str, pd.DataFrame] = {}
     for t in tickers:
@@ -146,10 +133,19 @@ def run_phase_3(tickers: tuple[str, ...]) -> tuple[VolatilityPanelExamples, Vola
 
     protocol = VolatilityForecastProtocol(horizons=EVAL_HORIZONS)
     examples = build_volatility_panel_examples(panel, protocol)
-    logger.info("Panel examples shape: %s, date range: %s to %s", examples.features.shape, str(examples.origin_dates.min()), str(examples.origin_dates.max()))
+    logger.info(
+        "Panel examples shape: %s, date range: %s to %s",
+        examples.features.shape,
+        str(examples.origin_dates.min()),
+        str(examples.origin_dates.max()),
+    )
 
     plan = build_volatility_fold_plan(examples, protocol, asset_split_seed=42)
-    logger.info("Built %d expanding development folds; certification start: %s", len(plan.folds), str(plan.certification_start))
+    logger.info(
+        "Built %d expanding development folds; certification start: %s",
+        len(plan.folds),
+        str(plan.certification_start),
+    )
 
     manifest_data = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -165,7 +161,9 @@ def run_phase_3(tickers: tuple[str, ...]) -> tuple[VolatilityPanelExamples, Vola
         },
         "feature_count": examples.features.shape[-1],
         "feature_names": list(examples.feature_names),
-        "feature_names_sha256": hashlib.sha256(json.dumps(list(examples.feature_names)).encode()).hexdigest(),
+        "feature_names_sha256": hashlib.sha256(
+            json.dumps(list(examples.feature_names)).encode()
+        ).hexdigest(),
         "folds": [
             {
                 "fold": f.fold,
@@ -231,26 +229,39 @@ def run_phase_4(
         # 1. Classical models
         for fam in ("har", "ewma", "garch", "gjr", "ridge", "elasticnet"):
             for h_idx, h in enumerate(examples.horizons):
-                pred_var = evaluate_classical_model(fam, examples, fold.train_indices, val_idx, h_idx)
+                pred_var = evaluate_classical_model(
+                    fam, examples, fold.train_indices, val_idx, h_idx
+                )
                 target_var = examples.realized_variance[val_idx, h_idx]
                 har_var = examples.baseline_variance[val_idx, h_idx]
 
                 m_losses = qlike_losses(pred_var, target_var)
                 b_losses = qlike_losses(har_var, target_var)
 
-                ratio, p05, p95 = compute_block_bootstrap_ratio_bounds(m_losses, b_losses, week_clusters)
+                ratio, p05, p95 = compute_block_bootstrap_ratio_bounds(
+                    m_losses, b_losses, week_clusters
+                )
                 low_ratio = (
-                    float(np.mean(m_losses[regimes == 0]) / max(np.mean(b_losses[regimes == 0]), 1e-12))
+                    float(
+                        np.mean(m_losses[regimes == 0])
+                        / max(np.mean(b_losses[regimes == 0]), 1e-12)
+                    )
                     if (regimes == 0).any()
                     else ratio
                 )
                 norm_ratio = (
-                    float(np.mean(m_losses[regimes == 1]) / max(np.mean(b_losses[regimes == 1]), 1e-12))
+                    float(
+                        np.mean(m_losses[regimes == 1])
+                        / max(np.mean(b_losses[regimes == 1]), 1e-12)
+                    )
                     if (regimes == 1).any()
                     else ratio
                 )
                 high_ratio = (
-                    float(np.mean(m_losses[regimes == 2]) / max(np.mean(b_losses[regimes == 2]), 1e-12))
+                    float(
+                        np.mean(m_losses[regimes == 2])
+                        / max(np.mean(b_losses[regimes == 2]), 1e-12)
+                    )
                     if (regimes == 2).any()
                     else ratio
                 )
@@ -292,19 +303,30 @@ def run_phase_4(
                     m_losses = qlike_losses(pred_var, target_var)
                     b_losses = qlike_losses(har_var, target_var)
 
-                    ratio, p05, p95 = compute_block_bootstrap_ratio_bounds(m_losses, b_losses, week_clusters)
+                    ratio, p05, p95 = compute_block_bootstrap_ratio_bounds(
+                        m_losses, b_losses, week_clusters
+                    )
                     low_ratio = (
-                        float(np.mean(m_losses[regimes == 0]) / max(np.mean(b_losses[regimes == 0]), 1e-12))
+                        float(
+                            np.mean(m_losses[regimes == 0])
+                            / max(np.mean(b_losses[regimes == 0]), 1e-12)
+                        )
                         if (regimes == 0).any()
                         else ratio
                     )
                     norm_ratio = (
-                        float(np.mean(m_losses[regimes == 1]) / max(np.mean(b_losses[regimes == 1]), 1e-12))
+                        float(
+                            np.mean(m_losses[regimes == 1])
+                            / max(np.mean(b_losses[regimes == 1]), 1e-12)
+                        )
                         if (regimes == 1).any()
                         else ratio
                     )
                     high_ratio = (
-                        float(np.mean(m_losses[regimes == 2]) / max(np.mean(b_losses[regimes == 2]), 1e-12))
+                        float(
+                            np.mean(m_losses[regimes == 2])
+                            / max(np.mean(b_losses[regimes == 2]), 1e-12)
+                        )
                         if (regimes == 2).any()
                         else ratio
                     )
@@ -340,9 +362,6 @@ def run_phase_4(
     return df_results, decision
 
 
-from dataclasses import asdict
-
-
 def freeze_candidate_members(
     examples: VolatilityPanelExamples,
     plan: VolatilityFoldPlan,
@@ -353,7 +372,9 @@ def freeze_candidate_members(
     if (candidate_dir / "candidate-manifest.json").exists():
         try:
             members = tuple(load_frozen_candidate_member(candidate_dir, s) for s in seeds)
-            logger.info("Loaded %d existing frozen candidate members from %s", len(members), candidate_dir)
+            logger.info(
+                "Loaded %d existing frozen candidate members from %s", len(members), candidate_dir
+            )
             return members
         except Exception as exc:
             logger.warning("Could not load existing frozen members: %s; refitting...", exc)
@@ -397,9 +418,7 @@ def freeze_candidate_members(
                 "variance_scale": cand.variance_scale.tolist(),
                 "return_variance_scale": cand.return_variance_scale.tolist(),
                 "baseline_return_variance_scale": cand.baseline_return_variance_scale.tolist(),
-                "comparison_baseline": [
-                    asdict(h) for h in cand.comparison_baseline.horizons
-                ],
+                "comparison_baseline": [asdict(h) for h in cand.comparison_baseline.horizons],
             }
         )
     manifest = {
@@ -429,7 +448,9 @@ def run_phase_5_and_6(
     # 1. Candidate Refit across full development history
     # Terminal development split: all development observations
     dev_dates = np.unique(examples.origin_dates[: -protocol.temporal_holdout_sessions])
-    dev_mask = np.isin(examples.tickers, plan.train_tickers) & (examples.origin_dates <= dev_dates[-1])
+    dev_mask = np.isin(examples.tickers, plan.train_tickers) & (
+        examples.origin_dates <= dev_dates[-1]
+    )
     dev_indices = np.flatnonzero(dev_mask)
 
     inner_dev_split = build_inner_training_split(examples, dev_indices, protocol)
@@ -469,9 +490,7 @@ def run_phase_5_and_6(
 
     if is_learned and selected_family == "tcn":
         # Load frozen ensemble and predict on locked reserves
-        member_candidates = [
-            load_frozen_candidate_member(candidate_dir, s) for s in NEURAL_SEEDS
-        ]
+        member_candidates = [load_frozen_candidate_member(candidate_dir, s) for s in NEURAL_SEEDS]
         temp_preds_list = [m.predict(examples, temporal_idx) for m in member_candidates]
         trans_preds_list = [m.predict(examples, transfer_idx) for m in member_candidates]
 
@@ -578,6 +597,7 @@ def run_phase_5_and_6(
     if cert_report.status == "passed" and is_learned and selected_family == "tcn":
         if release_dir.exists():
             import shutil
+
             shutil.rmtree(release_dir)
         assemble_release_bundle(
             candidate_dir=candidate_dir,

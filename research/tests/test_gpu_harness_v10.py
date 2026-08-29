@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from research.volatility_forecasting.gpu_harness_v10 import (
     check_gpu_runtime,
     cleanup_gpu_memory,

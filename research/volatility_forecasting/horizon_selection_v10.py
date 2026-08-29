@@ -54,12 +54,14 @@ def select_champions_by_horizon(
 
             # Check promotion gates
             if mean_rel_qlike < max_relative_qlike and max_upper_95 < max_ratio_upper_95:
-                eligible_candidates.append({
-                    "family": fam,
-                    "mean_relative_qlike": mean_rel_qlike,
-                    "max_upper_95": max_upper_95,
-                    "record_count": len(records),
-                })
+                eligible_candidates.append(
+                    {
+                        "family": fam,
+                        "mean_relative_qlike": mean_rel_qlike,
+                        "max_upper_95": max_upper_95,
+                        "record_count": len(records),
+                    }
+                )
 
         if eligible_candidates:
             # Sort by mean relative QLIKE (lowest is best)

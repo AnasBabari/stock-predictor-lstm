@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import platform
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -89,7 +88,9 @@ class ImmutableRunManifest:
             panel_sha256=str(data["panel_sha256"]),
             split_manifest_sha256=str(data["split_manifest_sha256"]),
             feature_schema_sha256=str(data["feature_schema_sha256"]),
-            news_snapshot_sha256=str(data["news_snapshot_sha256"]) if data.get("news_snapshot_sha256") is not None else None,
+            news_snapshot_sha256=str(data["news_snapshot_sha256"])
+            if data.get("news_snapshot_sha256") is not None
+            else None,
             dependency_lock_sha256=str(data["dependency_lock_sha256"]),
             candidate_registry_sha256=str(data["candidate_registry_sha256"]),
             hardware=dict(data.get("hardware", {})),
@@ -132,7 +133,8 @@ class ImmutableRunManifest:
                 mismatches.append(f"{field}: expected {v_self!r}, got {v_other!r}")
         if mismatches:
             raise ProvenanceMismatchError(
-                f"Provenance mismatch detected across {len(mismatches)} fields:\n" + "\n".join(f"  - {m}" for m in mismatches)
+                f"Provenance mismatch detected across {len(mismatches)} fields:\n"
+                + "\n".join(f"  - {m}" for m in mismatches)
             )
 
 

@@ -8,11 +8,7 @@ from __future__ import annotations
 
 import gc
 import logging
-import os
 from dataclasses import dataclass
-from typing import Any
-
-import numpy as np
 
 logger = logging.getLogger("gpu_harness_v10")
 
@@ -30,6 +26,7 @@ def check_gpu_runtime() -> HardwareRuntimeStatus:
     """Query runtime GPU state safely without forcing hard Torch dependency."""
     try:
         import torch
+
         if torch.cuda.is_available():
             device_name = torch.cuda.get_device_name(0)
             props = torch.cuda.get_device_properties(0)
@@ -60,6 +57,7 @@ def cleanup_gpu_memory() -> None:
     gc.collect()
     try:
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()

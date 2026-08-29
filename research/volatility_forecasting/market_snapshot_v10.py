@@ -6,7 +6,6 @@ license IDs, corporate-action adjustment logs, and cryptographic checksums.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -71,5 +70,7 @@ class MarketPanelSnapshotV10:
             row_count=int(data["row_count"]),
             checksums=dict(data.get("checksums", {})),
             certification_eligible=bool(data.get("certification_eligible", False)),
-            adjustment_method=str(data.get("adjustment_method", "point_in_time_split_and_dividend_adjusted")),
+            adjustment_method=str(
+                data.get("adjustment_method", "point_in_time_split_and_dividend_adjusted")
+            ),
         )

@@ -84,8 +84,12 @@ class FrozenCandidatePackageV10:
                 config=dict(h.get("config", {})),
                 selected_seed=int(h["selected_seed"]),
                 scaler_parameters=dict(h.get("scaler_parameters", {})),
-                baseline_parameters=dict(h.get("baseline_parameters", {})) if h.get("baseline_parameters") else None,
-                weights_relative_path=str(h["weights_relative_path"]) if h.get("weights_relative_path") else None,
+                baseline_parameters=dict(h.get("baseline_parameters", {}))
+                if h.get("baseline_parameters")
+                else None,
+                weights_relative_path=str(h["weights_relative_path"])
+                if h.get("weights_relative_path")
+                else None,
                 weights_sha256=str(h["weights_sha256"]) if h.get("weights_sha256") else None,
             )
             for h in data["horizons"]
@@ -108,7 +112,9 @@ class FrozenCandidatePackageV10:
             if h.weights_relative_path:
                 w_path = Path(package_dir) / h.weights_relative_path
                 if not w_path.exists():
-                    raise FreezeIntegrityError(f"Weight file missing for horizon {h.horizon}: {w_path}")
+                    raise FreezeIntegrityError(
+                        f"Weight file missing for horizon {h.horizon}: {w_path}"
+                    )
                 actual_sha = hashlib.sha256(w_path.read_bytes()).hexdigest()
                 if actual_sha != h.weights_sha256:
                     raise FreezeIntegrityError(

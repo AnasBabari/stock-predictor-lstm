@@ -18,7 +18,6 @@ from backend.panel.volatility import (
     cumulative_variance_target,
     qlike_loss,
     realized_variance_proxies,
-    rogers_satchell_frame,
 )
 
 

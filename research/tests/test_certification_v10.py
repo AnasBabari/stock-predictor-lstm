@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
 import pytest
 
 from research.volatility_forecasting.certification_v10 import (

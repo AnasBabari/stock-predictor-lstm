@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import pandas as pd
-import pytest
-
 from research.volatility_forecasting.news_fusion_v10 import (
     evaluate_news_gain,
-    generate_negative_controls,
 )
 from research.volatility_forecasting.news_lake_v10 import (
     HistoricalNewsRecord,

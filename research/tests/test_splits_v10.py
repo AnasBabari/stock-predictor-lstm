@@ -6,7 +6,6 @@ import pandas as pd
 import pytest
 
 from research.volatility_forecasting.splits_v10 import (
-    PartitionAssignment,
     UniqueOriginSplitterV10,
 )
 
@@ -35,7 +34,12 @@ def test_unique_origin_partition_ratios_and_isolation(synthetic_panel: pd.DataFr
     assert len(assignment.train_sessions) == 700
     assert len(assignment.val_sessions) == 150
     assert len(assignment.test_sessions) == 150
-    assert len(assignment.train_sessions) + len(assignment.val_sessions) + len(assignment.test_sessions) == 1000
+    assert (
+        len(assignment.train_sessions)
+        + len(assignment.val_sessions)
+        + len(assignment.test_sessions)
+        == 1000
+    )
 
     # No overlap in session dates
     train_set = set(assignment.train_sessions)

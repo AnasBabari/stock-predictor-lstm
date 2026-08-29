@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from research.volatility_forecasting.protocol_hashing import (
-    canonical_protocol_bytes,
     protocol_sha256,
 )
 

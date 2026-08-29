@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+
 import pytest
 
 from research.volatility_forecasting.candidate_freeze_v10 import (

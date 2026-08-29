@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat

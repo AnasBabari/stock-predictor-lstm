@@ -7,9 +7,9 @@ and aligned causally to trading sessions based on exchange close times.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import asdict, dataclass
 from typing import Any
+
 import pandas as pd
 
 

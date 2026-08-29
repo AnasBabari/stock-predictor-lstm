@@ -11,7 +11,6 @@ Implements negative controls to guard against spurious news correlation:
 
 from __future__ import annotations
 
-from typing import Any
 import numpy as np
 import pandas as pd
 
@@ -64,10 +63,16 @@ def evaluate_news_gain(
 ) -> tuple[bool, str]:
     """Verify that fused news model beats frozen numeric baseline AND all negative controls."""
     if fused_news_qlike >= numeric_qlike * (1.0 - margin):
-        return False, f"News model ({fused_news_qlike:.4f}) did not beat numeric baseline ({numeric_qlike:.4f})"
+        return (
+            False,
+            f"News model ({fused_news_qlike:.4f}) did not beat numeric baseline ({numeric_qlike:.4f})",
+        )
 
     for name, c_loss in control_qlikes.items():
         if fused_news_qlike >= c_loss:
-            return False, f"News model ({fused_news_qlike:.4f}) failed negative control '{name}' ({c_loss:.4f})"
+            return (
+                False,
+                f"News model ({fused_news_qlike:.4f}) failed negative control '{name}' ({c_loss:.4f})",
+            )
 
     return True, "News model cleared all negative controls and beat numeric baseline"

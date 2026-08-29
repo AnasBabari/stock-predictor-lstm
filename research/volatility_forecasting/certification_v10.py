@@ -9,15 +9,11 @@ Enforces:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from research.volatility_forecasting.market_snapshot_v10 import DataIneligibilityError
 
@@ -43,7 +39,9 @@ class SealedTestOpeningRecordV10:
     def save(self, output_dir: Path) -> Path:
         target = Path(output_dir) / "test_opening_record.json"
         if target.exists():
-            raise SealedTestReopenError(f"Test opening record already exists at {target}. Reopening forbidden.")
+            raise SealedTestReopenError(
+                f"Test opening record already exists at {target}. Reopening forbidden."
+            )
         target.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
         return target
 
@@ -98,7 +96,9 @@ def verify_certification_prerequisites(
 ) -> None:
     """Strict pre-certification gate validation."""
     eligibility = protocol_data.get("data_eligibility", {})
-    if not eligibility.get("universe_certification_eligible", False) or not eligibility.get("market_panel_certification_eligible", False):
+    if not eligibility.get("universe_certification_eligible", False) or not eligibility.get(
+        "market_panel_certification_eligible", False
+    ):
         raise DataIneligibilityError(
             f"Cannot certify: {eligibility.get('blocker', 'Data is not certification-eligible.')}"
         )

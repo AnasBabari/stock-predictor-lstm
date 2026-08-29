@@ -87,7 +87,9 @@ def verify_release_bundle_integrity(
             raise ValueError(f"Bundle missing file: {rel_path}")
         actual_sha = hashlib.sha256(p.read_bytes()).hexdigest()
         if actual_sha != expected_sha:
-            raise ValueError(f"Checksum mismatch for {rel_path}: expected {expected_sha}, got {actual_sha}")
+            raise ValueError(
+                f"Checksum mismatch for {rel_path}: expected {expected_sha}, got {actual_sha}"
+            )
 
     sig_file = target / "signature.ed25519"
     if public_key_pem is not None:

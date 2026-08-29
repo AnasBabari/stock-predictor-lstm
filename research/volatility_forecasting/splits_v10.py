@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -63,7 +62,9 @@ class UniqueOriginSplitterV10:
         self.embargo_sessions = embargo_sessions
         self.required_transfer_tickers = set(required_transfer_tickers)
 
-    def partition_sessions(self, all_dates: list[str] | pd.Index) -> tuple[list[str], list[str], list[str]]:
+    def partition_sessions(
+        self, all_dates: list[str] | pd.Index
+    ) -> tuple[list[str], list[str], list[str]]:
         unique_dates = sorted(set(pd.to_datetime(all_dates).strftime("%Y-%m-%d")))
         n = len(unique_dates)
         if n < 100:
@@ -71,7 +72,6 @@ class UniqueOriginSplitterV10:
 
         n_train = int(np.floor(self.train_fraction * n))
         n_val = int(np.floor(self.val_fraction * n))
-        n_test = n - n_train - n_val
 
         train_dates = unique_dates[:n_train]
         val_dates = unique_dates[n_train : n_train + n_val]
@@ -107,7 +107,9 @@ class UniqueOriginSplitterV10:
             "test_row_count": int(test_mask.sum()),
             "transfer_row_count": int(transfer_mask.sum()),
         }
-        fp = hashlib.sha256(json.dumps(fingerprint_data, sort_keys=True).encode("utf-8")).hexdigest()
+        fp = hashlib.sha256(
+            json.dumps(fingerprint_data, sort_keys=True).encode("utf-8")
+        ).hexdigest()
 
         return PartitionAssignment(
             train_sessions=train_dates,

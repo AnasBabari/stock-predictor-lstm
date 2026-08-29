@@ -47,7 +47,9 @@ def sample_securities() -> list[SecurityRecord]:
     ]
 
 
-def test_filter_eligible_equities_excludes_funds_and_spacs(sample_securities: list[SecurityRecord]) -> None:
+def test_filter_eligible_equities_excludes_funds_and_spacs(
+    sample_securities: list[SecurityRecord],
+) -> None:
     filtered = filter_eligible_equities(sample_securities)
     assert len(filtered) == 1
     assert filtered[0].ticker == "AAPL"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,6 @@ import pytest
 from research.volatility_forecasting.provenance import (
     ImmutableRunManifest,
     ProvenanceMismatchError,
-    compute_canonical_json_sha256,
     compute_ledger_evidence_sha256,
 )
 
@@ -52,14 +50,18 @@ def test_manifest_file_roundtrip(sample_manifest: ImmutableRunManifest, tmp_path
     loaded.verify_matching(sample_manifest)
 
 
-def test_provenance_mismatch_raises_on_divergent_protocol_hash(sample_manifest: ImmutableRunManifest) -> None:
+def test_provenance_mismatch_raises_on_divergent_protocol_hash(
+    sample_manifest: ImmutableRunManifest,
+) -> None:
     tampered_dict = sample_manifest.to_dict()
     tampered_dict["protocol_sha256"] = "0" * 64
     with pytest.raises(ProvenanceMismatchError, match="protocol_sha256"):
         sample_manifest.verify_matching(tampered_dict)
 
 
-def test_provenance_mismatch_raises_on_divergent_panel_hash(sample_manifest: ImmutableRunManifest) -> None:
+def test_provenance_mismatch_raises_on_divergent_panel_hash(
+    sample_manifest: ImmutableRunManifest,
+) -> None:
     tampered_dict = sample_manifest.to_dict()
     tampered_dict["panel_sha256"] = "1" * 64
     with pytest.raises(ProvenanceMismatchError, match="panel_sha256"):

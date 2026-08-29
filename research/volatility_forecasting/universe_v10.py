@@ -7,10 +7,7 @@ for NYSE and LSE ordinary equities.
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any
 
 
@@ -56,9 +53,9 @@ class PointInTimeUniverseManifest:
         if not self.data_provider or not self.license_id:
             return False
         # Free public web scraping or unverified development sources cannot be certification eligible
-        if "yfinance" in self.data_provider.lower() or "unverified" in self.license_id.lower():
-            return False
-        return True
+        return not (
+            "yfinance" in self.data_provider.lower() or "unverified" in self.license_id.lower()
+        )
 
 
 def filter_eligible_equities(
