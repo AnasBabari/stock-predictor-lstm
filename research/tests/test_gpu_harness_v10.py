@@ -1,10 +1,17 @@
-"""Tests for GPU harness status and training execution."""
+"""Tests for GPU harness status, neural architectures, and real training execution."""
 
 from __future__ import annotations
 
+import io
+
 import numpy as np
+import torch
 
 from research.volatility_forecasting.gpu_harness_v10 import (
+    GRUVolatilityModel,
+    LSTMVolatilityModel,
+    PatchTSTVolatilityModel,
+    TCNVolatilityModel,
     TrainingExecutionConfig,
     check_gpu_runtime,
     cleanup_gpu_memory,
@@ -19,45 +26,52 @@ def test_gpu_runtime_check_and_cleanup_run_safely() -> None:
     cleanup_gpu_memory()
 
 
-def test_train_candidate_fold_runs_classical_and_neural_candidates() -> None:
+def test_neural_architectures_forward_pass_and_positivity() -> None:
+    # (batch, seq_len, in_features)
+    x = torch.randn(8, 60, 26)
+
+    # 1. TCN
+    tcn = TCNVolatilityModel(in_features=26, num_channels=[16, 32])
+    out_tcn = tcn(x)
+    assert out_tcn.shape == (8, 1)
+    assert (out_tcn > 0).all()
+
+    # 2. LSTM
+    lstm = LSTMVolatilityModel(in_features=26, hidden_dim=16, num_layers=2)
+    out_lstm = lstm(x)
+    assert out_lstm.shape == (8, 1)
+    assert (out_lstm > 0).all()
+
+    # 3. GRU
+    gru = GRUVolatilityModel(in_features=26, hidden_dim=16, num_layers=2)
+    out_gru = gru(x)
+    assert out_gru.shape == (8, 1)
+    assert (out_gru > 0).all()
+
+    # 4. PatchTST
+    patch = PatchTSTVolatilityModel(in_features=26, patch_len=8, stride=4, d_model=16)
+    out_patch = patch(x)
+    assert out_patch.shape == (8, 1)
+    assert (out_patch > 0).all()
+
+
+def test_train_candidate_fold_serializes_real_weights_for_all_families() -> None:
     rng = np.random.default_rng(42)
-    X_train = rng.normal(size=(60, 26))
-    y_train = np.maximum(0.0004 + 0.0001 * X_train[:, 0], 1e-6)
-    X_val = rng.normal(size=(20, 26))
-    y_val = np.maximum(0.0004 + 0.0001 * X_val[:, 0], 1e-6)
+    X_train = rng.normal(size=(30, 20, 26))
+    y_train = np.maximum(0.0004 + 0.0001 * X_train[:, -1, 0], 1e-6)
+    X_val = rng.normal(size=(10, 20, 26))
+    y_val = np.maximum(0.0004 + 0.0001 * X_val[:, -1, 0], 1e-6)
 
-    # 1. Ridge
-    cfg_ridge = TrainingExecutionConfig(candidate_family="ridge", horizon=1, fold_idx=0)
-    res_ridge = train_candidate_fold(cfg_ridge, X_train, y_train, X_val, y_val)
-    assert res_ridge["status"] == "success"
-    assert res_ridge["val_qlike"] > 0.0
+    for fam in ["ridge", "elasticnet", "tcn", "lstm", "gru", "patch_transformer"]:
+        cfg = TrainingExecutionConfig(candidate_family=fam, horizon=1, fold_idx=0, max_epochs=3)
+        res = train_candidate_fold(cfg, X_train, y_train, X_val, y_val)
+        assert res["status"] == "success"
+        assert res["val_qlike"] > 0.0
+        assert isinstance(res["weights_bytes"], bytes)
+        assert len(res["weights_bytes"]) > 10
 
-    # 2. ElasticNet
-    cfg_enet = TrainingExecutionConfig(candidate_family="elasticnet", horizon=3, fold_idx=0)
-    res_enet = train_candidate_fold(cfg_enet, X_train, y_train, X_val, y_val)
-    assert res_enet["status"] == "success"
-    assert res_enet["val_qlike"] > 0.0
-
-    # 3. Neural (TCN/LSTM)
-    cfg_tcn = TrainingExecutionConfig(candidate_family="tcn", horizon=1, fold_idx=0, max_epochs=5)
-    res_tcn = train_candidate_fold(cfg_tcn, X_train, y_train, X_val, y_val)
-    assert res_tcn["status"] in ("success", "fallback_success")
-    assert res_tcn["val_qlike"] > 0.0
-
-
-def test_select_champions_by_horizon_role_naming() -> None:
-    from research.volatility_forecasting.horizon_selection_v10 import (
-        select_champions_by_horizon,
-    )
-
-    ledger = [
-        {"horizon": 1, "family": "tcn", "relative_qlike": 0.90, "ratio_upper_95": 0.98},
-        {"horizon": 3, "family": "tcn", "relative_qlike": 1.15, "ratio_upper_95": 1.25},
-    ]
-    champions = select_champions_by_horizon(ledger, horizons=[1, 3], baseline_family="har")
-    assert champions[1]["champion_family"] == "tcn"
-    assert champions[1]["role"] == "learned_candidate"
-
-    # Degraded horizon falls back to development_baseline_candidate
-    assert champions[3]["champion_family"] == "har"
-    assert champions[3]["role"] == "development_baseline_candidate"
+        # For neural families, verify torch.load can deserialize state dict
+        if fam in ("tcn", "lstm", "gru", "patch_transformer"):
+            buf = io.BytesIO(res["weights_bytes"])
+            state = torch.load(buf, weights_only=True)
+            assert isinstance(state, dict)

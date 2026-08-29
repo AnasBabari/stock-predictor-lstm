@@ -84,7 +84,10 @@ def get_protected_fingerprints(repo_root: Path) -> dict[str, str]:
             fingerprints[prohibited] = _hash_file(target)
         elif target.is_dir():
             for p in target.rglob("*"):
-                if any(part in ("node_modules", ".git", "dist", "__pycache__", ".pytest_cache") for part in p.parts):
+                if any(
+                    part in ("node_modules", ".git", "dist", "__pycache__", ".pytest_cache")
+                    for part in p.parts
+                ):
                     continue
                 if p.is_file():
                     rel = p.relative_to(repo_root).as_posix()

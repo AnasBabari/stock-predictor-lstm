@@ -12,6 +12,7 @@ import json
 import shutil
 import tempfile
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -71,14 +72,19 @@ class FrozenCandidatePackageV10:
         weights_map: dict[str, bytes] | None = None,
     ) -> Path:
         """Atomically create and write the candidate package directory."""
-        target_dir = Path(base_dir) / self.package_id
+        target_dir = Path(base_dir)
+        if target_dir.is_dir() and target_dir.name != self.package_id:
+            target_dir = target_dir / self.package_id
+
         if target_dir.exists():
             raise FreezeIntegrityError(
-                f"Candidate package {self.package_id} already exists at {target_dir}. Overwrite strictly forbidden."
+                f"Candidate package target already exists at {target_dir}. Overwrite strictly forbidden."
             )
 
         # Write to temporary directory first
-        tmp_dir = Path(tempfile.mkdtemp(prefix="pkg_atomic_", dir=base_dir))
+        parent_dir = target_dir.parent
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="pkg_atomic_", dir=parent_dir))
         try:
             manifest_path = tmp_dir / "candidate_manifest.json"
             manifest_path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
@@ -147,3 +153,65 @@ class FrozenCandidatePackageV10:
                     raise FreezeIntegrityError(
                         f"Weight checksum mismatch for horizon {h.horizon}: expected {h.weights_sha256}, got {actual_sha}"
                     )
+
+
+def freeze_candidate_package(
+    target_dir: Path,
+    candidate_name: str,
+    protocol_version: str,
+    horizons: list[int],
+    configuration: dict[str, Any],
+    scalers_by_horizon: dict[int, Any],
+    baseline_params_by_horizon: dict[int, Any],
+    weights_by_horizon: dict[int, bytes],
+    development_ledger_sha256: str,
+    git_sha: str = "0" * 40,
+    feature_schema_sha256: str = "0" * 64,
+    panel_snapshot_sha256: str = "0" * 64,
+) -> tuple[Path, FrozenCandidatePackageV10]:
+    """Assemble and atomically save a candidate package directory."""
+    weights_map: dict[str, bytes] = {}
+    frozen_horizons = []
+
+    for h in horizons:
+        h_sel = configuration.get(str(h), configuration.get(h, {}))
+        fam = h_sel.get("selected_family", "har")
+        role = h_sel.get("selected_role", "development_baseline_candidate")
+        seed = h_sel.get("selected_seed", 41)
+        w_bytes = weights_by_horizon.get(h)
+
+        if w_bytes:
+            rel_w = f"weights_h{h}_{fam}.bin"
+            w_sha = hashlib.sha256(w_bytes).hexdigest()
+            weights_map[rel_w] = w_bytes
+        else:
+            rel_w = None
+            w_sha = None
+
+        cand = FrozenHorizonCandidate(
+            horizon=h,
+            family=fam,
+            role=role,
+            config=h_sel,
+            selected_seed=seed,
+            scaler_parameters=scalers_by_horizon.get(h, {}),
+            baseline_parameters=baseline_params_by_horizon.get(h, {}),
+            weights_relative_path=rel_w,
+            weights_sha256=w_sha,
+        )
+        frozen_horizons.append(cand)
+
+    pkg = FrozenCandidatePackageV10(
+        package_id=candidate_name,
+        protocol_id=protocol_version,
+        protocol_sha256="0" * 64,
+        git_sha=git_sha,
+        feature_schema_sha256=feature_schema_sha256,
+        panel_snapshot_sha256=panel_snapshot_sha256,
+        development_ledger_sha256=development_ledger_sha256,
+        created_at_utc=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        horizons=tuple(frozen_horizons),
+    )
+
+    out_dir = pkg.save_package_atomic(target_dir, weights_map=weights_map)
+    return out_dir, pkg

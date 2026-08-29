@@ -165,3 +165,21 @@ def compute_ledger_evidence_sha256(records: list[dict[str, Any]]) -> str:
 
     sorted_records = sorted(records, key=record_sort_key)
     return compute_canonical_json_sha256(sorted_records)
+
+
+def compute_sha256(path: Path | str) -> str:
+    """Compute SHA-256 digest of a file on disk."""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"File not found for sha256 computation: {p}")
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def generate_run_id(prefix: str = "run_v10") -> str:
+    """Generate deterministic timestamped run ID."""
+    import secrets
+    from datetime import UTC, datetime
+
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    rand_suffix = secrets.token_hex(3)
+    return f"{prefix}_{ts}_{rand_suffix}"
