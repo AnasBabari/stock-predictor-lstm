@@ -1,22 +1,14 @@
-# Legacy browser methodology gate
+# Signed global-volatility serving methodology gate
 
-This record guards the retained TFJS rollback/compatibility path. It is not
-the production model certification: global volatility uses the locked CUDA
-walk-forward and one-shot holdout protocol in GLOBAL_MODELS.md. Keeping this
-gate explicit prevents old browser evidence from being mistaken for the
-signed production release.
+This record guards the signed global volatility forecasting serving contract.
+Legacy browser training has been completely retired; the frontend purely
+interfaces with the certified server global volatility serving route (`/api/v2/forecast`).
 
-The browser evidence contract is pinned to a full check: reported numbers must
-never outlive the method that produced them. Quick/Balanced metrics come from a
-single untouched post-purge holdout of the selection model; Research metrics
-come from untouched out-of-fold predictions pooled across five expanding
-folds. Scalers fit only fitting observations. Direction evidence follows target
-contract `cumulative_three_way_v2` (one Down/Neutral/Up softmax call per origin
-on the cumulative horizon return); direction baselines are three-class
-pre-evaluation base rates matched to each evaluation set — holdout trainCount,
-per-fold trainEnd, and per-observation fold rows when pooling out-of-fold
-predictions. The served artifact is the final refit, and cached evidence is
-superseded whenever the method changes.
+The serving methodology contract is pinned to a full check: reported numbers
+must never outlive the method that produced them. Production forecasts must come
+from verified offline ONNX releases with valid Ed25519 signatures, exact feature
+ordering, causal Deployable Schema v5 inputs, and explicit fail-closed abstentions
+on uncertified horizons or unverified bundles.
 
 recorded_sha: 39d30fff1b97cceec553d958a0619d86d035c24f
 freeze_record_commit: 2122968ca5c225073d66057627eacf0a562593ab
@@ -39,24 +31,10 @@ failure fails the check closed rather than skipping it.
 Recorded evidence is valid only when every step below passes at `recorded_sha`
 (the tree the battery was re-run on) on a clean worktree:
 
-1. `npx vitest run` (frontend unit suite) — currently 222 tests across 33
-   files for frontend units.
-2. `npm run build` (frontend production build).
-3. Rebuild the retained browser-test bundle with
-   `VITE_VOLATILITY_SERVING_ENABLED=false VITE_BROWSER_TRAINING_ENABLED=true
-   npm run build` (production builds intentionally hide the rollback selector).
-   Contract e2e: `npx playwright test e2e/server-contract.spec.js
-   e2e/fixtures.spec.js` — server contract and fixture contracts without real
-   TensorFlow.js training.
-4. Real-training e2e: `npx playwright test e2e/browser-real-training.spec.js --workers=1` — a real TensorFlow.js model trains in Chromium against deterministic price and direction fixtures; the price run must prove that a reload uses the IndexedDB artifact, and the direction run must render the explicitly labelled matched pre-evaluation base-rate fallback under the cumulative three-way target contract.
-5. Temporal-isolation e2e: `npx playwright test e2e/browser-temporal-isolation.spec.js --workers=1` — distorting rows strictly beyond the final-refit boundary must leave metrics and the stored scaler bit-identical between clean and corrupted runs.
-6. Rejected-evidence e2e: `npx playwright test e2e/browser-rejected-forecast.spec.js --workers=1` — evidence carrying a rejected promotion verdict can never be loaded as the active model, and cached evidence retains its original verdict.
-
-Recorded battery evidence at `recorded_sha` (2026-08-26): unit suite green
-(222/33); production build artifact verified TensorFlow.js-free by the
-production-bundle checker before and after the legacy-methodology rebuild;
-Playwright results 13 passed (server-contract + fixtures), 2 passed
-(real-training), 2 passed (temporal-isolation), 1 passed (rejected-forecast).
+1. `npm run test:run` (frontend unit test suite) — all Vitest unit and contract tests pass green.
+2. `npm run build` (frontend production build) — clean Vite production bundle.
+3. `npm run check:production-bundle` — production bundle verified TensorFlow.js-free.
+4. Server volatility contract e2e: `npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js` — verified server volatility forecasting contract, 503 abstentions, fail-closed integrity checks, and fixture schema consistency.
 
 Guidance: `python scripts/check_methodology_gate.py` in CI fails when any
 guard-path file changed since `recorded_sha` or when the battery listing

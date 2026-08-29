@@ -1,12 +1,11 @@
-"""Fail CI when browser-methodology evidence is stale relative to its recorded full check.
+"""Fail CI when global-model serving methodology evidence is stale relative to its recorded full check.
 
-The browser evaluation methodology is a contract: metrics must come from
-untouched evaluation windows, scalers fitted only to fitting observations,
-direction baselines derived from pre-evaluation labels, and evidence reported
-per forecast day. Every methodology-affecting change invalidates the pinned
-evidence unless the full check battery (unit suite, build, contract e2e,
-real-training e2e, temporal-isolation e2e) is re-run and the record in
-docs/METHODOLOGY_GATE.md is updated with the new SHA.
+The serving methodology is a contract: global volatility forecasts must come from
+certified offline ONNX releases with verified Ed25519 signatures, exact feature order,
+causal Deployable Schema v5 inputs, and explicit fail-closed abstentions. Every
+methodology-affecting change invalidates the pinned evidence unless the full check
+battery (unit suite, build, TFJS-free bundle verification, and Playwright contract e2e)
+is re-run and the record in docs/METHODOLOGY_GATE.md is updated with the new SHA.
 
 Usage:
   python scripts/check_methodology_gate.py
@@ -26,24 +25,30 @@ GATE = ROOT / "docs" / "METHODOLOGY_GATE.md"
 # that own each artifact so evidence can never silently outlive its method.
 GUARDED = (
     "frontend/src/ml/",
-    "frontend/e2e/browser-real-training.spec.js",
-    "frontend/e2e/browser-temporal-isolation.spec.js",
-    "frontend/e2e/fixtures.js",
-    "frontend/src/components/",
+    "frontend/src/hooks/useForecast.js",
+    "frontend/src/components/ModelCard.jsx",
+    "frontend/src/components/MetricsCard.jsx",
+    "frontend/src/components/StockChart.jsx",
     "frontend/src/App.jsx",
+    "frontend/e2e/fixtures.js",
+    "frontend/e2e/fixtures.spec.js",
+    "frontend/e2e/server-contract.spec.js",
     "frontend/package.json",
     "frontend/package-lock.json",
     "frontend/playwright.config.js",
+    "backend/routes/forecasts.py",
+    "backend/routes/models.py",
+    "backend/services/volatility_forecast.py",
+    "backend/services/volatility_snapshot.py",
+    "backend/release/bundle.py",
 )
 
 REQUIRED_BATTERY = (
-    "npx vitest run",
+    "npm run test:run",
     "npm run build",
+    "npm run check:production-bundle",
     "server-contract.spec.js",
     "fixtures.spec.js",
-    "browser-real-training.spec.js",
-    "browser-temporal-isolation.spec.js",
-    "--workers=1",
 )
 
 

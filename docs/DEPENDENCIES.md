@@ -12,7 +12,7 @@ This inventory records a local baseline captured on 2026-07-28. It separates sec
 | `npm audit` (from `frontend/`) | Passed; 0 vulnerabilities across 291 installed packages |
 | Docker image scan | Not run; no image scanner is configured in CI |
 
-The raw command output was kept outside the repository during the review. The backend runtime dependency tree intentionally excludes TensorFlow; TensorFlow is available only through the opt-in `training` group for offline research. The frontend ships TensorFlow.js for browser-side training. `pip-audit` reported no advisory for the resolved environment.
+The raw command output was kept outside the repository during the review. The backend runtime dependency tree intentionally excludes TensorFlow; TensorFlow is available only through the opt-in `training` group for offline research. The frontend dependencies are pure React and Chart.js; TensorFlow.js has been completely retired. `pip-audit` reported no advisory for the resolved environment.
 
 ### Declaration change (2026-08-28)
 

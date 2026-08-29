@@ -1,140 +1,109 @@
 import { expect, test } from '@playwright/test';
-import { deterministicSnapshot, installStubBrowserWorker, serverForecastPayload } from './fixtures.js';
+import { volatilityForecastPayload } from './fixtures.js';
 
-// Contract spec for the hybrid/server-pretrained paths: server-pretrained
-// forecast when the server responds, browser training when it falls back, and
-// the trend->direction API mapping. The frontend defaults to browser_only
-// (never probing the server), so each test explicitly injects the training
-// mode it exercises. All server APIs are intercepted and the browser-training
-// worker is stubbed, so this runs anywhere in seconds without building TF.js
-// models.
-
-function mockApi(page, forecastHandler) {
-  const calls = { server: [], trainingData: 0, search: 0 };
+function mockVolatilityApi(page, forecastHandler) {
+  const calls = { forecast: [], search: 0, info: 0 };
   page.route('**/api/v1/search?query=*', (route) => {
     calls.search += 1;
     return route.fulfill({ json: [{ ticker: 'MSFT', name: 'Microsoft Corp.', type: 'Equity' }] });
   });
-  page.route('**/api/v1/info?ticker=MSFT', (route) =>
-    route.fulfill({ json: { longName: 'Microsoft Corp.', sector: 'Technology' } })
-  );
-  page.route('**/api/v1/training-data?ticker=MSFT', (route) => {
-    calls.trainingData += 1;
-    return route.fulfill({ json: deterministicSnapshot('MSFT') });
+  page.route('**/api/v1/info?ticker=MSFT', (route) => {
+    calls.info += 1;
+    return route.fulfill({ json: { longName: 'Microsoft Corp.', sector: 'Technology' } });
   });
-  page.route('**/api/v1/server-forecasts/**', (route) => {
-    calls.server.push(route.request().url());
+  page.route('**/api/v2/forecast?*', (route) => {
+    calls.forecast.push(route.request().url());
     return forecastHandler(route);
   });
-  page.route('**/api/v1/predict**', (route) =>
-    route.fulfill({ status: 503, json: { detail: 'baseline should not be used in fixtures' } })
-  );
   return calls;
 }
 
-async function prepare(page, calls, mode) {
-  await installStubBrowserWorker(page);
-  await page.addInitScript((value) => {
-    window.STOCKLSTM_TRAINING_MODE = value;
-  }, mode);
-  await page.goto('/');
-  await page.locator('#trainingProfile').selectOption('quick');
-  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
-  return calls;
-}
-
-test('server price forecast is used verbatim and browser training is skipped', async ({ page }) => {
+test('server volatility forecast is rendered with volatility cone and certification metrics', async ({ page }) => {
   test.setTimeout(30_000);
-  const calls = mockApi(page, (route) => route.fulfill({ json: serverForecastPayload('MSFT', 7) }));
-  await prepare(page, calls, 'hybrid');
-
-  await page.getByRole('button', { name: 'Predict', exact: true }).click();
-  await expect(page.getByText('Price Forecast Metrics')).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText(/server_pretrained|server-pretrained/i).first()).toBeVisible({ timeout: 15_000 });
-
-  expect(calls.server).toHaveLength(1);
-  expect(calls.server[0]).toContain('forecast_type=price');
-  // The server answered; the browser must never fetch training data or train.
-  expect(calls.trainingData).toBe(0);
-});
-
-test('server fallback (missing) sends the request to browser training', async ({ page }) => {
-  test.setTimeout(60_000);
-  const calls = mockApi(page, (route) =>
-    route.fulfill({ json: { available: false, reason: 'missing', fallback: 'browser_training' } })
+  const calls = mockVolatilityApi(page, (route) =>
+    route.fulfill({ json: volatilityForecastPayload('MSFT', 7) })
   );
-  await prepare(page, calls, 'hybrid');
-
+  await page.goto('/');
+  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
-  await expect(page.getByText('Price Forecast Metrics')).toBeVisible({ timeout: 150_000 });
-  expect(calls.trainingData).toBe(1);
+
+  await expect(page.locator('#metricsCard')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/VOLATILITY CERTIFIED|PROMOTED/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/Historical vs Volatility Cone/i)).toBeVisible({ timeout: 10_000 });
+
+  expect(calls.forecast).toHaveLength(1);
+  expect(calls.forecast[0]).toContain('ticker=MSFT');
+  expect(calls.forecast[0]).toContain('horizon=7');
 });
 
-test('server 503 (infrastructure, hybrid) degrades to browser training', async ({ page }) => {
-  test.setTimeout(60_000);
-  const calls = mockApi(page, (route) =>
+test('server 503 abstention surfaces truthful message and does not substitute a baseline', async ({ page }) => {
+  test.setTimeout(30_000);
+  const calls = mockVolatilityApi(page, (route) =>
     route.fulfill({
       status: 503,
       json: {
         detail: {
-          available: false,
-          code: 'registry_unavailable',
-          message: 'Server forecast infrastructure is unavailable.',
-          fallback: 'browser_training',
+          code: 'abstain_no_certified_model',
+          message: 'No certified global model is available yet.',
         },
       },
     })
   );
-  await prepare(page, calls, 'hybrid');
-
+  await page.goto('/');
+  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
-  await expect(page.getByText('Price Forecast Metrics')).toBeVisible({ timeout: 150_000 });
-  expect(calls.trainingData).toBe(1);
+
+  await expect(
+    page.getByText(/No certified global model is available yet|Forecasting is paused/i).first()
+  ).toBeVisible({ timeout: 15_000 });
+
+  expect(calls.forecast).toHaveLength(1);
 });
 
-test('server 503 without a browser fallback (server_pretrained) surfaces an error, never trains', async ({ page }) => {
-  test.setTimeout(60_000);
-  const calls = mockApi(page, (route) =>
+test('server integrity failure fails closed with error toast/message', async ({ page }) => {
+  test.setTimeout(30_000);
+  const calls = mockVolatilityApi(page, (route) =>
     route.fulfill({
       status: 503,
       json: {
         detail: {
-          available: false,
-          code: 'signature_verification_failed',
-          message: 'Server forecast bundle verification failed.',
-          fallback: null,
+          code: 'artifact_integrity_failure',
+          message: 'Release digest mismatch.',
         },
       },
     })
   );
-  await prepare(page, calls, 'server_pretrained');
-
+  await page.goto('/');
+  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
-  await expect(page.getByText(/bundle verification failed|Server forecast/i).first()).toBeVisible({
-    timeout: 15_000,
-  });
-  // Fail closed: the browser must NOT silently take over training.
-  expect(calls.trainingData).toBe(0);
+
+  await expect(
+    page.getByText(/certified forecast service is temporarily unavailable|integrity failure/i).first()
+  ).toBeVisible({ timeout: 15_000 });
+
+  expect(calls.forecast).toHaveLength(1);
 });
 
-test('UI trend request maps to API direction and lands in the browser trend path', async ({ page }) => {
-  test.setTimeout(180_000);
-  let requestedUrl = null;
-  const calls = mockApi(page, (route) => {
-    requestedUrl = route.request().url();
-    return route.fulfill({
-      json: { available: false, reason: 'unsupported_forecast_type', fallback: 'browser_training' },
-    });
-  });
-  await prepare(page, calls, 'hybrid');
-
-  const trendButton = page.getByRole('button', { name: 'Trend Forecast' });
-  await trendButton.click();
-  await expect(trendButton).toHaveAttribute('aria-pressed', 'true');
+test('uncertified horizon returns 503 and displays clean error without baseline fallback', async ({ page }) => {
+  test.setTimeout(30_000);
+  const calls = mockVolatilityApi(page, (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        detail: {
+          code: 'certified_horizon_unavailable',
+          message: 'The selected horizon is not certified.',
+        },
+      },
+    })
+  );
+  await page.goto('/');
+  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
 
-  await expect(page.getByText('Trend Forecast Metrics')).toBeVisible({ timeout: 150_000 });
-  // The wire contract is "direction"; the server response must not be a price forecast.
-  expect(requestedUrl).toContain('forecast_type=direction');
-  expect(calls.trainingData).toBe(1);
+  await expect(
+    page.getByText(/selected horizon is not certified/i).first()
+  ).toBeVisible({ timeout: 15_000 });
+
+  expect(calls.forecast).toHaveLength(1);
 });

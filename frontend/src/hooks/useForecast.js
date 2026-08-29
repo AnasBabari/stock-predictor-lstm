@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchServerPrediction } from '../ml/serverModelClient';
 import { fetchVolatilityForecast } from '../ml/volatilityClient';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
-const IS_TEST_MODE = import.meta.env.MODE === 'test' || import.meta.env.VITEST === true;
-export const VOLATILITY_SERVING_ENABLED =
-  import.meta.env.VITE_VOLATILITY_SERVING_ENABLED === 'true' ||
-  (!IS_TEST_MODE && import.meta.env.PROD && import.meta.env.VITE_VOLATILITY_SERVING_ENABLED !== 'false') ||
-  import.meta.env.VITE_VOLATILITY_SERVING_ENABLED !== 'false';
+
+export const VOLATILITY_SERVING_ENABLED = true;
 
 export const FORECAST_TYPES = {
   PRICE: 'price',
@@ -16,11 +12,8 @@ export const FORECAST_TYPES = {
 
 export const stageLabels = {
   queued: 'Preparing request…',
-  downloading_market_data: 'Downloading market data…',
   volatility_snapshot: 'Building causal market snapshot…',
   volatility_inference: 'Running signed global volatility model…',
-  checking_server: 'Checking server model status…',
-  server_model_loaded: 'Loaded server model.',
   completed: 'Forecast ready.',
   failed: 'Forecast could not be completed.',
 };
@@ -157,62 +150,28 @@ export function useForecast({ addToast, onNewTickerSearched }) {
     return abortActiveRequest;
   }, [abortActiveRequest]);
 
-  const fetchServerBaseline = useCallback(async (symbol, days, type, signal, cause) => {
-    const endpoint = type === FORECAST_TYPES.TREND ? '/api/v1/predict/direction' : '/api/v1/predict';
-    const response = await fetch(`${API_BASE}${endpoint}?ticker=${encodeURIComponent(symbol)}&days=${days}`, { signal });
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || `Prediction failed (${response.status})`);
-    }
-    const data = await response.json();
-    data.metadata = {
-      ...(data.metadata || {}),
-      browser_training: false,
-      browser_training_error: cause instanceof Error ? cause.message : 'unavailable',
-      engine: {
-        ...(data.metadata?.engine || {}),
-        role: 'baseline_fallback',
-        baseline_fallback: true,
-      },
-    };
-    return data;
-  }, []);
-
   const fetchPredictionData = useCallback(
     async (symbol, days, type, signal, onProgress) => {
       const horizonRequest = normalizeHorizonRequest(days);
       const explicitDays = horizonRequest.requested_horizon;
-      if (VOLATILITY_SERVING_ENABLED) {
-        if (type !== FORECAST_TYPES.PRICE) {
-          throw new Error(
-            'Certified global serving currently provides volatility forecasts only; direction forecasts are not certified.',
-          );
-        }
-        if (explicitDays == null) {
-          throw new Error(
-            'Certified volatility serving requires an explicit forecast horizon.',
-          );
-        }
-        onProgress?.({ stage: 'volatility_snapshot' });
-        const volatilityResult = await fetchVolatilityForecast(symbol, explicitDays, signal, {
-          baseUrl: API_BASE,
-        });
-        onProgress?.({ stage: 'volatility_inference' });
-        return volatilityResult;
+      if (type !== FORECAST_TYPES.PRICE) {
+        throw new Error(
+          'Certified global serving currently provides volatility forecasts only; direction forecasts are not certified.',
+        );
       }
-
-      if (horizonRequest.horizon_mode === 'explicit') {
-        onProgress?.({ stage: 'checking_server', message: 'Checking for server-pretrained models...' });
-        const serverPrediction = await fetchServerPrediction(symbol, explicitDays, type, signal);
-        if (serverPrediction) {
-          onProgress?.({ stage: 'server_model_loaded', message: 'Loaded server-pretrained model.' });
-          return serverPrediction;
-        }
+      if (explicitDays == null) {
+        throw new Error(
+          'Certified volatility serving requires an explicit forecast horizon.',
+        );
       }
-
-      return fetchServerBaseline(symbol, explicitDays || 7, type, signal, new Error('Browser training is retired.'));
+      onProgress?.({ stage: 'volatility_snapshot' });
+      const volatilityResult = await fetchVolatilityForecast(symbol, explicitDays, signal, {
+        baseUrl: API_BASE,
+      });
+      onProgress?.({ stage: 'volatility_inference' });
+      return volatilityResult;
     },
-    [fetchServerBaseline]
+    []
   );
 
   const fetchStockInfo = useCallback(

@@ -71,7 +71,7 @@ The response cache is bounded and keyed by \`(signed_model_id, ticker, horizon)\
 
 The legacy \`/api/v1/predict\` routes are persistence/base-rate compatibility endpoints with \`server_disabled_fallback\` metadata. They never train. Trusted proxy addresses are exact configured peers/CIDRs; forwarded headers are replaced at Nginx. CORS is explicit, errors are sanitized, and no user identifiers or model weights are sent to Render.
 
-The source tree temporarily retains the old TFJS methodology harness, but Vite includes it only when the explicit legacy test build sets `VITE_VOLATILITY_SERVING_ENABLED=false` and `VITE_BROWSER_TRAINING_ENABLED=true`. Normal Vercel production builds compile that path out, and `npm run check:production-bundle` rejects emitted training-worker or TFJS artifacts. Production must not advertise browser-trained learned forecasts. Final source deletion must remove its dependencies, profile selector, worker tests, and methodology gate together in one reviewed boundary.
+Legacy browser training has been completely retired. The frontend purely interfaces with the verified server global volatility forecasting contract (`GET /api/v2/forecast`), and CI validates that the production bundle is TFJS-free. Production never advertises or performs browser-trained forecasts.
 
 ## Deployment gate
 

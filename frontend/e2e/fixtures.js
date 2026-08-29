@@ -158,7 +158,7 @@ export function deterministicSnapshot(ticker = 'MSFT') {
   };
 }
 
-export function serverForecastPayload(ticker = 'MSFT', days = 7, origin = '2026-08-05') {
+export function volatilityForecastPayload(ticker = 'MSFT', days = 7, origin = '2026-08-05') {
   const historyLength = 120;
   const originDate = new Date(`${origin}T00:00:00Z`);
   const originIndex = 479;
@@ -168,179 +168,54 @@ export function serverForecastPayload(ticker = 'MSFT', days = 7, origin = '2026-
     d.setUTCDate(d.getUTCDate() + offset);
     return d.toISOString().slice(0, 10);
   };
+  const futureDates = Array.from({ length: days }, (_, index) => toIso(index + 1));
+  const historicalDates = Array.from({ length: historyLength }, (_, index) => toIso(index - historyLength + 1));
+  const historicalPrices = Array.from({ length: historyLength }, (_, index) =>
+    lastClose * (1 - 0.0025 * (historyLength - 1 - index))
+  );
+
+  const priceQuantiles = {
+    p05: futureDates.map((_, i) => lastClose * (1 - 0.015 * Math.sqrt(i + 1))),
+    p10: futureDates.map((_, i) => lastClose * (1 - 0.012 * Math.sqrt(i + 1))),
+    p25: futureDates.map((_, i) => lastClose * (1 - 0.006 * Math.sqrt(i + 1))),
+    p50: futureDates.map(() => lastClose),
+    p75: futureDates.map((_, i) => lastClose * (1 + 0.006 * Math.sqrt(i + 1))),
+    p90: futureDates.map((_, i) => lastClose * (1 + 0.012 * Math.sqrt(i + 1))),
+    p95: futureDates.map((_, i) => lastClose * (1 + 0.015 * Math.sqrt(i + 1))),
+  };
+
   return {
-    available: true,
     ticker,
-    forecast_days: days,
-    future_dates: Array.from({ length: days }, (_, index) => toIso(index + 1)),
-    predicted_prices: Array.from({ length: days }, (_, index) => lastClose * (1 + 0.004 * (index + 1))),
-    historical_dates: Array.from({ length: historyLength }, (_, index) => toIso(index - historyLength + 1)),
-    historical_prices: Array.from({ length: historyLength }, (_, index) =>
-      lastClose * (1 - 0.0025 * (historyLength - 1 - index))
-    ),
-    metrics: {
-      metric_source: 'server_purged_walk_forward',
-      metric_scope: 'forecast_origin_horizon_pairs',
-      family: 'elastic_net',
-      target_mode: 'cumulative_log_return_v1',
-      horizon: days,
-      mae: 0.004,
-      mse: 0.00003,
-      rmse: 0.0055,
-      mape: 0.005,
-      r2: 0.97,
-      relative_mae: 0.45,
-      relative_rmse: 0.4,
-      directional_accuracy: 0.6,
-      per_horizon: Array.from({ length: days }, (_, index) => ({
-        horizon: index + 1,
-        rows: 160,
-        mae: 0.004,
-        rmse: 0.0055,
-        relative_mae: 0.45,
-        relative_rmse: 0.4,
-        directional_accuracy: 0.6,
-      })),
-      evaluation_rows: 160,
+    horizon: days,
+    current_price: lastClose,
+    historical_dates: historicalDates,
+    historical_prices: historicalPrices,
+    forecast: {
+      future_dates: futureDates,
+      expected_annualized_volatility: 0.22,
+      price_quantiles: priceQuantiles,
     },
-    metadata: {
-      engine: {
-        role: 'server_pretrained',
-        family: 'elastic_net',
-        version_id: `${ticker}-price-20260805T120000Z-0123456789ab-0000abcd`,
+    evidence: {
+      certified: true,
+      certified_heads: { volatility: true },
+      metric_source: 'locked_purged_walk_forward',
+      model_id: 'v8_tcn_global_ensemble_v1',
+      snapshot_id: `${ticker}-causal-snapshot-v5`,
+      feature_count: 26,
+      horizon_certification: {
+        [String(days)]: {
+          relative_qlike: 0.92,
+          ratio_upper_95: 0.98,
+          dm_p_value: 0.012,
+          coverage_80: 0.81,
+          coverage_95: 0.96,
+          evaluation_rows: 160,
+        },
       },
-      metric_source: 'server_purged_walk_forward',
-      browser_training: false,
-      trained_at: `${origin}T12:00:00Z`,
-      origin: { date: origin, close: lastClose },
-      authenticity: 'ed25519_verified',
     },
   };
 }
 
-/**
- * Replaces the browser-training Web Worker with a deterministic stub so e2e
- * contract tests never build a real TF.js model (slow, non-deterministic).
- * The stub answers every `forecast` message with a canned canonical result
- * after a microtask, so the app's browser path renders exactly as if training
- * had run. Real-training coverage lives in browser-real-training.spec.js.
- */
-export function installStubBrowserWorker(page) {
-  return page.addInitScript(() => {
-    if (globalThis.__STOCKLSTM_WORKER_FACTORY__) return;
-    globalThis.__STOCKLSTM_WORKER_FACTORY__ = () => {
-      const fake = {};
-      fake.postMessage = (msg) => {
-        if (!msg || typeof msg.type !== 'string') return;
-        if (msg.type === 'forecast') {
-          const { id, snapshot, forecastType, days, profile } = msg;
-          const last = snapshot.historical_prices?.[snapshot.historical_prices.length - 1] ?? 100;
-          const count = Number(days) || 7;
-          const predictedPrices = Array.from(
-            { length: count },
-            (_, i) => last * (1 + 0.005 * (i + 1))
-          );
-          const isTrend = forecastType === 'trend';
-          const result = isTrend
-            ? {
-                direction_horizon_days: count,
-                direction: 'Up',
-                direction_probabilities: [0.15, 0.25, 0.6],
-                model_direction_probabilities: [0.15, 0.25, 0.6],
-                base_rate_direction_probabilities: [0.33, 0.33, 0.34],
-                forecast_status: { state: 'promoted', decision: 'model', label: 'Promoted' },
-                metrics: {
-                  metric_source: 'browser_purged_holdout',
-                  brier_skill: 0.12,
-                  log_loss: 0.85,
-                  macro_f1: 0.62,
-                  macro_balanced_accuracy: 0.65,
-                  expected_calibration_error: 0.04,
-                  baseline_probabilities: [0.33, 0.33, 0.34],
-                },
-                trainingProfile: profile,
-                cacheStatus: 'miss',
-                backend: 'stub',
-                executionMode: 'trained',
-                modelVersion: 'tfjs-return-lstm-v4',
-                architectureVersion: 'v4',
-                targetMode: 'cumulative_three_way_v2',
-                trainingDurationMs: 1,
-                selectedEpochs: 1,
-                completedEpochs: 1,
-                tfjsVersion: 'stub',
-                storageStatus: 'none',
-                evaluation: {},
-                promotion: { promoted: true },
-                horizon: count,
-                forecastType,
-              }
-            : {
-                predictedPrices,
-                learnedPrices: predictedPrices,
-                metrics: {
-                  metric_source: 'browser_purged_holdout',
-                  mae: 0.02,
-                  rmse: 0.03,
-                  relative_mae: 0.85,
-                  relative_rmse: 0.82,
-                  per_horizon: Array.from({ length: count }, (_, i) => ({
-                    horizon: i + 1,
-                    mae: 0.02,
-                    rmse: 0.03,
-                    relative_rmse: 0.82,
-                    directional_accuracy: 0.6,
-                    rows: 100,
-                  })),
-                },
-                trainingProfile: profile,
-                cacheStatus: 'miss',
-                backend: 'stub',
-                executionMode: 'trained',
-                modelVersion: 'tfjs-return-lstm-v4',
-                architectureVersion: 'v4',
-                targetMode: 'returns',
-                trainingDurationMs: 1,
-                selectedEpochs: 1,
-                completedEpochs: 1,
-                tfjsVersion: 'stub',
-                storageStatus: 'none',
-                evaluation: {},
-                promotion: { promoted: true },
-                horizon: snapshot.output_width,
-                forecastType,
-              };
-          setTimeout(() => fake.onmessage?.({ data: { id, type: 'complete', result } }), 0);
-        } else if (msg.type === 'clear-cache') {
-          setTimeout(
-            () => fake.onmessage?.({ data: { id: msg.id, type: 'complete', result: { cleared: true } } }),
-            0
-          );
-        }
-      };
-      fake.terminate = () => {};
-      return fake;
-    };
-  });
-}
-
-// Unlearnable fixture: identical causal feature waves to the learnable one,
-// but the close path is a seeded random walk. No architecture can beat
-// persistence on it, so the trained model must fail promotion — exercising
-// the fallback-labelling contract end to end.
-export function rejectedForecastSnapshot(ticker = 'IGC') {
-  const snapshot = deterministicSnapshot(ticker);
-  const total = snapshot.historical_prices.length;
-  const split = Math.floor(total * 0.8);
-  const prices = [snapshot.historical_prices[0]];
-  for (let i = 1; i < total; i += 1) {
-    if (i < split) {
-      // Training regime: upward drift
-      prices.push(prices[i - 1] * 1.005);
-    } else {
-      // Holdout regime: severe adverse drop (model trained on upward drift will severely miss)
-      prices.push(prices[i - 1] * 0.96);
-    }
-  }
-  return { ...snapshot, ticker, historical_prices: prices };
+export function serverForecastPayload(ticker = 'MSFT', days = 7, origin = '2026-08-05') {
+  return volatilityForecastPayload(ticker, days, origin);
 }

@@ -45,13 +45,9 @@ export default function ModelCard({ data: stockData }) {
           'Model state',
           metadata.engine?.execution_mode === 'server_artifact_loaded'
             ? 'Signed server artifact loaded'
-            : metadata.engine?.execution_mode === 'browser_artifact_loaded'
-            ? 'Cached on this device'
-            : metadata.engine?.execution_mode === 'browser_trained'
-              ? 'Trained in this browser'
-              : metadata.engine?.execution_mode === 'rejected_evidence_cache'
-                ? 'Rejected evidence cache (diagnostics only)'
-                : metadata.engine?.cache_status || 'Not reported'
+            : metadata.engine?.role === 'baseline_fallback'
+              ? 'Explicit baseline fallback'
+              : metadata.engine?.cache_status || 'Signed server evaluation'
         )}
         {row('Feature count', String(metadata.feature_count ?? '?'))}
         {row('Schema version', `${metadata.schema_version ?? '?'}`)}

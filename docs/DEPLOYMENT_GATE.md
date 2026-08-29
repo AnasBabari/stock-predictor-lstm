@@ -11,7 +11,7 @@ Render service:
 - Set `PREVIEW_CORS_ORIGIN_REGEX` only for preview services, for example `https://[a-z0-9-]+\.vercel\.app`.
 - Set `VITE_VOLATILITY_SERVING_ENABLED=true` on the Vercel production project.
 - Keep the repository-pinned `VOLATILITY_PUBLIC_KEY_PATH` on Render. Set `VOLATILITY_SERVING_REQUIRED=true` only after certification passes. For Render's ephemeral free filesystem, publish the deterministic ZIP produced by `scripts/package_volatility_release.py` at an immutable HTTPS URL and set the paired `VOLATILITY_RELEASE_ARCHIVE_URL` and `VOLATILITY_RELEASE_ARCHIVE_SHA256`. Disk-backed deployments may use `VOLATILITY_RELEASE_DIR` instead.
-- Keep `SERVER_MODELS_ENABLED=false` and `VITE_BROWSER_TRAINING_ENABLED=false` in production. Browser TFJS is a rollback/migration path, not the production learned-model contract.
+- Keep `SERVER_MODELS_ENABLED=false` in production. Browser training is retired; production accepts only verified global volatility serving.
 
 GitHub variables/secrets used by deployment-gate workflows:
 

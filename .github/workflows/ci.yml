@@ -59,12 +59,12 @@ jobs:
           percent = coverage["totals"]["percent_covered"]
           summary = os.environ["GITHUB_STEP_SUMMARY"]
           with open(summary, "a", encoding="utf-8") as handle:
-              handle.write("## Backend test evidence\\n\\n")
-              handle.write(f"- Tests: {tests} (passed {tests - failures - errors - skipped}, failed {failures}, errors {errors}, skipped {skipped})\\n")
-              handle.write(f"- Coverage: {percent:.2f}%\\n")
-              handle.write(f"- Python: {sys.version.split()[0]}\\n")
-              handle.write(f"- Commit: {os.environ.get('GITHUB_SHA', 'unknown')}\\n")
-              handle.write(f"- Generated: {datetime.now(timezone.utc).isoformat()}\\n")
+              handle.write("## Backend test evidence\n\n")
+              handle.write(f"- Tests: {tests} (passed {tests - failures - errors - skipped}, failed {failures}, errors {errors}, skipped {skipped})\n")
+              handle.write(f"- Coverage: {percent:.2f}%\n")
+              handle.write(f"- Python: {sys.version.split()[0]}\n")
+              handle.write(f"- Commit: {os.environ.get('GITHUB_SHA', 'unknown')}\n")
+              handle.write(f"- Generated: {datetime.now(timezone.utc).isoformat()}\n")
           PY
 
   frontend-unit-build:
@@ -97,15 +97,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
         working-directory: frontend
-      - name: Build browser-contract bundle
-        env:
-          # Contract and real-training specs exercise the retained TFJS
-          # rollback path. Production builds intentionally hide this path.
-          VITE_VOLATILITY_SERVING_ENABLED: "false"
-          VITE_BROWSER_TRAINING_ENABLED: "true"
+      - name: Build frontend bundle
         run: npm run build
         working-directory: frontend
-      - name: Browser contract tests (server path + stub worker, no real TF.js training)
+      - name: Server volatility contract tests
         run: |
           npx playwright install --with-deps chromium
           npx playwright test e2e/server-contract.spec.js e2e/fixtures.spec.js
@@ -174,4 +169,3 @@ jobs:
         run: docker compose logs --no-color
       - if: always()
         run: docker compose down --volumes
-

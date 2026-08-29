@@ -73,7 +73,6 @@ def requirement_names(path: Path) -> set[str]:
 
 
 CI = ROOT / ".github" / "workflows" / "ci.yml"
-REAL_TRAINING = ROOT / ".github" / "workflows" / "frontend-real-training-e2e.yml"
 
 if CI.exists():
     ci_jobs = job_blocks(CI.read_text(encoding="utf-8"))
@@ -91,10 +90,8 @@ if CI.exists():
 
     if not contract_e2e:
         errors.append("ci.yml must define a frontend-contract-e2e job.")
-    elif "server-contract.spec.js" not in contract_e2e:
-        errors.append("frontend-contract-e2e job must run the server-contract spec.")
-    elif "browser-real-training.spec.js" in contract_e2e:
-        errors.append("frontend-contract-e2e must never run the real-training spec.")
+    elif "server-contract.spec.js" not in contract_e2e or "fixtures.spec.js" not in contract_e2e:
+        errors.append("frontend-contract-e2e job must run the server-contract and fixtures specs.")
 
     if "scripts/check_methodology_gate.py" not in policy:
         errors.append("policy job must run the methodology gate.")
@@ -112,21 +109,6 @@ if CI.exists():
         )
 else:
     errors.append("ci.yml is missing.")
-
-if not REAL_TRAINING.exists():
-    errors.append("frontend-real-training-e2e.yml is missing.")
-else:
-    real_training = REAL_TRAINING.read_text(encoding="utf-8")
-    for required in (
-        "workflow_dispatch:",
-        "schedule:",
-        "timeout-minutes:",
-        "browser-real-training.spec.js",
-        "--workers=1",
-        "actions/upload-artifact@",
-    ):
-        if required not in real_training:
-            errors.append(f"frontend-real-training-e2e.yml must include {required!r}.")
 
 project = tomllib.loads((ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8"))
 runtime_names = {

@@ -97,16 +97,18 @@ test('snapshot rows are non-constant and fully deterministic', () => {
   expect(first.features[0]).not.toEqual(first.features[1]);
 });
 
-test('server forecast payload keeps strictly increasing dates and positive prices', () => {
+test('server forecast payload keeps strictly increasing dates and valid volatility cone', () => {
   const payload = serverForecastPayload('MSFT', 7);
-  expect(payload.forecast_days).toBe(7);
-  expect(payload.future_dates).toHaveLength(7);
-  expect(payload.predicted_prices).toHaveLength(7);
-  expect(isStrictlyIncreasing(payload.future_dates)).toBe(true);
+  expect(payload.horizon).toBe(7);
+  expect(payload.forecast.future_dates).toHaveLength(7);
+  expect(isStrictlyIncreasing(payload.forecast.future_dates)).toBe(true);
   expect(isStrictlyIncreasing(payload.historical_dates)).toBe(true);
   const finalHistorical = new Date(`${payload.historical_dates[payload.historical_dates.length - 1]}T00:00:00Z`);
-  expect(new Date(`${payload.future_dates[0]}T00:00:00Z`).getTime()).toBeGreaterThan(finalHistorical.getTime());
-  expect(payload.predicted_prices.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
+  expect(new Date(`${payload.forecast.future_dates[0]}T00:00:00Z`).getTime()).toBeGreaterThan(finalHistorical.getTime());
+  expect(payload.forecast.price_quantiles).toBeDefined();
+  expect(payload.forecast.price_quantiles.p50).toHaveLength(7);
+  expect(payload.forecast.price_quantiles.p05.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
+  expect(payload.forecast.price_quantiles.p95.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
   expect(payload.historical_prices.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
 });
 

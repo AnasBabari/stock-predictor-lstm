@@ -119,7 +119,7 @@ def test_stale_guarded_paths_are_reported():
     errors = GATE.validate(
         _record_text(),
         run_git=_make_git(
-            head_diff="frontend/src/ml/trainingWorker.js\nREADME.md\n",
+            head_diff="frontend/src/ml/volatilityClient.js\nREADME.md\n",
         ),
     )
     assert any("methodology evidence is stale" in error for error in errors)
@@ -137,7 +137,7 @@ def test_freeze_on_sibling_branch_fails():
 def test_freeze_commit_must_touch_the_gate_document():
     errors = GATE.validate(
         _record_text(),
-        run_git=_make_git(freeze_diff="frontend/src/ml/trainingWorker.js\n"),
+        run_git=_make_git(freeze_diff="frontend/src/ml/volatilityClient.js\n"),
     )
     assert any("did not modify docs/METHODOLOGY_GATE.md" in error for error in errors)
 
