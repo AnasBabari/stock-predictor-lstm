@@ -15,8 +15,7 @@ from typing import Literal
 
 import numpy as np
 
-from .contracts import VolatilityForecastProtocol
-from .model import VolatilityLossWeights
+from .contracts import VolatilityForecastProtocol, VolatilityLossWeights
 
 PROSPECTIVE_PROTOCOL_VERSION = "global-volatility-distribution-v7-prospective"
 PROSPECTIVE_ARCHITECTURE_VERSION = "baseline-residual-tcn-v3-objective-selection"

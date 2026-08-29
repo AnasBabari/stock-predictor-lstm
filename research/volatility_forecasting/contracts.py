@@ -9,12 +9,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
 
 VOLATILITY_PROTOCOL_VERSION = "global-volatility-distribution-v6"
 MODEL_ARCHITECTURE_VERSION = "baseline-residual-tcn-v2"
 TARGET_VERSION = "future-rv-total-v1"
 DEFAULT_HORIZONS = (1, 3, 5, 7, 14, 30)
+
+
+@dataclass(frozen=True)
+class VolatilityLossWeights:
+    qlike: float = 0.60
+    variance_crps: float = 0.25
+    return_location: float = 0.05
+    direction: float = 0.05
+    baseline_regularization: float = 0.05
+
+    def __post_init__(self) -> None:
+        values = (
+            self.qlike,
+            self.variance_crps,
+            self.return_location,
+            self.direction,
+            self.baseline_regularization,
+        )
+        if any(value < 0 for value in values) or not np.isclose(sum(values), 1.0):
+            raise ValueError("loss weights must be non-negative and sum to one")
 
 
 @dataclass(frozen=True)

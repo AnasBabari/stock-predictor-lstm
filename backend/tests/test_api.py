@@ -288,15 +288,15 @@ def test_openapi_contains_public_routes_and_horizon_constraints():
     assert days["schema"]["maximum"] == MAX_FORECAST_DAYS
 
 
-def test_model_performance_discloses_global_volatility_engine():
+def test_model_performance_discloses_unconfigured_state():
     response = client.get("/api/v1/model-performance/AAPL")
     assert response.status_code == 200
     body = response.json()
-    assert body["engine"]["family"] == "baseline_residual_tcn_ensemble"
-    assert body["engine"]["role"] == "global_volatility"
+    assert body["engine"]["family"] is None
+    assert body["engine"]["role"] == "not_certified"
     assert body["engine"]["status"] == "unconfigured"
-    assert body["metrics"]["metric_source"] == "locked_purged_walk_forward"
-    assert body["benchmark"]["validation_folds"] == 5
+    assert body["metrics"]["metric_source"] == "not_certified"
+    assert body["benchmark"]["validation_folds"] is None
 
 
 def test_forecast_openapi_declares_shared_telemetry_contract():
@@ -761,11 +761,15 @@ def test_models_advertises_signed_global_volatility_and_disabled_browser_trainin
         "training_mode": "browser_only",
     }
     assert body["global_volatility"]["endpoint"] == "/api/v2/forecast"
-    assert body["global_volatility"]["certified_heads"]["volatility"] is True
+    assert body["global_volatility"]["model_family"] is None
+    assert body["global_volatility"]["certified_heads"]["volatility"] is False
     assert body["global_volatility"]["certified_heads"]["direction"] is False
+    assert body["global_volatility"]["metric_source"] is None
     assert body["browser_training"]["status"] == "disabled"
     assert body["model_storage"]["location"] == "none"
-    assert body["availability"]["price"]["status"] == "conditional_volatility_only"
+    assert body["availability"]["price"]["status"] == "unconfigured_abstaining"
+    assert body["availability"]["price"]["engine"] is None
+    assert body["availability"]["price"]["tickers"] == []
 
 
 def test_training_data_route_returns_validated_snapshot(monkeypatch):

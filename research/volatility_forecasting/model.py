@@ -18,6 +18,8 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
+from .contracts import VolatilityLossWeights
+
 
 @dataclass(frozen=True)
 class BaselineResidualTCNConfig:
@@ -78,26 +80,6 @@ class BaselineResidualTCNConfig:
 
 
 BaselineResidualLSTMConfig = BaselineResidualTCNConfig
-
-
-@dataclass(frozen=True)
-class VolatilityLossWeights:
-    qlike: float = 0.60
-    variance_crps: float = 0.25
-    return_location: float = 0.05
-    direction: float = 0.05
-    baseline_regularization: float = 0.05
-
-    def __post_init__(self) -> None:
-        values = (
-            self.qlike,
-            self.variance_crps,
-            self.return_location,
-            self.direction,
-            self.baseline_regularization,
-        )
-        if any(value < 0 for value in values) or not np.isclose(sum(values), 1.0):
-            raise ValueError("loss weights must be non-negative and sum to one")
 
 
 @dataclass(frozen=True)

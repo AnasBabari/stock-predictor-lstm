@@ -70,16 +70,22 @@ def list_models():
             "model_id": release.get("model_id"),
             "model_version": release.get("model_version"),
             "certified_horizons": release.get("certified_horizons", []),
-            "model_family": "baseline_residual_tcn_ensemble",
+            "model_family": release.get("model_family") if release_configured else None,
             "endpoint": "/api/v2/forecast",
             "horizons": [1, 3, 5, 7, 14, 30],
-            "certified_heads": {
-                "volatility": True,
-                "return_distribution": False,
-                "direction": False,
-            },
-            "metric_source": release.get("metric_source", "locked_purged_walk_forward"),
-            "certification_scope": release.get("certification_scope", "prospective_walk_forward"),
+            "certified_heads": (
+                release.get("certified_heads")
+                if release_configured
+                else {
+                    "volatility": False,
+                    "return_distribution": False,
+                    "direction": False,
+                }
+            ),
+            "metric_source": release.get("metric_source") if release_configured else None,
+            "certification_scope": release.get("certification_scope")
+            if release_configured
+            else None,
             "news_status": release.get("news_status", "not_certified"),
             "training": "offline RTX workstation",
         },
@@ -96,9 +102,9 @@ def list_models():
         },
         "availability": {
             "price": {
-                "status": "conditional_volatility_only",
-                "engine": "baseline_residual_tcn_ensemble",
-                "tickers": "global",
+                "status": "ready" if release_configured else "unconfigured_abstaining",
+                "engine": release.get("model_family") if release_configured else None,
+                "tickers": release.get("supported_tickers", []) if release_configured else [],
             },
             "direction": {
                 "status": "not_certified",
@@ -172,31 +178,46 @@ def model_performance(
     from routes.volatility_v2 import volatility_release_readiness
 
     release = volatility_release_readiness()
+    release_configured = release["status"] == "ready"
     is_volatility = forecast_type == "price"
     return {
         "ticker": ticker,
         "forecast_type": forecast_type,
         "engine": {
-            "family": "baseline_residual_tcn_ensemble" if is_volatility else None,
-            "role": "global_volatility" if is_volatility else "not_certified",
+            "family": release.get("model_family")
+            if (release_configured and is_volatility)
+            else None,
+            "role": "global_volatility"
+            if (release_configured and is_volatility)
+            else "not_certified",
             "baseline_fallback": False,
-            "artifact_version": release.get("model_id"),
+            "artifact_version": release.get("model_id") if release_configured else None,
             "status": release["status"] if is_volatility else "not_certified",
-            "certified_head": "volatility" if is_volatility else None,
+            "certified_head": "volatility" if (release_configured and is_volatility) else None,
         },
         "metrics": {
-            "metric_source": "locked_purged_walk_forward" if is_volatility else "not_certified",
+            "metric_source": release.get("metric_source")
+            if (release_configured and is_volatility)
+            else "not_certified",
             "detail": (
                 "QLIKE and coverage describe the locked offline volatility evaluation."
+                if (release_configured and is_volatility)
+                else "No certified volatility model is loaded; requests abstain."
                 if is_volatility
                 else "No direction model is certified for production."
             ),
         },
         "benchmark": {
             "snapshot": None,
-            "validation_method": "purged_walk_forward" if is_volatility else None,
-            "validation_folds": 5 if is_volatility else None,
-            "metric_source": "locked_purged_walk_forward" if is_volatility else "not_certified",
-            "certified_horizons": release.get("certified_horizons", []) if is_volatility else [],
+            "validation_method": "purged_walk_forward"
+            if (release_configured and is_volatility)
+            else None,
+            "validation_folds": 5 if (release_configured and is_volatility) else None,
+            "metric_source": release.get("metric_source")
+            if (release_configured and is_volatility)
+            else "not_certified",
+            "certified_horizons": release.get("certified_horizons", [])
+            if (release_configured and is_volatility)
+            else [],
         },
     }
