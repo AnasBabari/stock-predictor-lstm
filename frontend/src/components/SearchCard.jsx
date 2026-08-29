@@ -7,13 +7,11 @@ export default function SearchCard({
   forecastDays,
   setForecastDays,
   forecastType,
-  trainingProfile,
-  setTrainingProfile,
   onForecastTypeChange,
   onPredict,
   isLoading,
   apiBase,
-  volatilityServingEnabled = false,
+  volatilityServingEnabled = true,
 }) {
   const [suggestions, setSuggestions] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -219,23 +217,6 @@ export default function SearchCard({
             <option value={30}>30 days</option>
           </select>
         </div>
-
-        {!volatilityServingEnabled && <div className="forecast-selector quality-selector">
-          <label htmlFor="trainingProfile" className="sr-only">
-            Browser training quality
-          </label>
-          <select
-            id="trainingProfile"
-            title="Browser training quality"
-            value={trainingProfile}
-            onChange={(event) => setTrainingProfile(event.target.value)}
-            disabled={isLoading}
-          >
-            <option value="quick">Quick · fastest</option>
-            <option value="balanced">Balanced · recommended</option>
-            <option value="research">Research · 5-fold</option>
-          </select>
-        </div>}
 
         <button
           type="button"

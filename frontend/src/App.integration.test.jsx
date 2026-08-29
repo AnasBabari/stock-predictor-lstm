@@ -3,51 +3,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
-const browserTrainingState = vi.hoisted(() => ({ defer: false, resolve: null, reject: null, signal: null }));
-
-vi.mock('./ml/browserTrainingClient', () => ({
-  browserTrainingSupported: vi.fn(() => true),
-  clearBrowserModelCache: vi.fn(() => Promise.resolve()),
-  trainBrowserForecast: vi.fn(({ forecastType, days, signal, onProgress }) => {
-    const horizonCount = typeof days === 'number' && days > 0 ? days : 7;
-    browserTrainingState.signal = signal;
-    onProgress?.({ stage: 'training', message: 'Training epoch 4 of 12…' });
-    const result = forecastType === 'trend'
-      ? {
-          direction_horizon_days: horizonCount,
-          direction: 'Up',
-          direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 },
-          model_direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 },
-          persistence_direction_probabilities: { down: 0.2, neutral: 0.6, up: 0.2 },
-          forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Promoted' },
-          validation: { state: 'promoted', promoted: true, selected_horizon: horizonCount },
-          promotion: { promoted: true },
-          metrics: { metric_source: 'browser_purged_holdout', macro_balanced_accuracy: 0.6 },
-          cacheStatus: 'stored',
-          backend: 'cpu',
-          executionMode: 'browser_trained',
-        }
-      : {
-          predictedPrices: Array.from({ length: horizonCount }, (_, index) => 405 + index),
-          learnedPrices: Array.from({ length: horizonCount }, (_, index) => 405 + index),
-          persistence_forecast: Array.from({ length: horizonCount }, () => 400),
-          forecast_status: { state: 'promoted', decision: 'model', alpha: 1, label: 'Promoted' },
-          validation: { state: 'promoted', promoted: true, selected_horizon: horizonCount },
-          promotion: { promoted: true },
-          metrics: { metric_source: 'browser_purged_holdout', rmse: 1.2, mae: 0.8, relative_rmse: 0.95, relative_mae: 0.95 },
-          cacheStatus: 'stored',
-          backend: 'cpu',
-          executionMode: 'browser_trained',
-        };
-    return new Promise((resolve, reject) => {
-      browserTrainingState.reject = reject;
-      signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')), { once: true });
-      if (browserTrainingState.defer) browserTrainingState.resolve = () => resolve(result);
-      else resolve(result);
-    });
-  }),
-}));
-
 vi.mock('./components/SplashScreen', () => ({
   default: () => null,
 }));
@@ -99,44 +54,44 @@ vi.mock('./utils/exportService', () => ({
   exportCompleteAnalysis: vi.fn(),
 }));
 
-const priceResponse = {
-  ticker: 'TSLA',
+const makeVolatilityResponse = (ticker = 'TSLA', days = 7) => ({
+  ticker,
+  horizon: days,
+  current_price: 400.0,
   historical_dates: ['2026-07-18', '2026-07-21'],
   historical_prices: [390.0, 400.0],
-  future_dates: Array.from({ length: 7 }, (_, index) => `2026-07-${24 + index}`),
-  predicted_prices: Array.from({ length: 7 }, (_, index) => 405.0 + index),
-  forecast_days: 7,
-  metrics: { rmse: 1.2, mae: 0.8, r2: 0.99, mape: 0.5, directional_accuracy: 0.75 },
-};
-
-const trendResponse = {
-  ticker: 'TSLA',
-  forecast_days: 7,
-  direction_horizon_days: 7,
-  direction: 'Up',
-  direction_probabilities: { down: 0.1, neutral: 0.25, up: 0.65 },
-  future_dates: Array.from({ length: 7 }, (_, index) => `2026-07-${24 + index}`),
-  attention_weights: [
-    { index: 0, date: '2026-07-18', weight: 0.2 },
-    { index: 1, date: '2026-07-21', weight: 0.8 },
-  ],
-  metrics: { macro_balanced_accuracy: 0.7, macro_f1: 0.66, multiclass_brier: 0.4, log_loss: 0.9 },
-  sentiment: { score: 0.1, status: 'ok', provider: 'test', method: 'mock' },
-};
-
-const trainingSnapshot = {
-  ticker: 'TSLA',
-  schema_version: 4,
-  snapshot_id: 'snapshot-test',
-  feature_names: Array.from({ length: 29 }, (_, index) => `Feature_${index}`),
-  window_size: 60,
-  output_width: 30,
-  dates: ['2026-07-18', '2026-07-21'],
-  features: [],
-  historical_prices: [390.0, 400.0],
-  future_dates: Array.from({ length: 30 }, (_, index) => `2026-07-${24 + index}`),
-  data_snapshot: { snapshot_id: 'snapshot-test' },
-};
+  as_of: '2026-07-21',
+  forecast: {
+    future_dates: Array.from({ length: days }, (_, index) => `2026-07-${22 + index}`),
+    price_quantiles: {
+      p05: Array.from({ length: days }, () => 380.0),
+      p10: Array.from({ length: days }, () => 385.0),
+      p25: Array.from({ length: days }, () => 392.0),
+      p50: Array.from({ length: days }, () => 400.0),
+      p75: Array.from({ length: days }, () => 408.0),
+      p90: Array.from({ length: days }, () => 415.0),
+      p95: Array.from({ length: days }, () => 420.0),
+    },
+  },
+  evidence: {
+    certified: true,
+    certified_heads: { volatility: true },
+    model_id: 'volatility_v9_global',
+    snapshot_id: 'snap-test',
+    feature_count: 29,
+    metric_source: 'locked_purged_walk_forward',
+    horizon_certification: {
+      [String(days)]: {
+        relative_qlike: 0.92,
+        ratio_upper_95: 1.05,
+        dm_p_value: 0.01,
+        coverage_80: 0.81,
+        coverage_95: 0.95,
+        evaluation_rows: 500,
+      },
+    },
+  },
+});
 
 const infoResponse = {
   ticker: 'TSLA',
@@ -149,32 +104,22 @@ function mockFetchSequence() {
     const requestUrl = String(url);
     const parsedUrl = new URL(requestUrl, 'http://localhost');
     const ticker = parsedUrl.searchParams.get('ticker') || 'TSLA';
+    const horizon = Number(parsedUrl.searchParams.get('horizon')) || 7;
     if (requestUrl.includes('/api/v1/search')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) });
-    }
-    if (requestUrl.includes('/api/v1/training-data')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...trainingSnapshot, ticker }) });
     }
     if (requestUrl.includes('/api/v1/info')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...infoResponse, ticker }) });
     }
-    if (requestUrl.includes('/api/v1/predict/direction')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...trendResponse, ticker }) });
-    }
-    if (requestUrl.includes('/api/v1/predict')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...priceResponse, ticker }) });
+    if (requestUrl.includes('/api/v2/forecast')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(makeVolatilityResponse(ticker, horizon)) });
     }
     return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
   });
 }
 
-
-describe('forecast toggle integration', () => {
+describe('forecast integration', () => {
   beforeEach(() => {
-    browserTrainingState.defer = false;
-    browserTrainingState.resolve = null;
-    browserTrainingState.reject = null;
-    browserTrainingState.signal = null;
     mockFetchSequence();
     localStorage.clear();
   });
@@ -187,13 +132,10 @@ describe('forecast toggle integration', () => {
   function mockPredictionFailure(reason) {
     global.fetch = vi.fn((url) => {
       const requestUrl = String(url);
-      if (requestUrl.includes('/api/v1/prediction-status/')) {
-        return Promise.resolve({ ok: false });
-      }
       if (requestUrl.includes('/api/v1/info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
       }
-      if (requestUrl.includes('/api/v1/predict')) {
+      if (requestUrl.includes('/api/v2/forecast')) {
         return Promise.reject(reason);
       }
       return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
@@ -208,64 +150,17 @@ describe('forecast toggle integration', () => {
     return user;
   }
 
-  it('switches between forecast types without stale state', async () => {
+  it('fetches and displays certified volatility forecast and metrics', async () => {
     const user = userEvent.setup();
     render(<App />);
 
     await user.type(screen.getByPlaceholderText(/search tickers/i), 'TSLA');
-    await user.click(screen.getByRole('button', { name: /^price forecast$/i }));
     await user.click(screen.getByRole('button', { name: /^predict$/i }));
 
     expect(await screen.findByText('TSLA')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^price forecast$/i })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByText(/Historical vs Predicted/i)).toBeInTheDocument();
+    expect(screen.getByText(/Historical vs Volatility Cone/i)).toBeInTheDocument();
     expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /^trend forecast$/i }));
-    expect(screen.queryByText(/Historical vs Predicted/i)).not.toBeInTheDocument();
-    expect(screen.queryByText('Price Forecast Metrics')).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /^predict$/i }));
-
-    await waitFor(() => expect(screen.getByText('Trend Forecast Metrics')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /^trend forecast$/i })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByText(/Historical vs Predicted/i)).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /^price forecast$/i }));
-    expect(screen.queryByText('Trend Forecast Metrics')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Historical vs Predicted/i)).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /^predict$/i }));
-
-    await waitFor(() => expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument());
-    expect(screen.getByText(/Historical vs Predicted/i)).toBeInTheDocument();
-    expect(screen.queryByText('Trend Forecast Metrics')).not.toBeInTheDocument();
-  });
-
-  it('reports browser training progress and uses the feature snapshot', async () => {
-    browserTrainingState.defer = true;
-    const user = userEvent.setup();
-    render(<App />);
-    await user.type(screen.getByPlaceholderText(/search tickers/i), 'TSLA');
-    await user.click(screen.getByRole('button', { name: /^predict$/i }));
-
-    expect(await screen.findByText('Training epoch 4 of 12…')).toBeInTheDocument();
-    expect(browserTrainingState.signal).toBeTruthy();
-    browserTrainingState.resolve();
-    await waitFor(() => expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument());
-    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/training-data?ticker=TSLA'), expect.anything());
-  });
-
-  it('aborts browser training on unmount without server status polling', async () => {
-    browserTrainingState.defer = true;
-    const user = userEvent.setup();
-    const { unmount } = render(<App />);
-    await user.type(screen.getByPlaceholderText(/search tickers/i), 'TSLA');
-    await user.click(screen.getByRole('button', { name: /^predict$/i }));
-    await screen.findByText('Training epoch 4 of 12…');
-
-    unmount();
-    expect(browserTrainingState.signal.aborted).toBe(true);
+    expect(screen.getAllByText('90% Forecast Range').length).toBeGreaterThanOrEqual(1);
   });
 
   it.each([
@@ -300,13 +195,10 @@ describe('forecast toggle integration', () => {
   it('keeps intentional abort cancellation silent', async () => {
     global.fetch = vi.fn((url, options = {}) => {
       const requestUrl = String(url);
-      if (requestUrl.includes('/api/v1/prediction-status/')) {
-        return Promise.resolve({ ok: false });
-      }
       if (requestUrl.includes('/api/v1/info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
       }
-      if (requestUrl.includes('/api/v1/predict')) {
+      if (requestUrl.includes('/api/v2/forecast')) {
         return new Promise((resolve, reject) => {
           options.signal.addEventListener(
             'abort',
@@ -330,9 +222,6 @@ describe('forecast toggle integration', () => {
     let rejectFirstPrediction;
     global.fetch = vi.fn((url) => {
       const requestUrl = String(url);
-      if (requestUrl.includes('/api/v1/prediction-status/')) {
-        return Promise.resolve({ ok: false });
-      }
       if (requestUrl.includes('/api/v1/info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
       }
@@ -344,7 +233,7 @@ describe('forecast toggle integration', () => {
       if (requestUrl.includes('ticker=AAPL')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ ...priceResponse, ticker: 'AAPL' }),
+          json: () => Promise.resolve(makeVolatilityResponse('AAPL', 7)),
         });
       }
       return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
@@ -372,7 +261,7 @@ describe('forecast toggle integration', () => {
     expect(await screen.findByText('Price Forecast Metrics')).toBeInTheDocument();
 
     // 1. Click Complete Analysis
-    const completeAnalysisBtn = screen.queryByRole('button', { name: /complete analysis/i });
+    const completeAnalysisBtn = screen.queryByRole('button', { name: /export complete analysis/i });
     if (completeAnalysisBtn) {
       await user.click(completeAnalysisBtn);
     }

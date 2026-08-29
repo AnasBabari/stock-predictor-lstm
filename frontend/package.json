@@ -19,8 +19,6 @@
     "e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
-    "@tensorflow/tfjs": "^4.22.0",
-    "@tensorflow/tfjs-backend-webgpu": "^4.22.0",
     "chart.js": "^4.4.3",
     "jszip": "^3.10.1",
     "react": "^18.3.1",

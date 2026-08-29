@@ -15,8 +15,8 @@ describe('forecast horizon request contract', () => {
       horizon_mode: 'auto',
       requested_horizon: null,
     });
-    expect(forecastIdentity('msft', 'auto', FORECAST_TYPES.PRICE, 'balanced'))
-      .toBe('MSFT::auto::price::balanced');
+    expect(forecastIdentity('msft', 'auto', FORECAST_TYPES.PRICE))
+      .toBe('MSFT::auto::price');
   });
 
   it('accepts a numeric Auto result only when it is explicitly labelled Auto', () => {

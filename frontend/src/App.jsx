@@ -35,8 +35,6 @@ export default function App() {
     setDaysView,
     forecastType,
     setForecastType,
-    trainingProfile,
-    setTrainingProfile,
     isLoading,
     loadingStage,
     trainingProgress,
@@ -49,7 +47,6 @@ export default function App() {
     fetchPredictionData,
     handlePredict,
     handleCancelRequest,
-    handleClearBrowserModels,
     apiBase,
   } = useForecast({
     addToast,
@@ -80,7 +77,6 @@ export default function App() {
     forecastCacheRef,
     ticker,
     forecastDays,
-    trainingProfile,
     volatilityServing: VOLATILITY_SERVING_ENABLED,
   });
 
@@ -115,7 +111,6 @@ export default function App() {
       <Navbar
         theme={theme}
         onToggleTheme={toggleTheme}
-        onClearBrowserModels={VOLATILITY_SERVING_ENABLED ? null : handleClearBrowserModels}
       />
 
       <main className="main-content">
@@ -127,8 +122,6 @@ export default function App() {
           forecastDays={forecastDays}
           setForecastDays={setForecastDays}
           forecastType={forecastType}
-          trainingProfile={trainingProfile}
-          setTrainingProfile={setTrainingProfile}
           onForecastTypeChange={setForecastType}
           onPredict={handlePredict}
           isLoading={isBusy}
@@ -141,9 +134,7 @@ export default function App() {
             isLoading={isBusy}
             stage={loadingStage}
             progress={trainingProgress}
-            profile={trainingProfile}
             onCancel={handleCancelRequest}
-            volatilityServing={VOLATILITY_SERVING_ENABLED}
           />
         )}
 
@@ -263,7 +254,6 @@ export default function App() {
           />
         </div>
       </main>
-
 
       <footer className="footer">
         <p>

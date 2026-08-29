@@ -1,22 +1,25 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import LoadingIndicator from './LoadingIndicator';
 
-it('renders the server-reported loading stage without percentage progress', () => {
-  render(<LoadingIndicator isLoading stage="Training a new model for this ticker…" />);
+describe('LoadingIndicator', () => {
+  it('renders the loading stage and hint', () => {
+    render(<LoadingIndicator isLoading stage="Evaluating certified global volatility forecast…" />);
 
-  expect(screen.getByText('Training a new model for this ticker…')).toBeInTheDocument();
-  expect(screen.queryByText(/%/)).not.toBeInTheDocument();
-});
+    expect(screen.getByText('Evaluating certified global volatility forecast…')).toBeInTheDocument();
+    expect(screen.getByText(/Signed global volatility model/)).toBeInTheDocument();
+  });
 
-describe('LoadingIndicator profile label', () => {
-  it('reflects the selected training profile in the duration hint', () => {
-    const { container, rerender } = render(
-      <LoadingIndicator isLoading stage="Training…" progress={null} profile="quick" />
-    );
-    expect(container.textContent).toMatch(/Quick · expected/);
+  it('triggers onCancel when Cancel request button is clicked', () => {
+    const onCancel = vi.fn();
+    render(<LoadingIndicator isLoading onCancel={onCancel} />);
 
-    rerender(<LoadingIndicator isLoading stage="Training…" progress={null} profile="research" />);
-    expect(container.textContent).toMatch(/Research · expected/);
+    fireEvent.click(screen.getByRole('button', { name: /cancel request/i }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null when isLoading is false', () => {
+    const { container } = render(<LoadingIndicator isLoading={false} />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

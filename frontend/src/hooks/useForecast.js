@@ -1,31 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createSnapshotClient } from '../ml/snapshotClient';
 import { fetchServerPrediction } from '../ml/serverModelClient';
-import { isGlobalModelEnabled, loadGlobalModel } from '../ml/globalModelClient';
 import { fetchVolatilityForecast } from '../ml/volatilityClient';
-import { defaultTrainingProfile } from '../ml/trainingProfiles';
-import { safeGet, safeSet } from '../utils/safeStorage';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 const IS_TEST_MODE = import.meta.env.MODE === 'test' || import.meta.env.VITEST === true;
-// Replaced at build time by Vite. Normal production builds compile the legacy
-// browser worker out entirely; only the explicit methodology build retains it.
-const LEGACY_BROWSER_BUILD = __STOCKLSTM_LEGACY_BROWSER_BUILD__;
-// Production builds use the signed global-volatility contract by default. The
-// explicit false override is retained for local rollback/contract fixtures;
-// browser training is never an implicit production fallback.
 export const VOLATILITY_SERVING_ENABLED =
   import.meta.env.VITE_VOLATILITY_SERVING_ENABLED === 'true' ||
-  (!IS_TEST_MODE && import.meta.env.PROD && import.meta.env.VITE_VOLATILITY_SERVING_ENABLED !== 'false');
-const BROWSER_TRAINING_ENABLED =
-  LEGACY_BROWSER_BUILD && !VOLATILITY_SERVING_ENABLED;
-const DEPLOYMENT_TRAINING_MODE = (
-  window.STOCKLSTM_TRAINING_MODE ||
-  import.meta.env.VITE_TRAINING_MODE ||
-  'browser_only'
-).toLowerCase();
-
-const PROFILE_KEY = 'stocklstm-training-profile:v1';
+  (!IS_TEST_MODE && import.meta.env.PROD && import.meta.env.VITE_VOLATILITY_SERVING_ENABLED !== 'false') ||
+  import.meta.env.VITE_VOLATILITY_SERVING_ENABLED !== 'false';
 
 export const FORECAST_TYPES = {
   PRICE: 'price',
@@ -33,19 +15,12 @@ export const FORECAST_TYPES = {
 };
 
 export const stageLabels = {
-  queued: 'Preparing browser training data…',
+  queued: 'Preparing request…',
   downloading_market_data: 'Downloading market data…',
-  preparing_features: 'Preparing browser features…',
-  checking_artifact: 'Checking your local model cache…',
-  cache_hit: 'Loading your cached browser model…',
-  capability_check: 'Checking this device’s training speed…',
-  checkpoint_loaded: 'Resuming your local research benchmark…',
-  evaluating_fold: 'Running walk-forward evaluation…',
-  final_fit: 'Fitting the final local model…',
-  volatility_snapshot: 'Building a causal volatility snapshot…',
-  volatility_inference: 'Running the signed global volatility model…',
-  training: 'Training your local model…',
-  generating_forecast: 'Generating browser forecast…',
+  volatility_snapshot: 'Building causal market snapshot…',
+  volatility_inference: 'Running signed global volatility model…',
+  checking_server: 'Checking server model status…',
+  server_model_loaded: 'Loaded server model.',
   completed: 'Forecast ready.',
   failed: 'Forecast could not be completed.',
 };
@@ -106,7 +81,7 @@ export function predictionErrorMessage(error) {
   if (message.includes('invalid ticker') || message.includes('not enough data') || message.includes('(400)')) {
     return 'Invalid ticker or not enough data. Try a different symbol.';
   }
-  return 'Prediction could not be completed. Please try again.';
+  return error?.message || 'Prediction could not be completed. Please try again.';
 }
 
 export function normalizeHorizonRequest(value) {
@@ -120,10 +95,10 @@ export function normalizeHorizonRequest(value) {
   return { horizon_mode: 'explicit', requested_horizon: numeric };
 }
 
-export const forecastIdentity = (ticker, days, type, profile) => {
+export const forecastIdentity = (ticker, days, type) => {
   const request = normalizeHorizonRequest(days);
   const horizon = request.horizon_mode === 'auto' ? 'auto' : request.requested_horizon;
-  return `${ticker.trim().toUpperCase()}::${horizon}::${type}::${profile}`;
+  return `${ticker.trim().toUpperCase()}::${horizon}::${type}`;
 };
 
 export function assertForecastIdentity(data, ticker, days, type) {
@@ -153,119 +128,11 @@ export function assertForecastIdentity(data, ticker, days, type) {
   return data;
 }
 
-export function browserResponse(snapshot, result, forecastType, days) {
-  const resolvedDays = Number(result.selectedHorizon || result.days || days);
-  const promotion = result.promotion || {};
-  const validation = result.validation || {
-    state: promotion.state || (promotion.promoted ? 'promoted' : 'experimental'),
-    promoted: promotion.promoted === true,
-    reasons: promotion.reasons || [],
-    selected_horizon: resolvedDays,
-    promoted_horizons: promotion.promoted_horizons || [],
-    best_validated_horizon: promotion.best_validated_horizon || null,
-  };
-  const engine = {
-    family: `${result.trainingProfile || 'balanced'}_tfjs_lstm`,
-    role: validation.promoted ? 'browser_promoted' : 'browser_experimental',
-    validation_state: validation.state,
-    cache_status: result.cacheStatus,
-    backend: result.backend,
-    execution_mode: result.executionMode,
-  };
-  const metadata = {
-    model_version: result.modelVersion || 'tfjs-return-lstm-v4',
-    architecture_version: result.architectureVersion,
-    target_mode: result.targetMode,
-    training_profile: result.trainingProfile,
-    training_duration_ms: result.trainingDurationMs,
-    selected_epochs: result.selectedEpochs,
-    completed_epochs: result.completedEpochs,
-    tfjs_version: result.tfjsVersion,
-    storage_status: result.storageStatus,
-    evaluation: result.evaluation,
-    promotion: result.promotion,
-    validation,
-    schema_version: snapshot.schema_version,
-    window_size: snapshot.window_size,
-    feature_count: snapshot.feature_names.length,
-    output_width: result.horizon || snapshot.output_width,
-    architecture: `${result.trainingProfile || 'balanced'}_lstm_in_browser`,
-    metric_source: result.metrics?.metric_source || 'browser_purged_holdout',
-    data_snapshot: snapshot.data_snapshot,
-    snapshot_id: snapshot.snapshot_id,
-    requested_horizon_mode: result.requestedHorizonMode || 'explicit',
-    development_selection: result.developmentSelection || null,
-    browser_training: true,
-    engine,
-    execution: {
-      mode: result.executionMode,
-      coalesced: false,
-    },
-    artifact_state_before: result.cacheStatus === 'hit' ? 'fresh' : 'missing',
-    artifact_action: result.cacheStatus === 'hit' ? 'loaded' : 'trained',
-  };
-  if (forecastType === FORECAST_TYPES.TREND) {
-    return {
-      ticker: snapshot.ticker,
-      forecast_days: resolvedDays,
-      requested_horizon_mode: result.requestedHorizonMode || 'explicit',
-      selected_horizon: resolvedDays,
-      development_selection: result.developmentSelection || null,
-      future_dates: snapshot.future_dates.slice(0, resolvedDays),
-      // Direction v2 contract: one three-way call per origin.
-      direction_horizon_days: result.direction_horizon_days,
-      direction: result.direction,
-      direction_probabilities: result.direction_probabilities,
-      model_direction_probabilities: result.model_direction_probabilities,
-      base_rate_direction_probabilities: result.base_rate_direction_probabilities,
-      forecast_status: result.forecast_status,
-      attention_weights: [],
-      metrics: result.metrics,
-      validation,
-      sentiment: { status: 'context_only', detail: 'News is not used as a browser model feature.' },
-      metadata,
-    };
-  }
-  return {
-    ticker: snapshot.ticker,
-    forecast_days: resolvedDays,
-    requested_horizon_mode: result.requestedHorizonMode || 'explicit',
-    selected_horizon: resolvedDays,
-    development_selection: result.developmentSelection || null,
-    historical_dates: snapshot.dates,
-    historical_prices: snapshot.historical_prices,
-    future_dates: snapshot.future_dates.slice(0, resolvedDays),
-    predicted_prices: result.predictedPrices,
-    learned_prices: result.learnedPrices,
-    model_forecast: result.model_forecast || {
-      prices: result.predictedPrices,
-      source: `browser_${result.trainingProfile || 'balanced'}_lstm`,
-      candidate: 'balanced_tfjs_lstm',
-      horizon: result.horizon || days,
-    },
-    benchmark: result.benchmark || {
-      type: 'persistence',
-      prices: result.persistence_forecast,
-    },
-    validation,
-    persistence_forecast: result.persistence_forecast,
-    ...(result.historical_error_band ? { historical_error_band: result.historical_error_band } : {}),
-    forecast_status: result.forecast_status,
-    metrics: result.metrics,
-    ...(result.evaluation_series ? { evaluation_series: result.evaluation_series } : {}),
-    metadata,
-  };
-}
-
 export function useForecast({ addToast, onNewTickerSearched }) {
   const [ticker, setTicker] = useState('');
   const [forecastDays, setForecastDays] = useState(7);
   const [daysView, setDaysView] = useState(21);
   const [forecastType, setForecastType] = useState(FORECAST_TYPES.PRICE);
-  const [trainingProfile, setTrainingProfile] = useState(() => {
-    const stored = safeGet(PROFILE_KEY);
-    return ['quick', 'balanced', 'research'].includes(stored) ? stored : defaultTrainingProfile();
-  });
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState('');
   const [trainingProgress, setTrainingProgress] = useState(null);
@@ -277,14 +144,6 @@ export function useForecast({ addToast, onNewTickerSearched }) {
   const requestIdRef = useRef(0);
   const forecastCacheRef = useRef(new Map());
   const chartRef = useRef(null);
-  const snapshotClientRef = useRef(null);
-  if (!snapshotClientRef.current) {
-    snapshotClientRef.current = createSnapshotClient({ baseUrl: API_BASE });
-  }
-
-  useEffect(() => {
-    safeSet(PROFILE_KEY, trainingProfile);
-  }, [trainingProfile]);
 
   const abortActiveRequest = useCallback(() => {
     requestIdRef.current += 1;
@@ -341,120 +200,19 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         onProgress?.({ stage: 'volatility_inference' });
         return volatilityResult;
       }
-      let serverPrediction = null;
-      if (horizonRequest.horizon_mode === 'explicit' && DEPLOYMENT_TRAINING_MODE !== 'browser_only') {
+
+      if (horizonRequest.horizon_mode === 'explicit') {
         onProgress?.({ stage: 'checking_server', message: 'Checking for server-pretrained models...' });
-        serverPrediction = await fetchServerPrediction(symbol, explicitDays, type, signal, {
-          mode: DEPLOYMENT_TRAINING_MODE,
-        });
-      }
-      if (serverPrediction) {
-        onProgress?.({ stage: 'server_model_loaded', message: 'Loaded server-pretrained model.' });
-        return serverPrediction;
-      }
-
-      if (
-        LEGACY_BROWSER_BUILD
-        && horizonRequest.horizon_mode === 'explicit'
-        && isGlobalModelEnabled()
-      ) {
-        try {
-          onProgress?.({ stage: 'checking_global', message: 'Checking verified global models…' });
-          const tf = await import('@tensorflow/tfjs').catch(() => null);
-          if (tf) {
-            const globalResult = await loadGlobalModel(explicitDays, tf);
-            if (globalResult) {
-              onProgress?.({ stage: 'global_model_loaded', message: 'Executing certified global model…' });
-              const snapshot = await snapshotClientRef.current.fetchTrainingSnapshot(symbol, signal);
-              const features = snapshot.features;
-              const prices = snapshot.historical_prices;
-              const lastPrice = prices[prices.length - 1];
-              if (features && features.length >= 60 && lastPrice > 0) {
-                const windowFeatures = features.slice(features.length - 60);
-                const inputTensor = tf.tensor3d([windowFeatures], [1, 60, windowFeatures[0].length]);
-                const rawOutput = globalResult.model.predict(inputTensor);
-                const outputArray = Array.isArray(rawOutput) ? await rawOutput[0].data() : await rawOutput.data();
-                inputTensor.dispose();
-                if (Array.isArray(rawOutput)) rawOutput.forEach((t) => t.dispose());
-                else rawOutput.dispose();
-
-                const h = Math.min(explicitDays, outputArray.length || explicitDays);
-                const predictedPrices = [];
-                const futureDates = snapshot.future_dates.slice(0, h);
-                for (let i = 0; i < h; i += 1) {
-                  const ret = Number(outputArray[i]) || 0;
-                  predictedPrices.push(lastPrice * Math.exp(ret));
-                }
-                const alpha = Number(globalResult.artifact?.alpha ?? 1.0);
-                return {
-                  ticker: symbol,
-                  forecast_days: explicitDays,
-                  forecast_type: type,
-                  current_price: lastPrice,
-                  predicted_prices: predictedPrices,
-                  learned_prices: predictedPrices,
-                  persistence_forecast: Array(h).fill(lastPrice),
-                  future_dates: futureDates,
-                  historical_dates: snapshot.dates,
-                  historical_prices: snapshot.historical_prices,
-                  forecast_status: {
-                    state: alpha > 0 ? 'promoted' : 'experimental_no_demonstrated_edge',
-                    decision: alpha > 0 ? 'model' : 'persistence',
-                    alpha,
-                    label: `Certified Global Model (${globalResult.artifact?.name || 'global_v1'})`,
-                  },
-                  metadata: {
-                    model_source: 'global_model',
-                    artifact_name: globalResult.artifact?.name,
-                    catalog_recorded_sha: globalResult.catalog?.recorded_sha,
-                    alpha,
-                    browser_training: false,
-                    engine: {
-                      family: 'global_model',
-                      role: 'global_champion',
-                      baseline_fallback: false,
-                    },
-                  },
-                };
-              }
-            }
-          }
-        } catch {
-          // Global model execution failed -> fail closed to browser training
+        const serverPrediction = await fetchServerPrediction(symbol, explicitDays, type, signal);
+        if (serverPrediction) {
+          onProgress?.({ stage: 'server_model_loaded', message: 'Loaded server-pretrained model.' });
+          return serverPrediction;
         }
       }
 
-      if (!BROWSER_TRAINING_ENABLED) {
-        return fetchServerBaseline(symbol, explicitDays || 7, type, signal, new Error('Browser training is disabled by the deployment flag.'));
-      }
-      
-      let snapshot;
-      try {
-        snapshot = await snapshotClientRef.current.fetchTrainingSnapshot(symbol, signal);
-      } catch (error) {
-        if (error?.name === 'AbortError') throw error;
-        return fetchServerBaseline(symbol, explicitDays || 7, type, signal, error);
-      }
-
-      try {
-        const { trainBrowserForecast } = await import('../ml/browserTrainingClient');
-        const result = await trainBrowserForecast({
-          snapshot,
-          forecastType: type,
-          days,
-          horizonMode: horizonRequest.horizon_mode,
-          profile: trainingProfile,
-          signal,
-          onProgress,
-        });
-        return browserResponse(snapshot, result, type, days);
-      } catch (error) {
-        if (error?.name === 'AbortError') throw error;
-        return fetchServerBaseline(symbol, explicitDays || 7, type, signal, error);
-      }
-
+      return fetchServerBaseline(symbol, explicitDays || 7, type, signal, new Error('Browser training is retired.'));
     },
-    [fetchServerBaseline, trainingProfile]
+    [fetchServerBaseline]
   );
 
   const fetchStockInfo = useCallback(
@@ -481,8 +239,6 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         overrideTicker !== undefined &&
         !(typeof overrideTicker === 'string' && overrideTicker.trim())
       ) {
-        // An explicitly provided but unusable ticker must never silently fall
-        // back to the currently active ticker.
         const msg = 'Please enter a valid stock ticker symbol.';
         setErrorMsg(msg);
         addToast('error', msg);
@@ -502,13 +258,12 @@ export function useForecast({ addToast, onNewTickerSearched }) {
         return;
       }
 
-
       abortActiveRequest();
       const currentRequestId = requestIdRef.current;
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const cacheKey = forecastIdentity(activeTicker, activeDays, activeType, trainingProfile);
+      const cacheKey = forecastIdentity(activeTicker, activeDays, activeType);
       const cached = forecastCacheRef.current.get(cacheKey);
       if (cached) {
         setPredictionData(cached);
@@ -532,11 +287,10 @@ export function useForecast({ addToast, onNewTickerSearched }) {
           controller.signal,
           (progress) => {
             if (requestIdRef.current === currentRequestId) {
-              setLoadingStage(progress.message || stageLabels[progress.stage] || 'Training your local model…');
+              setLoadingStage(progress.message || stageLabels[progress.stage] || 'Evaluating forecast…');
               setTrainingProgress(progress);
             }
           }
-
         );
 
         if (requestIdRef.current === currentRequestId) {
@@ -571,7 +325,6 @@ export function useForecast({ addToast, onNewTickerSearched }) {
       forecastType,
       onNewTickerSearched,
       ticker,
-      trainingProfile,
     ]
   );
 
@@ -582,19 +335,6 @@ export function useForecast({ addToast, onNewTickerSearched }) {
     setTrainingProgress(null);
     addToast('info', 'Forecast request cancelled.');
   }, [abortActiveRequest, addToast]);
-
-  const handleClearBrowserModels = useCallback(async () => {
-    try {
-      const { clearBrowserModelCache } = await import('../ml/browserTrainingClient');
-      await clearBrowserModelCache();
-      forecastCacheRef.current.clear();
-      snapshotClientRef.current?.clear();
-      setPredictionData(null);
-      addToast('success', 'Locally trained browser models cleared');
-    } catch (error) {
-      addToast('error', error?.message || 'Could not clear browser models');
-    }
-  }, [addToast]);
 
   const handleForecastTypeChange = useCallback(
     (nextType) => {
@@ -635,20 +375,6 @@ export function useForecast({ addToast, onNewTickerSearched }) {
     [abortActiveRequest]
   );
 
-  const handleTrainingProfileChange = useCallback(
-    (nextProfile) => {
-      abortActiveRequest();
-      setTrainingProfile(nextProfile);
-      setPredictionData(null);
-      setStockInfo(null);
-      setErrorMsg('');
-      setIsLoading(false);
-      setLoadingStage('');
-      setTrainingProgress(null);
-    },
-    [abortActiveRequest]
-  );
-
   return {
     ticker,
     setTicker: handleTickerChange,
@@ -658,12 +384,9 @@ export function useForecast({ addToast, onNewTickerSearched }) {
     setDaysView,
     forecastType,
     setForecastType: handleForecastTypeChange,
-    trainingProfile,
-    setTrainingProfile: handleTrainingProfileChange,
     handleForecastTypeChange,
     handleTickerChange,
     handleForecastDaysChange,
-    handleTrainingProfileChange,
     isLoading,
     loadingStage,
     trainingProgress,
@@ -678,8 +401,6 @@ export function useForecast({ addToast, onNewTickerSearched }) {
     fetchPredictionData,
     handlePredict,
     handleCancelRequest,
-    handleClearBrowserModels,
     apiBase: API_BASE,
   };
 }
-

@@ -13,18 +13,17 @@ export function useCompleteAnalysisExport({
   forecastCacheRef,
   ticker,
   forecastDays,
-  trainingProfile,
-  volatilityServing = false,
+  volatilityServing = true,
 }) {
   const [isExportLoading, setIsExportLoading] = useState(false);
-  const exportAbortControllerRef = useRef(null);
   const exportRequestIdRef = useRef(0);
+  const exportAbortRef = useRef(null);
 
   const abortExport = useCallback(() => {
     exportRequestIdRef.current += 1;
-    if (exportAbortControllerRef.current) {
-      exportAbortControllerRef.current.abort();
-      exportAbortControllerRef.current = null;
+    if (exportAbortRef.current) {
+      exportAbortRef.current.abort();
+      exportAbortRef.current = null;
     }
   }, []);
 
@@ -42,13 +41,13 @@ export function useCompleteAnalysisExport({
     abortExport();
     const exportRequestId = exportRequestIdRef.current;
     const controller = new AbortController();
-    exportAbortControllerRef.current = controller;
+    exportAbortRef.current = controller;
 
-    const priceKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.PRICE, trainingProfile);
+    const priceKey = forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.PRICE);
     const cachedPrice = forecastCacheRef.current.get(priceKey);
     const trendKey = volatilityServing
       ? null
-      : forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.TREND, trainingProfile);
+      : forecastIdentity(tickerSymbol, forecastDays, FORECAST_TYPES.TREND);
     const cachedTrend = trendKey ? forecastCacheRef.current.get(trendKey) : null;
 
     const ensureForecast = async (type) => {
@@ -60,7 +59,7 @@ export function useCompleteAnalysisExport({
         () => {}
       );
       assertForecastIdentity(data, tickerSymbol, forecastDays, type);
-      const key = forecastIdentity(tickerSymbol, forecastDays, type, trainingProfile);
+      const key = forecastIdentity(tickerSymbol, forecastDays, type);
       forecastCacheRef.current.set(key, data);
       return data;
     };
@@ -128,7 +127,7 @@ export function useCompleteAnalysisExport({
     } finally {
       if (exportRequestIdRef.current === exportRequestId) {
         setIsExportLoading(false);
-        exportAbortControllerRef.current = null;
+        exportAbortRef.current = null;
       }
     }
   }, [
@@ -140,7 +139,6 @@ export function useCompleteAnalysisExport({
     volatilityServing,
     setErrorMsg,
     ticker,
-    trainingProfile,
   ]);
 
   return {
