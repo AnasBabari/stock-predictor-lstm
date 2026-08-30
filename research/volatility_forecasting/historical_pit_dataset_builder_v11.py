@@ -1,4 +1,4 @@
-"""Universal point-in-time multi-asset panel builder with Nasdaq membership masks and causal controls."""
+"""Universal point-in-time multi-asset panel builder with fail-closed membership masks and causal controls."""
 
 from __future__ import annotations
 
@@ -47,16 +47,25 @@ class HistoricalPanelDataset:
 
 
 class HistoricalPITDatasetBuilderV11:
-    """Constructs point-in-time historical datasets with survivorship masks and content hashing."""
+    """Constructs point-in-time historical datasets with fail-closed membership masks and content hashing."""
 
     @staticmethod
+    def is_active_member(
+        date_str: str,
+        intervals: list[tuple[str, str]],
+    ) -> bool:
+        """Checks if date_str falls within any active membership interval (start, end)."""
+        return any(start <= date_str <= end for start, end in intervals)
+
+    @classmethod
     def construct_panel_from_series(
+        cls,
         equities_ohlcv: dict[str, pd.DataFrame],
         sector_ohlcv: pd.DataFrame,
         market_ohlcv: pd.DataFrame,
         news_articles: list[EnrichedNewsArticle] | None = None,
-        membership_masks: dict[str, tuple[str, str]]
-        | None = None,  # ticker -> (start_date, end_date)
+        membership_masks: dict[str, list[tuple[str, str]]]
+        | None = None,  # ticker -> [(start, end), ...]
         horizons: tuple[int, ...] = REQUIRED_TARGET_HORIZONS_V11,
         warmup_sessions: int = 65,
     ) -> HistoricalPanelDataset:
@@ -71,6 +80,10 @@ class HistoricalPITDatasetBuilderV11:
         max_h = max(horizons)
 
         for sec_id, df in equities_ohlcv.items():
+            # If membership mask supplied, reject if security is not in the mask (fail-closed)
+            if membership_masks is not None and sec_id not in membership_masks:
+                continue
+
             df_sorted = df.copy().sort_index()
             c = df_sorted["Close"].to_numpy(dtype=float)
             dates = [str(d)[:10] for d in df_sorted.index]
@@ -79,20 +92,17 @@ class HistoricalPITDatasetBuilderV11:
             if n <= warmup_sessions + max_h:
                 continue
 
-            # Membership date filtering
-            mem_start, mem_end = ("1900-01-01", "2099-12-31")
-            if membership_masks and sec_id in membership_masks:
-                mem_start, mem_end = membership_masks[sec_id]
-
             daily_rets = np.log(c[1:] / c[:-1])
 
             # Iterate over causal origin sessions
             for t_idx in range(warmup_sessions, n - max_h):
                 t_date = dates[t_idx]
 
-                # Check PIT membership
-                if not (mem_start <= t_date <= mem_end):
-                    continue
+                # Check PIT multi-interval membership (fail closed)
+                if membership_masks is not None:
+                    intervals = membership_masks[sec_id]
+                    if not cls.is_active_member(t_date, intervals):
+                        continue
 
                 history_df = df_sorted.iloc[: t_idx + 1]
                 sec_sub = sector_ohlcv.loc[:t_date] if sector_ohlcv is not None else None
@@ -104,7 +114,7 @@ class HistoricalPITDatasetBuilderV11:
                 )
                 num_arr = feats.to_array()
 
-                # 2. 19 Causal News Features (strictly <= t_date)
+                # 2. 19 Causal News Features (strictly <= t_date and bound to sec_id)
                 if news_articles:
                     news_agg = MultiDimensionalNewsAggregator.aggregate_causal_window(
                         articles=news_articles,
@@ -159,7 +169,6 @@ class HistoricalPITDatasetBuilderV11:
         rv_mat = np.array(all_rv, dtype=float)[sort_order]
 
         # 4. Generate Causal Same-Origin Cross-Sectional Shuffle (M3 Control A)
-        # Groups rows by exact calendar date and permutes news across assets on the SAME day
         same_origin_shuffled = news_mat.copy()
         df_group = pd.DataFrame({"date": dates_sorted, "idx": np.arange(len(dates_sorted))})
         rng = np.random.default_rng(2026)

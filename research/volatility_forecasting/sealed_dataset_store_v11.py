@@ -1,15 +1,18 @@
-"""Physically sealed dataset store enforcing one-shot test partition access after model freeze."""
+"""Physically sealed dataset store enforcing persistent on-disk one-shot test partition access."""
 
 from __future__ import annotations
 
+import datetime
 import hashlib
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
 
 class SealedPartitionAccessError(RuntimeError):
-    """Raised when an unauthorized access to the sealed test partition is attempted before candidate freeze."""
+    """Raised when an unauthorized access or multiple unseal of the sealed test partition is attempted."""
 
     __test__ = False
 
@@ -41,7 +44,7 @@ class SealedTestPayload:
 
 
 class SealedDatasetStoreV11:
-    """Manages secure storage of 70/15/15 datasets, strictly blocking test targets during development."""
+    """Manages physical, on-disk sealed storage of 70/15/15 datasets, strictly blocking test access."""
 
     def __init__(
         self,
@@ -54,6 +57,7 @@ class SealedDatasetStoreV11:
         val_indices: np.ndarray,
         test_indices: np.ndarray,
         split_digest: str,
+        lock_dir: Path | None = None,
     ) -> None:
         self._dates = dates
         self._numeric = numeric_features
@@ -66,8 +70,11 @@ class SealedDatasetStoreV11:
         self._test_idx = test_indices
         self._split_digest = split_digest
 
-        self._is_test_unsealed: bool = False
-        self._unseal_candidate_digest: str | None = None
+        self._lock_dir = lock_dir or (
+            Path(__file__).resolve().parents[2] / "artifacts" / "sealed_test_locks"
+        )
+        self._lock_dir.mkdir(parents=True, exist_ok=True)
+        self._lock_file = self._lock_dir / f"SEALED_TEST_OPENED_{split_digest[:16]}.json"
 
     def load_development_dataset(self) -> DevelopmentDatasetPayload:
         """Returns train and validation partitions. Test set remains strictly inaccessible."""
@@ -86,23 +93,40 @@ class SealedDatasetStoreV11:
         )
 
     def unseal_test_partition(self, candidate_freeze_digest: str) -> SealedTestPayload:
-        """Unseals the sacred 15% test partition once and only once using the frozen candidate digest."""
+        """Unseals the sacred 15% test partition once and only once using the frozen candidate digest.
+
+        Enforces persistent on-disk locking across process restarts.
+        """
         if len(candidate_freeze_digest) < 32:
             raise SealedPartitionAccessError(
                 "Invalid candidate freeze digest: must be a valid 32+ character SHA digest."
             )
 
-        if self._is_test_unsealed and self._unseal_candidate_digest != candidate_freeze_digest:
+        # Check persistent on-disk lock marker
+        if self._lock_file.exists():
+            try:
+                locked_meta = json.loads(self._lock_file.read_text(encoding="utf-8"))
+            except Exception:
+                locked_meta = {}
             raise SealedPartitionAccessError(
-                f"Test partition already unsealed for candidate {self._unseal_candidate_digest}. Re-unsealing with different candidate is prohibited!"
+                f"Test partition already permanently unsealed on disk! Lock file: {self._lock_file}, "
+                f"originally unsealed for candidate: {locked_meta.get('candidate_digest')}, "
+                f"unsealed_at: {locked_meta.get('unsealed_at')}."
             )
-
-        self._is_test_unsealed = True
-        self._unseal_candidate_digest = candidate_freeze_digest
 
         unseal_token = hashlib.sha256(
             f"{candidate_freeze_digest}:{self._split_digest}".encode()
         ).hexdigest()
+
+        # Write immutable on-disk lock marker
+        lock_data = {
+            "candidate_digest": candidate_freeze_digest,
+            "split_digest": self._split_digest,
+            "unsealed_at": datetime.datetime.now(datetime.UTC).isoformat(),
+            "unseal_token": unseal_token,
+            "test_sample_count": len(self._test_idx),
+        }
+        self._lock_file.write_text(json.dumps(lock_data, indent=2), encoding="utf-8")
 
         return SealedTestPayload(
             test_numeric=self._numeric[self._test_idx],
