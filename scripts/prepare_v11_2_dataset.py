@@ -11,18 +11,27 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 
-from research.volatility_forecasting.v11_2_protocol import (
+ROOT = Path(__file__).resolve().parents[1]
+for candidate in (ROOT, ROOT / "research"):
+    if str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
+
+from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
     V112Protocol,
     canonical_json_digest,
     feature_schema_digest,
     protocol_manifest,
 )
-from research.volatility_forecasting.v11_2_sealed_store import seal_v112_dataset
-from research.volatility_forecasting.v11_2_split import create_v112_split, save_split_manifest
+from research.volatility_forecasting.v11_2_sealed_store import seal_v112_dataset  # noqa: E402
+from research.volatility_forecasting.v11_2_split import (  # noqa: E402
+    create_v112_split,
+    save_split_manifest,
+)
 
 
 def _sha256_file(path: Path) -> str:

@@ -85,16 +85,40 @@ statistic may be produced during development.
 
 ## RTX execution
 
-Prepare the audited panel as an NPZ and run:
+First materialize the audited, point-in-time panel from an immutable OHLCV
+snapshot. This adapter is offline and refuses to infer a universe from a
+current constituent list:
 
 ```powershell
+python scripts/build_v11_2_panel.py `
+  --snapshot-dir <immutable-snapshot-directory> `
+  --universe-manifest <audited-pit64-universe.json> `
+  --output <audited-panel>.npz
+```
+
+The command writes `<audited-panel>.npz.manifest.json` with the snapshot and
+universe digests. The snapshot must carry an explicit provider-license
+acknowledgement, the universe must contain exactly 64 accepted securities, and
+every security must resolve through its point-in-time ticker and membership
+intervals. The repository's secondary NDX100 cache is not a V11.2
+certification input.
+
+Compute the frozen feature-contract digest and prepare the dataset. The key
+path must remain outside the repository:
+
+```powershell
+$schema = python -c "from research.volatility_forecasting.v11_2_protocol import feature_schema_digest; print(feature_schema_digest())"
 python scripts/prepare_v11_2_dataset.py `
   --panel <audited-panel>.npz `
-  --universe-manifest <universe>.json `
+  --universe-manifest <audited-pit64-universe.json> `
   --output-dir artifacts/v11_2_numeric `
   --key-path "$env:USERPROFILE\.stocklstm\secrets\v11_2_holdout.key" `
-  --schema-sha256 <schema-sha256>
+  --schema-sha256 $schema
+```
 
+Run development only on the unsealed train/validation files:
+
+```powershell
 python scripts/run_v11_2_numeric_development.py `
   --dataset-dir artifacts/v11_2_numeric `
   --output-dir artifacts/v11_2_numeric/development_results `
@@ -103,3 +127,32 @@ python scripts/run_v11_2_numeric_development.py `
 
 The runner automatically uses CUDA when available, but can be forced to CPU
 for a controlled comparison. It does not accept a sealed-test key.
+
+Before opening the holdout, run the non-decrypting audit:
+
+```powershell
+python scripts/pre_unseal_audit_v11_2.py `
+  --dataset-dir artifacts/v11_2_numeric `
+  --results-dir artifacts/v11_2_numeric/development_results `
+  --output artifacts/v11_2_numeric/pre_unseal_audit.json
+```
+
+Certification is a one-shot operation. It writes
+`sealed/SEALED_TEST_OPENED.json` before decrypting, never retrains or selects
+on test rows, and creates an immutable metrics report and receipt. A failed
+certification intentionally consumes the reserve and requires a new V11.2
+dataset/protocol version rather than a rerun:
+
+```powershell
+python scripts/certify_v11_2_candidate.py `
+  --dataset-dir artifacts/v11_2_numeric `
+  --results-dir artifacts/v11_2_numeric/development_results `
+  --key-path "$env:USERPROFILE\.stocklstm\secrets\v11_2_holdout.key" `
+  --output-dir artifacts/v11_2_numeric/certification `
+  --open-sealed-holdout
+```
+
+The exit status is zero only when every frozen learned route passes its
+holdout CRPS/uncertainty/QLIKE/coverage gate (explicit baseline routes are
+reported as baselines). The report's metric source is
+`sealed_holdout_once`; it must not be relabelled as a walk-forward result.

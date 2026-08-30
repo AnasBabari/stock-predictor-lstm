@@ -12,6 +12,7 @@ import hashlib
 import json
 import pickle
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,21 +21,31 @@ import torch
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
 
-from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
-from research.volatility_forecasting.global_multimodal_trainer_v11 import EconometricHARBaseline
-from research.volatility_forecasting.model import RobustSequenceScaler
-from research.volatility_forecasting.v11_2_evidence import (
+ROOT = Path(__file__).resolve().parents[1]
+for candidate in (ROOT, ROOT / "research"):
+    if str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
+
+from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5  # noqa: E402
+from research.volatility_forecasting.global_multimodal_trainer_v11 import (  # noqa: E402
+    EconometricHARBaseline,
+)
+from research.volatility_forecasting.model import RobustSequenceScaler  # noqa: E402
+from research.volatility_forecasting.v11_2_evidence import (  # noqa: E402
     seed_evidence_from_forecast,
     write_development_report,
     write_seed_evidence,
 )
-from research.volatility_forecasting.v11_2_freezer import (
+from research.volatility_forecasting.v11_2_freezer import (  # noqa: E402
     V112Route,
     freeze_routing_bundle,
 )
-from research.volatility_forecasting.v11_2_protocol import V112Protocol, require_numeric_only
-from research.volatility_forecasting.v11_2_sealed_store import load_v112_development
-from research.volatility_forecasting.v11_2_trainer import (
+from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
+    V112Protocol,
+    require_numeric_only,
+)
+from research.volatility_forecasting.v11_2_sealed_store import load_v112_development  # noqa: E402
+from research.volatility_forecasting.v11_2_trainer import (  # noqa: E402
     evaluate_residual_model,
     fit_histgb_location,
     fit_ridge_location,

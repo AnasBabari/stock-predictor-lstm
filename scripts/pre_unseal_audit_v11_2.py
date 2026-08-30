@@ -5,10 +5,21 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from research.volatility_forecasting.v11_2_protocol import V112Protocol, canonical_json_digest
+ROOT = Path(__file__).resolve().parents[1]
+for candidate in (ROOT, ROOT / "research"):
+    if str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
+
+from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
+    V112Protocol,
+    canonical_json_digest,
+    feature_schema_digest,
+    protocol_manifest,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -27,9 +38,15 @@ def _require_sha256(value: object, label: str) -> str:
 
 
 def _required_file(root: Path, relative: object, label: str) -> Path:
-    name = str(relative)
-    candidate = Path(name)
-    if not name or candidate.is_absolute():
+    if isinstance(relative, Path):
+        candidate = relative
+        name = relative.as_posix()
+    elif isinstance(relative, str):
+        name = relative
+        candidate = Path(name)
+    else:
+        raise SystemExit(f"{label} must be a relative artifact path")
+    if not name or "\x00" in name or candidate.is_absolute():
         raise SystemExit(f"{label} must be a relative artifact path")
     resolved = (root / candidate).resolve()
     try:
@@ -51,16 +68,9 @@ def _verify_self_digest(path: Path, digest_field: str, label: str) -> tuple[str,
     return declared, payload
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset-dir", type=Path, required=True)
-    parser.add_argument("--results-dir", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-
+def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
+    """Verify every immutable development artifact without decrypting the test."""
     protocol = V112Protocol()
-    dataset = args.dataset_dir
-    results = args.results_dir
     metadata_path = dataset / "sealed" / "sealed_metadata.json"
     payload_path = dataset / "sealed" / "test_payload.aesgcm"
     lock_path = dataset / "sealed" / "SEALED_TEST_OPENED.json"
@@ -77,6 +87,8 @@ def main() -> int:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     manifest = json.loads(bundle_path.read_text(encoding="utf-8"))
     development = json.loads(dev_manifest_path.read_text(encoding="utf-8"))
+    if not all(isinstance(value, dict) for value in (metadata, manifest, development)):
+        raise SystemExit("V11.2 audit manifests must contain JSON objects")
     ciphertext_sha = _sha256(payload_path)
     if ciphertext_sha != metadata.get("ciphertext_sha256"):
         raise SystemExit("sealed ciphertext digest does not match metadata")
@@ -84,12 +96,18 @@ def main() -> int:
         raise SystemExit("development manifest does not prove an unopened holdout")
     if manifest.get("sealed_test_status") != "LOCKED_UNOPENED":
         raise SystemExit("routing bundle does not prove an unopened holdout")
-    if manifest.get("protocol", {}).get("protocol_id") != protocol.protocol_id:
+    protocol_payload = manifest.get("protocol")
+    if not isinstance(protocol_payload, dict) or canonical_json_digest(protocol_payload) != (
+        canonical_json_digest(protocol_manifest(protocol))
+    ):
         raise SystemExit("routing bundle protocol mismatch")
     routes = manifest.get("routes", [])
     if not isinstance(routes, list) or any(not isinstance(route, dict) for route in routes):
         raise SystemExit("routing bundle routes must be a list of objects")
-    if sorted(route.get("horizon") for route in routes) != list(protocol.horizons):
+    route_horizons = [route.get("horizon") for route in routes]
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in route_horizons):
+        raise SystemExit("routing bundle route horizons must be integers")
+    if sorted(route_horizons) != list(protocol.horizons):
         raise SystemExit("routing bundle does not contain exactly one route per horizon")
     if len({route.get("horizon") for route in routes}) != len(routes):
         raise SystemExit("routing bundle contains duplicate horizon routes")
@@ -105,6 +123,8 @@ def main() -> int:
 
     for label in ("universe_sha256", "panel_sha256", "schema_sha256", "split_sha256"):
         _require_sha256(manifest.get(label), f"routing bundle {label}")
+    if manifest.get("schema_sha256") != feature_schema_digest(protocol):
+        raise SystemExit("routing bundle schema digest does not match the frozen V11.2 contract")
     if manifest.get("panel_sha256") != development.get("panel_sha256"):
         raise SystemExit("routing bundle panel digest differs from development evidence")
     if manifest.get("split_sha256") != development.get("split_sha256"):
@@ -115,22 +135,26 @@ def main() -> int:
     scaler_digest = _sha256(scaler_path)
     if any(route.get("scaler_digest") != scaler_digest for route in routes):
         raise SystemExit("routing bundle scaler digest does not match numeric_scaler.json")
-    selection_paths: dict[int, Path] = {}
     for route in routes:
         horizon = int(route["horizon"])
         family = str(route.get("family", ""))
         if family not in set(protocol.candidate_families):
             raise SystemExit(f"route {horizon} uses a family outside the protocol")
-        baseline = family in {"ZERO_RETURN_CONST_VAR", "ZERO_RETURN_PERSISTENCE_VOL", "M0_HAR_BASELINE"}
+        baseline = family in {
+            "ZERO_RETURN_CONST_VAR",
+            "ZERO_RETURN_PERSISTENCE_VOL",
+            "M0_HAR_BASELINE",
+        }
         if bool(route.get("learned_promotion")) != (not baseline):
             raise SystemExit(f"route {horizon} has inconsistent learned_promotion")
-        artifact_path = _required_file(results_root, route.get("artifact_path"), f"route {horizon} artifact")
+        artifact_path = _required_file(
+            results_root, route.get("artifact_path"), f"route {horizon} artifact"
+        )
         if _sha256(artifact_path) != route.get("model_digest"):
             raise SystemExit(f"route {horizon} model digest does not match its artifact")
         selection_path = _required_file(
             results_root, f"selection_horizon_{horizon}.json", f"route {horizon} selection record"
         )
-        selection_paths[horizon] = selection_path
         if _sha256(selection_path) != route.get("selection_record_digest"):
             raise SystemExit(f"route {horizon} selection digest does not match its record")
 
@@ -157,7 +181,9 @@ def main() -> int:
         _require_sha256(value, "seed evidence digest") for value in seed_values
     }
     if len(expected_seed_digests) != len(protocol.horizons) * len(protocol.seeds):
-        raise SystemExit("routing bundle does not contain one unique evidence digest per seed/horizon")
+        raise SystemExit(
+            "routing bundle does not contain one unique evidence digest per seed/horizon"
+        )
     for horizon in protocol.horizons:
         for seed in protocol.seeds:
             evidence_path = _required_file(
@@ -170,7 +196,7 @@ def main() -> int:
             )
             if evidence_digest not in expected_seed_digests:
                 raise SystemExit(f"h{horizon} seed {seed} evidence is not referenced by the bundle")
-            if int(evidence_body.get("horizon", -1)) != horizon or int(evidence_body.get("seed", -1)) != seed:
+            if evidence_body.get("horizon") != horizon or evidence_body.get("seed") != seed:
                 raise SystemExit(f"h{horizon} seed {seed} evidence identity mismatch")
 
     audit = {
@@ -185,6 +211,17 @@ def main() -> int:
         "audited_at": datetime.now(UTC).isoformat(),
         "decryption_performed": False,
     }
+    return audit
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset-dir", type=Path, required=True)
+    parser.add_argument("--results-dir", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+
+    audit = audit_pre_unseal(args.dataset_dir.resolve(), args.results_dir.resolve())
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(audit, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(audit, indent=2, sort_keys=True))
