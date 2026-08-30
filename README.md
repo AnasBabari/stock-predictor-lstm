@@ -68,6 +68,12 @@ Live Yahoo Finance headlines remain context-only for the legacy v1 paths. Histor
 
 The offline global-model pipeline builds immutable snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs only an overall passing release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the full contract and [docs/VOLATILITY_V7_PREREGISTRATION.md](docs/VOLATILITY_V7_PREREGISTRATION.md) for the fresh cycle created after v6 strict rejection. Legacy browser training has been retired; the frontend purely interfaces with the verified server global forecasting contract, and CI verifies that the production bundle is TFJS-free.
 
+### V11.2 numeric PIT64 development
+
+The additive V11.2 protocol is a numeric-only, pre-holdout development cycle. It expands the panel to exactly 64 audited point-in-time securities, uses a session-grouped chronological 70/15/15 split, and selects a separately gated route for each 1-, 3-, 5-, and 7-session horizon. Epoch zero of the neural residual model is evaluated before any optimizer update and remains a valid HAR-equivalent fallback. Loss uncertainty is estimated by contiguous 20-session block bootstrap with Holm correction; stock-origin observations and unique sessions are reported separately. Historical news is deliberately disabled in V11.2 and reserved for an independent V12 protocol.
+
+The V11.2 preparation command writes train/validation files separately from an AES-256-GCM encrypted final holdout. The development runner never receives the holdout key and must finish with `sealed_test_status = LOCKED_UNOPENED`. See [docs/VOLATILITY_V11_2.md](docs/VOLATILITY_V11_2.md) for the protocol, RTX commands, sealing boundary, and pre-unseal audit.
+
 ## Volatility v9 (preregistered)
 
 v9 freezes the research question **before** any v9 model is trained, so it cannot be revised after an inconvenient result appears. The machine-readable protocol is [`configs/volatility_v9_protocol.json`](configs/volatility_v9_protocol.json) and the reasoning is in [docs/VOLATILITY_V9_PREREGISTRATION.md](docs/VOLATILITY_V9_PREREGISTRATION.md). Primary metric is QLIKE (`qlike_losses(forecast, realized)`); a candidate must show skill at **every** required horizon (1, 3, 5, 7) — a losing horizon cannot be hidden inside an average.

@@ -53,6 +53,8 @@ The RTX workstation runs the research harness in \`research/volatility_forecasti
 6. Consume one untouched holdout only after the methodology gate and winner decision pass.
 7. Export ONNX members, verify CPU parity, sign the manifest, and mount the immutable release.
 
+V11.2 is an additive numeric-only development protocol. It uses an exactly 64-security point-in-time universe, a session-grouped 70/15/15 split, independent per-horizon routing, and a fresh AES-GCM encrypted holdout. The development process receives only train/validation files; the decryption key and sealed payload are reserved for a separate one-shot certification command. Epoch zero is evaluated before neural updates so the residual learner can restore the HAR prior. See [VOLATILITY_V11_2.md](VOLATILITY_V11_2.md).
+
 The final refit is never used to claim evaluation metrics. Locked evaluation metrics describe only untouched out-of-fold or certification observations.
 
 ## News boundary

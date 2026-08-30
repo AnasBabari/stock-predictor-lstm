@@ -22,6 +22,7 @@ from research.volatility_forecasting.v11_2_split import (
     create_v112_expanding_folds,
     create_v112_split,
 )
+from research.volatility_forecasting.v11_2_trainer import train_epoch_zero_residual_model
 
 
 def _dates(count: int) -> list[str]:
@@ -131,3 +132,28 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
             candidate_digest="d" * 64,
             repository_root=tmp_path / "repository",
         )
+
+
+def test_epoch_zero_is_evaluated_before_updates_and_can_be_selected() -> None:
+    rng = np.random.default_rng(42)
+    x = rng.normal(size=(60, 3, 5)).astype(np.float32)
+    base = np.full(60, 0.04, dtype=np.float32)
+    returns = np.zeros(60, dtype=np.float32)
+    rv = np.full(60, 0.04, dtype=np.float32)
+    result = train_epoch_zero_residual_model(
+        x_train=x[:40],
+        base_variance_train=base[:40],
+        returns_train=returns[:40],
+        rv_train=rv[:40],
+        x_validation=x[40:],
+        base_variance_validation=base[40:],
+        returns_validation=returns[40:],
+        rv_validation=rv[40:],
+        max_epochs=2,
+        patience=2,
+        seed=42,
+        device="cpu",
+    )
+    assert result.epoch_evidence[0].epoch == 0
+    assert result.best_epoch == 0
+    assert result.epoch_zero_crps == pytest.approx(result.epoch_evidence[0].validation_crps)

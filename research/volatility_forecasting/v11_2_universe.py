@@ -87,11 +87,11 @@ class PITSecurity:
         aliases = [interval.ticker.upper() for interval in self.ticker_intervals]
         if len(aliases) != len(set(aliases)):
             raise ValueError(f"{self.security_id}: duplicate ticker interval")
-        for left, right in zip(self.ticker_intervals, self.ticker_intervals[1:], strict=True):
+        for left, right in zip(self.ticker_intervals, self.ticker_intervals[1:], strict=False):
             if _date(left.end_date) >= _date(right.start_date):
                 raise ValueError(f"{self.security_id}: overlapping ticker intervals")
         for left, right in zip(
-            self.membership_intervals, self.membership_intervals[1:], strict=True
+            self.membership_intervals, self.membership_intervals[1:], strict=False
         ):
             if _date(left.end_date) >= _date(right.start_date):
                 raise ValueError(f"{self.security_id}: overlapping membership intervals")
@@ -145,8 +145,8 @@ def _validate_strata(securities: list[PITSecurity]) -> None:
     counts: dict[str, int] = {}
     for security in securities:
         counts[security.sector] = counts.get(security.sector, 0) + 1
-    if len(counts) < 6:
-        raise ValueError("V11.2 universe must span at least six sectors")
+    if len(counts) != 8 or any(count != 8 for count in counts.values()):
+        raise ValueError("V11.2 universe must contain eight sector strata with eight securities each")
 
 
 def build_universe_manifest(

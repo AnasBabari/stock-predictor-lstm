@@ -73,6 +73,8 @@ The data service can be ready without a model for local development. Set `VOLATI
 
 This bounded route is for diagnostics and offline research. It returns the validated Stationary Schema v4 matrix, historical closes, future calendar dates, and deterministic snapshot id. It accepts no client feature matrix and writes no files. It is not a public training service and is not used by the production global-volatility path.
 
+The RTX-only V11.2 development workflow consumes an offline panel rather than this HTTP route. Its `prepare_v11_2_dataset.py` command creates train/validation files and an encrypted final holdout; `run_v11_2_numeric_development.py` has no holdout-key input and reports `sealed_test_status = LOCKED_UNOPENED`. V11.2 uses an exact 64-security PIT universe and independently routes horizons 1, 3, 5, and 7. Historical news is disabled by that protocol and is reserved for an independent V12 experiment.
+
 ## Compatibility forecasts
 
 GET /api/v1/predict and GET /api/v1/predict/direction remain temporarily for old clients. They return persistence/recent-base-rate outputs with metadata.engine.role = server_disabled_fallback, baseline_fallback = true, and metrics.metric_source = baseline_definition. A flat compatibility result must never be labelled an LSTM or global model.

@@ -11,6 +11,7 @@ import contextlib
 import datetime as dt
 import gc
 import hashlib
+import io
 import json
 import os
 import secrets
@@ -95,6 +96,24 @@ def _atomic_write(path: Path, data: bytes) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _atomic_create(path: Path, data: bytes) -> None:
+    """Create a marker exactly once, failing if another process won the race."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise V112SealedAccessError("sealed test open race detected") from exc
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        with contextlib.suppress(OSError):
+            path.unlink()
+        raise
 
 
 def _key_bytes(key_path: Path, *, create: bool) -> bytes:
@@ -312,9 +331,7 @@ def unseal_v112_test_once(
         "opened_at": dt.datetime.now(dt.UTC).isoformat(),
         "unseal_token": token,
     }
-    if lock_path.exists():
-        raise V112SealedAccessError("sealed test open race detected")
-    _atomic_write(lock_path, json.dumps(lock, indent=2, sort_keys=True).encode("utf-8"))
+    _atomic_create(lock_path, json.dumps(lock, indent=2, sort_keys=True).encode("utf-8"))
     associated = json.dumps(
         {
             "protocol_id": metadata["protocol_id"],
@@ -328,14 +345,11 @@ def unseal_v112_test_once(
     plaintext = AESGCM(_key_bytes(key_path, create=False)).decrypt(
         bytes.fromhex(str(metadata["nonce_hex"])), ciphertext, associated
     )
-    with tempfile.NamedTemporaryFile(suffix=".npz") as temporary:
-        temporary.write(plaintext)
-        temporary.flush()
-        with np.load(temporary.name, allow_pickle=False) as payload:
-            features = np.asarray(payload["features"], dtype=np.float32)
-            returns = np.asarray(payload["returns"], dtype=np.float32)
-            rv = np.asarray(payload["rv"], dtype=np.float32)
-            dates = tuple(str(value) for value in payload["dates"].tolist())
+    with np.load(io.BytesIO(plaintext), allow_pickle=False) as payload:
+        features = np.asarray(payload["features"], dtype=np.float32)
+        returns = np.asarray(payload["returns"], dtype=np.float32)
+        rv = np.asarray(payload["rv"], dtype=np.float32)
+        dates = tuple(str(value) for value in payload["dates"].tolist())
     del plaintext, ciphertext
     gc.collect()
     return V112SealedTestPayload(

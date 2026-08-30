@@ -22,6 +22,7 @@ class V112Route:
     scaler_digest: str
     selection_record_digest: str
     learned_promotion: bool
+    artifact_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -31,6 +32,7 @@ class V112Route:
             "scaler_digest": self.scaler_digest,
             "selection_record_digest": self.selection_record_digest,
             "learned_promotion": self.learned_promotion,
+            "artifact_path": self.artifact_path,
         }
 
 

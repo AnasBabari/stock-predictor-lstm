@@ -39,7 +39,6 @@ class V112Forecast:
         return {
             "crps_mean": float(np.mean(self.crps)),
             "qlike_mean": float(np.mean(self.qlike)),
-            "mae": float(np.mean(np.abs(self.location))),
         }
 
 
@@ -155,6 +154,7 @@ def train_epoch_zero_residual_model(
     patience: int = 4,
     learning_rate: float = 0.003,
     seed: int = 42,
+    device: str | torch.device | None = None,
 ) -> V112ResidualTrainingResult:
     """Train one horizon while evaluating and preserving exact epoch zero."""
     if max_epochs < 1 or patience < 1:
@@ -177,12 +177,22 @@ def train_epoch_zero_residual_model(
         patch_stride=1,
     )
     model = BaselineResidualLSTM(config)
+    selected_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    if selected_device.type == "cuda" and not torch.cuda.is_available():
+        raise ValueError("CUDA device requested but CUDA is unavailable")
+    model.to(selected_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    t_x = torch.tensor(train_x, dtype=torch.float32)
-    t_b = torch.tensor(np.asarray(base_variance_train, dtype=np.float32).reshape(-1, 1))
-    t_y = torch.tensor(np.asarray(returns_train, dtype=np.float32).reshape(-1, 1))
-    t_rv = torch.tensor(np.asarray(rv_train, dtype=np.float32).reshape(-1, 1))
-    v_x = torch.tensor(validation_x, dtype=torch.float32)
+    t_x = torch.tensor(train_x, dtype=torch.float32, device=selected_device)
+    t_b = torch.tensor(
+        np.asarray(base_variance_train, dtype=np.float32).reshape(-1, 1), device=selected_device
+    )
+    t_y = torch.tensor(
+        np.asarray(returns_train, dtype=np.float32).reshape(-1, 1), device=selected_device
+    )
+    t_rv = torch.tensor(
+        np.asarray(rv_train, dtype=np.float32).reshape(-1, 1), device=selected_device
+    )
+    v_x = torch.tensor(validation_x, dtype=torch.float32, device=selected_device)
     v_b_np = np.asarray(base_variance_validation, dtype=np.float64).reshape(-1, 1)
     v_y_np = np.asarray(returns_validation, dtype=np.float64).reshape(-1, 1)
     v_rv_np = np.asarray(rv_validation, dtype=np.float64).reshape(-1, 1)
@@ -192,9 +202,14 @@ def train_epoch_zero_residual_model(
         model.eval()
         with torch.no_grad():
             variance, location, _direction, _residual = model(
-                v_x, torch.tensor(v_b_np.astype(np.float32))
+                v_x, torch.tensor(v_b_np.astype(np.float32), device=selected_device)
             )
-        crps, qlike = _metric_arrays(location.numpy(), variance.numpy(), v_y_np, v_rv_np)
+        crps, qlike = _metric_arrays(
+            location.detach().cpu().numpy(),
+            variance.detach().cpu().numpy(),
+            v_y_np,
+            v_rv_np,
+        )
         return float(np.mean(crps)), float(np.mean(qlike)), _state_digest(model)
 
     # Epoch zero is evaluated before any optimizer update and is the exact HAR prior.
@@ -307,14 +322,16 @@ def evaluate_residual_model(
     x_values = torch.tensor(_as_sequence(x_eval), dtype=torch.float32)
     base = np.asarray(base_variance_eval, dtype=np.float32).reshape(-1, 1)
     with torch.no_grad():
+        model_device = next(result.model.parameters()).device
         variance, location, _direction, _residual = result.model(
-            x_values, torch.tensor(base, dtype=torch.float32)
+            x_values.to(model_device),
+            torch.tensor(base, dtype=torch.float32, device=model_device),
         )
     return make_forecast(
         "M1_NUMERIC_RESIDUAL",
         horizon,
-        location.numpy().reshape(-1),
-        variance.numpy().reshape(-1),
+        location.detach().cpu().numpy().reshape(-1),
+        variance.detach().cpu().numpy().reshape(-1),
         returns_eval,
         rv_eval,
     )
@@ -326,6 +343,7 @@ def select_per_horizon_challenger(
     dates: list[str] | tuple[str, ...],
     har: V112Forecast,
     candidates: dict[str, V112Forecast],
+    ranking_scores: dict[str, float] | None = None,
     block_sessions: int = 20,
     n_replicates: int = 10_000,
     seed: int = 42,
@@ -339,7 +357,14 @@ def select_per_horizon_challenger(
     ]
     if not learned:
         return V112SelectionResult(horizon, "M0_HAR_BASELINE", False, (), "no learned candidates")
-    learned.sort(key=lambda candidate: float(np.mean(candidate.crps)))
+    if ranking_scores is None:
+        raise ValueError("candidate ranking must come from training-only evidence")
+    missing_scores = [
+        candidate.family for candidate in learned if candidate.family not in ranking_scores
+    ]
+    if missing_scores:
+        raise ValueError(f"missing training-only ranking scores: {missing_scores}")
+    learned.sort(key=lambda candidate: ranking_scores[candidate.family])
     challenger = learned[0]
     gates = evaluate_horizon_gates(
         dates=dates,
