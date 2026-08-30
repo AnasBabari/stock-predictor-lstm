@@ -250,11 +250,9 @@ class GlobalMultimodalTrainerV11:
 
         # Patton QLIKE on implied variance
         implied_var = (scale_pred**2) * (df / (df - 2.0))
-        qlike_matrix = (
-            (y_rv / np.maximum(implied_var, 1e-8))
-            - np.log(y_rv / np.maximum(implied_var, 1e-8))
-            - 1.0
-        )
+        clipped_rv = np.maximum(y_rv, 1e-8)
+        clipped_imp_var = np.maximum(implied_var, 1e-8)
+        qlike_matrix = (clipped_rv / clipped_imp_var) - np.log(clipped_rv / clipped_imp_var) - 1.0
         qlike = float(np.mean(qlike_matrix))
 
         # 80% coverage
