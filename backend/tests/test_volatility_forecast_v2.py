@@ -253,6 +253,10 @@ def test_news_release_abstains_when_the_live_provider_fails(monkeypatch) -> None
     runtime = _NewsRuntime()
     _install_release(monkeypatch, runtime=runtime)
     _install_news_provider(monkeypatch, SimpleNamespace(features_for=broken))
+    monkeypatch.setattr(
+        "services.volatility_snapshot.build_volatility_inference_snapshot",
+        lambda ticker: _fake_snapshot(ticker),
+    )
     response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
     assert response.status_code == 503
     detail = response.json()["detail"]
@@ -270,6 +274,10 @@ def test_news_release_abstains_without_a_declared_feature_schema(monkeypatch) ->
     _install_news_provider(
         monkeypatch,
         SimpleNamespace(features_for=lambda *args, **kwargs: None),
+    )
+    monkeypatch.setattr(
+        "services.volatility_snapshot.build_volatility_inference_snapshot",
+        lambda ticker: _fake_snapshot(ticker),
     )
     response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
     assert response.status_code == 503
