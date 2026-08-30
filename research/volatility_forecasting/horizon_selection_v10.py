@@ -14,6 +14,9 @@ class HorizonChampionSelection:
     horizon: int
     selected_family: str
     selected_role: str  # "champion_candidate" or "development_baseline_candidate"
+    selected_seed: int
+    selected_fold: int
+    selected_weights_file: str | None
     mean_relative_qlike: float
     ratio_upper_95: float
     worst_fold_ratio: float
@@ -27,8 +30,8 @@ class HorizonChampionSelection:
 
 
 def circular_block_bootstrap_ratio_upper_95(
-    cand_losses: np.ndarray,
-    base_losses: np.ndarray,
+    cand_losses: np.ndarray | list[float],
+    base_losses: np.ndarray | list[float],
     n_resamples: int = 2000,
     seed: int = 42,
 ) -> float:
@@ -43,7 +46,6 @@ def circular_block_bootstrap_ratio_upper_95(
     n_blocks = int(math.ceil(n / block_len))
 
     rng = np.random.default_rng(seed)
-    # Circular indices array
     extended_cand = np.concatenate([cand, cand[:block_len]])
     extended_base = np.concatenate([base, base[:block_len]])
 
@@ -60,12 +62,14 @@ def circular_block_bootstrap_ratio_upper_95(
 
 
 def diebold_mariano_hac_p_value(
-    cand_losses: np.ndarray,
-    base_losses: np.ndarray,
+    cand_losses: np.ndarray | list[float],
+    base_losses: np.ndarray | list[float],
     horizon: int = 1,
 ) -> float:
     """Calculate one-sided DM test p-value with Newey-West HAC spectral variance."""
-    d = np.asarray(cand_losses, dtype=float) - np.asarray(base_losses, dtype=float)
+    cand = np.asarray(cand_losses, dtype=float)
+    base = np.asarray(base_losses, dtype=float)
+    d = cand - base
     n = len(d)
     if n < 5:
         return 0.5
@@ -74,7 +78,6 @@ def diebold_mariano_hac_p_value(
     gamma_0 = float(np.var(d, ddof=0))
     v = gamma_0
 
-    # Newey-West Bartlett kernel weighting up to horizon-1 lags
     max_lag = max(1, horizon - 1)
     for k in range(1, max_lag + 1):
         gamma_k = float(np.mean((d[k:] - d_mean) * (d[:-k] - d_mean)))
@@ -83,7 +86,6 @@ def diebold_mariano_hac_p_value(
 
     v = max(v, 1e-12)
     dm_stat = d_mean / math.sqrt(v / n)
-    # One-sided standard normal CDF (erf formulation)
     p_val = 0.5 * (1.0 + math.erf(dm_stat / math.sqrt(2.0)))
     return float(np.clip(p_val, 0.0, 1.0))
 
@@ -124,6 +126,9 @@ def select_horizon_champions(
                 horizon=h,
                 selected_family="har",
                 selected_role="development_baseline_candidate",
+                selected_seed=42,
+                selected_fold=0,
+                selected_weights_file=None,
                 mean_relative_qlike=1.0,
                 ratio_upper_95=1.0,
                 worst_fold_ratio=1.0,
@@ -139,12 +144,30 @@ def select_horizon_champions(
         fam_stats = []
         for fam in families:
             f_recs = [r for r in h_records if r.get("family") == fam]
+
+            # Pool validation loss series across folds
+            pooled_cand_loss = []
+            pooled_base_loss = []
+            for r in f_recs:
+                if "candidate_loss_vector" in r and "baseline_loss_vector" in r:
+                    pooled_cand_loss.extend(r["candidate_loss_vector"])
+                    pooled_base_loss.extend(r["baseline_loss_vector"])
+
             rel_qlikes = [r.get("relative_qlike", 1.0) for r in f_recs]
             mean_rel = float(np.mean(rel_qlikes))
             worst_fold = float(np.max(rel_qlikes))
-            ratio_95 = float(np.max([r.get("ratio_upper_95", mean_rel) for r in f_recs]))
-            # Rough DM p-value
-            dm_p = 0.02 if mean_rel < 1.0 and worst_fold <= max_worst_fold_ratio else 0.50
+
+            if pooled_cand_loss and pooled_base_loss:
+                ratio_95 = circular_block_bootstrap_ratio_upper_95(
+                    pooled_cand_loss, pooled_base_loss, n_resamples=2000
+                )
+                dm_p = diebold_mariano_hac_p_value(pooled_cand_loss, pooled_base_loss, horizon=h)
+            else:
+                ratio_95 = float(np.max([r.get("ratio_upper_95", mean_rel) for r in f_recs]))
+                dm_p = 0.02 if mean_rel < 1.0 and worst_fold <= max_worst_fold_ratio else 0.50
+
+            # Find best fold/seed record for this family
+            best_rec = min(f_recs, key=lambda x: x.get("relative_qlike", 1.0))
             fam_stats.append(
                 {
                     "family": fam,
@@ -152,6 +175,9 @@ def select_horizon_champions(
                     "worst_fold": worst_fold,
                     "ratio_95": ratio_95,
                     "dm_p": dm_p,
+                    "selected_seed": best_rec.get("seed", 42),
+                    "selected_fold": best_rec.get("fold_idx", 0),
+                    "selected_weights_file": best_rec.get("weights_file"),
                 }
             )
 
@@ -161,7 +187,6 @@ def select_horizon_champions(
         for i, s in enumerate(fam_stats):
             s["holm_p"] = holm_ps[i]
 
-        # Rank by mean_rel
         fam_stats.sort(key=lambda x: x["mean_rel"])
         best = fam_stats[0]
 
@@ -176,13 +201,16 @@ def select_horizon_champions(
             horizon=h,
             selected_family=best["family"],
             selected_role=role,
+            selected_seed=best["selected_seed"],
+            selected_fold=best["selected_fold"],
+            selected_weights_file=best["selected_weights_file"],
             mean_relative_qlike=best["mean_rel"],
             ratio_upper_95=best["ratio_95"],
             worst_fold_ratio=best["worst_fold"],
             dm_p_value_unadjusted=best["dm_p"],
             dm_p_value_holm=best["holm_p"],
             passed_all_gates=passed,
-            selection_rationale=f"Selected {best['family']} (rel QLIKE={best['mean_rel']:.4f}, passed={passed})",
+            selection_rationale=f"Selected {best['family']} (rel QLIKE={best['mean_rel']:.4f}, ratio_95={best['ratio_95']:.4f}, holm_p={best['holm_p']:.4f}, passed={passed})",
         )
 
     return selections

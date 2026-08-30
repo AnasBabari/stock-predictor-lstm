@@ -1,7 +1,7 @@
 """End-to-end synthetic CLI subprocess integration test for StockLSTM Volatility V10.
 
 Exercises the real operational research runner via CLI subprocess commands:
-prepare -> train -> select -> freeze -> certify -> export -> sign -> verify
+prepare -> train -> select -> freeze -> certify -> export -> forecast -> report -> sign -> verify
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from research.volatility_forecasting.export_v10 import verify_release_bundle_integrity
 from research.volatility_forecasting.signing_v10 import sign_release_manifest_detached
+from research.volatility_forecasting.splits_v10 import DEPLOYABLE_FEATURE_COLUMNS_V5
 
 
 def test_v10_full_cli_lifecycle_end_to_end(tmp_path: Path) -> None:
@@ -41,15 +42,15 @@ def test_v10_full_cli_lifecycle_end_to_end(tmp_path: Path) -> None:
     backend_dir.mkdir(parents=True, exist_ok=True)
     (backend_dir / "pyproject.toml").write_text("[project]\nname='stock-lstm'\n", encoding="utf-8")
 
-    # Generate synthetic market panel CSV
-    dates = pd.date_range("2022-01-01", periods=120, freq="B").strftime("%Y-%m-%d").tolist()
+    # Generate synthetic market panel CSV with all 26 deployable features across 300 sessions
+    dates = pd.date_range("2022-01-01", periods=300, freq="B").strftime("%Y-%m-%d").tolist()
     rows = []
     rng = np.random.default_rng(42)
     for d in dates:
         for sec in ["SEC_AAPL_001", "SEC_AMZN_001"]:
             row = {"Date": d, "SecurityID": sec, "target_h1": 0.0004, "target_h5": 0.0020}
-            for feat_idx in range(26):
-                row[f"feat_{feat_idx}"] = float(rng.normal())
+            for feat in DEPLOYABLE_FEATURE_COLUMNS_V5:
+                row[feat] = float(rng.normal(0.0, 1.0))
             rows.append(row)
 
     df_panel = pd.DataFrame(rows)
@@ -67,9 +68,9 @@ def test_v10_full_cli_lifecycle_end_to_end(tmp_path: Path) -> None:
     split_json.write_text(
         json.dumps(
             {
-                "train_sessions": dates[:70],
-                "val_sessions": dates[70:95],
-                "test_sessions": dates[95:],
+                "train_sessions": dates[:200],
+                "val_sessions": dates[200:250],
+                "test_sessions": dates[250:],
             },
             indent=2,
         ),
@@ -79,7 +80,7 @@ def test_v10_full_cli_lifecycle_end_to_end(tmp_path: Path) -> None:
     # Generate feature schema
     schema_json = tmp_path / "synthetic_schema.json"
     schema_json.write_text(
-        json.dumps({"feature_names": [f"feat_{i}" for i in range(26)]}, indent=2),
+        json.dumps({"feature_names": list(DEPLOYABLE_FEATURE_COLUMNS_V5)}, indent=2),
         encoding="utf-8",
     )
 
@@ -99,6 +100,8 @@ def test_v10_full_cli_lifecycle_end_to_end(tmp_path: Path) -> None:
         run_id,
         "--protocol",
         str(configs_dir / "volatility_v10_protocol.json"),
+        "--horizons",
+        "1,5",
         "--universe-manifest",
         str(universe_json),
         "--market-snapshot",
@@ -196,7 +199,25 @@ def test_v10_full_cli_lifecycle_end_to_end(tmp_path: Path) -> None:
     res_exp = subprocess.run(cmd_exp, capture_output=True, text=True, env=env)
     assert res_exp.returncode == 0, f"export failed: {res_exp.stderr}"
 
-    # 8. RUN SUBPROCESS: REPORT
+    # 8. RUN SUBPROCESS: FORECAST
+    cmd_fc = [
+        sys.executable,
+        str(script_path),
+        "--repo-root",
+        str(repo_root),
+        "forecast",
+        "--run-id",
+        run_id,
+        "--market-snapshot",
+        str(panel_csv),
+        "--security-id",
+        "SEC_AAPL_001",
+    ]
+    res_fc = subprocess.run(cmd_fc, capture_output=True, text=True, env=env)
+    assert res_fc.returncode == 0, f"forecast failed: {res_fc.stderr}"
+    assert (run_dir / "forecast_SEC_AAPL_001.json").exists()
+
+    # 9. RUN SUBPROCESS: REPORT
     cmd_rep = [
         sys.executable,
         str(script_path),
@@ -210,7 +231,7 @@ def test_v10_full_cli_lifecycle_end_to_end(tmp_path: Path) -> None:
     assert res_rep.returncode == 0, f"report failed: {res_rep.stderr}"
     assert (run_dir / "V10_RUN_REPORT.md").exists()
 
-    # 9. SIGN AND VERIFY RELEASE BUNDLE
+    # 10. SIGN AND VERIFY RELEASE BUNDLE
     bundle_dir = repo_root / "backend" / "releases" / f"release-v10-{run_id}"
     assert bundle_dir.exists()
     assert (bundle_dir / "manifest.json").exists()

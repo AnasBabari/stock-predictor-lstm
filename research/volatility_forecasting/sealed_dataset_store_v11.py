@@ -21,11 +21,15 @@ class SealedPartitionAccessError(RuntimeError):
 class DevelopmentDatasetPayload:
     train_numeric: np.ndarray
     train_news: np.ndarray
+    train_shuffled_news: np.ndarray
+    train_delayed_news: np.ndarray
     train_returns: np.ndarray
     train_rv: np.ndarray
     train_dates: list[str]
     val_numeric: np.ndarray
     val_news: np.ndarray
+    val_shuffled_news: np.ndarray
+    val_delayed_news: np.ndarray
     val_returns: np.ndarray
     val_rv: np.ndarray
     val_dates: list[str]
@@ -87,11 +91,15 @@ class SealedDatasetStoreV11:
         return DevelopmentDatasetPayload(
             train_numeric=self._numeric[self._train_idx],
             train_news=self._news[self._train_idx],
+            train_shuffled_news=self._shuffled_news[self._train_idx],
+            train_delayed_news=self._delayed_news[self._train_idx],
             train_returns=self._returns[self._train_idx],
             train_rv=self._rv[self._train_idx],
             train_dates=[self._dates[i] for i in self._train_idx],
             val_numeric=self._numeric[self._val_idx],
             val_news=self._news[self._val_idx],
+            val_shuffled_news=self._shuffled_news[self._val_idx],
+            val_delayed_news=self._delayed_news[self._val_idx],
             val_returns=self._returns[self._val_idx],
             val_rv=self._rv[self._val_idx],
             val_dates=[self._dates[i] for i in self._val_idx],

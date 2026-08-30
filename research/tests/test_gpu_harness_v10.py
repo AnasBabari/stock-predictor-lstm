@@ -1,18 +1,20 @@
-"""Tests for GPU harness status, neural architectures, and real training execution."""
+"""Tests for GPU harness status, neural architectures, sequences, scalers and serialization round-trip."""
 
 from __future__ import annotations
 
-import io
-
 import numpy as np
+import pandas as pd
 import torch
 
+from research.volatility_forecasting.export_v10 import reconstruct_pytorch_model
 from research.volatility_forecasting.gpu_harness_v10 import (
     GRUVolatilityModel,
     LSTMVolatilityModel,
     PatchTSTVolatilityModel,
     TCNVolatilityModel,
     TrainingExecutionConfig,
+    TrainOnlyRobustScaler,
+    build_temporal_sequences,
     check_gpu_runtime,
     cleanup_gpu_memory,
     train_candidate_fold,
@@ -33,29 +35,72 @@ def test_neural_architectures_forward_pass_and_positivity() -> None:
     # 1. TCN
     tcn = TCNVolatilityModel(in_features=26, num_channels=[16, 32])
     out_tcn = tcn(x)
-    assert out_tcn.shape == (8, 1)
+    assert out_tcn.shape == (8,)
     assert (out_tcn > 0).all()
 
     # 2. LSTM
     lstm = LSTMVolatilityModel(in_features=26, hidden_dim=16, num_layers=2)
     out_lstm = lstm(x)
-    assert out_lstm.shape == (8, 1)
+    assert out_lstm.shape == (8,)
     assert (out_lstm > 0).all()
 
     # 3. GRU
     gru = GRUVolatilityModel(in_features=26, hidden_dim=16, num_layers=2)
     out_gru = gru(x)
-    assert out_gru.shape == (8, 1)
+    assert out_gru.shape == (8,)
     assert (out_gru > 0).all()
 
     # 4. PatchTST
     patch = PatchTSTVolatilityModel(in_features=26, patch_len=8, stride=4, d_model=16)
     out_patch = patch(x)
-    assert out_patch.shape == (8, 1)
+    assert out_patch.shape == (8,)
     assert (out_patch > 0).all()
 
 
-def test_train_candidate_fold_serializes_real_weights_for_all_families() -> None:
+def test_build_temporal_sequences_independent_per_security() -> None:
+    dates = pd.date_range("2024-01-01", periods=100, freq="B").strftime("%Y-%m-%d").tolist()
+    rows = []
+    for d in dates:
+        for sec in ["SEC_AAPL_001", "SEC_AMZN_001"]:
+            row = {"Date": d, "SecurityID": sec, "target_h1": 0.0004}
+            for i in range(26):
+                row[f"feat_{i}"] = float(i)
+            rows.append(row)
+
+    df = pd.DataFrame(rows)
+    feature_cols = [f"feat_{i}" for i in range(26)]
+    X_seq, y_seq, meta_df = build_temporal_sequences(
+        df, feature_cols, target_col="target_h1", sequence_length=60
+    )
+
+    # 100 - 60 + 1 = 41 sequences per security * 2 = 82
+    assert X_seq.shape == (82, 60, 26)
+    assert y_seq.shape == (82,)
+    assert len(meta_df) == 82
+    assert set(meta_df["SecurityID"].unique()) == {"SEC_AAPL_001", "SEC_AMZN_001"}
+
+
+def test_train_only_robust_scaler_fit_transform_and_serialization() -> None:
+    rng = np.random.default_rng(42)
+    X_train = rng.normal(loc=5.0, scale=2.0, size=(50, 60, 26))
+    X_val = rng.normal(loc=5.0, scale=2.0, size=(20, 60, 26))
+
+    scaler = TrainOnlyRobustScaler()
+    X_train_norm = scaler.fit_transform(X_train)
+    X_val_norm = scaler.transform(X_val)
+
+    assert X_train_norm.shape == X_train.shape
+    assert X_val_norm.shape == X_val.shape
+
+    # Check serialization roundtrip
+    s_dict = scaler.to_dict()
+    scaler_reloaded = TrainOnlyRobustScaler.from_dict(s_dict)
+    X_val_norm_reloaded = scaler_reloaded.transform(X_val)
+
+    np.testing.assert_allclose(X_val_norm, X_val_norm_reloaded, atol=1e-7)
+
+
+def test_train_candidate_fold_serializes_real_weights_and_parity_round_trip() -> None:
     rng = np.random.default_rng(42)
     X_train = rng.normal(size=(30, 20, 26))
     y_train = np.maximum(0.0004 + 0.0001 * X_train[:, -1, 0], 1e-6)
@@ -70,8 +115,16 @@ def test_train_candidate_fold_serializes_real_weights_for_all_families() -> None
         assert isinstance(res["weights_bytes"], bytes)
         assert len(res["weights_bytes"]) > 10
 
-        # For neural families, verify torch.load can deserialize state dict
+        # For neural families, verify serialization roundtrip parity
         if fam in ("tcn", "lstm", "gru", "patch_transformer"):
-            buf = io.BytesIO(res["weights_bytes"])
-            state = torch.load(buf, weights_only=True)
-            assert isinstance(state, dict)
+            model_reloaded = reconstruct_pytorch_model(
+                fam, in_features=26, weights_bytes=res["weights_bytes"]
+            )
+            # Ensure predictions match
+            with torch.no_grad():
+                scaler = TrainOnlyRobustScaler.from_dict(res["scaler_parameters"])
+                x_val_scaled = scaler.transform(X_val)
+                pred_reloaded = (
+                    model_reloaded(torch.tensor(x_val_scaled, dtype=torch.float32)).cpu().numpy()
+                )
+            np.testing.assert_allclose(res["candidate_predictions"], pred_reloaded, atol=1e-5)

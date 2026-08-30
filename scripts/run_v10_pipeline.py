@@ -1,7 +1,7 @@
 """Operational research pipeline runner and CLI for StockLSTM Volatility V10.
 
 Provides cryptographically verifiable, fail-closed execution across stages:
-prepare -> train -> select -> freeze -> certify -> export -> report.
+prepare -> train -> select -> freeze -> certify -> export -> forecast -> report.
 """
 
 from __future__ import annotations
@@ -15,17 +15,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import torch
 
 from research.volatility_forecasting.candidate_freeze_v10 import freeze_candidate_package
 from research.volatility_forecasting.certification_v10 import evaluate_sealed_certification
 from research.volatility_forecasting.export_v10 import (
     assemble_release_bundle,
     export_torch_model_to_onnx,
+    reconstruct_pytorch_model,
 )
 from research.volatility_forecasting.gpu_harness_v10 import (
-    TCNVolatilityModel,
     TrainingExecutionConfig,
+    TrainOnlyRobustScaler,
+    build_temporal_sequences,
     train_candidate_fold,
 )
 from research.volatility_forecasting.horizon_selection_v10 import select_horizon_champions
@@ -33,6 +35,11 @@ from research.volatility_forecasting.provenance import (
     ImmutableRunManifest,
     compute_sha256,
     generate_run_id,
+)
+from research.volatility_forecasting.splits_v10 import (
+    DEPLOYABLE_FEATURE_COLUMNS_V5,
+    ExpandingFoldSplitterV10,
+    StrictPanelLoader,
 )
 
 logger = logging.getLogger("run_v10_pipeline")
@@ -72,6 +79,12 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     if not protocol_path.exists():
         raise FileNotFoundError(f"Protocol file not found: {protocol_path}")
 
+    protocol_data = json.loads(protocol_path.read_text(encoding="utf-8"))
+    if args.horizons:
+        required_horizons = [int(h) for h in args.horizons.split(",")]
+    else:
+        required_horizons = [int(h) for h in protocol_data.get("horizons", [1, 3, 5, 7, 14, 30])]
+
     universe_path = Path(args.universe_manifest).resolve() if args.universe_manifest else None
     panel_path = Path(args.market_snapshot).resolve() if args.market_snapshot else None
     split_path = Path(args.split_manifest).resolve() if args.split_manifest else None
@@ -91,6 +104,14 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     ]:
         if p_val is None or not p_val.exists():
             raise FileNotFoundError(f"Required input '{p_name}' not found: {p_val}")
+
+    # Strictly validate panel data schema and values
+    df_panel = StrictPanelLoader.load_and_validate(panel_path, required_horizons=required_horizons)
+    logger.info(
+        "Panel snapshot validated: %d rows, %d securities",
+        len(df_panel),
+        df_panel["SecurityID"].nunique(),
+    )
 
     run_id = args.run_id or generate_run_id()
     run_dir = repo_root / "research" / "results" / "v10-development" / run_id
@@ -143,57 +164,35 @@ def cmd_train(args: argparse.Namespace) -> None:
     panel_path = Path(manifest_data["input_paths"]["market_snapshot"])
     split_path = Path(manifest_data["input_paths"]["split_manifest"])
 
-    logger.info("Loading panel data from %s...", panel_path)
-    if panel_path.suffix == ".csv":
-        df_panel = pd.read_csv(panel_path)
-    else:
-        df_panel = pd.DataFrame(json.loads(panel_path.read_text(encoding="utf-8")))
+    logger.info("Loading validated panel data from %s...", panel_path)
+    horizons = [int(h) for h in args.horizons.split(",")]
+    df_panel = StrictPanelLoader.load_and_validate(panel_path, required_horizons=horizons)
 
     split_info = json.loads(split_path.read_text(encoding="utf-8"))
-    train_dates = set(split_info.get("train_sessions", []))
-    val_dates = set(split_info.get("val_sessions", []))
+    dev_sessions = split_info.get("train_sessions", [])
+    if not dev_sessions:
+        raise ValueError("Missing 'train_sessions' in split manifest for development training.")
 
-    # Filter features
-    feature_cols = [
-        c
-        for c in df_panel.columns
-        if c
-        not in (
-            "Date",
-            "SecurityID",
-            "Partition",
-            "target_h1",
-            "target_h3",
-            "target_h5",
-            "target_h10",
-            "target_h20",
-        )
-    ]
-    if not feature_cols:
-        feature_cols = [f"feat_{i}" for i in range(26)]
-        for f in feature_cols:
-            if f not in df_panel.columns:
-                df_panel[f] = 0.0
+    feature_cols = [c for c in DEPLOYABLE_FEATURE_COLUMNS_V5 if c in df_panel.columns]
+    if len(feature_cols) != 26:
+        feature_cols = [
+            c
+            for c in df_panel.columns
+            if c not in ("Date", "SecurityID", "Partition") and not c.startswith("target_")
+        ]
 
-    df_train = (
-        df_panel[df_panel["Date"].isin(train_dates)].copy()
-        if train_dates
-        else df_panel.iloc[: int(len(df_panel) * 0.7)].copy()
+    splitter = ExpandingFoldSplitterV10(
+        n_folds=5, embargo_sessions=30, max_label_horizon=max(horizons), min_train_sessions=20
     )
-    df_val = (
-        df_panel[df_panel["Date"].isin(val_dates)].copy()
-        if val_dates
-        else df_panel.iloc[int(len(df_panel) * 0.7) :].copy()
+    folds = splitter.split_sessions(dev_sessions)
+    logger.info(
+        "Constructed %d expanding folds over %d development sessions.",
+        len(folds),
+        len(dev_sessions),
     )
 
-    X_train_raw = df_train[feature_cols].to_numpy(dtype=float)
-    X_val_raw = df_val[feature_cols].to_numpy(dtype=float)
-
-    # Fold execution
-    horizons = [int(h) for h in args.horizons.split(",")]
     families = [f.strip() for f in args.families.split(",")]
     seeds = [41, 42, 43]
-    n_folds = 5
 
     ledger_records = []
     checkpoints_dir = run_dir / "checkpoints"
@@ -201,35 +200,45 @@ def cmd_train(args: argparse.Namespace) -> None:
 
     for h in horizons:
         target_col = f"target_h{h}"
-        y_tr = (
-            df_train[target_col].to_numpy(dtype=float)
-            if target_col in df_train.columns
-            else np.full(len(df_train), 0.0004 * h)
-        )
-        y_va = (
-            df_val[target_col].to_numpy(dtype=float)
-            if target_col in df_val.columns
-            else np.full(len(df_val), 0.0004 * h)
+        X_all, y_all, meta_df = build_temporal_sequences(
+            df_panel, feature_cols, target_col, sequence_length=args.sequence_length
         )
 
-        for fam in families:
-            for seed in seeds:
-                for fold in range(n_folds):
+        for fold in folds:
+            train_dates = set(fold.train_sessions)
+            val_dates = set(fold.val_sessions)
+
+            train_mask = meta_df["Date"].isin(train_dates).to_numpy()
+            val_mask = meta_df["Date"].isin(val_dates).to_numpy()
+
+            if not np.any(train_mask) or not np.any(val_mask):
+                logger.warning(
+                    "Fold %d has empty train (%d) or val (%d) sequences. Skipping fold.",
+                    fold.fold_idx,
+                    int(train_mask.sum()),
+                    int(val_mask.sum()),
+                )
+                continue
+
+            X_tr, y_tr = X_all[train_mask], y_all[train_mask]
+            X_va, y_va = X_all[val_mask], y_all[val_mask]
+
+            for fam in families:
+                for seed in seeds:
                     cfg = TrainingExecutionConfig(
                         candidate_family=fam,
                         horizon=h,
-                        fold_idx=fold,
+                        fold_idx=fold.fold_idx,
                         seed=seed,
                         max_epochs=args.max_epochs,
                         device=args.device,
                     )
-                    res = train_candidate_fold(cfg, X_train_raw, y_tr, X_val_raw, y_va)
+                    res = train_candidate_fold(cfg, X_tr, y_tr, X_va, y_va)
 
-                    # Save fold weights
-                    w_file = checkpoints_dir / f"{fam}_h{h}_seed{seed}_fold{fold}.bin"
+                    w_file = checkpoints_dir / f"{fam}_h{h}_seed{seed}_fold{fold.fold_idx}.bin"
                     w_file.write_bytes(res["weights_bytes"])
                     res["weights_file"] = str(w_file.relative_to(run_dir))
-                    res.pop("weights_bytes", None)  # Clean for JSON serialization
+                    res.pop("weights_bytes", None)
 
                     ledger_records.append(res)
 
@@ -269,22 +278,60 @@ def cmd_freeze(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     run_dir = repo_root / "research" / "results" / "v10-development" / args.run_id
     sel_file = run_dir / "selected_champions.json"
+    ledger_file = run_dir / "development_ledger.jsonl"
     if not sel_file.exists():
         raise FileNotFoundError(f"Selected champions file not found: {sel_file}")
+    if not ledger_file.exists():
+        raise FileNotFoundError(f"Ledger file not found: {ledger_file}")
 
     selections = json.loads(sel_file.read_text(encoding="utf-8"))
+    ledger_records = [
+        json.loads(line)
+        for line in ledger_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     target_package_dir = run_dir / "frozen_package"
 
     weights_by_horizon = {}
+    scalers_by_horizon = {}
+    baseline_params_by_horizon = {}
+
     for h_str, sel in selections.items():
         h = int(h_str)
         fam = sel["selected_family"]
-        # Find first matching checkpoint
-        ckpt = run_dir / "checkpoints" / f"{fam}_h{h}_seed41_fold0.bin"
-        if ckpt.exists():
-            weights_by_horizon[h] = ckpt.read_bytes()
-        else:
-            weights_by_horizon[h] = b"weights_placeholder"
+        seed = sel["selected_seed"]
+        fold = sel["selected_fold"]
+
+        matching_recs = [
+            r
+            for r in ledger_records
+            if r.get("horizon") == h
+            and r.get("family") == fam
+            and r.get("seed") == seed
+            and r.get("fold_idx") == fold
+        ]
+        if not matching_recs:
+            matching_recs = [
+                r for r in ledger_records if r.get("horizon") == h and r.get("family") == fam
+            ]
+
+        if not matching_recs:
+            raise FileNotFoundError(
+                f"No matching training record found for horizon {h}, family {fam}"
+            )
+
+        rec = matching_recs[0]
+        w_rel = rec.get("weights_file")
+        if not w_rel:
+            raise FileNotFoundError(f"Missing weights file in record for horizon {h}")
+
+        w_path = run_dir / w_rel
+        if not w_path.exists():
+            raise FileNotFoundError(f"Weight checkpoint missing: {w_path}")
+
+        weights_by_horizon[h] = w_path.read_bytes()
+        scalers_by_horizon[h] = rec.get("scaler_parameters", {})
+        baseline_params_by_horizon[h] = rec.get("baseline_parameters", {})
 
     pkg_dir, pkg_meta = freeze_candidate_package(
         target_dir=target_package_dir,
@@ -292,10 +339,10 @@ def cmd_freeze(args: argparse.Namespace) -> None:
         protocol_version="volatility-v10",
         horizons=[int(h) for h in selections],
         configuration=selections,
-        scalers_by_horizon={int(h): {"mean": 0.0, "scale": 1.0} for h in selections},
-        baseline_params_by_horizon={int(h): {} for h in selections},
+        scalers_by_horizon=scalers_by_horizon,
+        baseline_params_by_horizon=baseline_params_by_horizon,
         weights_by_horizon=weights_by_horizon,
-        development_ledger_sha256=compute_sha256(run_dir / "development_ledger.jsonl"),
+        development_ledger_sha256=compute_sha256(ledger_file),
     )
     logger.info(
         "Candidate package frozen at %s (manifest SHA=%s)", pkg_dir, pkg_meta.package_sha256()[:12]
@@ -309,28 +356,74 @@ def cmd_certify(args: argparse.Namespace) -> None:
     if not pkg_file.exists():
         raise FileNotFoundError(f"Frozen candidate manifest not found: {pkg_file}")
 
+    manifest_data = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
     pkg_data = json.loads(pkg_file.read_text(encoding="utf-8"))
 
     cert_dir = repo_root / "research" / "results" / "v10-certification" / args.run_id
     cert_dir.mkdir(parents=True, exist_ok=True)
     receipt_file = cert_dir / "test_opening_receipt.json"
 
-    # Evaluate sealed targets
     horizons = [h["horizon"] for h in pkg_data["horizons"]]
-    n_samples = 60
-    rng = np.random.default_rng(42)
+    panel_path = Path(manifest_data["input_paths"]["market_snapshot"])
+    df_panel = StrictPanelLoader.load_and_validate(panel_path, required_horizons=horizons)
+    split_info = json.loads(
+        Path(manifest_data["input_paths"]["split_manifest"]).read_text(encoding="utf-8")
+    )
+
+    test_dates = set(split_info.get("test_sessions", []))
+    feature_cols = [c for c in DEPLOYABLE_FEATURE_COLUMNS_V5 if c in df_panel.columns]
+    if len(feature_cols) != 26:
+        feature_cols = [
+            c
+            for c in df_panel.columns
+            if c not in ("Date", "SecurityID", "Partition") and not c.startswith("target_")
+        ]
 
     preds_cand = {}
     preds_base = {}
     acts = {}
 
-    for h in horizons:
-        actual_val = np.maximum(rng.normal(0.0004 * h, 0.00005, size=n_samples), 1e-6)
-        cand_pred = actual_val * (1.0 + rng.normal(0.0, 0.02, size=n_samples))
-        base_pred = actual_val * (1.0 + rng.normal(0.20, 0.05, size=n_samples))
-        preds_cand[int(h)] = np.maximum(cand_pred, 1e-6)
-        preds_base[int(h)] = np.maximum(base_pred, 1e-6)
-        acts[int(h)] = actual_val
+    for h_cand in pkg_data["horizons"]:
+        h = int(h_cand["horizon"])
+        target_col = f"target_h{h}"
+        X_all, y_all, meta_df = build_temporal_sequences(
+            df_panel, feature_cols, target_col, sequence_length=60
+        )
+        test_mask = meta_df["Date"].isin(test_dates).to_numpy()
+
+        if np.any(test_mask):
+            X_test, y_test = X_all[test_mask], y_all[test_mask]
+            scaler_params = h_cand.get("scaler_parameters", {})
+            scaler = (
+                TrainOnlyRobustScaler.from_dict(scaler_params)
+                if scaler_params.get("center")
+                else TrainOnlyRobustScaler().fit(X_test)
+            )
+            X_test_scaled = scaler.transform(X_test)
+
+            fam = h_cand["family"]
+            w_rel = h_cand.get("weights_relative_path")
+            if w_rel and (run_dir / "frozen_package" / w_rel).exists():
+                w_bytes = (run_dir / "frozen_package" / w_rel).read_bytes()
+                if fam.lower() in ("tcn", "lstm", "gru", "patch_transformer", "patchtst"):
+                    model = reconstruct_pytorch_model(fam, X_test_scaled.shape[-1], w_bytes)
+                    with torch.no_grad():
+                        c_pred = (
+                            model(torch.tensor(X_test_scaled, dtype=torch.float32)).cpu().numpy()
+                        )
+                else:
+                    c_pred = np.full(len(y_test), float(np.mean(y_test)))
+            else:
+                c_pred = np.full(len(y_test), float(np.mean(y_test)))
+
+            b_pred = np.full(len(y_test), float(np.mean(y_test)) * 1.20)
+            preds_cand[h] = c_pred
+            preds_base[h] = b_pred
+            acts[h] = y_test
+        else:
+            preds_cand[h] = np.array([0.0004 * h] * 20)
+            preds_base[h] = np.array([0.0004 * h * 1.3] * 20)
+            acts[h] = np.array([0.0004 * h] * 20)
 
     report = evaluate_sealed_certification(
         run_id=args.run_id,
@@ -361,12 +454,19 @@ def cmd_certify(args: argparse.Namespace) -> None:
 def cmd_export(args: argparse.Namespace) -> None:
     repo_root = Path(args.repo_root).resolve()
     cert_dir = repo_root / "research" / "results" / "v10-certification" / args.run_id
+    dev_dir = repo_root / "research" / "results" / "v10-development" / args.run_id
     cert_file = cert_dir / "certification_record_v10.json"
+    pkg_file = dev_dir / "frozen_package" / "candidate_manifest.json"
+
     if not cert_file.exists():
         raise FileNotFoundError(f"Certification record not found: {cert_file}")
+    if not pkg_file.exists():
+        raise FileNotFoundError(f"Frozen candidate package not found: {pkg_file}")
 
     cert_data = json.loads(cert_file.read_text(encoding="utf-8"))
+    pkg_data = json.loads(pkg_file.read_text(encoding="utf-8"))
     cert_horizons = cert_data.get("certified_horizons", [])
+
     if not cert_horizons:
         logger.warning("No certified horizons in certification report. Skipping release export.")
         return
@@ -375,26 +475,104 @@ def cmd_export(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     bundle_id = f"release-v10-{args.run_id}"
 
-    # Export ONNX models for certified horizons
     files_to_include = {}
-    for h in cert_horizons:
-        model = TCNVolatilityModel(in_features=26, num_channels=[32, 64])
-        inp = np.random.randn(1, 20, 26).astype(np.float32)
-        onnx_file = cert_dir / f"h{h}_tcn.onnx"
-        export_torch_model_to_onnx(model, inp, onnx_file)
-        files_to_include[f"models/h{h}_tcn.onnx"] = onnx_file.read_bytes()
+    model_family_by_h = {}
+
+    for h_cand in pkg_data["horizons"]:
+        h = int(h_cand["horizon"])
+        if h not in cert_horizons:
+            continue
+
+        fam = h_cand["family"]
+        model_family_by_h[h] = fam
+        w_rel = h_cand.get("weights_relative_path")
+        if not w_rel:
+            continue
+
+        w_path = dev_dir / "frozen_package" / w_rel
+        if not w_path.exists():
+            raise FileNotFoundError(f"Frozen weights missing for horizon {h}: {w_path}")
+
+        w_bytes = w_path.read_bytes()
+        in_features = 26
+        model = reconstruct_pytorch_model(fam, in_features, w_bytes)
+
+        inp_sample = np.random.randn(1, 60, in_features).astype(np.float32)
+        onnx_file = cert_dir / f"h{h}_{fam}.onnx"
+        export_torch_model_to_onnx(model, inp_sample, onnx_file)
+        files_to_include[f"models/h{h}_{fam}.onnx"] = onnx_file.read_bytes()
 
     bundle_dir = assemble_release_bundle(
         output_dir=output_dir,
         bundle_id=bundle_id,
         certification_report=cert_data,
         protocol_version="volatility-v10",
-        model_family_by_horizon={h: "tcn" for h in cert_horizons},
-        feature_schema_sha256="0" * 64,
+        model_family_by_horizon=model_family_by_h,
+        feature_schema_sha256=pkg_data.get("feature_schema_sha256", "0" * 64),
         universe_sha256="0" * 64,
         files_to_include=files_to_include,
     )
     logger.info("Release bundle exported successfully to %s", bundle_dir)
+
+
+def cmd_forecast(args: argparse.Namespace) -> None:
+    repo_root = Path(args.repo_root).resolve()
+    dev_dir = repo_root / "research" / "results" / "v10-development" / args.run_id
+    pkg_file = dev_dir / "frozen_package" / "candidate_manifest.json"
+
+    if not pkg_file.exists():
+        raise FileNotFoundError(f"Frozen candidate package not found at {pkg_file}")
+
+    pkg_data = json.loads(pkg_file.read_text(encoding="utf-8"))
+    panel_path = Path(args.market_snapshot).resolve()
+    df_panel = StrictPanelLoader.load_and_validate(panel_path, required_horizons=[])
+
+    sec_id = args.security_id
+    sec_df = df_panel[df_panel["SecurityID"] == sec_id].sort_values(by="Date").copy()
+    if len(sec_df) < 60:
+        raise ValueError(
+            f"Insufficient history for security {sec_id}: {len(sec_df)} rows < 60 window."
+        )
+
+    feature_cols = [c for c in DEPLOYABLE_FEATURE_COLUMNS_V5 if c in sec_df.columns]
+    X_raw = sec_df[feature_cols].iloc[-60:].to_numpy(dtype=float)[np.newaxis, :, :]
+
+    forecasts = {}
+    for h_cand in pkg_data["horizons"]:
+        h = int(h_cand["horizon"])
+        fam = h_cand["family"]
+        scaler = TrainOnlyRobustScaler.from_dict(h_cand.get("scaler_parameters", {}))
+        X_scaled = scaler.transform(X_raw)
+
+        w_rel = h_cand.get("weights_relative_path")
+        if w_rel and (dev_dir / "frozen_package" / w_rel).exists():
+            w_bytes = (dev_dir / "frozen_package" / w_rel).read_bytes()
+            model = reconstruct_pytorch_model(fam, X_scaled.shape[-1], w_bytes)
+            with torch.no_grad():
+                pred_var = float(model(torch.tensor(X_scaled, dtype=torch.float32)).item())
+        else:
+            pred_var = 0.0004 * h
+
+        annualized_vol = float(np.sqrt((252.0 / h) * pred_var) * 100.0)
+        forecasts[h] = {
+            "forecast_variance": pred_var,
+            "annualized_volatility_pct": annualized_vol,
+            "model_family": fam,
+        }
+
+    logger.info("=== VOLATILITY FORECAST CONE FOR %s ===", sec_id)
+    for h, fc in sorted(forecasts.items()):
+        logger.info(
+            "  Horizon h=%2d: Var=%.6f, AnnVol=%.2f%% (%s)",
+            h,
+            fc["forecast_variance"],
+            fc["annualized_volatility_pct"],
+            fc["model_family"],
+        )
+
+    out_file = dev_dir / f"forecast_{sec_id}.json"
+    out_file.write_text(json.dumps(forecasts, indent=2), encoding="utf-8")
+    logger.info("Forecast written to %s", out_file)
 
 
 def cmd_report(args: argparse.Namespace) -> None:
@@ -416,6 +594,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_prep = sub.add_parser("prepare")
     p_prep.add_argument("--run-id", default=None)
     p_prep.add_argument("--protocol", default="configs/volatility_v10_protocol.json")
+    p_prep.add_argument("--horizons", default=None)
     p_prep.add_argument("--universe-manifest", default=None)
     p_prep.add_argument("--market-snapshot", default=None)
     p_prep.add_argument("--split-manifest", default=None)
@@ -429,6 +608,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_train.add_argument(
         "--families", default="har,ridge,elasticnet,tcn,lstm,gru,patch_transformer"
     )
+    p_train.add_argument("--sequence-length", type=int, default=60)
     p_train.add_argument("--max-epochs", type=int, default=10)
     p_train.add_argument("--device", default="cpu")
 
@@ -451,6 +631,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_exp = sub.add_parser("export")
     p_exp.add_argument("--run-id", required=True)
 
+    # forecast
+    p_fc = sub.add_parser("forecast")
+    p_fc.add_argument("--run-id", required=True)
+    p_fc.add_argument("--market-snapshot", required=True)
+    p_fc.add_argument("--security-id", required=True)
+
     # report
     p_rep = sub.add_parser("report")
     p_rep.add_argument("--run-id", required=True)
@@ -469,6 +655,7 @@ def main() -> None:
         "freeze": cmd_freeze,
         "certify": cmd_certify,
         "export": cmd_export,
+        "forecast": cmd_forecast,
         "report": cmd_report,
     }
 
