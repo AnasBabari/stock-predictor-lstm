@@ -210,10 +210,9 @@ def main() -> int:
     train_x = train_scaler.transform(development.train_features)
     validation_x = train_scaler.transform(development.validation_features)
     scaler_payload = train_scaler.to_dict()
-    scaler_digest = _digest_bytes(json.dumps(scaler_payload, sort_keys=True).encode("utf-8"))
-    (output / "numeric_scaler.json").write_text(
-        json.dumps(scaler_payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    scaler_bytes = json.dumps(scaler_payload, indent=2, sort_keys=True).encode("utf-8")
+    scaler_digest = _digest_bytes(scaler_bytes)
+    (output / "numeric_scaler.json").write_bytes(scaler_bytes)
 
     train_har, validation_har = _fit_har(
         development.train_features, development.train_rv, development.validation_features
@@ -407,9 +406,10 @@ def main() -> int:
         else:
             baseline_path = output / "baselines" / f"har_horizon_{horizon}.json"
             baseline_payload = {"family": "M0_HAR_BASELINE", "horizon": horizon}
-            model_digest = _digest_bytes(json.dumps(baseline_payload, sort_keys=True).encode())
             baseline_path.parent.mkdir(parents=True, exist_ok=True)
-            baseline_path.write_text(json.dumps(baseline_payload, indent=2), encoding="utf-8")
+            baseline_bytes = json.dumps(baseline_payload, indent=2).encode("utf-8")
+            baseline_path.write_bytes(baseline_bytes)
+            model_digest = _digest_bytes(baseline_bytes)
             artifact_path = str(Path("baselines") / baseline_path.name)
         routes.append(
             V112Route(
@@ -435,6 +435,10 @@ def main() -> int:
             "validation_qlike": {
                 "HAR": float(np.mean(har_forecast.qlike)),
                 **{family: float(np.mean(value.qlike)) for family, value in candidates.items()},
+            },
+            "validation_coverage_80": {
+                "HAR": har_forecast.coverage_80,
+                **{family: value.coverage_80 for family, value in candidates.items()},
             },
             "m1_better_seed_count": m1_better_seeds,
             "selection_record_sha256": selection_digest,

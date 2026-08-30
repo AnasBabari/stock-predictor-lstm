@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
+from .v11_2_protocol import V11_2_MAX_COVERAGE_80, V11_2_MIN_COVERAGE_80
+
 
 @dataclass(frozen=True)
 class BootstrapInterval:
@@ -35,6 +37,8 @@ class HorizonGate:
     holm_p_value: float | None
     passed: bool
     reason: str
+    coverage_candidate_80: float | None = None
+    coverage_comparator_80: float | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -86,7 +90,13 @@ def session_block_bootstrap_ci(
     if n_replicates < 100:
         raise ValueError("at least 100 bootstrap replicates are required")
     rng = np.random.default_rng(seed)
+    mean_delta = float(np.mean(deltas))
+    # Center the observed deltas at the null boundary (zero) for the
+    # one-sided test.  Resampling the observed, uncentered deltas would test
+    # around the observed effect and produces an invalid p-value.
+    null_deltas = deltas - mean_delta
     boot = np.empty(n_replicates, dtype=np.float64)
+    null_boot = np.empty(n_replicates, dtype=np.float64)
     starts_count = int(np.ceil(n_sessions / block_sessions))
     for replicate in range(n_replicates):
         starts = rng.integers(0, n_sessions, size=starts_count)
@@ -94,10 +104,10 @@ def session_block_bootstrap_ci(
             [((start + np.arange(block_sessions)) % n_sessions) for start in starts]
         )[:n_sessions]
         boot[replicate] = float(np.mean(deltas[indices]))
-    mean_delta = float(np.mean(deltas))
-    centered = boot - mean_delta
-    # One-sided bootstrap p-value for candidate loss strictly below comparator.
-    p_value = (1.0 + float(np.sum(centered <= mean_delta))) / (n_replicates + 1.0)
+        null_boot[replicate] = float(np.mean(null_deltas[indices]))
+    # One-sided bootstrap p-value for candidate loss strictly below comparator
+    # under H0: E[candidate - comparator] = 0.
+    p_value = (1.0 + float(np.sum(null_boot <= mean_delta))) / (n_replicates + 1.0)
     return BootstrapInterval(
         mean_delta=mean_delta,
         ci_lower_95=float(np.percentile(boot, 2.5)),
@@ -140,17 +150,28 @@ def evaluate_horizon_gates(
     comparator_crps_by_horizon: dict[int, float],
     qlike_candidate_by_horizon: dict[int, float] | None = None,
     qlike_comparator_by_horizon: dict[int, float] | None = None,
+    coverage_candidate_by_horizon: dict[int, float] | None = None,
+    coverage_comparator_by_horizon: dict[int, float] | None = None,
+    minimum_coverage_80: float = V11_2_MIN_COVERAGE_80,
+    maximum_coverage_80: float = V11_2_MAX_COVERAGE_80,
     block_sessions: int = 20,
     n_replicates: int = 10_000,
     seed: int = 42,
 ) -> list[HorizonGate]:
     """Evaluate four independent horizon gates and apply Holm correction."""
     horizon_list = [int(value) for value in horizons]
+    if (qlike_candidate_by_horizon is None) != (qlike_comparator_by_horizon is None):
+        raise ValueError("candidate and comparator QLIKE maps must be supplied together")
+    if (coverage_candidate_by_horizon is None) != (coverage_comparator_by_horizon is None):
+        raise ValueError("candidate and comparator coverage maps must be supplied together")
+    if not 0.0 < minimum_coverage_80 < maximum_coverage_80 < 1.0:
+        raise ValueError("coverage bounds must satisfy 0 < minimum < maximum < 1")
+    date_values = list(dates)
     intervals: list[BootstrapInterval] = []
     for horizon in horizon_list:
         intervals.append(
             session_block_bootstrap_ci(
-                dates,
+                date_values,
                 candidate_losses_by_horizon[horizon],
                 comparator_losses_by_horizon[horizon],
                 block_sessions=block_sessions,
@@ -166,14 +187,24 @@ def evaluate_horizon_gates(
             qlike_ok = (
                 qlike_candidate_by_horizon[horizon] <= qlike_comparator_by_horizon[horizon] + 1e-12
             )
+        coverage_candidate = None
+        coverage_comparator = None
+        coverage_ok = True
+        if coverage_candidate_by_horizon is not None and coverage_comparator_by_horizon is not None:
+            coverage_candidate = float(coverage_candidate_by_horizon[horizon])
+            coverage_comparator = float(coverage_comparator_by_horizon[horizon])
+            coverage_ok = minimum_coverage_80 <= coverage_candidate <= maximum_coverage_80
         passed = (
             candidate_crps_by_horizon[horizon] < comparator_crps_by_horizon[horizon]
             and interval.ci_upper_95 < 0.0
             and adjusted_p < 0.05
             and qlike_ok
+            and coverage_ok
         )
         reason = (
-            "passed" if passed else "candidate did not pass paired CRPS, uncertainty, or QLIKE gate"
+            "passed"
+            if passed
+            else "candidate did not pass paired CRPS, uncertainty, QLIKE, or coverage gate"
         )
         gates.append(
             HorizonGate(
@@ -186,6 +217,8 @@ def evaluate_horizon_gates(
                 holm_p_value=float(adjusted_p),
                 passed=passed,
                 reason=reason,
+                coverage_candidate_80=coverage_candidate,
+                coverage_comparator_80=coverage_comparator,
             )
         )
     return gates
@@ -207,32 +240,56 @@ def evaluate_m0_adequacy(
 ) -> dict[str, list[HorizonGate]]:
     """Pre-register the two four-horizon M0 adequacy comparisons."""
     horizon_list = [int(value) for value in horizons]
+    date_values = list(dates)
     comparisons = [
-        evaluate_horizon_gates(
-            dates=dates,
-            horizons=horizon_list,
-            candidate="M0_HAR_BASELINE",
-            comparator="ZERO_RETURN_CONST_VAR",
-            candidate_losses_by_horizon=har_losses_by_horizon,
-            comparator_losses_by_horizon=constant_losses_by_horizon,
-            candidate_crps_by_horizon=har_crps_by_horizon,
-            comparator_crps_by_horizon=constant_crps_by_horizon,
-            block_sessions=block_sessions,
-            n_replicates=n_replicates,
-            seed=seed,
-        ),
-        evaluate_horizon_gates(
-            dates=dates,
-            horizons=horizon_list,
-            candidate="M0_HAR_BASELINE",
-            comparator="ZERO_RETURN_PERSISTENCE_VOL",
-            candidate_losses_by_horizon=har_losses_by_horizon,
-            comparator_losses_by_horizon=persistence_losses_by_horizon,
-            candidate_crps_by_horizon=har_crps_by_horizon,
-            comparator_crps_by_horizon=persistence_crps_by_horizon,
-            block_sessions=block_sessions,
-            n_replicates=n_replicates,
-            seed=seed,
-        ),
+        ("ZERO_RETURN_CONST_VAR", constant_losses_by_horizon, constant_crps_by_horizon),
+        ("ZERO_RETURN_PERSISTENCE_VOL", persistence_losses_by_horizon, persistence_crps_by_horizon),
     ]
-    return {"har_vs_constant": comparisons[0], "har_vs_persistence": comparisons[1]}
+    intervals: list[BootstrapInterval] = []
+    for _comparator, losses, _crps in comparisons:
+        for horizon in horizon_list:
+            intervals.append(
+                session_block_bootstrap_ci(
+                    date_values,
+                    har_losses_by_horizon[horizon],
+                    losses[horizon],
+                    block_sessions=block_sessions,
+                    n_replicates=n_replicates,
+                    seed=seed,
+                )
+            )
+    adjusted = holm_adjust(interval.raw_p_value for interval in intervals)
+    output: dict[str, list[HorizonGate]] = {}
+    for comparison_index, (comparator, _losses, crps) in enumerate(comparisons):
+        gates: list[HorizonGate] = []
+        offset = comparison_index * len(horizon_list)
+        for horizon_index, horizon in enumerate(horizon_list):
+            interval = intervals[offset + horizon_index]
+            adjusted_p = adjusted[offset + horizon_index]
+            gates.append(
+                HorizonGate(
+                    horizon=horizon,
+                    candidate="M0_HAR_BASELINE",
+                    comparator=comparator,
+                    mean_crps_candidate=float(har_crps_by_horizon[horizon]),
+                    mean_crps_comparator=float(crps[horizon]),
+                    interval=interval,
+                    holm_p_value=float(adjusted_p),
+                    passed=(
+                        har_crps_by_horizon[horizon] < crps[horizon]
+                        and interval.ci_upper_95 < 0.0
+                        and adjusted_p < 0.05
+                    ),
+                    reason="passed"
+                    if (
+                        har_crps_by_horizon[horizon] < crps[horizon]
+                        and interval.ci_upper_95 < 0.0
+                        and adjusted_p < 0.05
+                    )
+                    else "HAR did not pass the corrected adequacy gate",
+                )
+            )
+        output[
+            "har_vs_constant" if comparator == "ZERO_RETURN_CONST_VAR" else "har_vs_persistence"
+        ] = gates
+    return output

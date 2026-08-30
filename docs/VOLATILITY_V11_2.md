@@ -45,16 +45,19 @@ restored.
 
 Each horizon is selected independently. A learned route must beat HAR on the
 untouched validation partition, pass the paired session-block uncertainty gate,
-pass Holm correction across the four horizon decisions, preserve QLIKE and
-coverage, and satisfy the three-seed stability rule. Otherwise that horizon is
-routed to HAR.
+pass Holm correction across the four horizon decisions, have non-worse QLIKE,
+and keep central 80% Student-t interval coverage in the preregistered
+`[0.65, 0.95]` calibration band. It must also satisfy the three-seed stability
+rule. Otherwise that horizon is routed to HAR.
 
 ## Statistical method
 
 Losses are first averaged across securities sharing an origin session. A
 circular moving-block bootstrap then resamples contiguous blocks of 20 sessions
 for 10,000 replicates with seed 42. A learned route requires a two-sided 95%
-interval whose upper bound for candidate-minus-HAR CRPS is below zero. M0
+interval whose upper bound for candidate-minus-HAR CRPS is below zero; the
+one-sided p-value is computed from a null-centered block bootstrap rather than
+from the observed effect distribution. M0
 adequacy comparisons against constant variance and persistence use the same
 session-block method and are corrected across eight comparisons at final
 certification time.
@@ -100,4 +103,3 @@ python scripts/run_v11_2_numeric_development.py `
 
 The runner automatically uses CUDA when available, but can be forced to CPU
 for a controlled comparison. It does not accept a sealed-test key.
-

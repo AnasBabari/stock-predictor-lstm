@@ -35,7 +35,11 @@ class MembershipInterval:
     def __post_init__(self) -> None:
         if _date(self.start_date) > _date(self.end_date):
             raise ValueError("membership interval is not chronological")
-        if not self.source.strip() or len(self.source_digest) < 32:
+        if (
+            not self.source.strip()
+            or len(self.source_digest) != 64
+            or any(value not in "0123456789abcdef" for value in self.source_digest)
+        ):
             raise ValueError("membership provenance requires a source and content digest")
 
 
@@ -88,11 +92,15 @@ class PITSecurity:
         if len(aliases) != len(set(aliases)):
             raise ValueError(f"{self.security_id}: duplicate ticker interval")
         for left, right in zip(self.ticker_intervals, self.ticker_intervals[1:], strict=False):
+            if _date(left.start_date) > _date(right.start_date):
+                raise ValueError(f"{self.security_id}: ticker intervals are not chronological")
             if _date(left.end_date) >= _date(right.start_date):
                 raise ValueError(f"{self.security_id}: overlapping ticker intervals")
         for left, right in zip(
             self.membership_intervals, self.membership_intervals[1:], strict=False
         ):
+            if _date(left.start_date) > _date(right.start_date):
+                raise ValueError(f"{self.security_id}: membership intervals are not chronological")
             if _date(left.end_date) >= _date(right.start_date):
                 raise ValueError(f"{self.security_id}: overlapping membership intervals")
 
@@ -166,6 +174,8 @@ def build_universe_manifest(
         raise ValueError("duplicate permanent security_id")
     if len(set(item.exchange_mic for item in ordered)) < 1:
         raise ValueError("at least one exchange MIC is required")
+    if not universe_version.strip():
+        raise ValueError("universe version is required")
     _validate_strata(ordered)
     source_list = tuple(sorted({source.strip() for source in membership_sources if source.strip()}))
     if not source_list:

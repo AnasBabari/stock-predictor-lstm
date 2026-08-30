@@ -7,6 +7,7 @@ reusing a different split.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 from collections.abc import Iterable
@@ -109,6 +110,17 @@ def create_v112_split(
     security_list = [str(value) for value in security_ids]
     if not date_list or len(date_list) != len(security_list):
         raise ValueError("non-empty dates and security IDs of equal length are required")
+    for value in date_list:
+        try:
+            parsed = dt.date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"split dates must be ISO calendar dates: {value!r}") from exc
+        if parsed.isoformat() != value:
+            raise ValueError(f"split dates must use canonical ISO form: {value!r}")
+    if any(not value.strip() for value in security_list):
+        raise ValueError("security IDs must be non-empty")
+    if len(set(zip(security_list, date_list, strict=True))) != len(date_list):
+        raise ValueError("panel contains duplicate security/session observations")
     sessions = sorted(set(date_list))
     if len(sessions) < 200:
         raise ValueError("V11.2 needs at least 200 unique market sessions")

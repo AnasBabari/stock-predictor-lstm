@@ -12,6 +12,7 @@ import io
 from dataclasses import dataclass
 
 import numpy as np
+import scipy.stats as stats
 import torch
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
@@ -30,6 +31,7 @@ class V112Forecast:
     variance: np.ndarray
     crps: np.ndarray
     qlike: np.ndarray
+    coverage_80: float
 
     @property
     def scale(self) -> np.ndarray:
@@ -39,6 +41,7 @@ class V112Forecast:
         return {
             "crps_mean": float(np.mean(self.crps)),
             "qlike_mean": float(np.mean(self.qlike)),
+            "coverage_80": self.coverage_80,
         }
 
 
@@ -115,13 +118,22 @@ def make_forecast(
     realized_variance: np.ndarray,
 ) -> V112Forecast:
     crps, qlike = _metric_arrays(location, variance, returns, realized_variance)
+    location_values = np.asarray(location, dtype=np.float64).reshape(-1)
+    variance_values = np.maximum(np.asarray(variance, dtype=np.float64).reshape(-1), 1e-12)
+    returns_values = np.asarray(returns, dtype=np.float64).reshape(-1)
+    critical_value = float(stats.t.ppf(0.90, df=5.0))
+    scale = np.sqrt(variance_values * (5.0 - 2.0) / 5.0)
+    lower = location_values - critical_value * scale
+    upper = location_values + critical_value * scale
+    coverage_80 = float(np.mean((returns_values >= lower) & (returns_values <= upper)))
     return V112Forecast(
         family=family,
         horizon=horizon,
-        location=np.asarray(location, dtype=np.float64).reshape(-1),
-        variance=np.maximum(np.asarray(variance, dtype=np.float64).reshape(-1), 1e-12),
+        location=location_values,
+        variance=variance_values,
         crps=crps,
         qlike=qlike,
+        coverage_80=coverage_80,
     )
 
 
@@ -375,6 +387,10 @@ def select_per_horizon_challenger(
         comparator_losses_by_horizon={horizon: har.crps},
         candidate_crps_by_horizon={horizon: float(np.mean(challenger.crps))},
         comparator_crps_by_horizon={horizon: float(np.mean(har.crps))},
+        qlike_candidate_by_horizon={horizon: float(np.mean(challenger.qlike))},
+        qlike_comparator_by_horizon={horizon: float(np.mean(har.qlike))},
+        coverage_candidate_by_horizon={horizon: challenger.coverage_80},
+        coverage_comparator_by_horizon={horizon: har.coverage_80},
         block_sessions=block_sessions,
         n_replicates=n_replicates,
         seed=seed,

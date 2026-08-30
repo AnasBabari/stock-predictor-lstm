@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from research.volatility_forecasting.v11_2_evaluation import (
+    evaluate_m0_adequacy,
     holm_adjust,
     session_block_bootstrap_ci,
 )
@@ -22,7 +23,11 @@ from research.volatility_forecasting.v11_2_split import (
     create_v112_expanding_folds,
     create_v112_split,
 )
-from research.volatility_forecasting.v11_2_trainer import train_epoch_zero_residual_model
+from research.volatility_forecasting.v11_2_trainer import (
+    make_forecast,
+    select_per_horizon_challenger,
+    train_epoch_zero_residual_model,
+)
 
 
 def _dates(count: int) -> list[str]:
@@ -47,7 +52,7 @@ def test_v112_split_groups_rows_by_session_and_hashes_assignments() -> None:
     assert split.test_session_count > 0
     assert split.test_rows == split.test_session_count * 2
     changed = list(dates)
-    changed[0] = "2020-01-02"
+    changed[0] = "2030-01-01"
     changed_split = create_v112_split(changed, [f"SEC-{i % 2}" for i in range(len(changed))])
     assert changed_split.assignment_sha256 != split.assignment_sha256
 
@@ -83,12 +88,63 @@ def test_session_block_bootstrap_is_reproducible_and_session_weighted() -> None:
     )
     assert first == second
     assert first.mean_delta < 0
+    assert first.raw_p_value < 0.05
     assert first.unique_sessions == 100
     assert first.stock_origin_observations == 200
 
 
+def test_m0_adequacy_holm_corrects_all_eight_comparisons() -> None:
+    dates = _dates(100)
+    horizons = (1, 3, 5, 7)
+    har_losses = {horizon: np.full(100, 0.1) for horizon in horizons}
+    constant_losses = {horizon: np.full(100, 0.2) for horizon in horizons}
+    persistence_losses = {horizon: np.full(100, 0.3) for horizon in horizons}
+    har_crps = {horizon: 0.1 for horizon in horizons}
+    constant_crps = {horizon: 0.2 for horizon in horizons}
+    persistence_crps = {horizon: 0.3 for horizon in horizons}
+    result = evaluate_m0_adequacy(
+        dates=dates,
+        horizons=horizons,
+        har_losses_by_horizon=har_losses,
+        constant_losses_by_horizon=constant_losses,
+        persistence_losses_by_horizon=persistence_losses,
+        har_crps_by_horizon=har_crps,
+        constant_crps_by_horizon=constant_crps,
+        persistence_crps_by_horizon=persistence_crps,
+        block_sessions=20,
+        n_replicates=200,
+        seed=42,
+    )
+    assert set(result) == {"har_vs_constant", "har_vs_persistence"}
+    assert len(result["har_vs_constant"]) == len(result["har_vs_persistence"]) == 4
+    assert all(gate.passed for gates in result.values() for gate in gates)
+    assert all(gate.holm_p_value == pytest.approx(8 / 201) for gates in result.values() for gate in gates)
+
+
 def test_holm_adjust_preserves_order() -> None:
     assert holm_adjust([0.01, 0.04, 0.2]) == pytest.approx([0.03, 0.08, 0.2])
+
+
+def test_horizon_gate_requires_qlike_and_calibrated_coverage() -> None:
+    dates = _dates(100)
+    target = np.full(100, 0.02, dtype=np.float64)
+    realized = np.full(100, 0.02, dtype=np.float64)
+    har = make_forecast("M0_HAR_BASELINE", 1, np.zeros(100), np.full(100, 0.04), target, realized)
+    candidate = make_forecast(
+        "RIDGE_LOCATION_HAR_SCALE", 1, np.zeros(100), np.full(100, 0.02), target, realized
+    )
+    selection = select_per_horizon_challenger(
+        horizon=1,
+        dates=dates,
+        har=har,
+        candidates={candidate.family: candidate},
+        ranking_scores={candidate.family: 0.0},
+        block_sessions=20,
+        n_replicates=200,
+        seed=42,
+    )
+    assert not selection.learned_promotion
+    assert "coverage" in selection.gates[0].reason
 
 
 def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> None:
@@ -96,8 +152,8 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
     security_ids = [f"SEC-{i % 2}" for i in range(len(dates))]
     split = create_v112_split(dates, security_ids)
     features = np.arange(len(dates) * 3, dtype=np.float32).reshape(len(dates), 3)
-    returns = np.zeros((len(dates), 1), dtype=np.float32)
-    rv = np.ones((len(dates), 1), dtype=np.float32)
+    returns = np.zeros((len(dates), 4), dtype=np.float32)
+    rv = np.ones((len(dates), 4), dtype=np.float32)
     output_dir = tmp_path / "v112"
     key_path = tmp_path / "private" / "holdout.key"
     metadata = seal_v112_dataset(

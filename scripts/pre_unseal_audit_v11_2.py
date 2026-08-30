@@ -19,6 +19,38 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _require_sha256(value: object, label: str) -> str:
+    digest = str(value)
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise SystemExit(f"{label} is not a lowercase SHA-256 digest")
+    return digest
+
+
+def _required_file(root: Path, relative: object, label: str) -> Path:
+    name = str(relative)
+    candidate = Path(name)
+    if not name or candidate.is_absolute():
+        raise SystemExit(f"{label} must be a relative artifact path")
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root.resolve())
+    except ValueError as exc:
+        raise SystemExit(f"{label} escapes the results directory") from exc
+    if not resolved.is_file():
+        raise SystemExit(f"{label} is missing: {name}")
+    return resolved
+
+
+def _verify_self_digest(path: Path, digest_field: str, label: str) -> tuple[str, dict[str, object]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{label} must contain a JSON object")
+    declared = _require_sha256(payload.pop(digest_field, None), f"{label} {digest_field}")
+    if canonical_json_digest(payload) != declared:
+        raise SystemExit(f"{label} digest does not match its canonical contents")
+    return declared, payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-dir", type=Path, required=True)
@@ -55,14 +87,91 @@ def main() -> int:
     if manifest.get("protocol", {}).get("protocol_id") != protocol.protocol_id:
         raise SystemExit("routing bundle protocol mismatch")
     routes = manifest.get("routes", [])
+    if not isinstance(routes, list) or any(not isinstance(route, dict) for route in routes):
+        raise SystemExit("routing bundle routes must be a list of objects")
     if sorted(route.get("horizon") for route in routes) != list(protocol.horizons):
         raise SystemExit("routing bundle does not contain exactly one route per horizon")
+    if len({route.get("horizon") for route in routes}) != len(routes):
+        raise SystemExit("routing bundle contains duplicate horizon routes")
     expected_bundle_sha = bundle_sha_path.read_text(encoding="ascii").strip()
+    _require_sha256(expected_bundle_sha, "routing bundle digest")
     actual_bundle_sha = canonical_json_digest(
         {key: value for key, value in manifest.items() if key != "master_freeze_sha256"}
     )
     if expected_bundle_sha != actual_bundle_sha:
         raise SystemExit("routing bundle digest does not match its canonical manifest")
+    if manifest.get("master_freeze_sha256") != expected_bundle_sha:
+        raise SystemExit("routing bundle master digest does not match its digest file")
+
+    for label in ("universe_sha256", "panel_sha256", "schema_sha256", "split_sha256"):
+        _require_sha256(manifest.get(label), f"routing bundle {label}")
+    if manifest.get("panel_sha256") != development.get("panel_sha256"):
+        raise SystemExit("routing bundle panel digest differs from development evidence")
+    if manifest.get("split_sha256") != development.get("split_sha256"):
+        raise SystemExit("routing bundle split digest differs from development evidence")
+
+    results_root = results.resolve()
+    scaler_path = _required_file(results_root, "numeric_scaler.json", "numeric scaler")
+    scaler_digest = _sha256(scaler_path)
+    if any(route.get("scaler_digest") != scaler_digest for route in routes):
+        raise SystemExit("routing bundle scaler digest does not match numeric_scaler.json")
+    selection_paths: dict[int, Path] = {}
+    for route in routes:
+        horizon = int(route["horizon"])
+        family = str(route.get("family", ""))
+        if family not in set(protocol.candidate_families):
+            raise SystemExit(f"route {horizon} uses a family outside the protocol")
+        baseline = family in {"ZERO_RETURN_CONST_VAR", "ZERO_RETURN_PERSISTENCE_VOL", "M0_HAR_BASELINE"}
+        if bool(route.get("learned_promotion")) != (not baseline):
+            raise SystemExit(f"route {horizon} has inconsistent learned_promotion")
+        artifact_path = _required_file(results_root, route.get("artifact_path"), f"route {horizon} artifact")
+        if _sha256(artifact_path) != route.get("model_digest"):
+            raise SystemExit(f"route {horizon} model digest does not match its artifact")
+        selection_path = _required_file(
+            results_root, f"selection_horizon_{horizon}.json", f"route {horizon} selection record"
+        )
+        selection_paths[horizon] = selection_path
+        if _sha256(selection_path) != route.get("selection_record_digest"):
+            raise SystemExit(f"route {horizon} selection digest does not match its record")
+
+    comparison_path = _required_file(
+        results_root, "v11_2_development_model_comparison.json", "development comparison"
+    )
+    comparison_payload = json.loads(comparison_path.read_text(encoding="utf-8"))
+    if not isinstance(comparison_payload, dict):
+        raise SystemExit("development comparison must contain a JSON object")
+    comparison_digest = _require_sha256(
+        comparison_payload.get("report_sha256"), "development comparison report_sha256"
+    )
+    comparison_body = dict(comparison_payload)
+    comparison_body.pop("report_sha256", None)
+    if canonical_json_digest(comparison_body) != comparison_digest:
+        raise SystemExit("development comparison digest does not match its canonical contents")
+    if comparison_digest != manifest.get("development_evidence_sha256"):
+        raise SystemExit("routing bundle development evidence digest does not match report")
+
+    seed_values = manifest.get("seed_evidence_sha256", [])
+    if not isinstance(seed_values, list):
+        raise SystemExit("routing bundle seed evidence must be a list")
+    expected_seed_digests = {
+        _require_sha256(value, "seed evidence digest") for value in seed_values
+    }
+    if len(expected_seed_digests) != len(protocol.horizons) * len(protocol.seeds):
+        raise SystemExit("routing bundle does not contain one unique evidence digest per seed/horizon")
+    for horizon in protocol.horizons:
+        for seed in protocol.seeds:
+            evidence_path = _required_file(
+                results_root,
+                Path("seed_evidence") / f"horizon_{horizon}" / f"seed_{seed}.json",
+                f"h{horizon} seed {seed} evidence",
+            )
+            evidence_digest, evidence_body = _verify_self_digest(
+                evidence_path, "evidence_sha256", f"h{horizon} seed {seed} evidence"
+            )
+            if evidence_digest not in expected_seed_digests:
+                raise SystemExit(f"h{horizon} seed {seed} evidence is not referenced by the bundle")
+            if int(evidence_body.get("horizon", -1)) != horizon or int(evidence_body.get("seed", -1)) != seed:
+                raise SystemExit(f"h{horizon} seed {seed} evidence identity mismatch")
 
     audit = {
         "protocol_id": protocol.protocol_id,

@@ -23,6 +23,7 @@ class V112SeedEvidence:
     epoch_zero_crps: float | None
     validation_crps: float
     validation_qlike: float
+    validation_coverage_80: float
     stock_origin_observations: int
     unique_sessions: int
     predictions_sha256: str
@@ -60,6 +61,7 @@ def seed_evidence_from_forecast(
         epoch_zero_crps=training.epoch_zero_crps if training else None,
         validation_crps=metrics["crps_mean"],
         validation_qlike=metrics["qlike_mean"],
+        validation_coverage_80=metrics["coverage_80"],
         stock_origin_observations=len(forecast.crps),
         unique_sessions=unique_sessions,
         predictions_sha256=predictions_digest(forecast.location, forecast.variance),

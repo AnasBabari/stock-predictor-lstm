@@ -13,6 +13,17 @@ import torch
 
 from .v11_2_protocol import V112Protocol, canonical_json_digest, protocol_manifest
 
+_BASELINE_FAMILIES = {
+    "ZERO_RETURN_CONST_VAR",
+    "ZERO_RETURN_PERSISTENCE_VOL",
+    "M0_HAR_BASELINE",
+}
+
+
+def _require_sha256(value: str, label: str) -> None:
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise ValueError(f"{label} must be a lowercase SHA-256 hex digest")
+
 
 @dataclass(frozen=True)
 class V112Route:
@@ -94,8 +105,34 @@ def freeze_routing_bundle(
     horizons = [route.horizon for route in routes]
     if sorted(horizons) != sorted(protocol.horizons):
         raise ValueError("V11.2 routes must cover horizons 1, 3, 5, and 7 exactly once")
-    if not sealed_ciphertext_sha256 or len(sealed_ciphertext_sha256) < 64:
-        raise ValueError("sealed ciphertext digest is required before candidate freeze")
+    if len(set(horizons)) != len(horizons):
+        raise ValueError("V11.2 routes must contain each horizon exactly once")
+    if len(seed_evidence_sha256) != len(protocol.horizons) * len(protocol.seeds):
+        raise ValueError("one seed-evidence digest is required for every horizon and seed")
+    for label, digest in (
+        ("universe", universe_sha256),
+        ("panel", panel_sha256),
+        ("schema", schema_sha256),
+        ("split", split_sha256),
+        ("development evidence", development_evidence_sha256),
+        ("sealed ciphertext", sealed_ciphertext_sha256),
+    ):
+        _require_sha256(digest, f"{label} digest")
+    for digest in seed_evidence_sha256:
+        _require_sha256(digest, "seed evidence digest")
+    if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha):
+        raise ValueError("git_sha must be a full lowercase commit SHA")
+    allowed_families = set(protocol.candidate_families)
+    for route in routes:
+        if route.family not in allowed_families:
+            raise ValueError(f"route family is not allowed by the protocol: {route.family}")
+        if not route.artifact_path.strip():
+            raise ValueError("every route must identify its frozen artifact")
+        _require_sha256(route.model_digest, "route model digest")
+        _require_sha256(route.scaler_digest, "route scaler digest")
+        _require_sha256(route.selection_record_digest, "route selection digest")
+        if route.learned_promotion != (route.family not in _BASELINE_FAMILIES):
+            raise ValueError("route learned_promotion disagrees with its selected family")
     payload: dict[str, Any] = {
         "protocol": protocol_manifest(protocol),
         "universe_sha256": universe_sha256,

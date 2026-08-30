@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from .v11_2_protocol import V11_2_PROTOCOL_ID
+from .v11_2_protocol import V11_2_HORIZONS, V11_2_PROTOCOL_ID
 from .v11_2_split import V112Split
 
 
@@ -122,7 +122,12 @@ def _key_bytes(key_path: Path, *, create: bool) -> bytes:
     elif create:
         key = secrets.token_bytes(32)
         key_path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(key_path, key)
+        try:
+            _atomic_create(key_path, key)
+        except V112SealedAccessError:
+            # Another sealing process won the creation race; use its fully
+            # fsynced key rather than replacing it with a different key.
+            key = key_path.read_bytes()
         with contextlib.suppress(OSError):
             key_path.chmod(0o600)
     else:
@@ -168,10 +173,24 @@ def _validate_arrays(
     rv: np.ndarray,
     dates: Iterable[str],
 ) -> None:
-    n = len(list(dates)) if not isinstance(dates, tuple) else len(dates)
-    if n == 0 or len(features) != n or len(returns) != n or len(rv) != n:
+    n = len(dates)
+    feature_values = np.asarray(features)
+    return_values = np.asarray(returns)
+    rv_values = np.asarray(rv)
+    if (
+        n == 0
+        or len(feature_values) != n
+        or len(return_values) != n
+        or len(rv_values) != n
+    ):
         raise ValueError("feature, target, and date row counts must match and be non-zero")
-    if not all(np.isfinite(np.asarray(value)).all() for value in (features, returns, rv)):
+    if feature_values.ndim not in (2, 3):
+        raise ValueError("features must have shape [rows, features] or [rows, window, features]")
+    if return_values.ndim != 2 or return_values.shape[1] != len(V11_2_HORIZONS):
+        raise ValueError("returns must contain one column for each V11.2 horizon")
+    if rv_values.ndim != 2 or rv_values.shape[1] != len(V11_2_HORIZONS):
+        raise ValueError("realized variance must contain one column for each V11.2 horizon")
+    if not all(np.isfinite(value).all() for value in (feature_values, return_values, rv_values)):
         raise ValueError("V11.2 sealed payload contains non-finite values")
 
 
@@ -194,9 +213,25 @@ def seal_v112_dataset(
     _validate_arrays(features, returns, rv, dates_list)
     if max(split.test_indices, default=-1) >= len(dates_list):
         raise ValueError("split index exceeds panel length")
+    all_indices = np.concatenate(
+        (split.train_indices, split.validation_indices, split.test_indices)
+    )
+    if len(all_indices) != len(set(int(value) for value in all_indices)):
+        raise ValueError("split partitions contain duplicate row indices")
+    if any(int(value) < 0 or int(value) >= len(dates_list) for value in all_indices):
+        raise ValueError("split partitions contain an out-of-range row index")
     development_dir = output_dir / "development"
     sealed_dir = output_dir / "sealed"
     manifests_dir = output_dir / "manifests"
+    existing = [
+        development_dir / "train.npz",
+        development_dir / "validation.npz",
+        sealed_dir / "test_payload.aesgcm",
+        sealed_dir / "sealed_metadata.json",
+        manifests_dir / "development_manifest.json",
+    ]
+    if any(path.exists() for path in existing):
+        raise V112SealedAccessError("V11.2 dataset output already exists and is immutable")
     development_dir.mkdir(parents=True, exist_ok=True)
     sealed_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir.mkdir(parents=True, exist_ok=True)
@@ -308,8 +343,12 @@ def unseal_v112_test_once(
 ) -> V112SealedTestPayload:
     """One-shot certification loader; writes the lock before decrypting."""
     _assert_external_key(key_path, repository_root)
-    if len(candidate_digest) < 64:
+    if len(candidate_digest) != 64:
         raise V112SealedAccessError("candidate digest must be a SHA-256 hex digest")
+    try:
+        int(candidate_digest, 16)
+    except ValueError as exc:
+        raise V112SealedAccessError("candidate digest must be a SHA-256 hex digest") from exc
     sealed_dir = output_dir / "sealed"
     lock_path = sealed_dir / "SEALED_TEST_OPENED.json"
     metadata_path = sealed_dir / "sealed_metadata.json"
