@@ -18,7 +18,7 @@ This is the research, certification, and release contract for the production glo
             ↓
     CPU-parity ONNX members → signed immutable release
             ↓
-    Render /api/v2/forecast → Vercel volatility cone
+    Render /api/v2/forecast → Vercel certified return distribution/cone
 
 ## Data provenance
 
@@ -60,7 +60,11 @@ passthroughs, so `/api/v2/forecast` abstains for those horizons. The adapter
 rejects Ridge/HistGB routes rather than exporting a different implementation
 than the one evaluated. Its signed metadata reports
 `metric_source=sealed_holdout_once` and `certification_scope=sealed_holdout_once`;
-it never relabels the result as walk-forward evidence.
+it never relabels the result as walk-forward evidence. Its certified Student-t
+return-location and variance heads are consumed by the API; the terminal p50
+is therefore a learned median path, while intermediate chart points are
+explicitly interpolated. Legacy volatility-only bundles continue to expose
+only the zero-location cone.
 
 No model binary or private key belongs in Git. Release storage is immutable; promotion updates a pointer only after all checks pass. Response-cache keys include the signed model id so a new release cannot reuse a prior generation's forecast.
 
@@ -75,7 +79,9 @@ Research runs on the local RTX machine with bounded CUDA memory, deterministic s
 ## Known limitations
 
 - Daily OHLCV volatility is difficult to predict and simple baselines often remain competitive.
-- The serving contract's center line is a baseline, not a learned expected return; no release is currently certified.
+- Legacy volatility-only bundles use a baseline center line; V11.2's signed
+  return-distribution head can provide a certified median, but no production
+  release is currently certified.
 - News archives have provider gaps and license/coverage constraints.
 - The initial panel is survivor-biased and lacks options-implied, intraday, and fundamentals data.
 - GPU results are not bit-for-bit identical across machines; snapshot, code, seed, fold, and runtime manifests are the reproducibility unit.

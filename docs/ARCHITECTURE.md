@@ -12,14 +12,21 @@ flowchart LR
     market --> snapshot[Causal Deployable Schema v5 snapshot]
     release --> runtime[CPU ensemble runtime]
     snapshot --> runtime
-    runtime --> cone[Certified volatility cone]
-    cone --> browser
+    runtime --> distribution[Certified return distribution or volatility cone]
+    distribution --> browser
     api -->|missing, invalid, stale, uncertified| abstain[503 explicit abstention]
 \`\`\`
 
 The production route is \`GET /api/v2/forecast?ticker=MSFT&horizon=7\`. Supported horizons are \`{1, 3, 5, 7, 14, 30}\` trading sessions. A request is accepted only when the signed manifest, per-file SHA-256 checksums, Ed25519 signature, schema, feature order, ONNX I/O names, member set, model size, and requested horizon all verify.
 
-The API returns a p05–p95 lognormal cone derived from certified cumulative variance. p50 is the unchanged-close location baseline; it is not a learned price path. The current release does not certify return location or direction, and the UI says so. A failed horizon is an abstention, not a baseline masquerading as a model.
+The API returns p05–p95 price quantiles derived from the signed runtime. A
+legacy volatility-only release exposes a zero-location lognormal cone whose p50
+is the unchanged-close baseline. A V11.2 release can additionally certify a
+Student-t return distribution: its terminal location and variance become the
+learned median path and uncertainty band, while intermediate daily points are
+labelled interpolations rather than independently certified horizons. Direction
+remains uncertified unless its own head passes a separate gate. A failed
+horizon is an abstention, not a baseline masquerading as a model.
 
 ## Data contract
 
@@ -55,7 +62,11 @@ The RTX workstation runs the research harness in \`research/volatility_forecasti
 
 V11.2 is an additive numeric-only development protocol. It uses an exactly 64-security point-in-time universe, a session-grouped 70/15/15 split, independent per-horizon routing, and a fresh AES-GCM encrypted holdout. The development process receives only train/validation files; the decryption key and sealed payload are reserved for a separate one-shot certification command. Epoch zero is evaluated before neural updates so the residual learner can restore the HAR prior. See [VOLATILITY_V11_2.md](VOLATILITY_V11_2.md).
 
-The final refit is never used to claim evaluation metrics. Locked evaluation metrics describe only untouched out-of-fold or certification observations.
+The final refit is never used to claim evaluation metrics. Locked evaluation
+metrics describe only untouched out-of-fold or certification observations.
+For V11.2, the signed serving payload preserves `metric_source=sealed_holdout_once`
+and exposes the certified return-distribution head separately from the
+volatility head.
 
 ## News boundary
 

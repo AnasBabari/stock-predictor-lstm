@@ -32,10 +32,13 @@ Example response (abbreviated):
       "forecast": {
         "future_dates": ["2026-08-24", "..."],
         "price_quantiles": {
-          "p05": ["..."], "p50": [501.2], "p95": ["..."]
+          "p05": ["..."], "p50": ["..."], "p95": ["..."]
         },
         "probability_up": null,
         "expected_cumulative_variance": 0.0012,
+        "expected_cumulative_return": 0.012,
+        "return_distribution_variance": 0.0015,
+        "return_distribution_family": "student_t",
         "expected_annualized_volatility": 0.208
       },
       "evidence": {
@@ -45,14 +48,29 @@ Example response (abbreviated):
         "certified": true,
         "certified_heads": {
           "volatility": true,
-          "return_distribution": false,
+          "return_distribution": true,
           "direction": false
+        },
+        "certified_head_horizons": {
+          "volatility": [1, 3, 5, 7],
+          "return_distribution": [7],
+          "direction": []
         },
         "horizon_certification": {"7": {"decision": "pass"}}
       }
     }
 
-The quantile bands are the learned/certified volatility head. The p50 value is the disclosed unchanged-close distribution assumption, not a learned expected price. The frontend deliberately suppresses that flat center line and shows the certified range and expected volatility instead. The endpoint makes no claim that direction or expected price level was learned.
+The quantile bands are the learned/certified return distribution. For a
+`certified_heads.return_distribution = true` release, the terminal p50 is the
+certified Student-t return-location (median) path reconstructed from the latest
+close; `expected_cumulative_return` and `return_distribution_variance` describe
+that same terminal distribution. Intermediate daily points are transparent
+linear interpolations of cumulative location and variance and are not separate
+certification horizons. Direction remains uncertified (`probability_up = null`).
+
+Legacy releases with `return_distribution = false` retain a zero-location
+normal cone: their p50 is the unchanged-close distribution assumption and the
+frontend intentionally does not render it as a learned price line.
 
 When a signed release is news-certified, the evidence additionally reports `news_input` telemetry when the live news provider is enabled (`VOLATILITY_NEWS_PROVIDER_ENABLED=true`): `provider_cutoff_utc` (the origin-session close, 20:00 UTC), `eligible_article_count` (causally eligible articles), and `news_feature_count` (certified schema size). With the provider disabled, a news-certified release answers with a structured 503 abstention instead of a forecast.
 
@@ -62,7 +80,9 @@ The response contains:
 
 - global_volatility.status: ready, unconfigured, unavailable, or integrity_failure.
 - global_volatility.model_id and certified_horizons when ready.
-- global_volatility.metric_source = locked_purged_walk_forward.
+- global_volatility.metric_source is the signed release's declared source (for
+  example `sealed_holdout_once` for V11.2; it is never rewritten as a
+  walk-forward source).
 - browser_training.status = disabled and server_models.status = disabled for the production contract.
 
 ## GET /ready

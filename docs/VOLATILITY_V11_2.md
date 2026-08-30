@@ -219,5 +219,8 @@ must fail before a release directory is created.
 ONNX Runtime CPU parity is mandatory before signing. The resulting metadata
 uses `metric_source=sealed_holdout_once` and
 `certification_scope=sealed_holdout_once`, preserving the distinction from
-walk-forward evidence. No private key, release binary, or opened holdout is
-committed to Git.
+walk-forward evidence. V11.2 certifies both the conditional-volatility head
+and the terminal Student-t return-distribution head (location plus variance);
+the serving API exposes that terminal p50 as a learned median path and labels
+intermediate daily interpolation explicitly. Direction remains uncertified.
+No private key, release binary, or opened holdout is committed to Git.
