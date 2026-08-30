@@ -28,6 +28,7 @@ from research.volatility_forecasting.v11_2_trainer import (
     select_per_horizon_challenger,
     train_epoch_zero_residual_model,
 )
+from scripts.run_v11_2_numeric_development import _fit_har, _persistence_variance
 
 
 def _dates(count: int) -> list[str]:
@@ -145,6 +146,21 @@ def test_horizon_gate_requires_qlike_and_calibrated_coverage() -> None:
     )
     assert not selection.learned_promotion
     assert "coverage" in selection.gates[0].reason
+
+
+def test_v112_baselines_use_named_v5_columns_not_legacy_positions() -> None:
+    features = np.zeros((40, 26), dtype=np.float32)
+    features[:, 0] = 0.2  # Return_1D
+    features[:, 13] = 0.01  # Vol_C2C_5
+    features[:, 15] = 0.02  # Vol_C2C_20
+    features[:, 16] = 0.03  # Vol_C2C_60
+    features[:, 23:26] = 1000.0  # v5 liquidity columns; must not drive HAR
+    persistence = _persistence_variance(features[:1], (1, 3, 5, 7))
+    assert persistence[0].tolist() == pytest.approx([0.04, 0.12, 0.20, 0.28])
+    train_rv = np.full((30, 4), 0.04, dtype=np.float32)
+    train_variance, eval_variance = _fit_har(features[:30], train_rv, features[30:])
+    assert np.isfinite(train_variance).all()
+    assert np.isfinite(eval_variance).all()
 
 
 def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> None:

@@ -42,6 +42,14 @@ from research.volatility_forecasting.v11_2_trainer import (
     train_epoch_zero_residual_model,
 )
 
+# V11.2 consumes the deployable v5 stationary feature order.  The legacy
+# V11.1 HAR helper expects its own 34-column schema, so never pass v5 columns
+# to its hard-coded positions (23, 24, 25): those are liquidity features here.
+# Use the named v5 volatility columns explicitly instead.
+_V112_FEATURE_COUNT = 26
+_V112_HAR_INDICES = (13, 15, 16)  # Vol_C2C_5, Vol_C2C_20, Vol_C2C_60
+_V112_DAILY_RETURN_INDEX = 0  # Return_1D
+
 
 def _digest_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
@@ -70,18 +78,27 @@ def _fit_har(
 ) -> tuple[np.ndarray, np.ndarray]:
     train_last = _last_row(train_features)
     eval_last = _last_row(eval_features)
-    if train_last.shape[1] < 26:
-        raise ValueError("V11.2 numeric features must include the 34-feature HAR columns")
+    if train_last.shape[1] != _V112_FEATURE_COUNT:
+        raise ValueError("V11.2 numeric features must contain exactly the 26 deployable v5 columns")
+    har_features_train = train_last[:, _V112_HAR_INDICES]
+    har_features_eval = eval_last[:, _V112_HAR_INDICES]
     har = EconometricHARBaseline()
-    har.fit(train_last, train_rv)
-    return har.predict_variance(train_last), har.predict_variance(eval_last)
+    # The V11.1 class consumes three variance predictors at positions 23–25;
+    # adapt its stable regression implementation to the correctly named v5
+    # volatility predictors rather than changing the V11.1 contract.
+    train_projection = np.zeros((len(har_features_train), _V112_FEATURE_COUNT), dtype=np.float64)
+    eval_projection = np.zeros((len(har_features_eval), _V112_FEATURE_COUNT), dtype=np.float64)
+    train_projection[:, 23:26] = har_features_train
+    eval_projection[:, 23:26] = har_features_eval
+    har.fit(train_projection, train_rv)
+    return har.predict_variance(train_projection), har.predict_variance(eval_projection)
 
 
 def _persistence_variance(features: np.ndarray, horizons: tuple[int, ...]) -> np.ndarray:
     last = _last_row(features)
-    if last.shape[1] <= 23:
-        raise ValueError("V11.2 numeric features must include the causal daily-return column")
-    latest_daily_variance = np.maximum(last[:, 23] ** 2, 1e-8)
+    if last.shape[1] != _V112_FEATURE_COUNT:
+        raise ValueError("V11.2 numeric features must contain exactly the 26 deployable v5 columns")
+    latest_daily_variance = np.maximum(last[:, _V112_DAILY_RETURN_INDEX] ** 2, 1e-8)
     return np.column_stack([latest_daily_variance * horizon for horizon in horizons])
 
 
