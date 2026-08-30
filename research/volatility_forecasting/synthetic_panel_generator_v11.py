@@ -70,6 +70,8 @@ def build_synthetic_sessions(
         except ValueError:
             pass
     return valid_sessions
+
+
 def generate_synthetic_market_payload(
     universe_identities: list[StableSecurityIdentity],
     sessions: list[str],
@@ -128,6 +130,8 @@ def generate_synthetic_market_payload(
         equities_ohlcv[ident.security_id] = eq_df
 
     return equities_ohlcv, sec_df, mkt_df
+
+
 def generate_synthetic_news_payload(
     universe_identities: list[StableSecurityIdentity],
     sessions: list[str],
@@ -189,6 +193,8 @@ def generate_synthetic_news_payload(
                 art_id_counter += 1
 
     return news_articles
+
+
 def synthetic_classification(
     market_payload_sha256: str,
     news_payload_sha256: str,

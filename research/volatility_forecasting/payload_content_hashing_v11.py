@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -113,11 +113,7 @@ def hash_news_payload(articles: Iterable[EnrichedNewsArticle]) -> str:
 def canonical_pit_membership_rows(identities: Iterable[StableSecurityIdentity]) -> list[str]:
     rows: list[str] = []
     for ident in identities:
-        rows.append(
-            json.dumps(
-                ident.to_dict(), sort_keys=True, separators=(",", ":")
-            )
-        )
+        rows.append(json.dumps(ident.to_dict(), sort_keys=True, separators=(",", ":")))
     return sorted(rows)
 
 
