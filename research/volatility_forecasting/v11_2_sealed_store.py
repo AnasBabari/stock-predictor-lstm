@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .v11_2_protocol import (
@@ -134,6 +135,17 @@ def _require_digest(value: object, label: str) -> str:
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
         raise V112SealedAccessError(f"{label} must be a lowercase SHA-256 digest")
     return digest
+
+
+def _read_json_object(path: Path, label: str) -> dict[str, Any]:
+    """Read a JSON object and expose malformed artifacts as a sealed-access error."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise V112SealedAccessError(f"{label} is malformed") from exc
+    if not isinstance(payload, dict):
+        raise V112SealedAccessError(f"{label} must contain a JSON object")
+    return payload
 
 
 def _key_bytes(key_path: Path, *, create: bool) -> bytes:
@@ -344,9 +356,7 @@ def load_v112_development(output_dir: Path) -> V112DevelopmentData:
     manifest_path = output_dir / "manifests" / "development_manifest.json"
     if not train_path.exists() or not validation_path.exists() or not manifest_path.exists():
         raise V112SealedAccessError("V11.2 development dataset is incomplete")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict):
-        raise V112SealedAccessError("V11.2 development manifest is malformed")
+    manifest = _read_json_object(manifest_path, "V11.2 development manifest")
     protocol = V112Protocol()
     if manifest.get("protocol_id") != protocol.protocol_id:
         raise V112SealedAccessError("V11.2 development manifest protocol mismatch")
@@ -368,23 +378,29 @@ def load_v112_development(output_dir: Path) -> V112DevelopmentData:
         manifest.get("validation_sha256"), "validation digest"
     ):
         raise V112SealedAccessError("V11.2 validation bytes do not match the development manifest")
-    with (
-        np.load(train_path, allow_pickle=False) as train,
-        np.load(validation_path, allow_pickle=False) as validation,
-    ):
-        train_features = np.asarray(train["features"], dtype=np.float32)
-        train_returns = np.asarray(train["returns"], dtype=np.float32)
-        train_rv = np.asarray(train["rv"], dtype=np.float32)
-        train_dates = tuple(str(value) for value in train["dates"].tolist())
-        validation_features = np.asarray(validation["features"], dtype=np.float32)
-        validation_returns = np.asarray(validation["returns"], dtype=np.float32)
-        validation_rv = np.asarray(validation["rv"], dtype=np.float32)
-        validation_dates = tuple(str(value) for value in validation["dates"].tolist())
+    try:
+        with (
+            np.load(train_path, allow_pickle=False) as train,
+            np.load(validation_path, allow_pickle=False) as validation,
+        ):
+            train_features = np.asarray(train["features"], dtype=np.float32)
+            train_returns = np.asarray(train["returns"], dtype=np.float32)
+            train_rv = np.asarray(train["rv"], dtype=np.float32)
+            train_dates = tuple(str(value) for value in train["dates"].tolist())
+            validation_features = np.asarray(validation["features"], dtype=np.float32)
+            validation_returns = np.asarray(validation["returns"], dtype=np.float32)
+            validation_rv = np.asarray(validation["rv"], dtype=np.float32)
+            validation_dates = tuple(str(value) for value in validation["dates"].tolist())
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise V112SealedAccessError("V11.2 development arrays are malformed") from exc
     for values, returns, rv, dates, label in (
         (train_features, train_returns, train_rv, train_dates, "train"),
         (validation_features, validation_returns, validation_rv, validation_dates, "validation"),
     ):
-        _validate_arrays(values, returns, rv, dates)
+        try:
+            _validate_arrays(values, returns, rv, dates)
+        except ValueError as exc:
+            raise V112SealedAccessError(f"V11.2 {label} arrays are invalid") from exc
         if values.ndim != 3 or values.shape[1:] != (
             protocol.window_size,
             len(protocol.feature_names),
@@ -422,27 +438,40 @@ def unseal_v112_test_once(
 ) -> V112SealedTestPayload:
     """One-shot certification loader; writes the lock before decrypting."""
     _assert_external_key(key_path, repository_root)
-    if len(candidate_digest) != 64:
-        raise V112SealedAccessError("candidate digest must be a SHA-256 hex digest")
-    try:
-        int(candidate_digest, 16)
-    except ValueError as exc:
-        raise V112SealedAccessError("candidate digest must be a SHA-256 hex digest") from exc
+    candidate_digest = _require_digest(candidate_digest, "candidate digest")
     sealed_dir = output_dir / "sealed"
     lock_path = sealed_dir / "SEALED_TEST_OPENED.json"
     metadata_path = sealed_dir / "sealed_metadata.json"
     payload_path = sealed_dir / "test_payload.aesgcm"
     if lock_path.exists():
         raise V112SealedAccessError("V11.2 sealed test has already been opened")
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    ciphertext = payload_path.read_bytes()
-    expected = str(metadata["ciphertext_sha256"])
+    metadata = _read_json_object(metadata_path, "V11.2 sealed metadata")
+    if metadata.get("protocol_id") != V11_2_PROTOCOL_ID:
+        raise V112SealedAccessError("sealed metadata protocol mismatch")
+    if metadata.get("sealed_test_status") != "LOCKED_UNOPENED":
+        raise V112SealedAccessError("sealed metadata does not prove an unopened holdout")
+    panel_sha = _require_digest(metadata.get("panel_sha256"), "sealed panel digest")
+    schema_sha = _require_digest(metadata.get("schema_sha256"), "sealed schema digest")
+    split_sha = _require_digest(metadata.get("split_sha256"), "sealed split digest")
+    if schema_sha != feature_schema_digest():
+        raise V112SealedAccessError("sealed metadata schema digest mismatch")
+    nonce_hex = str(metadata.get("nonce_hex", ""))
+    if len(nonce_hex) != 24 or any(value not in "0123456789abcdef" for value in nonce_hex):
+        raise V112SealedAccessError("sealed metadata nonce is invalid")
+    try:
+        nonce = bytes.fromhex(nonce_hex)
+    except ValueError as exc:
+        raise V112SealedAccessError("sealed metadata nonce is invalid") from exc
+    try:
+        ciphertext = payload_path.read_bytes()
+    except OSError as exc:
+        raise V112SealedAccessError("sealed ciphertext is unavailable") from exc
+    expected = _require_digest(metadata.get("ciphertext_sha256"), "sealed ciphertext digest")
     if hashlib.sha256(ciphertext).hexdigest() != expected:
         raise V112SealedAccessError("sealed ciphertext digest mismatch")
-    split_sha = str(metadata["split_sha256"])
     token = hashlib.sha256(f"{candidate_digest}:{split_sha}".encode()).hexdigest()
     lock = {
-        "protocol_id": metadata["protocol_id"],
+        "protocol_id": V11_2_PROTOCOL_ID,
         "candidate_digest": candidate_digest,
         "split_sha256": split_sha,
         "ciphertext_sha256": expected,
@@ -452,22 +481,38 @@ def unseal_v112_test_once(
     _atomic_create(lock_path, json.dumps(lock, indent=2, sort_keys=True).encode("utf-8"))
     associated = json.dumps(
         {
-            "protocol_id": metadata["protocol_id"],
-            "panel_sha256": metadata["panel_sha256"],
-            "schema_sha256": metadata["schema_sha256"],
+            "protocol_id": V11_2_PROTOCOL_ID,
+            "panel_sha256": panel_sha,
+            "schema_sha256": schema_sha,
             "split_sha256": split_sha,
         },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    plaintext = AESGCM(_key_bytes(key_path, create=False)).decrypt(
-        bytes.fromhex(str(metadata["nonce_hex"])), ciphertext, associated
-    )
-    with np.load(io.BytesIO(plaintext), allow_pickle=False) as payload:
-        features = np.asarray(payload["features"], dtype=np.float32)
-        returns = np.asarray(payload["returns"], dtype=np.float32)
-        rv = np.asarray(payload["rv"], dtype=np.float32)
-        dates = tuple(str(value) for value in payload["dates"].tolist())
+    try:
+        plaintext = AESGCM(_key_bytes(key_path, create=False)).decrypt(
+            nonce, ciphertext, associated
+        )
+    except (InvalidTag, OSError, ValueError, TypeError) as exc:
+        raise V112SealedAccessError("sealed test decryption failed") from exc
+    try:
+        with np.load(io.BytesIO(plaintext), allow_pickle=False) as payload:
+            features = np.asarray(payload["features"], dtype=np.float32)
+            returns = np.asarray(payload["returns"], dtype=np.float32)
+            rv = np.asarray(payload["rv"], dtype=np.float32)
+            dates = tuple(str(value) for value in payload["dates"].tolist())
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise V112SealedAccessError("sealed test payload is malformed") from exc
+    protocol = V112Protocol()
+    try:
+        _validate_arrays(features, returns, rv, dates)
+    except ValueError as exc:
+        raise V112SealedAccessError("sealed test payload arrays are invalid") from exc
+    if features.ndim != 3 or features.shape[1:] != (
+        protocol.window_size,
+        len(protocol.feature_names),
+    ):
+        raise V112SealedAccessError("sealed test feature geometry is invalid")
     del plaintext, ciphertext
     gc.collect()
     return V112SealedTestPayload(

@@ -58,6 +58,24 @@ def _make_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     (dataset / "manifests" / "protocol.json").write_text(
         json.dumps(protocol_manifest(protocol), sort_keys=True), encoding="utf-8"
     )
+    universe_body = {
+        "protocol_id": protocol.protocol_id,
+        "universe_version": "synthetic-v11.2",
+        "selection_method": "synthetic_fixture",
+        "membership_sources": ["synthetic_fixture"],
+        "securities": [{"security_id": f"SECURITY-{index:03d}"} for index in range(64)],
+    }
+    universe_payload = {
+        **universe_body,
+        "universe_size": 64,
+        "manifest_sha256": canonical_json_digest(universe_body),
+    }
+    (dataset / "manifests" / "universe.json").write_text(
+        json.dumps(universe_payload, sort_keys=True), encoding="utf-8"
+    )
+    (dataset / "manifests" / "split.json").write_text(
+        json.dumps(split.to_dict(), sort_keys=True), encoding="utf-8"
+    )
     results = tmp_path / "results"
     results.mkdir()
     scaler = RobustSequenceScaler.fit(features[: split.train_rows])
@@ -108,7 +126,7 @@ def _make_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     comparison_path.write_text(json.dumps(comparison_body, sort_keys=True), encoding="utf-8")
     freeze_routing_bundle(
         protocol=protocol,
-        universe_sha256="b" * 64,
+        universe_sha256=universe_payload["manifest_sha256"],
         panel_sha256="a" * 64,
         schema_sha256=feature_schema_digest(protocol),
         split_sha256=split.split_sha256,

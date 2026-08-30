@@ -37,6 +37,16 @@ def _require_sha256(value: object, label: str) -> str:
     return digest
 
 
+def _json_object(path: Path, label: str) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"{label} is malformed") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{label} must contain a JSON object")
+    return payload
+
+
 def _required_file(root: Path, relative: object, label: str) -> Path:
     if isinstance(relative, Path):
         candidate = relative
@@ -77,6 +87,9 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
     bundle_path = results / "v11_2_routing_bundle.json"
     bundle_sha_path = results / "v11_2_routing_bundle.sha256"
     dev_manifest_path = dataset / "manifests" / "development_manifest.json"
+    protocol_path = dataset / "manifests" / "protocol.json"
+    universe_path = dataset / "manifests" / "universe.json"
+    split_path = dataset / "manifests" / "split.json"
     train_path = dataset / "development" / "train.npz"
     validation_path = dataset / "development" / "validation.npz"
     required = [
@@ -85,6 +98,9 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
         bundle_path,
         bundle_sha_path,
         dev_manifest_path,
+        protocol_path,
+        universe_path,
+        split_path,
         train_path,
         validation_path,
     ]
@@ -94,14 +110,75 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
     if lock_path.exists():
         raise SystemExit("sealed test is already open; candidate cannot be certified")
 
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    manifest = json.loads(bundle_path.read_text(encoding="utf-8"))
-    development = json.loads(dev_manifest_path.read_text(encoding="utf-8"))
-    if not all(isinstance(value, dict) for value in (metadata, manifest, development)):
-        raise SystemExit("V11.2 audit manifests must contain JSON objects")
+    metadata = _json_object(metadata_path, "sealed metadata")
+    manifest = _json_object(bundle_path, "routing bundle")
+    development = _json_object(dev_manifest_path, "development manifest")
+    stored_protocol = _json_object(protocol_path, "protocol manifest")
+    universe = _json_object(universe_path, "universe manifest")
+    split = _json_object(split_path, "split manifest")
+    if canonical_json_digest(stored_protocol) != canonical_json_digest(protocol_manifest(protocol)):
+        raise SystemExit("stored protocol manifest does not match V11.2")
+    if development.get("protocol_id") != protocol.protocol_id:
+        raise SystemExit("development manifest protocol does not match V11.2")
+    if metadata.get("protocol_id") != protocol.protocol_id:
+        raise SystemExit("sealed metadata protocol does not match V11.2")
+    if metadata.get("sealed_test_status") != "LOCKED_UNOPENED":
+        raise SystemExit("sealed metadata does not prove an unopened holdout")
+    metadata_panel = _require_sha256(metadata.get("panel_sha256"), "sealed metadata panel digest")
+    metadata_schema = _require_sha256(
+        metadata.get("schema_sha256"), "sealed metadata schema digest"
+    )
+    metadata_split = _require_sha256(metadata.get("split_sha256"), "sealed metadata split digest")
+    if metadata_schema != feature_schema_digest(protocol):
+        raise SystemExit("sealed metadata schema digest does not match V11.2")
+    if metadata_panel != development.get("panel_sha256"):
+        raise SystemExit("sealed metadata panel digest differs from development evidence")
+    if metadata_split != development.get("split_sha256"):
+        raise SystemExit("sealed metadata split digest differs from development evidence")
+    universe_digest = _require_sha256(universe.get("manifest_sha256"), "universe manifest digest")
+    universe_body = {
+        key: universe[key]
+        for key in (
+            "protocol_id",
+            "universe_version",
+            "selection_method",
+            "membership_sources",
+            "securities",
+        )
+        if key in universe
+    }
+    if canonical_json_digest(universe_body) != universe_digest:
+        raise SystemExit("universe manifest digest does not match its canonical contents")
+    if (
+        universe.get("protocol_id") != protocol.protocol_id
+        or universe.get("universe_size") != protocol.universe_size
+    ):
+        raise SystemExit("universe manifest does not contain the frozen 64-security universe")
+    securities = universe.get("securities")
+    if not isinstance(securities, list) or len(securities) != protocol.universe_size:
+        raise SystemExit("universe manifest must list exactly 64 securities")
+    security_ids = [item.get("security_id") for item in securities if isinstance(item, dict)]
+    if (
+        len(security_ids) != protocol.universe_size
+        or any(not isinstance(value, str) or not value.strip() for value in security_ids)
+        or len(set(security_ids)) != protocol.universe_size
+    ):
+        raise SystemExit("universe manifest security IDs are invalid")
+    if universe_digest != manifest.get("universe_sha256"):
+        raise SystemExit("routing bundle universe digest differs from the audited manifest")
+    if split.get("protocol") != protocol.protocol_id or split.get("nominal_split") != "70/15/15":
+        raise SystemExit("split manifest does not match the frozen V11.2 protocol")
+    split_digest = _require_sha256(split.get("split_sha256"), "split manifest digest")
+    if split_digest != metadata_split or split_digest != manifest.get("split_sha256"):
+        raise SystemExit("split manifest digest differs from the sealed evidence")
     ciphertext_sha = _sha256(payload_path)
-    if ciphertext_sha != metadata.get("ciphertext_sha256"):
+    metadata_ciphertext = _require_sha256(
+        metadata.get("ciphertext_sha256"), "sealed metadata ciphertext digest"
+    )
+    if ciphertext_sha != metadata_ciphertext:
         raise SystemExit("sealed ciphertext digest does not match metadata")
+    if ciphertext_sha != manifest.get("sealed_ciphertext_sha256"):
+        raise SystemExit("sealed ciphertext digest differs from the routing bundle")
     if development.get("sealed_test_status") != "LOCKED_UNOPENED":
         raise SystemExit("development manifest does not prove an unopened holdout")
     if development.get("schema_sha256") != feature_schema_digest(protocol):
