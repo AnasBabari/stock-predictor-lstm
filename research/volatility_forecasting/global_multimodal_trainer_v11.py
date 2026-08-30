@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import io
 import math
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -17,6 +19,7 @@ from backend.contracts.schemas_v11 import (
     HORIZON_RETURN_LOSS_WEIGHTS_V11,
     HORIZON_VARIANCE_LOSS_WEIGHTS_V11,
     REQUIRED_TARGET_HORIZONS_V11,
+    get_schema_v11_manifest,
 )
 from research.volatility_forecasting.chronological_partitions_v11 import (
     ChronologicalPartitionManager,
@@ -37,6 +40,7 @@ class ModelMetricRecord:
         str  # M0_HAR_BASELINE, M1_NUMERIC, M2_MULTIMODAL_NEWS, M3_SHUFFLE_CONTROL, M3_DELAY_CONTROL
     )
     crps_mean: float
+    crps_per_horizon: dict[int, float]
     return_mae: float
     qlike_mean: float
     coverage_80pct: float
@@ -93,7 +97,7 @@ class CertifiedSealedEvaluationResult:
     delay_control_delta_crps: float  # CRPS(M2) - CRPS(M3_delay)
     econometric_delta_crps: float  # CRPS(M1) - CRPS(M0)
     certification_decision: (
-        str  # CERTIFIED_M2_PROMOTED, CERTIFIED_M1_NUMERIC_CHAMPION, CERTIFIED_INFERIOR
+        str  # SEALED_TEST_PASS_M2_MULTIMODAL, SEALED_TEST_PASS_M1_NUMERIC, SEALED_TEST_FAIL
     )
     audit_trail: dict[str, Any]
 
@@ -146,7 +150,7 @@ class EconometricHARBaseline:
 
 
 class GlobalMultimodalTrainerV11:
-    """Rigorous trainer supporting multi-task loss, expanding folds, HAR-residual scaling, and sealed evaluation."""
+    """Rigorous trainer supporting fold-local scaling, early stopping, HAR-residual loss, and cryptographic freeze."""
 
     @staticmethod
     def compute_crps_student_t(
@@ -180,15 +184,25 @@ class GlobalMultimodalTrainerV11:
         y_returns: np.ndarray,
         y_rv: np.ndarray,
         df: float = 5.0,
+        horizons: tuple[int, ...] = REQUIRED_TARGET_HORIZONS_V11,
     ) -> ModelMetricRecord:
         pred_var = (pred_scale**2) * (df / (df - 2.0)) if df > 2.0 else pred_scale**2
         pred_var = np.maximum(pred_var, 1e-8)
         true_var = np.maximum(y_rv, 1e-8)
 
-        # 1. CRPS across returns
+        # 1. CRPS across returns and per-horizon
         crps = GlobalMultimodalTrainerV11.compute_crps_student_t(
             y_true=y_returns, mu=pred_mu, scale=pred_scale, df=df
         )
+        crps_per_h: dict[int, float] = {}
+        for col_idx, h in enumerate(horizons):
+            h_crps = GlobalMultimodalTrainerV11.compute_crps_student_t(
+                y_true=y_returns[:, col_idx : col_idx + 1],
+                mu=pred_mu[:, col_idx : col_idx + 1],
+                scale=pred_scale[:, col_idx : col_idx + 1],
+                df=df,
+            )
+            crps_per_h[h] = round(h_crps, 6)
 
         # 2. Return MAE
         mae = float(np.mean(np.abs(pred_mu - y_returns)))
@@ -214,6 +228,7 @@ class GlobalMultimodalTrainerV11:
         return ModelMetricRecord(
             model_id=model_name,
             crps_mean=round(crps, 6),
+            crps_per_horizon=crps_per_h,
             return_mae=round(mae, 6),
             qlike_mean=round(qlike, 6),
             coverage_80pct=round(coverage, 4),
@@ -221,31 +236,38 @@ class GlobalMultimodalTrainerV11:
         )
 
     @classmethod
-    def train_har_residual_model(
+    def train_har_residual_model_with_early_stopping(
         cls,
-        x_num: np.ndarray,
-        x_news: np.ndarray | None,
-        base_har_variance: np.ndarray,
-        y_returns: np.ndarray,
-        y_rv: np.ndarray,
+        x_num_train: np.ndarray,
+        x_news_train: np.ndarray | None,
+        base_har_var_train: np.ndarray,
+        y_returns_train: np.ndarray,
+        y_rv_train: np.ndarray,
         train_scale_returns: np.ndarray,
-        epochs: int = 15,
+        x_num_val: np.ndarray | None = None,
+        x_news_val: np.ndarray | None = None,
+        base_har_var_val: np.ndarray | None = None,
+        y_returns_val: np.ndarray | None = None,
+        max_epochs: int = 20,
+        patience: int = 5,
         lr: float = 0.005,
         lambda_qlike: float = 0.5,
         df: float = 5.0,
-    ) -> MultimodalFusionModel:
-        n_num = x_num.shape[1]
-        n_news = x_news.shape[1] if x_news is not None else 19
+    ) -> tuple[MultimodalFusionModel, int]:
+        n_num = x_num_train.shape[1]
+        n_news = x_news_train.shape[1] if x_news_train is not None else 19
         model = MultimodalFusionModel(
             numeric_dim=n_num, news_dim=n_news, horizons=REQUIRED_TARGET_HORIZONS_V11
         )
         optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
 
-        t_num = torch.tensor(x_num, dtype=torch.float32)
-        t_news = torch.tensor(x_news, dtype=torch.float32) if x_news is not None else None
-        t_rets = torch.tensor(y_returns, dtype=torch.float32)
-        t_rv = torch.tensor(y_rv, dtype=torch.float32)
-        t_har_var = torch.tensor(base_har_variance, dtype=torch.float32)
+        t_num = torch.tensor(x_num_train, dtype=torch.float32)
+        t_news = (
+            torch.tensor(x_news_train, dtype=torch.float32) if x_news_train is not None else None
+        )
+        t_rets = torch.tensor(y_returns_train, dtype=torch.float32)
+        t_rv = torch.tensor(y_rv_train, dtype=torch.float32)
+        t_har_var = torch.tensor(base_har_var_train, dtype=torch.float32)
         t_norm_scale = torch.tensor(train_scale_returns, dtype=torch.float32)
 
         w_ret = torch.tensor(
@@ -257,18 +279,23 @@ class GlobalMultimodalTrainerV11:
             dtype=torch.float32,
         )
 
-        for _ in range(epochs):
+        has_val = (
+            x_num_val is not None and y_returns_val is not None and base_har_var_val is not None
+        )
+        best_val_crps = float("inf")
+        best_state = copy.deepcopy(model.state_dict())
+        best_epoch = 1
+        stagnant_epochs = 0
+
+        for epoch in range(1, max_epochs + 1):
             model.train()
             optimizer.zero_grad()
             d_mu, d_log_vol = model(t_num, t_news)
 
-            # 1. Normalized Location Huber Loss
             huber_per_h = nn.functional.huber_loss(d_mu, t_rets, reduction="none")
             normalized_huber = huber_per_h / torch.clamp(t_norm_scale, min=1e-4)
             loss_ret = torch.mean(torch.sum(w_ret * normalized_huber, dim=-1))
 
-            # 2. Genuine Observation-Specific HAR-Residual Variance & QLIKE Loss
-            # Pred_Var_{t,h} = Var_{HAR, t, h} * exp(2 * d_log_vol)
             pred_var = torch.clamp(t_har_var * torch.exp(2.0 * d_log_vol), min=1e-8)
             qlike_per_h = (t_rv / pred_var) - torch.log(t_rv / pred_var) - 1.0
             loss_vol = torch.mean(torch.sum(w_vol * qlike_per_h, dim=-1))
@@ -277,19 +304,147 @@ class GlobalMultimodalTrainerV11:
             total_loss.backward()
             optimizer.step()
 
-        return model
+            if has_val:
+                model.eval()
+                with torch.no_grad():
+                    v_t_num = torch.tensor(x_num_val, dtype=torch.float32)
+                    v_t_news = (
+                        torch.tensor(x_news_val, dtype=torch.float32)
+                        if x_news_val is not None
+                        else None
+                    )
+                    v_mu, v_logvol = model(v_t_num, v_t_news)
+                    val_scale = np.sqrt(base_har_var_val * (df - 2.0) / df) * np.exp(
+                        v_logvol.numpy()
+                    )
+                    val_crps = cls.compute_crps_student_t(
+                        y_true=y_returns_val, mu=v_mu.numpy(), scale=val_scale, df=df
+                    )
+                if val_crps < best_val_crps:
+                    best_val_crps = val_crps
+                    best_state = copy.deepcopy(model.state_dict())
+                    best_epoch = epoch
+                    stagnant_epochs = 0
+                else:
+                    stagnant_epochs += 1
+                    if stagnant_epochs >= patience:
+                        break
+
+        if has_val:
+            model.load_state_dict(best_state)
+
+        return model, best_epoch
 
     @classmethod
     def develop_and_freeze_bundle(
         cls,
         dev_payload: DevelopmentDatasetPayload,
-        max_epochs: int = 15,
+        max_epochs: int = 20,
+        patience: int = 5,
         lr: float = 0.005,
         n_expanding_folds: int = 4,
         df: float = 5.0,
     ) -> FrozenCandidateBundle:
-        """Executes expanding cross-validation folds, early stopping, and returns frozen candidate bundle."""
-        # 1. Fit Preprocessing exclusively on Train Partition
+        """Executes fold-local expanding cross-validation, separate early stopping, and cryptographic bundle freeze."""
+        all_dev_dates = dev_payload.train_dates + dev_payload.val_dates
+        all_dev_num = np.vstack([dev_payload.train_numeric, dev_payload.val_numeric])
+        all_dev_news = np.vstack([dev_payload.train_news, dev_payload.val_news])
+        all_dev_rets = np.vstack([dev_payload.train_returns, dev_payload.val_returns])
+        all_dev_rv = np.vstack([dev_payload.train_rv, dev_payload.val_rv])
+
+        folds = ChronologicalPartitionManager.create_expanding_folds(
+            all_dev_dates, n_folds=n_expanding_folds, max_horizon_days=7, embargo_sessions=15
+        )
+
+        # 1. Fold-Local Expanding Cross-Validation (ZERO Future Distribution Leakage)
+        fold_m0_crps: list[float] = []
+        fold_m1_crps: list[float] = []
+        fold_m2_crps: list[float] = []
+
+        for t_f_idx, v_f_idx in folds:
+            # Fit scalers STRICTLY on fold train
+            f_num_mean = np.mean(all_dev_num[t_f_idx], axis=0, keepdims=True)
+            f_num_std = np.std(all_dev_num[t_f_idx], axis=0, keepdims=True) + 1e-6
+            f_x_num_train = (all_dev_num[t_f_idx] - f_num_mean) / f_num_std
+            f_x_num_val = (all_dev_num[v_f_idx] - f_num_mean) / f_num_std
+
+            f_news_mean = np.mean(all_dev_news[t_f_idx], axis=0, keepdims=True)
+            f_news_std = np.std(all_dev_news[t_f_idx], axis=0, keepdims=True) + 1e-6
+            f_x_news_train = (all_dev_news[t_f_idx] - f_news_mean) / f_news_std
+            f_x_news_val = (all_dev_news[v_f_idx] - f_news_mean) / f_news_std
+
+            f_train_scale_rets = np.std(all_dev_rets[t_f_idx], axis=0, keepdims=True) + 1e-6
+
+            # Fit HAR strictly on fold train
+            f_har = EconometricHARBaseline(REQUIRED_TARGET_HORIZONS_V11)
+            f_har.fit(all_dev_num[t_f_idx], all_dev_rv[t_f_idx])
+            f_train_har_var = f_har.predict_variance(all_dev_num[t_f_idx])
+            f_val_har_var = f_har.predict_variance(all_dev_num[v_f_idx])
+
+            # M0 Score on Fold Validation
+            f_val_scale_har = np.sqrt(f_val_har_var * (df - 2.0) / df)
+            f_m0_crps = cls.compute_crps_student_t(
+                y_true=all_dev_rets[v_f_idx],
+                mu=np.zeros_like(all_dev_rets[v_f_idx]),
+                scale=f_val_scale_har,
+                df=df,
+            )
+            fold_m0_crps.append(f_m0_crps)
+
+            # M1 on Fold
+            f_m1, _ = cls.train_har_residual_model_with_early_stopping(
+                x_num_train=f_x_num_train,
+                x_news_train=None,
+                base_har_var_train=f_train_har_var,
+                y_returns_train=all_dev_rets[t_f_idx],
+                y_rv_train=all_dev_rv[t_f_idx],
+                train_scale_returns=f_train_scale_rets,
+                x_num_val=f_x_num_val,
+                x_news_val=None,
+                base_har_var_val=f_val_har_var,
+                y_returns_val=all_dev_rets[v_f_idx],
+                max_epochs=max_epochs,
+                patience=patience,
+                lr=lr,
+                df=df,
+            )
+            with torch.no_grad():
+                m1_mu_v, m1_lv_v = f_m1(torch.tensor(f_x_num_val, dtype=torch.float32), None)
+                f_m1_scale = f_val_scale_har * np.exp(m1_lv_v.numpy())
+                f_m1_crps = cls.compute_crps_student_t(
+                    y_true=all_dev_rets[v_f_idx], mu=m1_mu_v.numpy(), scale=f_m1_scale, df=df
+                )
+                fold_m1_crps.append(f_m1_crps)
+
+            # M2 on Fold
+            f_m2, _ = cls.train_har_residual_model_with_early_stopping(
+                x_num_train=f_x_num_train,
+                x_news_train=f_x_news_train,
+                base_har_var_train=f_train_har_var,
+                y_returns_train=all_dev_rets[t_f_idx],
+                y_rv_train=all_dev_rv[t_f_idx],
+                train_scale_returns=f_train_scale_rets,
+                x_num_val=f_x_num_val,
+                x_news_val=f_x_news_val,
+                base_har_var_val=f_val_har_var,
+                y_returns_val=all_dev_rets[v_f_idx],
+                max_epochs=max_epochs,
+                patience=patience,
+                lr=lr,
+                df=df,
+            )
+            with torch.no_grad():
+                m2_mu_v, m2_lv_v = f_m2(
+                    torch.tensor(f_x_num_val, dtype=torch.float32),
+                    torch.tensor(f_x_news_val, dtype=torch.float32),
+                )
+                f_m2_scale = f_val_scale_har * np.exp(m2_lv_v.numpy())
+                f_m2_crps = cls.compute_crps_student_t(
+                    y_true=all_dev_rets[v_f_idx], mu=m2_mu_v.numpy(), scale=f_m2_scale, df=df
+                )
+                fold_m2_crps.append(f_m2_crps)
+
+        # 2. Final Training on Outer 70% Train with Validation-Based Early Stopping
         num_mean = np.mean(dev_payload.train_numeric, axis=0, keepdims=True)
         num_std = np.std(dev_payload.train_numeric, axis=0, keepdims=True) + 1e-6
         train_x_num = (dev_payload.train_numeric - num_mean) / num_std
@@ -302,88 +457,48 @@ class GlobalMultimodalTrainerV11:
 
         train_scale_rets = np.std(dev_payload.train_returns, axis=0, keepdims=True) + 1e-6
 
-        # 2. Fit M0 (Econometric HAR Baseline) on Train
-        har_model = EconometricHARBaseline(REQUIRED_TARGET_HORIZONS_V11)
-        har_model.fit(dev_payload.train_numeric, dev_payload.train_rv)
+        final_har = EconometricHARBaseline(REQUIRED_TARGET_HORIZONS_V11)
+        final_har.fit(dev_payload.train_numeric, dev_payload.train_rv)
+        train_har_var = final_har.predict_variance(dev_payload.train_numeric)
+        val_har_var = final_har.predict_variance(dev_payload.val_numeric)
 
-        train_har_var = har_model.predict_variance(dev_payload.train_numeric)
-        val_har_var = har_model.predict_variance(dev_payload.val_numeric)
-
-        # 3. Expanding Folds Cross-Validation on Development Set
-        all_dev_dates = dev_payload.train_dates + dev_payload.val_dates
-        all_dev_num = np.vstack([train_x_num, val_x_num])
-        all_dev_news = np.vstack([train_x_news, val_x_news])
-        all_dev_rets = np.vstack([dev_payload.train_returns, dev_payload.val_returns])
-        all_dev_rv = np.vstack([dev_payload.train_rv, dev_payload.val_rv])
-        all_dev_har_var = np.vstack([train_har_var, val_har_var])
-
-        folds = ChronologicalPartitionManager.create_expanding_folds(
-            all_dev_dates, n_folds=n_expanding_folds, max_horizon_days=7, embargo_sessions=15
-        )
-
-        # Evaluate OOF performance across expanding folds for hyperparameter tuning & early stopping
-        best_epoch = max_epochs
-        best_oof_crps = float("inf")
-
-        for trial_epoch in [5, max_epochs]:
-            oof_m2_crps_list = []
-            for t_f_idx, v_f_idx in folds:
-                fold_model = cls.train_har_residual_model(
-                    x_num=all_dev_num[t_f_idx],
-                    x_news=all_dev_news[t_f_idx],
-                    base_har_variance=all_dev_har_var[t_f_idx],
-                    y_returns=all_dev_rets[t_f_idx],
-                    y_rv=all_dev_rv[t_f_idx],
-                    train_scale_returns=train_scale_rets,
-                    epochs=trial_epoch,
-                    lr=lr,
-                    df=df,
-                )
-                with torch.no_grad():
-                    mu_t, logvol_t = fold_model(
-                        torch.tensor(all_dev_num[v_f_idx], dtype=torch.float32),
-                        torch.tensor(all_dev_news[v_f_idx], dtype=torch.float32),
-                    )
-                    fold_scale = np.sqrt(all_dev_har_var[v_f_idx] * (df - 2.0) / df) * np.exp(
-                        logvol_t.numpy()
-                    )
-                    f_crps = cls.compute_crps_student_t(
-                        y_true=all_dev_rets[v_f_idx], mu=mu_t.numpy(), scale=fold_scale, df=df
-                    )
-                    oof_m2_crps_list.append(f_crps)
-            mean_oof_crps = float(np.mean(oof_m2_crps_list))
-            if mean_oof_crps < best_oof_crps:
-                best_oof_crps = mean_oof_crps
-                best_epoch = trial_epoch
-
-        # 4. Train Final M1 (Numeric Only) on Train Partition
-        m1_final = cls.train_har_residual_model(
-            x_num=train_x_num,
-            x_news=None,
-            base_har_variance=train_har_var,
-            y_returns=dev_payload.train_returns,
-            y_rv=dev_payload.train_rv,
+        # Train Final M1 with separate early stopping
+        m1_final, m1_best_epoch = cls.train_har_residual_model_with_early_stopping(
+            x_num_train=train_x_num,
+            x_news_train=None,
+            base_har_var_train=train_har_var,
+            y_returns_train=dev_payload.train_returns,
+            y_rv_train=dev_payload.train_rv,
             train_scale_returns=train_scale_rets,
-            epochs=best_epoch,
+            x_num_val=val_x_num,
+            x_news_val=None,
+            base_har_var_val=val_har_var,
+            y_returns_val=dev_payload.val_returns,
+            max_epochs=max_epochs,
+            patience=patience,
             lr=lr,
             df=df,
         )
 
-        # 5. Train Final M2 (Multimodal Numeric + News) on Train Partition
-        m2_final = cls.train_har_residual_model(
-            x_num=train_x_num,
-            x_news=train_x_news,
-            base_har_variance=train_har_var,
-            y_returns=dev_payload.train_returns,
-            y_rv=dev_payload.train_rv,
+        # Train Final M2 with separate early stopping
+        m2_final, m2_best_epoch = cls.train_har_residual_model_with_early_stopping(
+            x_num_train=train_x_num,
+            x_news_train=train_x_news,
+            base_har_var_train=train_har_var,
+            y_returns_train=dev_payload.train_returns,
+            y_rv_train=dev_payload.train_rv,
             train_scale_returns=train_scale_rets,
-            epochs=best_epoch,
+            x_num_val=val_x_num,
+            x_news_val=val_x_news,
+            base_har_var_val=val_har_var,
+            y_returns_val=dev_payload.val_returns,
+            max_epochs=max_epochs,
+            patience=patience,
             lr=lr,
             df=df,
         )
 
-        # 6. Evaluate Validation Metrics
-        # M0
+        # Evaluate Validation Metrics on Outer 15%
         val_scale_har = np.sqrt(val_har_var * (df - 2.0) / df)
         m0_val = cls.evaluate_partition(
             "M0_HAR_BASELINE",
@@ -394,30 +509,27 @@ class GlobalMultimodalTrainerV11:
             df=df,
         )
 
-        # M1
         with torch.no_grad():
-            m1_mu_t, m1_logvol_t = m1_final(torch.tensor(val_x_num, dtype=torch.float32), None)
-            m1_scale = val_scale_har * np.exp(m1_logvol_t.numpy())
+            m1_mu_v, m1_lv_v = m1_final(torch.tensor(val_x_num, dtype=torch.float32), None)
+            m1_scale_v = val_scale_har * np.exp(m1_lv_v.numpy())
             m1_val = cls.evaluate_partition(
                 "M1_NUMERIC",
-                m1_mu_t.numpy(),
-                m1_scale,
+                m1_mu_v.numpy(),
+                m1_scale_v,
                 dev_payload.val_returns,
                 dev_payload.val_rv,
                 df=df,
             )
 
-        # M2
-        with torch.no_grad():
-            m2_mu_t, m2_logvol_t = m2_final(
+            m2_mu_v, m2_lv_v = m2_final(
                 torch.tensor(val_x_num, dtype=torch.float32),
                 torch.tensor(val_x_news, dtype=torch.float32),
             )
-            m2_scale = val_scale_har * np.exp(m2_logvol_t.numpy())
+            m2_scale_v = val_scale_har * np.exp(m2_lv_v.numpy())
             m2_val = cls.evaluate_partition(
                 "M2_MULTIMODAL_NEWS",
-                m2_mu_t.numpy(),
-                m2_scale,
+                m2_mu_v.numpy(),
+                m2_scale_v,
                 dev_payload.val_returns,
                 dev_payload.val_rv,
                 df=df,
@@ -433,17 +545,43 @@ class GlobalMultimodalTrainerV11:
             "M2_MULTIMODAL_NEWS" if m2_val.crps_mean <= m1_val.crps_mean else "M1_NUMERIC"
         )
 
-        raw_meta = f"{winning_family}:{best_epoch}:{lr}:{m2_val.crps_mean}:{m1_val.crps_mean}"
-        cand_digest = hashlib.sha256(raw_meta.encode()).hexdigest()
+        # 3. Cryptographic Candidate Bundle Freeze
+        # Serializes exact model parameter bytes, HAR coefficients, scalers, and schema
+        h = hashlib.sha256()
+        h.update(winning_family.encode())
+        h.update(get_schema_v11_manifest().schema_sha256.encode())
+        h.update(dev_payload.split_digest.encode())
+        h.update(num_mean.tobytes())
+        h.update(num_std.tobytes())
+        h.update(news_mean.tobytes())
+        h.update(news_std.tobytes())
+        h.update(train_scale_rets.tobytes())
+
+        buf_m1 = io.BytesIO()
+        torch.save(m1_final.state_dict(), buf_m1)
+        h.update(buf_m1.getvalue())
+
+        buf_m2 = io.BytesIO()
+        torch.save(m2_final.state_dict(), buf_m2)
+        h.update(buf_m2.getvalue())
+
+        for k in sorted(final_har.coefficients.keys()):
+            h.update(final_har.coefficients[k].tobytes())
+
+        cand_digest = h.hexdigest()
 
         manifest = FrozenCandidateManifest(
             candidate_id=f"CAND_{cand_digest[:12]}",
             winning_model_family=winning_family,
             selected_hyperparameters={
-                "epochs": best_epoch,
+                "m1_best_epoch": m1_best_epoch,
+                "m2_best_epoch": m2_best_epoch,
                 "lr": lr,
                 "lambda_qlike": 0.5,
                 "df": df,
+                "oof_m0_crps": float(np.mean(fold_m0_crps)),
+                "oof_m1_crps": float(np.mean(fold_m1_crps)),
+                "oof_m2_crps": float(np.mean(fold_m2_crps)),
             },
             validation_oof_metrics=val_records,
             train_dates=(dev_payload.train_dates[0], dev_payload.train_dates[-1]),
@@ -452,7 +590,7 @@ class GlobalMultimodalTrainerV11:
         )
 
         return FrozenCandidateBundle(
-            m0_har_baseline=har_model,
+            m0_har_baseline=final_har,
             m1_numeric_model=m1_final,
             m2_multimodal_model=m2_final,
             num_scaler_mean=num_mean,
@@ -468,33 +606,33 @@ class GlobalMultimodalTrainerV11:
         cls,
         bundle: FrozenCandidateBundle,
         sealed_store: SealedDatasetStoreV11,
-        test_same_origin_shuffled_news: np.ndarray | None = None,
-        test_causal_delayed_news: np.ndarray | None = None,
     ) -> CertifiedSealedEvaluationResult:
-        """Single-use one-shot evaluation on sacred sealed test partition using the exact frozen bundle."""
+        """Single-use one-shot evaluation on sacred sealed test partition using the exact frozen bundle and sealed controls."""
         test_payload: SealedTestPayload = sealed_store.unseal_test_partition(
             bundle.manifest.manifest_sha256
         )
 
+        # Enforce sealed controls presence (ZERO unsafe fallbacks)
+        if test_payload.test_same_origin_shuffled_news is None or len(
+            test_payload.test_same_origin_shuffled_news
+        ) != len(test_payload.test_numeric):
+            raise ValueError(
+                "Missing sealed same-origin shuffled news negative control in test payload."
+            )
+        if test_payload.test_causal_delayed_news is None or len(
+            test_payload.test_causal_delayed_news
+        ) != len(test_payload.test_numeric):
+            raise ValueError("Missing sealed causal delayed news negative control in test payload.")
+
         # Apply train scalers
         test_x_num = (test_payload.test_numeric - bundle.num_scaler_mean) / bundle.num_scaler_std
         test_x_news = (test_payload.test_news - bundle.news_scaler_mean) / bundle.news_scaler_std
-
-        # Causal Negative Controls
-        if test_same_origin_shuffled_news is not None:
-            shuffled_test_news = (
-                test_same_origin_shuffled_news - bundle.news_scaler_mean
-            ) / bundle.news_scaler_std
-        else:
-            rng = np.random.default_rng(2026)
-            shuffled_test_news = rng.permutation(test_x_news)
-
-        if test_causal_delayed_news is not None:
-            delayed_test_news = (
-                test_causal_delayed_news - bundle.news_scaler_mean
-            ) / bundle.news_scaler_std
-        else:
-            delayed_test_news = np.roll(test_x_news, shift=10, axis=0)
+        shuffled_test_news = (
+            test_payload.test_same_origin_shuffled_news - bundle.news_scaler_mean
+        ) / bundle.news_scaler_std
+        delayed_test_news = (
+            test_payload.test_causal_delayed_news - bundle.news_scaler_mean
+        ) / bundle.news_scaler_std
 
         df = bundle.manifest.selected_hyperparameters.get("df", 5.0)
 
@@ -541,7 +679,7 @@ class GlobalMultimodalTrainerV11:
                 df=df,
             )
 
-        # M3_shuffle (Negative Control with Same-Origin Shuffled News)
+        # M3_shuffle (Negative Control with Sealed Same-Origin Shuffled News)
         with torch.no_grad():
             m3s_mu_t, m3s_logvol_t = bundle.m2_multimodal_model(
                 torch.tensor(test_x_num, dtype=torch.float32),
@@ -557,7 +695,7 @@ class GlobalMultimodalTrainerV11:
                 df=df,
             )
 
-        # M3_delay (Negative Control with Causal Delayed News)
+        # M3_delay (Negative Control with Sealed Causal Delayed News)
         with torch.no_grad():
             m3d_mu_t, m3d_logvol_t = bundle.m2_multimodal_model(
                 torch.tensor(test_x_num, dtype=torch.float32),
@@ -586,19 +724,29 @@ class GlobalMultimodalTrainerV11:
         delta_delay = round(m2_test.crps_mean - m3d_test.crps_mean, 6)
         delta_econometric = round(m1_test.crps_mean - m0_test.crps_mean, 6)
 
-        # Strict Promotion Hierarchy:
-        # M2 is promoted only if M2 < M0, M2 < M1, M2 < M3_shuffle, and M2 < M3_delay
+        # Rigorous Per-Horizon Promotion Gate across all required horizons (1, 3, 5, 7)
+        all_h_pass_m2 = all(
+            m2_test.crps_per_horizon[h] <= m1_test.crps_per_horizon[h]
+            and m2_test.crps_per_horizon[h] <= m3s_test.crps_per_horizon[h]
+            and m2_test.crps_per_horizon[h] <= m3d_test.crps_per_horizon[h]
+            for h in REQUIRED_TARGET_HORIZONS_V11
+        )
+        all_h_pass_m1 = all(
+            m1_test.crps_per_horizon[h] <= m0_test.crps_per_horizon[h]
+            for h in REQUIRED_TARGET_HORIZONS_V11
+        )
+
         if (
-            m2_test.crps_mean < m0_test.crps_mean
+            all_h_pass_m2
+            and m2_test.crps_mean < m0_test.crps_mean
             and m2_test.crps_mean < m1_test.crps_mean
-            and m2_test.crps_mean < m3s_test.crps_mean
-            and m2_test.crps_mean < m3d_test.crps_mean
+            and m2_test.qlike_mean <= m0_test.qlike_mean
         ):
-            decision = "CERTIFIED_M2_PROMOTED"
-        elif m1_test.crps_mean < m0_test.crps_mean:
-            decision = "CERTIFIED_M1_NUMERIC_CHAMPION"
+            decision = "SEALED_TEST_PASS_M2_MULTIMODAL"
+        elif all_h_pass_m1 and m1_test.crps_mean < m0_test.crps_mean:
+            decision = "SEALED_TEST_PASS_M1_NUMERIC"
         else:
-            decision = "CERTIFIED_INFERIOR"
+            decision = "SEALED_TEST_FAIL"
 
         return CertifiedSealedEvaluationResult(
             candidate_digest=bundle.manifest.manifest_sha256,

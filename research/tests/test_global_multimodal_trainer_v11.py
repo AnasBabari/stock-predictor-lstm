@@ -1,4 +1,4 @@
-"""Unit tests for hardened GlobalMultimodalTrainerV11 exercising full candidate bundle and negative controls."""
+"""Unit tests for hardened GlobalMultimodalTrainerV11 exercising fold-local CV and cryptographic freeze."""
 
 import tempfile
 from pathlib import Path
@@ -24,9 +24,10 @@ def test_global_multimodal_trainer_v11_bundle_and_controls():
     rng = np.random.default_rng(42)
     # Exact 34 numeric + 19 news features (53 total)
     x_num = rng.normal(0.0, 1.0, size=(n_samples, 34))
-    # Make har components (features 23, 24, 25) positive daily volatility
     x_num[:, [23, 24, 25]] = np.abs(x_num[:, [23, 24, 25]]) * 0.015 + 0.005
     x_news = rng.normal(0.0, 1.0, size=(n_samples, 19))
+    shuffled_news = rng.normal(0.0, 1.0, size=(n_samples, 19))
+    delayed_news = rng.normal(0.0, 1.0, size=(n_samples, 19))
 
     # Exact 4 required target horizons (1, 3, 5, 7)
     y_rets = rng.normal(0.001, 0.02, size=(n_samples, 4))
@@ -43,6 +44,8 @@ def test_global_multimodal_trainer_v11_bundle_and_controls():
             dates=dates,
             numeric_features=x_num,
             news_features=x_news,
+            same_origin_shuffled_news=shuffled_news,
+            causal_delayed_news=delayed_news,
             returns_targets=y_rets,
             rv_targets=y_rv,
             train_indices=split.train_indices,
@@ -52,7 +55,7 @@ def test_global_multimodal_trainer_v11_bundle_and_controls():
             lock_dir=lock_dir,
         )
 
-        # 1. Development, Expanding Folds, and Bundle Freeze
+        # 1. Development, Expanding Folds (Fold-Local Scaling), and Bundle Freeze
         dev_payload = store.load_development_dataset()
         assert len(dev_payload.train_numeric) > 100
         assert len(dev_payload.val_numeric) > 20
@@ -60,11 +63,13 @@ def test_global_multimodal_trainer_v11_bundle_and_controls():
         bundle = GlobalMultimodalTrainerV11.develop_and_freeze_bundle(
             dev_payload=dev_payload,
             max_epochs=4,
+            patience=2,
             lr=0.005,
             n_expanding_folds=3,
         )
 
         assert bundle.manifest.winning_model_family in ["M1_NUMERIC", "M2_MULTIMODAL_NEWS"]
+        assert len(bundle.manifest.manifest_sha256) == 64
         assert "M0_HAR_BASELINE" in bundle.manifest.validation_oof_metrics
         assert "M1_NUMERIC" in bundle.manifest.validation_oof_metrics
         assert "M2_MULTIMODAL_NEWS" in bundle.manifest.validation_oof_metrics
@@ -82,7 +87,7 @@ def test_global_multimodal_trainer_v11_bundle_and_controls():
         assert "M3_DELAY_CONTROL" in cert_result.sealed_test_metrics
         assert len(cert_result.audit_trail["unseal_token"]) == 64
         assert cert_result.certification_decision in [
-            "CERTIFIED_M2_PROMOTED",
-            "CERTIFIED_M1_NUMERIC_CHAMPION",
-            "CERTIFIED_INFERIOR",
+            "SEALED_TEST_PASS_M2_MULTIMODAL",
+            "SEALED_TEST_PASS_M1_NUMERIC",
+            "SEALED_TEST_FAIL",
         ]

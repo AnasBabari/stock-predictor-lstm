@@ -1,4 +1,4 @@
-"""Universal point-in-time multi-asset panel builder with fail-closed membership masks and causal controls."""
+"""Universal point-in-time multi-asset panel builder with stable identities and exact exchange close UTC timestamps."""
 
 from __future__ import annotations
 
@@ -20,6 +20,16 @@ from research.volatility_forecasting.news_aggregator_v2 import (
     EnrichedNewsArticle,
     MultiDimensionalNewsAggregator,
 )
+from research.volatility_forecasting.session_calendar_v11 import (
+    get_session_close_utc,
+)
+
+
+@dataclass(frozen=True)
+class StableSecurityIdentity:
+    security_id: str  # Permanent identifier e.g. "US.AMGN" or "US.META"
+    provider_aliases: list[str]  # e.g. ["FB", "META"]
+    active_membership_intervals: list[tuple[str, str]]  # [(start_date, end_date), ...]
 
 
 @dataclass(frozen=True)
@@ -80,7 +90,7 @@ class HistoricalPITDatasetBuilderV11:
         max_h = max(horizons)
 
         for sec_id, df in equities_ohlcv.items():
-            # If membership mask supplied, reject if security is not in the mask (fail-closed)
+            # Fail closed if membership mask is provided and security is missing
             if membership_masks is not None and sec_id not in membership_masks:
                 continue
 
@@ -114,22 +124,24 @@ class HistoricalPITDatasetBuilderV11:
                 )
                 num_arr = feats.to_array()
 
-                # 2. 19 Causal News Features (strictly <= t_date and bound to sec_id)
+                # 2. 19 Causal News Features (using exact exchange close UTC timestamp)
                 if news_articles:
+                    cutoff_utc = get_session_close_utc(t_date)
                     news_agg = MultiDimensionalNewsAggregator.aggregate_causal_window(
                         articles=news_articles,
                         target_ticker=sec_id,
-                        cutoff_iso=f"{t_date}T20:00:00Z",
+                        cutoff_iso=cutoff_utc,
                     )
                     news_arr = news_agg.to_array()
 
                     # Causal Delayed Control B: News from 10 sessions prior
                     delayed_t_idx = max(0, t_idx - 10)
                     delayed_date = dates[delayed_t_idx]
+                    delayed_cutoff_utc = get_session_close_utc(delayed_date)
                     delayed_agg = MultiDimensionalNewsAggregator.aggregate_causal_window(
                         articles=news_articles,
                         target_ticker=sec_id,
-                        cutoff_iso=f"{delayed_date}T20:00:00Z",
+                        cutoff_iso=delayed_cutoff_utc,
                     )
                     delayed_news_arr = delayed_agg.to_array()
                 else:

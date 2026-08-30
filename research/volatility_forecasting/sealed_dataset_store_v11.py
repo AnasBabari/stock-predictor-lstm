@@ -1,4 +1,4 @@
-"""Physically sealed dataset store enforcing persistent on-disk one-shot test partition access."""
+"""Physically sealed dataset store enforcing persistent on-disk one-shot test partition access with sealed controls."""
 
 from __future__ import annotations
 
@@ -36,6 +36,8 @@ class DevelopmentDatasetPayload:
 class SealedTestPayload:
     test_numeric: np.ndarray
     test_news: np.ndarray
+    test_same_origin_shuffled_news: np.ndarray
+    test_causal_delayed_news: np.ndarray
     test_returns: np.ndarray
     test_rv: np.ndarray
     test_dates: list[str]
@@ -51,6 +53,8 @@ class SealedDatasetStoreV11:
         dates: list[str],
         numeric_features: np.ndarray,
         news_features: np.ndarray,
+        same_origin_shuffled_news: np.ndarray,
+        causal_delayed_news: np.ndarray,
         returns_targets: np.ndarray,
         rv_targets: np.ndarray,
         train_indices: np.ndarray,
@@ -62,6 +66,8 @@ class SealedDatasetStoreV11:
         self._dates = dates
         self._numeric = numeric_features
         self._news = news_features
+        self._shuffled_news = same_origin_shuffled_news
+        self._delayed_news = causal_delayed_news
         self._returns = returns_targets
         self._rv = rv_targets
 
@@ -131,6 +137,8 @@ class SealedDatasetStoreV11:
         return SealedTestPayload(
             test_numeric=self._numeric[self._test_idx],
             test_news=self._news[self._test_idx],
+            test_same_origin_shuffled_news=self._shuffled_news[self._test_idx],
+            test_causal_delayed_news=self._delayed_news[self._test_idx],
             test_returns=self._returns[self._test_idx],
             test_rv=self._rv[self._test_idx],
             test_dates=[self._dates[i] for i in self._test_idx],
