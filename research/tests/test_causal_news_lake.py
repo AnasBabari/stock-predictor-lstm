@@ -1,6 +1,5 @@
 """Unit tests for point-in-time causal news lake and negative controls."""
 
-
 from research.volatility_forecasting.causal_news_lake import (
     CausalNewsFeatureExtractor,
     NewsEventRecord,
