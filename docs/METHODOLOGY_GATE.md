@@ -10,7 +10,7 @@ from verified offline ONNX releases with valid Ed25519 signatures, exact feature
 ordering, causal Deployable Schema v5 inputs, and explicit fail-closed abstentions
 on uncertified horizons or unverified bundles.
 
-recorded_sha: 95f643dc67acf9aebb136a6f1e55581a70ecc992
+recorded_sha: f4523ae83767b27f4ef5b1cdd69cd516f08586a8
 freeze_record_commit: 8f285822bb8405e23ad7801e4696d1f4ae99ce99
 
 **Field conventions.** `recorded_sha` identifies the battery-verified tree the
