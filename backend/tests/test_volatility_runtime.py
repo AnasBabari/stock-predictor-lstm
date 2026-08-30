@@ -106,6 +106,46 @@ def test_release_metadata_round_trips_json_certification_keys() -> None:
     assert contract.certification_summary(7)["decision"] == "pass"
 
 
+def test_release_metadata_round_trips_certified_return_distribution() -> None:
+    metadata = {
+        "runtime_schema": "volatility-runtime-v1",
+        "model_id": "global-volatility-v11.2-numeric-pit64:fixture",
+        "model_version": "global-volatility-v11.2-numeric-pit64",
+        "protocol_version": "stocklstm-volatility-v11.2-numeric-pit64",
+        "metric_source": "sealed_holdout_once",
+        "certification_scope": "sealed_holdout_once",
+        "horizons": [1, 3, 5, 7, 14, 30],
+        "window_size": 60,
+        "news_feature_count": 0,
+        "feature_names": list(DEPLOYABLE_FEATURE_COLUMNS_V5),
+        "members": [{"seed": 42, "file": "members/seed-42.onnx"}],
+        "certified_horizons": [1, 3, 5, 7],
+        "certified_heads": {"volatility": True, "return_distribution": True, "direction": False},
+        "return_distribution_horizons": [1, 3, 5, 7],
+        "return_distribution": {
+            "family": "student_t",
+            "degrees_of_freedom": 5.0,
+            "location_output": "return_location",
+            "variance_output": "return_variance",
+        },
+    }
+    contract = VolatilityRuntimeContract.from_release_metadata(metadata, {"members/seed-42.onnx"})
+    assert contract.certified_head_map() == {
+        "volatility": True,
+        "return_distribution": True,
+        "direction": False,
+    }
+    assert contract.return_distribution_family == "student_t"
+    assert contract.return_distribution_degrees_of_freedom == 5.0
+    assert contract.return_distribution_horizon_list() == (1, 3, 5, 7)
+
+    with pytest.raises(ValueError, match="Student-t"):
+        VolatilityRuntimeContract.from_release_metadata(
+            {**metadata, "return_distribution": {"family": "student_t", "degrees_of_freedom": 2}},
+            {"members/seed-42.onnx"},
+        )
+
+
 def test_release_metadata_preserves_signed_v8_evidence_identity() -> None:
     metadata = {
         "runtime_schema": "volatility-runtime-v1",

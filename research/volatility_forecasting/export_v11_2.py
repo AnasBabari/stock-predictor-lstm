@@ -564,6 +564,18 @@ def assemble_v11_2_release(
         "test_unique_sessions": report.get("test_unique_sessions"),
         "test_sessions": report.get("test_sessions"),
         "news_status": "not_certified",
+        "certified_heads": {
+            "volatility": True,
+            "return_distribution": bool(learned_horizons),
+            "direction": False,
+        },
+        "return_distribution_horizons": learned_horizons,
+        "return_distribution": {
+            "family": "student_t" if learned_horizons else "zero_location_normal",
+            "degrees_of_freedom": 5.0 if learned_horizons else None,
+            "location_output": "return_location" if learned_horizons else None,
+            "variance_output": "return_variance" if learned_horizons else None,
+        },
         "ensemble_semantics": (
             "canonical seed-42 per-horizon V11.2 routes; 14/30 are baseline "
             "passthroughs and remain uncertified"

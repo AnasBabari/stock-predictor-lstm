@@ -279,6 +279,18 @@ def test_assemble_v112_baseline_release_is_signed_and_withholds_14_30(tmp_path: 
     assert metadata["architecture_version"] == V11_2_RESIDUAL_ARCHITECTURE_VERSION
     assert metadata["architecture"]["feature_count"] == 26
     assert metadata["architecture"]["window_size"] == 60
+    assert metadata["certified_heads"] == {
+        "volatility": True,
+        "return_distribution": False,
+        "direction": False,
+    }
+    assert metadata["return_distribution_horizons"] == []
+    assert metadata["return_distribution"] == {
+        "family": "zero_location_normal",
+        "degrees_of_freedom": None,
+        "location_output": None,
+        "variance_output": None,
+    }
     assert metadata["certified_horizons"] == [1, 3, 5, 7]
     assert metadata["uncertified_horizons"] == [14, 30]
 
@@ -319,6 +331,9 @@ def test_assemble_v112_m1_release_round_trips_through_production_runtime(
     )
     forecast = runtime.forecast(snapshot)
     assert runtime.certified_horizon_list() == (1, 3, 5, 7)
+    assert runtime.return_distribution_horizon_list() == (3,)
+    assert runtime.is_return_distribution_horizon(1) is False
+    assert runtime.is_return_distribution_horizon(3) is True
     assert forecast.forecast_variance.shape == (6,)
     assert forecast.direction_probabilities.shape == (6, 3)
     assert forecast.forecast_variance[1] > baseline[1]

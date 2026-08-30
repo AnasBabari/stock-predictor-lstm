@@ -110,6 +110,24 @@ class VolatilityOnnxRuntime:
     def news_feature_names(self) -> tuple[str, ...]:
         return self.contract.news_feature_names
 
+    @property
+    def certified_heads(self) -> dict[str, bool]:
+        return self.contract.certified_head_map()
+
+    @property
+    def return_distribution_family(self) -> str:
+        return self.contract.return_distribution_family
+
+    @property
+    def return_distribution_degrees_of_freedom(self) -> float | None:
+        return self.contract.return_distribution_degrees_of_freedom
+
+    def return_distribution_horizon_list(self) -> tuple[int, ...]:
+        return self.contract.return_distribution_horizon_list()
+
+    def is_return_distribution_horizon(self, horizon: int) -> bool:
+        return self.contract.is_return_distribution_horizon(horizon)
+
     def is_certified_horizon(self, horizon: int) -> bool:
         return self.contract.is_certified_horizon(horizon)
 

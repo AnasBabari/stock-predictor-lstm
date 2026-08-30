@@ -23,9 +23,17 @@ class _FakeRuntime:
     metric_source = "locked_purged_walk_forward"
     certification_scope = "prospective_walk_forward"
     news_status = "not_certified"
+    certified_heads = {
+        "volatility": True,
+        "return_distribution": False,
+        "direction": False,
+    }
+    return_distribution_family = "zero_location_normal"
+    return_distribution_degrees_of_freedom = None
 
-    def __init__(self, variance: float = 4e-4) -> None:
+    def __init__(self, variance: float = 4e-4, return_location: float = 0.0) -> None:
         self.variance = variance
+        self.return_location = return_location
         self.calls = 0
 
     def is_certified_horizon(self, horizon: int) -> bool:
@@ -44,7 +52,9 @@ class _FakeRuntime:
         self.calls += 1
         return SimpleNamespace(
             forecast_variance=np.full(len(VOLATILITY_HORIZONS), self.variance, dtype=np.float32),
-            return_location=np.zeros(len(VOLATILITY_HORIZONS), dtype=np.float32),
+            return_location=np.full(
+                len(VOLATILITY_HORIZONS), self.return_location, dtype=np.float32
+            ),
             direction_probabilities=np.full((len(VOLATILITY_HORIZONS), 3), 1 / 3, dtype=np.float32),
             return_variance=np.full(len(VOLATILITY_HORIZONS), self.variance * 1.5),
         )
@@ -154,6 +164,78 @@ def test_serves_certified_volatility_cone(monkeypatch) -> None:
     summary = evidence["horizon_certification"]["7"]
     assert summary["decision"] == "pass"
     assert summary["coverage_80"] == pytest.approx(0.79)
+
+
+def test_serves_certified_student_t_return_distribution(monkeypatch) -> None:
+    class _DistributionRuntime(_FakeRuntime):
+        certified_heads = {
+            "volatility": True,
+            "return_distribution": True,
+            "direction": False,
+        }
+        return_distribution_family = "student_t"
+        return_distribution_degrees_of_freedom = 5.0
+
+    runtime = _DistributionRuntime(variance=4e-4, return_location=0.035)
+    _install_release(monkeypatch, runtime=runtime)
+    monkeypatch.setattr(
+        "services.volatility_snapshot.build_volatility_inference_snapshot",
+        lambda ticker: _fake_snapshot(ticker),
+    )
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
+    assert response.status_code == 200
+    body = response.json()
+    quantiles = body["forecast"]["price_quantiles"]
+    expected_terminal_median = body["current_price"] * np.exp(0.035)
+    assert quantiles["p50"][-1] == pytest.approx(expected_terminal_median, rel=1e-6)
+    assert quantiles["p50"][0] == pytest.approx(body["current_price"] * np.exp(0.035 / 7), rel=1e-6)
+    assert [quantiles[key][-1] for key in QUANTILE_KEYS] == sorted(
+        quantiles[key][-1] for key in QUANTILE_KEYS
+    )
+    assert body["forecast"]["expected_cumulative_return"] == pytest.approx(0.035)
+    assert body["forecast"]["return_distribution_variance"] == pytest.approx(6e-4)
+    assert body["forecast"]["return_distribution_family"] == "student_t"
+    assert body["forecast"]["probability_up"] is None
+    assert body["evidence"]["certified_heads"] == _DistributionRuntime.certified_heads
+    assert "terminal location and variance are certified" in body["evidence"]["quantile_model"]
+
+
+def test_mixed_release_labels_only_the_learned_horizon(monkeypatch) -> None:
+    class _MixedRuntime(_FakeRuntime):
+        certified_heads = {
+            "volatility": True,
+            "return_distribution": True,
+            "direction": False,
+        }
+        return_distribution_family = "student_t"
+        return_distribution_degrees_of_freedom = 5.0
+
+        def is_return_distribution_horizon(self, horizon: int) -> bool:
+            return horizon == 3
+
+        def is_certified_horizon(self, horizon: int) -> bool:
+            return horizon in (1, 3)
+
+    monkeypatch.setattr(
+        "services.volatility_snapshot.build_volatility_inference_snapshot",
+        lambda ticker: _fake_snapshot(ticker),
+    )
+    _install_release(monkeypatch, runtime=_MixedRuntime(return_location=0.035))
+    baseline_response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 1})
+    assert baseline_response.status_code == 200
+    baseline = baseline_response.json()
+    assert baseline["evidence"]["certified_heads"]["return_distribution"] is False
+    assert baseline["forecast"]["expected_cumulative_return"] is None
+    assert baseline["forecast"]["price_quantiles"]["p50"][-1] == pytest.approx(
+        baseline["current_price"]
+    )
+
+    learned_response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 3})
+    assert learned_response.status_code == 200
+    learned = learned_response.json()
+    assert learned["evidence"]["certified_heads"]["return_distribution"] is True
+    assert learned["forecast"]["expected_cumulative_return"] == pytest.approx(0.035)
+    assert learned["forecast"]["price_quantiles"]["p50"][-1] > learned["current_price"]
 
 
 def test_abstains_on_horizons_that_failed_the_guardrail(monkeypatch) -> None:

@@ -1,10 +1,11 @@
 """Certified global-volatility forecast endpoint (v2, fail-closed).
 
-One frozen ensemble serves every supported ticker. The return-distribution
-head is withheld until its own evidence gate passes, so price ranges are
-reconstructed as zero-location volatility cones around the current close and
-labelled accordingly. Without a signed, verified release the endpoint answers
-with an explicit no-certified-model abstention instead of any baseline path.
+One frozen ensemble serves every supported ticker. Legacy releases may certify
+conditional volatility only, in which case price ranges are reconstructed as
+zero-location cones around the current close. A V11.2 release may additionally
+certify a Student-t return distribution and expose its terminal learned
+location. Without a signed, verified release the endpoint answers with an
+explicit no-certified-model abstention instead of any baseline path.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from typing import Any
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
+from scipy.stats import t as student_t
 
 from config import settings
 from routes.common import limiter, validate_ticker
@@ -45,7 +47,20 @@ _QUANTILE_Z_SCORES: dict[str, float] = {
 
 TRADING_SESSIONS_PER_YEAR = 252
 
-CERTIFIED_HEADS = {"volatility": True, "return_distribution": False, "direction": False}
+LEGACY_CERTIFIED_HEADS = {
+    "volatility": True,
+    "return_distribution": False,
+    "direction": False,
+}
+_QUANTILE_PROBABILITIES: dict[str, float] = {
+    "p05": 0.05,
+    "p10": 0.10,
+    "p25": 0.25,
+    "p50": 0.50,
+    "p75": 0.75,
+    "p90": 0.90,
+    "p95": 0.95,
+}
 
 
 class VolatilityForecastResponse(BaseModel):
@@ -162,6 +177,9 @@ def volatility_release_readiness() -> dict[str, Any]:
                 "metric_source": runtime.metric_source,
                 "certification_scope": runtime.certification_scope,
                 "news_status": runtime.news_status,
+                "certified_heads": getattr(
+                    runtime, "certified_heads", dict(LEGACY_CERTIFIED_HEADS)
+                ),
                 "certified_horizons": [],
             }
         return {
@@ -172,6 +190,7 @@ def volatility_release_readiness() -> dict[str, Any]:
             "metric_source": runtime.metric_source,
             "certification_scope": runtime.certification_scope,
             "news_status": runtime.news_status,
+            "certified_heads": getattr(runtime, "certified_heads", dict(LEGACY_CERTIFIED_HEADS)),
             "news_provider_enabled": True,
             "certified_horizons": list(runtime.certified_horizon_list()),
         }
@@ -183,6 +202,7 @@ def volatility_release_readiness() -> dict[str, Any]:
         "metric_source": runtime.metric_source,
         "certification_scope": runtime.certification_scope,
         "news_status": runtime.news_status,
+        "certified_heads": getattr(runtime, "certified_heads", dict(LEGACY_CERTIFIED_HEADS)),
         "certified_horizons": list(runtime.certified_horizon_list()),
     }
 
@@ -191,23 +211,60 @@ def _price_quantiles(
     current_price: float,
     cumulative_variance: float,
     horizon: int,
+    *,
+    cumulative_location: float = 0.0,
+    distribution_family: str = "zero_location_normal",
+    degrees_of_freedom: float | None = None,
 ) -> dict[str, list[float]]:
-    """Zero-location lognormal bands derived from certified variance only.
+    """Interpolate a certified terminal log-return distribution to daily bands.
 
-    The certified head emits cumulative variance at selected horizons. Between
-    the origin and a requested horizon we expose a transparent linear variance
-    cone, never a learned directional path.
+    The selected horizon is the certified endpoint. Intermediate sessions use
+    transparent linear interpolation of cumulative location and variance; they
+    are visualisation points, not separately certified horizons.
     """
     if horizon < 1:
         raise ValueError("quantile horizon must be positive")
+    if (
+        not np.isfinite(current_price)
+        or current_price <= 0
+        or not np.isfinite(cumulative_variance)
+        or cumulative_variance <= 0
+        or not np.isfinite(cumulative_location)
+    ):
+        raise ValueError("return-distribution inputs must be finite and positive where required")
+    if distribution_family == "student_t":
+        if (
+            isinstance(degrees_of_freedom, bool)
+            or not isinstance(degrees_of_freedom, (int, float))
+            or not np.isfinite(float(degrees_of_freedom))
+            or float(degrees_of_freedom) <= 2.0
+        ):
+            raise ValueError("Student-t distribution requires finite degrees of freedom above two")
+        degrees = float(degrees_of_freedom)
+        quantile_scores = {
+            name: float(student_t.ppf(probability, df=degrees))
+            for name, probability in _QUANTILE_PROBABILITIES.items()
+        }
+        variance_to_scale = (degrees - 2.0) / degrees
+    elif distribution_family == "zero_location_normal":
+        if degrees_of_freedom is not None or abs(cumulative_location) > 1e-15:
+            raise ValueError("legacy normal cone must have zero location and no degrees of freedom")
+        quantile_scores = _QUANTILE_Z_SCORES
+        variance_to_scale = 1.0
+    else:
+        raise ValueError("return-distribution family is unsupported")
     return {
         name: [
             float(
-                current_price * np.exp(z * np.sqrt(max(cumulative_variance, 0.0) * day / horizon))
+                current_price
+                * np.exp(
+                    cumulative_location * day / horizon
+                    + score * np.sqrt(cumulative_variance * day / horizon * variance_to_scale)
+                )
             )
             for day in range(1, horizon + 1)
         ]
-        for name, z in _QUANTILE_Z_SCORES.items()
+        for name, score in quantile_scores.items()
     }
 
 
@@ -325,6 +382,38 @@ async def volatility_forecast_v2(
 
     horizon_index = VOLATILITY_HORIZONS.index(horizon)
     variance_at_horizon = float(forecast.forecast_variance[horizon_index])
+    release_certified_heads = dict(
+        getattr(runtime, "certified_heads", dict(LEGACY_CERTIFIED_HEADS))
+    )
+    # A V11.2 bundle may mix learned and HAR routes by horizon.  Use the
+    # signed per-horizon declaration when available instead of promoting every
+    # output merely because another horizon has a learned route.
+    if hasattr(runtime, "is_return_distribution_horizon"):
+        return_distribution_certified = bool(runtime.is_return_distribution_horizon(horizon))
+    else:
+        return_distribution_certified = release_certified_heads.get("return_distribution") is True
+    certified_heads = {
+        **release_certified_heads,
+        "return_distribution": return_distribution_certified,
+    }
+    if hasattr(runtime, "certified_horizon_list"):
+        certified_horizon_list = list(runtime.certified_horizon_list())
+    else:
+        certified_horizon_list = [horizon] if runtime.is_certified_horizon(horizon) else []
+    if hasattr(runtime, "return_distribution_horizon_list"):
+        return_distribution_horizon_list = list(runtime.return_distribution_horizon_list())
+    else:
+        return_distribution_horizon_list = [horizon] if return_distribution_certified else []
+    if return_distribution_certified:
+        cumulative_location = float(forecast.return_location[horizon_index])
+        distribution_variance = float(forecast.return_variance[horizon_index])
+        distribution_family = str(runtime.return_distribution_family)
+        distribution_df = runtime.return_distribution_degrees_of_freedom
+    else:
+        cumulative_location = 0.0
+        distribution_variance = variance_at_horizon
+        distribution_family = "zero_location_normal"
+        distribution_df = None
     daily_variance = variance_at_horizon / horizon
     future_dates = tuple(snapshot.future_dates[:horizon])
     if len(future_dates) != horizon:
@@ -346,10 +435,19 @@ async def volatility_forecast_v2(
         "news_status": runtime.news_status,
         "news_input": news_input,
         "quantile_model": (
-            "zero_location_volatility_cone: bands derive from the certified "
-            "variance around the unchanged close; no learned direction claim"
+            "student_t_return_distribution: terminal location and variance are certified; "
+            "intermediate sessions linearly interpolate cumulative moments; direction head "
+            "is not certified"
+            if return_distribution_certified
+            else "zero_location_volatility_cone: bands derive from the certified variance "
+            "around the unchanged close; no learned direction claim"
         ),
-        "certified_heads": dict(CERTIFIED_HEADS),
+        "certified_heads": certified_heads,
+        "certified_head_horizons": {
+            "volatility": certified_horizon_list,
+            "return_distribution": return_distribution_horizon_list,
+            "direction": [],
+        },
         "certified": True,
     }
     certification_summary = runtime.certification_summary(horizon)
@@ -365,12 +463,22 @@ async def volatility_forecast_v2(
         "forecast": {
             "price_quantiles": _price_quantiles(
                 snapshot.origin_close,
-                variance_at_horizon,
+                distribution_variance,
                 horizon,
+                cumulative_location=cumulative_location,
+                distribution_family=distribution_family,
+                degrees_of_freedom=distribution_df,
             ),
             "future_dates": list(future_dates),
             "probability_up": None,
             "expected_cumulative_variance": variance_at_horizon,
+            "expected_cumulative_return": (
+                cumulative_location if return_distribution_certified else None
+            ),
+            "return_distribution_variance": (
+                distribution_variance if return_distribution_certified else None
+            ),
+            "return_distribution_family": distribution_family,
             "expected_annualized_volatility": float(
                 np.sqrt(daily_variance * TRADING_SESSIONS_PER_YEAR)
             ),

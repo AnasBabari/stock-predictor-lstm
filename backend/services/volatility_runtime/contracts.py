@@ -40,6 +40,7 @@ EXPECTED_OUTPUT_NAMES: tuple[str, ...] = (
 MAX_ENSEMBLE_MEMBERS = 8
 MAX_NEWS_FEATURE_COUNT = 1024
 PROBABILITY_SUM_TOLERANCE = 1e-4
+CERTIFIED_HEAD_NAMES = ("volatility", "return_distribution", "direction")
 
 
 def _validate_member_file(name: object) -> str:
@@ -74,6 +75,15 @@ class VolatilityRuntimeContract:
     metric_source: str = "locked_purged_walk_forward"
     certification_scope: str = "prospective_walk_forward"
     news_status: str = "not_certified"
+    certified_volatility: bool = True
+    certified_return_distribution: bool = False
+    certified_direction: bool = False
+    # ``None`` preserves the original whole-release semantics for older
+    # metadata. New releases should provide an explicit per-horizon list so a
+    # mixed HAR/LSTM bundle cannot label a baseline horizon as learned.
+    certified_return_distribution_horizons: tuple[int, ...] | None = None
+    return_distribution_family: str = "zero_location_normal"
+    return_distribution_degrees_of_freedom: float | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.model_id, str) or not self.model_id or len(self.model_id) > 128:
@@ -164,6 +174,66 @@ class VolatilityRuntimeContract:
             raise ValueError("release news status is unsupported")
         if self.news_status == "certified" and self.news_feature_count == 0:
             raise ValueError("news certification requires a non-empty news input")
+        head_flags = (
+            self.certified_volatility,
+            self.certified_return_distribution,
+            self.certified_direction,
+        )
+        if any(not isinstance(value, bool) for value in head_flags):
+            raise ValueError("certified head flags must be booleans")
+        if not self.certified_volatility:
+            raise ValueError("volatility runtime requires a certified volatility head")
+        if self.certified_return_distribution_horizons is not None:
+            if (
+                not isinstance(self.certified_return_distribution_horizons, tuple)
+                or any(
+                    isinstance(horizon, bool) or not isinstance(horizon, int)
+                    for horizon in self.certified_return_distribution_horizons
+                )
+                or tuple(sorted(self.certified_return_distribution_horizons))
+                != self.certified_return_distribution_horizons
+                or len(set(self.certified_return_distribution_horizons))
+                != len(self.certified_return_distribution_horizons)
+                or any(
+                    horizon not in self.horizons
+                    or (
+                        self.certified_horizons is not None
+                        and horizon not in self.certified_horizons
+                    )
+                    for horizon in self.certified_return_distribution_horizons
+                )
+            ):
+                raise ValueError("return-distribution horizons are malformed")
+            if (
+                not self.certified_return_distribution
+                and self.certified_return_distribution_horizons
+            ):
+                raise ValueError(
+                    "uncertified return distribution cannot declare certified horizons"
+                )
+            if (
+                self.certified_return_distribution
+                and not self.certified_return_distribution_horizons
+            ):
+                raise ValueError("certified return distribution must declare at least one horizon")
+        if self.certified_return_distribution:
+            if self.return_distribution_family != "student_t":
+                raise ValueError("certified return distribution must declare the Student-t family")
+            degrees = self.return_distribution_degrees_of_freedom
+            if (
+                isinstance(degrees, bool)
+                or not isinstance(degrees, (int, float))
+                or not np.isfinite(float(degrees))
+                or not 2.0 < float(degrees) <= 100.0
+            ):
+                raise ValueError("Student-t return distribution requires finite df in (2, 100]")
+        elif (
+            self.return_distribution_family != "zero_location_normal"
+            or self.return_distribution_degrees_of_freedom is not None
+        ):
+            raise ValueError(
+                "uncertified return distribution must use the legacy zero-location cone"
+            )
 
     @classmethod
     def from_release_metadata(
@@ -187,6 +257,38 @@ class VolatilityRuntimeContract:
         metric_source = metadata.get("metric_source", "locked_purged_walk_forward")
         certification_scope = metadata.get("certification_scope", "prospective_walk_forward")
         news_status = metadata.get("news_status", "not_certified")
+        certified_heads_raw = metadata.get(
+            "certified_heads",
+            {
+                "volatility": True,
+                "return_distribution": False,
+                "direction": False,
+            },
+        )
+        if (
+            not isinstance(certified_heads_raw, dict)
+            or set(certified_heads_raw) != set(CERTIFIED_HEAD_NAMES)
+            or any(not isinstance(certified_heads_raw[name], bool) for name in CERTIFIED_HEAD_NAMES)
+        ):
+            raise ValueError("release certified-head metadata is malformed")
+        return_distribution_raw = metadata.get(
+            "return_distribution",
+            {"family": "zero_location_normal", "degrees_of_freedom": None},
+        )
+        if not isinstance(return_distribution_raw, dict):
+            raise ValueError("release return-distribution metadata is malformed")
+        return_distribution_family = return_distribution_raw.get("family")
+        return_distribution_degrees_of_freedom = return_distribution_raw.get("degrees_of_freedom")
+        return_distribution_horizons_raw = metadata.get("return_distribution_horizons")
+        if return_distribution_horizons_raw is None:
+            return_distribution_horizons: tuple[int, ...] | None = None
+        else:
+            if not isinstance(return_distribution_horizons_raw, list) or any(
+                isinstance(horizon, bool) or not isinstance(horizon, int)
+                for horizon in return_distribution_horizons_raw
+            ):
+                raise ValueError("release return-distribution horizons are malformed")
+            return_distribution_horizons = tuple(return_distribution_horizons_raw)
         raw_members = metadata.get("members")
         certified_horizons_raw = metadata.get("certified_horizons")
         if certified_horizons_raw is not None:
@@ -264,6 +366,12 @@ class VolatilityRuntimeContract:
             metric_source=metric_source,
             certification_scope=certification_scope,
             news_status=news_status,
+            certified_volatility=certified_heads_raw["volatility"],
+            certified_return_distribution=certified_heads_raw["return_distribution"],
+            certified_direction=certified_heads_raw["direction"],
+            certified_return_distribution_horizons=return_distribution_horizons,
+            return_distribution_family=return_distribution_family,
+            return_distribution_degrees_of_freedom=return_distribution_degrees_of_freedom,
         )
 
     @property
@@ -285,6 +393,29 @@ class VolatilityRuntimeContract:
             return None
         summary = self.certification_metrics.get(horizon)
         return dict(summary) if isinstance(summary, Mapping) else None
+
+    def certified_head_map(self) -> dict[str, bool]:
+        """Return the signed head-level evidence contract exposed by the API."""
+        return {
+            "volatility": self.certified_volatility,
+            "return_distribution": self.certified_return_distribution,
+            "direction": self.certified_direction,
+        }
+
+    def return_distribution_horizon_list(self) -> tuple[int, ...]:
+        """Return horizons whose location/variance head is actually certified."""
+        if not self.certified_return_distribution:
+            return ()
+        if self.certified_return_distribution_horizons is None:
+            return self.certified_horizon_list()
+        return tuple(
+            horizon
+            for horizon in self.certified_return_distribution_horizons
+            if self.is_certified_horizon(horizon)
+        )
+
+    def is_return_distribution_horizon(self, horizon: int) -> bool:
+        return horizon in self.return_distribution_horizon_list()
 
     def expected_input_names(self) -> tuple[str, ...]:
         inputs = [MODEL_INPUT_FEATURES, MODEL_INPUT_BASELINE]
