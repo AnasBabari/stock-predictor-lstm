@@ -148,11 +148,16 @@ class VolatilityRuntimeContract:
         if self.metric_source not in {
             "locked_purged_walk_forward",
             "locked_historical_temporal_test_plus_asset_transfer",
+            # V11.2 consumes one physically sealed historical holdout.  This
+            # source is intentionally distinct from walk-forward evidence so
+            # the API cannot imply a methodology that was not run.
+            "sealed_holdout_once",
         }:
             raise ValueError("release metric source is unsupported")
         if self.certification_scope not in {
             "prospective_walk_forward",
             "historical_temporal_test_plus_asset_transfer",
+            "sealed_holdout_once",
         }:
             raise ValueError("release certification scope is unsupported")
         if self.news_status not in {"not_certified", "certified"}:
