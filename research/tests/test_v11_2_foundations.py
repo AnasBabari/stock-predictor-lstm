@@ -26,6 +26,7 @@ from research.volatility_forecasting.v11_2_split import (
 from research.volatility_forecasting.v11_2_trainer import (
     make_forecast,
     select_per_horizon_challenger,
+    select_per_horizon_challengers,
     train_epoch_zero_residual_model,
 )
 from scripts.run_v11_2_numeric_development import (
@@ -167,6 +168,51 @@ def test_horizon_gate_requires_qlike_and_calibrated_coverage() -> None:
     )
     assert not selection.learned_promotion
     assert "coverage" in selection.gates[0].reason
+
+
+def test_per_horizon_selection_applies_holm_across_all_decisions() -> None:
+    dates = _dates(100)
+    horizons = (1, 3, 5, 7)
+    target = np.random.default_rng(8).normal(0.0, np.sqrt(0.02), 100)
+    realized = np.full(100, 0.02, dtype=np.float64)
+    har_by_horizon = {}
+    candidates_by_horizon = {}
+    ranking_by_horizon = {}
+    for horizon in horizons:
+        har = make_forecast(
+            "M0_HAR_BASELINE",
+            horizon,
+            np.zeros(100),
+            np.full(100, 0.16),
+            target,
+            realized,
+        )
+        candidate = make_forecast(
+            "RIDGE_LOCATION_HAR_SCALE",
+            horizon,
+            np.zeros(100),
+            np.full(100, 0.03),
+            target,
+            realized,
+        )
+        har_by_horizon[horizon] = har
+        candidates_by_horizon[horizon] = {candidate.family: candidate}
+        ranking_by_horizon[horizon] = {candidate.family: 0.0}
+
+    selected = select_per_horizon_challengers(
+        dates=dates,
+        horizons=horizons,
+        har_by_horizon=har_by_horizon,
+        candidates_by_horizon=candidates_by_horizon,
+        ranking_scores_by_horizon=ranking_by_horizon,
+        block_sessions=20,
+        n_replicates=200,
+        seed=42,
+    )
+    assert all(result.learned_promotion for result in selected.values())
+    assert all(
+        result.gates[0].holm_p_value == pytest.approx(4 / 201) for result in selected.values()
+    )
 
 
 def test_v112_baselines_use_named_v5_columns_not_legacy_positions() -> None:

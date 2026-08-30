@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import io
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
@@ -360,54 +361,125 @@ def select_per_horizon_challenger(
     n_replicates: int = 10_000,
     seed: int = 42,
 ) -> V112SelectionResult:
-    """Select one learned route for a horizon or fail safely to HAR."""
-    learned = [
-        candidate
-        for family, candidate in candidates.items()
-        if family
-        in {"RIDGE_LOCATION_HAR_SCALE", "HISTGB_LOCATION_HAR_SCALE", "M1_NUMERIC_RESIDUAL"}
-    ]
-    if not learned:
-        return V112SelectionResult(horizon, "M0_HAR_BASELINE", False, (), "no learned candidates")
-    if ranking_scores is None:
-        raise ValueError("candidate ranking must come from training-only evidence")
-    missing_scores = [
-        candidate.family for candidate in learned if candidate.family not in ranking_scores
-    ]
-    if missing_scores:
-        raise ValueError(f"missing training-only ranking scores: {missing_scores}")
-    learned.sort(key=lambda candidate: ranking_scores[candidate.family])
-    challenger = learned[0]
-    gates = evaluate_horizon_gates(
+    """Select one learned route for a horizon or fail safely to HAR.
+
+    This compatibility wrapper evaluates a single horizon.  The production
+    V11.2 runner uses :func:`select_per_horizon_challengers` so Holm correction
+    is applied jointly across all four horizon decisions.
+    """
+    return select_per_horizon_challengers(
         dates=dates,
         horizons=[horizon],
-        candidate=challenger.family,
-        comparator="M0_HAR_BASELINE",
-        candidate_losses_by_horizon={horizon: challenger.crps},
-        comparator_losses_by_horizon={horizon: har.crps},
-        candidate_crps_by_horizon={horizon: float(np.mean(challenger.crps))},
-        comparator_crps_by_horizon={horizon: float(np.mean(har.crps))},
-        qlike_candidate_by_horizon={horizon: float(np.mean(challenger.qlike))},
-        qlike_comparator_by_horizon={horizon: float(np.mean(har.qlike))},
-        coverage_candidate_by_horizon={horizon: challenger.coverage_80},
-        coverage_comparator_by_horizon={horizon: har.coverage_80},
+        har_by_horizon={horizon: har},
+        candidates_by_horizon={horizon: candidates},
+        ranking_scores_by_horizon={horizon: ranking_scores} if ranking_scores is not None else {},
         block_sessions=block_sessions,
         n_replicates=n_replicates,
         seed=seed,
-    )
-    gate = gates[0]
-    if gate.passed:
-        return V112SelectionResult(
-            horizon,
-            challenger.family,
-            True,
-            tuple(gates),
-            "learned challenger passed the horizon gate",
+    )[horizon]
+
+
+def select_per_horizon_challengers(
+    *,
+    dates: Iterable[str],
+    horizons: Iterable[int],
+    har_by_horizon: dict[int, V112Forecast],
+    candidates_by_horizon: dict[int, dict[str, V112Forecast]],
+    ranking_scores_by_horizon: dict[int, dict[str, float]],
+    block_sessions: int = 20,
+    n_replicates: int = 10_000,
+    seed: int = 42,
+) -> dict[int, V112SelectionResult]:
+    """Rank candidates per horizon and apply one family-wise gate.
+
+    Ranking is allowed to be horizon-specific, but the uncertainty tests are
+    evaluated in one call so Holm step-down correction covers the complete
+    frozen horizon family.  This prevents four independent one-test decisions
+    from being mislabeled as a four-horizon family-wise gate.
+    """
+    horizon_list = [int(value) for value in horizons]
+    if not horizon_list or len(set(horizon_list)) != len(horizon_list):
+        raise ValueError("horizons must be a non-empty unique sequence")
+    date_values = list(dates)
+    selected: dict[int, V112Forecast] = {}
+    selected_families: dict[int, str] = {}
+    results: dict[int, V112SelectionResult] = {}
+    learned_families = {
+        "RIDGE_LOCATION_HAR_SCALE",
+        "HISTGB_LOCATION_HAR_SCALE",
+        "M1_NUMERIC_RESIDUAL",
+    }
+    for horizon in horizon_list:
+        if horizon not in har_by_horizon or horizon not in candidates_by_horizon:
+            raise ValueError(f"missing HAR or candidate forecasts for horizon {horizon}")
+        candidates = candidates_by_horizon[horizon]
+        scores = ranking_scores_by_horizon.get(horizon)
+        if not isinstance(scores, dict):
+            raise ValueError("candidate ranking must come from training-only evidence")
+        learned = [
+            candidate for family, candidate in candidates.items() if family in learned_families
+        ]
+        if not learned:
+            results[horizon] = V112SelectionResult(
+                horizon, "M0_HAR_BASELINE", False, (), "no learned candidates"
+            )
+            continue
+        missing_scores = [
+            candidate.family for candidate in learned if candidate.family not in scores
+        ]
+        if missing_scores:
+            raise ValueError(f"missing training-only ranking scores: {missing_scores}")
+        challenger = min(learned, key=lambda candidate: scores[candidate.family])
+        selected[horizon] = challenger
+        selected_families[horizon] = challenger.family
+
+    if selected:
+        gates = evaluate_horizon_gates(
+            dates=date_values,
+            horizons=sorted(selected),
+            candidate="per_horizon_selected_challenger",
+            comparator="M0_HAR_BASELINE",
+            candidate_losses_by_horizon={h: selected[h].crps for h in selected},
+            comparator_losses_by_horizon={h: har_by_horizon[h].crps for h in selected},
+            candidate_crps_by_horizon={h: float(np.mean(selected[h].crps)) for h in selected},
+            comparator_crps_by_horizon={
+                h: float(np.mean(har_by_horizon[h].crps)) for h in selected
+            },
+            qlike_candidate_by_horizon={h: float(np.mean(selected[h].qlike)) for h in selected},
+            qlike_comparator_by_horizon={
+                h: float(np.mean(har_by_horizon[h].qlike)) for h in selected
+            },
+            coverage_candidate_by_horizon={h: selected[h].coverage_80 for h in selected},
+            coverage_comparator_by_horizon={h: har_by_horizon[h].coverage_80 for h in selected},
+            block_sessions=block_sessions,
+            n_replicates=n_replicates,
+            seed=seed,
         )
-    return V112SelectionResult(
-        horizon,
-        "M0_HAR_BASELINE",
-        False,
-        tuple(gates),
-        "learned challenger failed; HAR retained",
-    )
+        for gate in gates:
+            family = selected_families[gate.horizon]
+            # Preserve the actual family in evidence while retaining the
+            # globally corrected p-value produced by evaluate_horizon_gates.
+            corrected_gate = HorizonGate(
+                horizon=gate.horizon,
+                candidate=family,
+                comparator=gate.comparator,
+                mean_crps_candidate=gate.mean_crps_candidate,
+                mean_crps_comparator=gate.mean_crps_comparator,
+                interval=gate.interval,
+                holm_p_value=gate.holm_p_value,
+                passed=gate.passed,
+                reason=gate.reason,
+                coverage_candidate_80=gate.coverage_candidate_80,
+                coverage_comparator_80=gate.coverage_comparator_80,
+            )
+            results[gate.horizon] = V112SelectionResult(
+                gate.horizon,
+                family if gate.passed else "M0_HAR_BASELINE",
+                gate.passed,
+                (corrected_gate,),
+                "learned challenger passed the family-wise horizon gates"
+                if gate.passed
+                else "learned challenger failed; HAR retained",
+            )
+
+    return {horizon: results[horizon] for horizon in horizon_list}

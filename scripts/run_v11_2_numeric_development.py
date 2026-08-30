@@ -52,7 +52,7 @@ from research.volatility_forecasting.v11_2_trainer import (  # noqa: E402
     fit_histgb_location,
     fit_ridge_location,
     make_forecast,
-    select_per_horizon_challenger,
+    select_per_horizon_challengers,
     train_epoch_zero_residual_model,
 )
 
@@ -271,6 +271,12 @@ def main() -> int:
     }
     routes: list[V112Route] = []
     seed_evidence_digests: list[str] = []
+    har_forecasts_by_horizon: dict[int, Any] = {}
+    constant_forecasts_by_horizon: dict[int, Any] = {}
+    persistence_forecasts_by_horizon: dict[int, Any] = {}
+    candidates_by_horizon: dict[int, dict[str, Any]] = {}
+    seed_results_by_horizon: dict[int, dict[int, Any]] = {}
+    ranking_scores_by_horizon: dict[int, dict[str, float]] = {}
 
     for column, horizon in enumerate(protocol.horizons):
         train_returns = development.train_returns[:, column]
@@ -377,16 +383,36 @@ def main() -> int:
             patience=args.patience,
             device=args.device,
         )
-        selection = select_per_horizon_challenger(
-            horizon=horizon,
-            dates=list(development.validation_dates),
-            har=har_forecast,
-            candidates=candidates,
-            ranking_scores=ranking_scores,
-            block_sessions=protocol.bootstrap_block_sessions,
-            n_replicates=protocol.bootstrap_replicates,
-            seed=protocol.bootstrap_seed,
-        )
+        har_forecasts_by_horizon[horizon] = har_forecast
+        constant_forecasts_by_horizon[horizon] = constant_forecast
+        persistence_forecasts_by_horizon[horizon] = persistence_forecast
+        candidates_by_horizon[horizon] = candidates
+        seed_results_by_horizon[horizon] = seed_results
+        ranking_scores_by_horizon[horizon] = ranking_scores
+
+    # Candidate ranking is horizon-specific, but the inferential gate is
+    # family-wise across all four horizons.  Do this once before any route or
+    # selection record is frozen so no route can accidentally use an
+    # uncorrected one-horizon p-value.
+    selections = select_per_horizon_challengers(
+        dates=list(development.validation_dates),
+        horizons=protocol.horizons,
+        har_by_horizon=har_forecasts_by_horizon,
+        candidates_by_horizon=candidates_by_horizon,
+        ranking_scores_by_horizon=ranking_scores_by_horizon,
+        block_sessions=protocol.bootstrap_block_sessions,
+        n_replicates=protocol.bootstrap_replicates,
+        seed=protocol.bootstrap_seed,
+    )
+
+    for _column, horizon in enumerate(protocol.horizons):
+        har_forecast = har_forecasts_by_horizon[horizon]
+        constant_forecast = constant_forecasts_by_horizon[horizon]
+        persistence_forecast = persistence_forecasts_by_horizon[horizon]
+        candidates = candidates_by_horizon[horizon]
+        seed_results = seed_results_by_horizon[horizon]
+        ranking_scores = ranking_scores_by_horizon[horizon]
+        selection = selections[horizon]
         m1_better_seeds = sum(
             float(np.mean(result[1].crps)) < float(np.mean(har_forecast.crps))
             for result in seed_results.values()
