@@ -236,6 +236,8 @@ def main() -> int:
         raise SystemExit("V11.2 targets must contain exactly four horizons")
 
     output = args.output_dir
+    if output.exists() and (not output.is_dir() or any(output.iterdir())):
+        raise SystemExit("V11.2 development output must be absent or an empty directory")
     evidence_dir = output / "seed_evidence"
     model_dir = output / "models"
     output.mkdir(parents=True, exist_ok=True)
@@ -277,6 +279,7 @@ def main() -> int:
     candidates_by_horizon: dict[int, dict[str, Any]] = {}
     seed_results_by_horizon: dict[int, dict[int, Any]] = {}
     ranking_scores_by_horizon: dict[int, dict[str, float]] = {}
+    inner_split_by_horizon: dict[int, dict[str, Any]] = {}
 
     for column, horizon in enumerate(protocol.horizons):
         train_returns = development.train_returns[:, column]
@@ -383,12 +386,32 @@ def main() -> int:
             patience=args.patience,
             device=args.device,
         )
+        inner_train_indices, inner_validation_indices = _inner_development_indices(
+            development.train_dates
+        )
+        inner_train_sessions = sorted(
+            {development.train_dates[index] for index in inner_train_indices}
+        )
+        inner_validation_sessions = sorted(
+            {development.train_dates[index] for index in inner_validation_indices}
+        )
         har_forecasts_by_horizon[horizon] = har_forecast
         constant_forecasts_by_horizon[horizon] = constant_forecast
         persistence_forecasts_by_horizon[horizon] = persistence_forecast
         candidates_by_horizon[horizon] = candidates
         seed_results_by_horizon[horizon] = seed_results
         ranking_scores_by_horizon[horizon] = ranking_scores
+        inner_split_by_horizon[horizon] = {
+            "train_sessions": [inner_train_sessions[0], inner_train_sessions[-1]],
+            "validation_sessions": [
+                inner_validation_sessions[0],
+                inner_validation_sessions[-1],
+            ],
+            "train_session_count": len(inner_train_sessions),
+            "validation_session_count": len(inner_validation_sessions),
+            "purge_sessions": V11_2_MAX_HORIZON,
+            "embargo_sessions": V11_2_EMBARGO_SESSIONS,
+        }
 
     # Candidate ranking is horizon-specific, but the inferential gate is
     # family-wise across all four horizons.  Do this once before any route or
@@ -437,6 +460,7 @@ def main() -> int:
             "gates": [gate.to_dict() for gate in selection.gates],
             "m1_better_seed_count": m1_better_seeds,
             "training_only_ranking_scores": ranking_scores,
+            "inner_ranking_split": inner_split_by_horizon[horizon],
         }
         selection_path = output / f"selection_horizon_{horizon}.json"
         selection_bytes = json.dumps(selection_record, indent=2, sort_keys=True).encode("utf-8")
