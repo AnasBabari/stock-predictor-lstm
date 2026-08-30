@@ -41,6 +41,8 @@ from research.volatility_forecasting.v11_2_freezer import (  # noqa: E402
     freeze_routing_bundle,
 )
 from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
+    V11_2_EMBARGO_SESSIONS,
+    V11_2_MAX_HORIZON,
     V112Protocol,
     require_numeric_only,
 )
@@ -115,13 +117,15 @@ def _persistence_variance(features: np.ndarray, horizons: tuple[int, ...]) -> np
 
 
 def _inner_development_indices(dates: tuple[str, ...]) -> tuple[np.ndarray, np.ndarray]:
-    """Split the 70% training partition by sessions for candidate ranking only."""
+    """Split training rows by sessions with purge and embargo for ranking only."""
     sessions = sorted(set(dates))
     cut = int(len(sessions) * 0.80)
-    if cut < 100 or len(sessions) - cut < 20:
+    train_end = cut - V11_2_MAX_HORIZON
+    validation_start = cut + V11_2_EMBARGO_SESSIONS
+    if train_end < 100 or validation_start >= len(sessions):
         raise ValueError("V11.2 training partition is too small for inner selection")
-    train_sessions = set(sessions[:cut])
-    validation_sessions = set(sessions[cut:])
+    train_sessions = set(sessions[:train_end])
+    validation_sessions = set(sessions[validation_start:])
     train_idx = np.asarray(
         [i for i, date in enumerate(dates) if date in train_sessions], dtype=np.int64
     )

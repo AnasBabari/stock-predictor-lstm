@@ -28,7 +28,11 @@ from research.volatility_forecasting.v11_2_trainer import (
     select_per_horizon_challenger,
     train_epoch_zero_residual_model,
 )
-from scripts.run_v11_2_numeric_development import _fit_har, _persistence_variance
+from scripts.run_v11_2_numeric_development import (
+    _fit_har,
+    _inner_development_indices,
+    _persistence_variance,
+)
 
 
 def _dates(count: int) -> list[str]:
@@ -66,6 +70,19 @@ def test_expanding_folds_stay_inside_development_and_are_ordered() -> None:
     for left, right in zip(folds[:-1], folds[1:], strict=True):
         assert len(right.train_indices) > len(left.train_indices)
         assert max(left.train_indices) < min(left.validation_indices)
+
+
+def test_inner_ranking_split_purges_and_embargoes_boundary_sessions() -> None:
+    dates = tuple(_dates(500))
+    train_indices, validation_indices = _inner_development_indices(dates)
+    sessions = sorted(set(dates))
+    train_dates = {dates[index] for index in train_indices}
+    validation_dates = {dates[index] for index in validation_indices}
+    train_last = sessions[max(index for index, date in enumerate(sessions) if date in train_dates)]
+    validation_first = sessions[
+        min(index for index, date in enumerate(sessions) if date in validation_dates)
+    ]
+    assert (dt.date.fromisoformat(validation_first) - dt.date.fromisoformat(train_last)).days > 7
 
 
 def test_session_block_bootstrap_is_reproducible_and_session_weighted() -> None:
