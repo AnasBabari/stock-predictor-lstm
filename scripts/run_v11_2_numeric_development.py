@@ -20,6 +20,7 @@ import torch
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
 
+from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
 from research.volatility_forecasting.global_multimodal_trainer_v11 import EconometricHARBaseline
 from research.volatility_forecasting.model import RobustSequenceScaler
 from research.volatility_forecasting.v11_2_evidence import (
@@ -46,7 +47,7 @@ from research.volatility_forecasting.v11_2_trainer import (
 # V11.1 HAR helper expects its own 34-column schema, so never pass v5 columns
 # to its hard-coded positions (23, 24, 25): those are liquidity features here.
 # Use the named v5 volatility columns explicitly instead.
-_V112_FEATURE_COUNT = 26
+_V112_FEATURE_COUNT = len(DEPLOYABLE_FEATURE_COLUMNS_V5)
 _V112_HAR_INDICES = (13, 15, 16)  # Vol_C2C_5, Vol_C2C_20, Vol_C2C_60
 _V112_DAILY_RETURN_INDEX = 0  # Return_1D
 

@@ -154,7 +154,9 @@ def _validate_strata(securities: list[PITSecurity]) -> None:
     for security in securities:
         counts[security.sector] = counts.get(security.sector, 0) + 1
     if len(counts) != 8 or any(count != 8 for count in counts.values()):
-        raise ValueError("V11.2 universe must contain eight sector strata with eight securities each")
+        raise ValueError(
+            "V11.2 universe must contain eight sector strata with eight securities each"
+        )
 
 
 def build_universe_manifest(
@@ -218,6 +220,50 @@ class PITUniverseResolver:
         if security is None or not security.is_member(date_str):
             raise ValueError(f"{security_id} is not an active PIT constituent at {date_str}")
         return security
+
+
+def load_universe_manifest(path: Path) -> V112UniverseManifest:
+    """Load and re-hash a canonical PIT manifest before it is used for data."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("universe manifest must contain a JSON object")
+    try:
+        securities = [
+            PITSecurity(
+                security_id=str(item["security_id"]),
+                cik=str(item["cik"]),
+                figi=str(item["figi"]),
+                exchange_mic=str(item["exchange_mic"]),
+                sector=str(item["sector"]),
+                industry=str(item["industry"]),
+                volatility_stratum=str(item["volatility_stratum"]),
+                market_cap_stratum=str(item["market_cap_stratum"]),
+                ticker_intervals=tuple(
+                    TickerInterval(**interval) for interval in item["ticker_intervals"]
+                ),
+                membership_intervals=tuple(
+                    MembershipInterval(**interval) for interval in item["membership_intervals"]
+                ),
+                provider_aliases=tuple(str(value) for value in item.get("provider_aliases", ())),
+                corporate_actions=tuple(item.get("corporate_actions", ())),
+                ohlcv_coverage=item.get("ohlcv_coverage"),
+                provenance=item.get("provenance"),
+            )
+            for item in payload["securities"]
+        ]
+        manifest = build_universe_manifest(
+            securities,
+            protocol_id=str(payload["protocol_id"]),
+            universe_version=str(payload["universe_version"]),
+            membership_sources=tuple(str(value) for value in payload["membership_sources"]),
+            selection_method=str(payload["selection_method"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("universe manifest is malformed") from exc
+    canonical_payload = json.loads(json.dumps(manifest.to_dict(), sort_keys=True))
+    if canonical_payload != payload:
+        raise ValueError("universe manifest is not canonical or its digest is invalid")
+    return manifest
 
 
 def save_universe_manifest(manifest: V112UniverseManifest, path: Path) -> None:

@@ -18,6 +18,7 @@ import numpy as np
 from research.volatility_forecasting.v11_2_protocol import (
     V112Protocol,
     canonical_json_digest,
+    feature_schema_digest,
     protocol_manifest,
 )
 from research.volatility_forecasting.v11_2_sealed_store import seal_v112_dataset
@@ -43,6 +44,11 @@ def main() -> int:
     args = parser.parse_args()
 
     protocol = V112Protocol()
+    schema_sha = str(args.schema_sha256)
+    if len(schema_sha) != 64 or any(value not in "0123456789abcdef" for value in schema_sha):
+        raise SystemExit("--schema-sha256 must be a lowercase SHA-256 digest")
+    if schema_sha != feature_schema_digest(protocol):
+        raise SystemExit("--schema-sha256 does not match the frozen V11.2 feature contract")
     universe_payload = json.loads(args.universe_manifest.read_text(encoding="utf-8"))
     if universe_payload.get("protocol_id") != protocol.protocol_id:
         raise SystemExit("universe manifest protocol does not match V11.2")
@@ -64,14 +70,24 @@ def main() -> int:
     }
     if canonical_json_digest(digest_payload) != universe_sha:
         raise SystemExit("universe manifest content does not match its manifest digest")
-    manifest_ids = [str(item.get("security_id", "")) for item in universe_payload.get("securities", [])]
+    manifest_ids = [
+        str(item.get("security_id", "")) for item in universe_payload.get("securities", [])
+    ]
     if len(manifest_ids) != protocol.universe_size or not all(manifest_ids):
         raise SystemExit("universe manifest must list 64 non-empty permanent security IDs")
     if len(set(manifest_ids)) != len(manifest_ids):
         raise SystemExit("universe manifest contains duplicate permanent security IDs")
 
     with np.load(args.panel, allow_pickle=False) as panel:
-        required = {"dates", "security_ids", "features", "returns", "rv"}
+        required = {
+            "dates",
+            "security_ids",
+            "features",
+            "returns",
+            "rv",
+            "feature_names",
+            "horizons",
+        }
         missing = required.difference(panel.files)
         if missing:
             raise SystemExit(f"panel is missing arrays: {sorted(missing)}")
@@ -80,6 +96,26 @@ def main() -> int:
         features = np.asarray(panel["features"], dtype=np.float32)
         returns = np.asarray(panel["returns"], dtype=np.float32)
         rv = np.asarray(panel["rv"], dtype=np.float32)
+        feature_names = [str(value) for value in panel["feature_names"].tolist()]
+        horizons = [int(value) for value in panel["horizons"].tolist()]
+
+    if feature_names != list(protocol.feature_names):
+        raise SystemExit("panel feature_names do not match the frozen deployable_v5 ordering")
+    if horizons != list(protocol.horizons):
+        raise SystemExit("panel horizons do not match the frozen V11.2 horizon contract")
+    if features.ndim != 3 or features.shape[1:] != (
+        protocol.window_size,
+        len(protocol.feature_names),
+    ):
+        raise SystemExit("panel features must have shape [rows, 60, 26]")
+    if returns.ndim != 2 or returns.shape[1] != len(protocol.horizons):
+        raise SystemExit("panel returns must have one column per V11.2 horizon")
+    if rv.ndim != 2 or rv.shape != returns.shape:
+        raise SystemExit("panel realized variance must match the returns shape")
+    if not all(np.isfinite(values).all() for values in (features, returns, rv)):
+        raise SystemExit("panel arrays must contain only finite numeric values")
+    if not (len(dates) == len(security_ids) == len(features) == len(returns) == len(rv)):
+        raise SystemExit("panel identity and target arrays must have equal row counts")
 
     if len(set(security_ids)) != protocol.universe_size:
         raise SystemExit("panel must contain all 64 accepted securities")
@@ -95,7 +131,7 @@ def main() -> int:
         split=split,
         output_dir=args.output_dir,
         panel_sha256=panel_sha,
-        schema_sha256=args.schema_sha256,
+        schema_sha256=schema_sha,
         key_path=args.key_path,
         repository_root=args.repository_root,
     )

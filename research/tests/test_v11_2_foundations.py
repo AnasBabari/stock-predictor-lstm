@@ -12,7 +12,7 @@ from research.volatility_forecasting.v11_2_evaluation import (
     holm_adjust,
     session_block_bootstrap_ci,
 )
-from research.volatility_forecasting.v11_2_protocol import V112Protocol
+from research.volatility_forecasting.v11_2_protocol import V112Protocol, feature_schema_digest
 from research.volatility_forecasting.v11_2_sealed_store import (
     V112SealedAccessError,
     load_v112_development,
@@ -42,6 +42,8 @@ def test_protocol_is_numeric_only_and_horizon_specific() -> None:
     assert protocol.horizons == (1, 3, 5, 7)
     assert protocol.selection == "per_horizon"
     assert protocol.news_mode == "M2_DISABLED_BY_PROTOCOL"
+    assert protocol.feature_schema_version == "deployable_v5"
+    assert len(protocol.feature_names) == 26
     assert len(protocol.digest()) == 64
 
 
@@ -119,7 +121,9 @@ def test_m0_adequacy_holm_corrects_all_eight_comparisons() -> None:
     assert set(result) == {"har_vs_constant", "har_vs_persistence"}
     assert len(result["har_vs_constant"]) == len(result["har_vs_persistence"]) == 4
     assert all(gate.passed for gates in result.values() for gate in gates)
-    assert all(gate.holm_p_value == pytest.approx(8 / 201) for gates in result.values() for gate in gates)
+    assert all(
+        gate.holm_p_value == pytest.approx(8 / 201) for gates in result.values() for gate in gates
+    )
 
 
 def test_holm_adjust_preserves_order() -> None:
@@ -180,7 +184,7 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
         split=split,
         output_dir=output_dir,
         panel_sha256="a" * 64,
-        schema_sha256="b" * 64,
+        schema_sha256=feature_schema_digest(),
         key_path=key_path,
         repository_root=tmp_path / "repository",
     )

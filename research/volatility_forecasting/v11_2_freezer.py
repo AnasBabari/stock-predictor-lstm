@@ -11,7 +11,12 @@ from typing import Any
 
 import torch
 
-from .v11_2_protocol import V112Protocol, canonical_json_digest, protocol_manifest
+from .v11_2_protocol import (
+    V112Protocol,
+    canonical_json_digest,
+    feature_schema_digest,
+    protocol_manifest,
+)
 
 _BASELINE_FAMILIES = {
     "ZERO_RETURN_CONST_VAR",
@@ -118,6 +123,8 @@ def freeze_routing_bundle(
         ("sealed ciphertext", sealed_ciphertext_sha256),
     ):
         _require_sha256(digest, f"{label} digest")
+    if schema_sha256 != feature_schema_digest(protocol):
+        raise ValueError("schema digest does not match the frozen V11.2 feature contract")
     for digest in seed_evidence_sha256:
         _require_sha256(digest, "seed evidence digest")
     if len(git_sha) != 40 or any(character not in "0123456789abcdef" for character in git_sha):

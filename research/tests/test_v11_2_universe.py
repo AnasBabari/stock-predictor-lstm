@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from research.volatility_forecasting.v11_2_universe import (
@@ -10,6 +13,7 @@ from research.volatility_forecasting.v11_2_universe import (
     PITUniverseResolver,
     TickerInterval,
     build_universe_manifest,
+    load_universe_manifest,
 )
 
 SECTORS = (
@@ -62,3 +66,22 @@ def test_manifest_rejects_missing_security() -> None:
             protocol_id="stocklstm-volatility-v11.2-numeric-pit64",
             membership_sources=["test-source"],
         )
+
+
+def test_manifest_round_trip_rehashes_canonical_payload(tmp_path: Path) -> None:
+    securities = [_security(i, SECTORS[i // 8]) for i in range(64)]
+    manifest = build_universe_manifest(
+        securities,
+        protocol_id="stocklstm-volatility-v11.2-numeric-pit64",
+        membership_sources=["test-source"],
+    )
+    path = tmp_path / "universe.json"
+    path.write_text(json.dumps(manifest.to_dict(), sort_keys=True), encoding="utf-8")
+    loaded = load_universe_manifest(path)
+    assert loaded == manifest
+
+    payload = manifest.to_dict()
+    payload["manifest_sha256"] = "0" * 64
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ValueError, match="canonical|digest"):
+        load_universe_manifest(path)

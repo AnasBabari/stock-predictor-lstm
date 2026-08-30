@@ -13,6 +13,8 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
+from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
+
 V11_2_PROTOCOL_ID = "stocklstm-volatility-v11.2-numeric-pit64"
 V11_2_PROTOCOL_VERSION = "v11.2-numeric-pit64"
 V11_2_HORIZONS: tuple[int, ...] = (1, 3, 5, 7)
@@ -33,6 +35,7 @@ V11_2_MIN_COVERAGE_80 = 0.65
 V11_2_MAX_COVERAGE_80 = 0.95
 V11_2_NEWS_MODE = "M2_DISABLED_BY_PROTOCOL"
 V11_2_MODEL_VERSION = "v11.2-numeric-residual-v1"
+V11_2_FEATURE_SCHEMA_VERSION = "deployable_v5"
 
 
 class HistoricalNewsFeatureProvider(Protocol):
@@ -51,6 +54,9 @@ class V112Protocol:
     universe_size: int = V11_2_UNIVERSE_SIZE
     horizons: tuple[int, ...] = V11_2_HORIZONS
     split: str = "chronological_70_15_15"
+    window_size: int = 60
+    feature_schema_version: str = V11_2_FEATURE_SCHEMA_VERSION
+    feature_names: tuple[str, ...] = DEPLOYABLE_FEATURE_COLUMNS_V5
     train_ratio: float = V11_2_TRAIN_RATIO
     validation_ratio: float = V11_2_VALIDATION_RATIO
     test_ratio: float = V11_2_TEST_RATIO
@@ -79,8 +85,14 @@ class V112Protocol:
             raise ValueError("V11.2 requires exactly 64 accepted securities")
         if self.horizons != V11_2_HORIZONS:
             raise ValueError("V11.2 horizons are fixed to 1, 3, 5, and 7")
+        if self.window_size != 60:
+            raise ValueError("V11.2 feature windows are fixed to 60 sessions")
         if self.selection != "per_horizon":
             raise ValueError("V11.2 requires independent per-horizon selection")
+        if self.feature_schema_version != V11_2_FEATURE_SCHEMA_VERSION:
+            raise ValueError("V11.2 feature schema is fixed to deployable_v5")
+        if self.feature_names != DEPLOYABLE_FEATURE_COLUMNS_V5:
+            raise ValueError("V11.2 feature ordering must match deployable_v5")
         if self.news_mode != V11_2_NEWS_MODE:
             raise ValueError("V11.2 is numeric-only and structurally disables news")
         if abs(self.train_ratio + self.validation_ratio + self.test_ratio - 1.0) > 1e-12:
@@ -110,6 +122,22 @@ def canonical_json_digest(payload: Any) -> str:
     """Hash JSON-compatible payloads without formatting or key-order ambiguity."""
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def feature_schema_manifest(protocol: V112Protocol | None = None) -> dict[str, Any]:
+    """Return the exact feature/target input contract bound to V11.2."""
+    selected = protocol or V112Protocol()
+    return {
+        "feature_schema_version": selected.feature_schema_version,
+        "feature_names": list(selected.feature_names),
+        "window_size": selected.window_size,
+        "horizons": list(selected.horizons),
+    }
+
+
+def feature_schema_digest(protocol: V112Protocol | None = None) -> str:
+    """Digest the feature ordering and target geometry independently of artifacts."""
+    return canonical_json_digest(feature_schema_manifest(protocol))
 
 
 def require_numeric_only(news_provider: HistoricalNewsFeatureProvider | None) -> None:

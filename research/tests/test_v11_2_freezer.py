@@ -8,7 +8,7 @@ from research.volatility_forecasting.v11_2_freezer import (
     V112Route,
     freeze_routing_bundle,
 )
-from research.volatility_forecasting.v11_2_protocol import V112Protocol
+from research.volatility_forecasting.v11_2_protocol import V112Protocol, feature_schema_digest
 
 
 def _route(horizon: int, *, family: str = "M0_HAR_BASELINE", promoted: bool = False) -> V112Route:
@@ -29,7 +29,7 @@ def _freeze_kwargs(tmp_path):
         "protocol": protocol,
         "universe_sha256": "1" * 64,
         "panel_sha256": "2" * 64,
-        "schema_sha256": "3" * 64,
+        "schema_sha256": feature_schema_digest(protocol),
         "split_sha256": "4" * 64,
         "development_evidence_sha256": "5" * 64,
         "routes": [_route(horizon) for horizon in protocol.horizons],
@@ -51,4 +51,11 @@ def test_freeze_rejects_inconsistent_learned_promotion(tmp_path) -> None:
     kwargs = _freeze_kwargs(tmp_path)
     kwargs["routes"] = [_route(1, promoted=True), _route(3), _route(5), _route(7)]
     with pytest.raises(ValueError, match="learned_promotion"):
+        freeze_routing_bundle(**kwargs)
+
+
+def test_freeze_rejects_schema_digest_from_another_contract(tmp_path) -> None:
+    kwargs = _freeze_kwargs(tmp_path)
+    kwargs["schema_sha256"] = "3" * 64
+    with pytest.raises(ValueError, match="schema digest"):
         freeze_routing_bundle(**kwargs)
