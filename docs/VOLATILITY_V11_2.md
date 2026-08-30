@@ -110,6 +110,18 @@ every security must resolve through its point-in-time ticker and membership
 intervals. The repository's secondary NDX100 cache is not a V11.2
 certification input.
 
+Run the read-only input preflight before preparing the sealed dataset. It
+fails closed unless the panel sidecar, audited universe, stable security/date
+identities, feature geometry, and an external 32-byte holdout key are all
+present. It never opens or decrypts the holdout and never prints key bytes:
+
+```powershell
+python scripts/check_v11_2_inputs.py `
+  --panel <audited-panel>.npz `
+  --universe-manifest <audited-pit64-universe.json> `
+  --key-path "$env:USERPROFILE\.stocklstm\secrets\v11_2_holdout.key"
+```
+
 Compute the frozen feature-contract digest and prepare the dataset. The key
 path must remain outside the repository:
 
