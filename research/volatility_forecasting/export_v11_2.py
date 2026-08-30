@@ -527,7 +527,10 @@ def assemble_v11_2_release(
         ),
         "parity_errors": parity_errors,
     }
-    from release.bundle import build_release, verify_release
+    try:
+        from release.bundle import build_release, verify_release
+    except ImportError:  # pragma: no cover - repository-root invocation
+        from backend.release.bundle import build_release, verify_release  # type: ignore[no-redef]
 
     build_release(
         output_dir,
