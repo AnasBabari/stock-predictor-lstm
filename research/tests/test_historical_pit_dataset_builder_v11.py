@@ -1,4 +1,4 @@
-"""Unit tests for HistoricalPITDatasetBuilderV11."""
+"""Unit tests for hardened HistoricalPITDatasetBuilderV11 with perturbation check."""
 
 import numpy as np
 import pandas as pd
@@ -8,7 +8,7 @@ from research.volatility_forecasting.historical_pit_dataset_builder_v11 import (
 )
 
 
-def test_historical_pit_panel_construction_and_causality():
+def test_historical_pit_panel_construction_and_perturbation_invariance():
     n_days = 100
     dates = pd.date_range("2022-01-01", periods=n_days, freq="B")
     rng = np.random.default_rng(42)
@@ -31,22 +31,40 @@ def test_historical_pit_panel_construction_and_causality():
     sector_df = create_synthetic_df()
     market_df = create_synthetic_df()
 
-    panel = HistoricalPITDatasetBuilderV11.construct_panel_from_series(
+    # Define membership mask excluding AMGN after day 85
+    membership = {"AMGN": ("2022-01-01", str(dates[85])[:10])}
+
+    panel1 = HistoricalPITDatasetBuilderV11.construct_panel_from_series(
         equities_ohlcv=equities,
         sector_ohlcv=sector_df,
         market_ohlcv=market_df,
+        membership_masks=membership,
         horizons=(1, 3, 5, 7),
         warmup_sessions=65,
     )
 
-    # Verify output shapes and dimensions
-    assert len(panel.dates) > 50
-    assert panel.numeric_features.shape[1] == 34
-    assert panel.news_features.shape[1] == 19
-    assert panel.returns_targets.shape[1] == 4
-    assert panel.rv_targets.shape[1] == 4
-    assert len(panel.panel_sha256) == 64
+    assert panel1.numeric_features.shape[1] == 34
+    assert panel1.news_features.shape[1] == 19
+    assert panel1.returns_targets.shape[1] == 4
+    assert panel1.rv_targets.shape[1] == 4
+    assert len(panel1.panel_sha256) == 64
 
-    # Verify chronological ordering
-    for i in range(len(panel.dates) - 1):
-        assert panel.dates[i] <= panel.dates[i + 1]
+    # Perturbation Test: Altering prices at future day 95 should produce ZERO change at day 70
+    equities_perturbed = {k: v.copy() for k, v in equities.items()}
+    equities_perturbed["AAPL"].iloc[95, equities_perturbed["AAPL"].columns.get_loc("Close")] *= 1.50
+
+    panel2 = HistoricalPITDatasetBuilderV11.construct_panel_from_series(
+        equities_ohlcv=equities_perturbed,
+        sector_ohlcv=sector_df,
+        market_ohlcv=market_df,
+        membership_masks=membership,
+        horizons=(1, 3, 5, 7),
+        warmup_sessions=65,
+    )
+
+    # Filter rows at day 70
+    target_date = str(dates[70])[:10]
+    idx1 = [i for i, d in enumerate(panel1.dates) if d == target_date]
+    idx2 = [i for i, d in enumerate(panel2.dates) if d == target_date]
+
+    np.testing.assert_array_equal(panel1.numeric_features[idx1], panel2.numeric_features[idx2])

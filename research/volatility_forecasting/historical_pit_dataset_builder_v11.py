@@ -1,4 +1,4 @@
-"""Universal point-in-time multi-asset panel builder for historical 70/15/15 multimodal model training."""
+"""Universal point-in-time multi-asset panel builder with Nasdaq membership masks and causal controls."""
 
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ class HistoricalPanelDataset:
     security_ids: list[str]
     numeric_features: np.ndarray  # [N, 34]
     news_features: np.ndarray  # [N, 19]
-    shuffled_news_negative_control: np.ndarray  # [N, 19]
+    same_origin_shuffled_news: np.ndarray  # [N, 19] M3 Control A
+    causal_delayed_news: np.ndarray  # [N, 19] M3 Control B (10-session delay)
     returns_targets: np.ndarray  # [N, 4] for h in (1, 3, 5, 7)
     rv_targets: np.ndarray  # [N, 4] for h in (1, 3, 5, 7)
     panel_sha256: str
@@ -46,7 +47,7 @@ class HistoricalPanelDataset:
 
 
 class HistoricalPITDatasetBuilderV11:
-    """Builds point-in-time panel datasets across target equities and exogenous market/sector contexts."""
+    """Constructs point-in-time historical datasets with survivorship masks and content hashing."""
 
     @staticmethod
     def construct_panel_from_series(
@@ -54,6 +55,8 @@ class HistoricalPITDatasetBuilderV11:
         sector_ohlcv: pd.DataFrame,
         market_ohlcv: pd.DataFrame,
         news_articles: list[EnrichedNewsArticle] | None = None,
+        membership_masks: dict[str, tuple[str, str]]
+        | None = None,  # ticker -> (start_date, end_date)
         horizons: tuple[int, ...] = REQUIRED_TARGET_HORIZONS_V11,
         warmup_sessions: int = 65,
     ) -> HistoricalPanelDataset:
@@ -61,6 +64,7 @@ class HistoricalPITDatasetBuilderV11:
         all_sec_ids: list[str] = []
         all_num_feats: list[np.ndarray] = []
         all_news_feats: list[np.ndarray] = []
+        all_delayed_news_feats: list[np.ndarray] = []
         all_rets: list[np.ndarray] = []
         all_rv: list[np.ndarray] = []
 
@@ -75,51 +79,62 @@ class HistoricalPITDatasetBuilderV11:
             if n <= warmup_sessions + max_h:
                 continue
 
-            # Compute daily log returns for target calculations
+            # Membership date filtering
+            mem_start, mem_end = ("1900-01-01", "2099-12-31")
+            if membership_masks and sec_id in membership_masks:
+                mem_start, mem_end = membership_masks[sec_id]
+
             daily_rets = np.log(c[1:] / c[:-1])
 
-            # Loop over valid historical origin sessions
+            # Iterate over causal origin sessions
             for t_idx in range(warmup_sessions, n - max_h):
                 t_date = dates[t_idx]
-                history_df = df_sorted.iloc[: t_idx + 1]
 
-                # Align context data strictly up to t_date
+                # Check PIT membership
+                if not (mem_start <= t_date <= mem_end):
+                    continue
+
+                history_df = df_sorted.iloc[: t_idx + 1]
                 sec_sub = sector_ohlcv.loc[:t_date] if sector_ohlcv is not None else None
                 mkt_sub = market_ohlcv.loc[:t_date] if market_ohlcv is not None else None
 
-                # 1. Extract 34 Numeric Features
+                # 1. 34 Numeric Features
                 feats = EnrichedFeatureExtractor.extract_from_series(
                     target_df=history_df, sector_df=sec_sub, market_df=mkt_sub
                 )
                 num_arr = feats.to_array()
 
-                # 2. Extract 19 Causal News Features
+                # 2. 19 Causal News Features (strictly <= t_date)
                 if news_articles:
-                    news_sub = [
-                        a
-                        for a in news_articles
-                        if (
-                            a.available_at[:10] <= t_date
-                            and (a.ticker_relevance > 0.5 or a.event_type == "macro")
-                        )
-                    ]
                     news_agg = MultiDimensionalNewsAggregator.aggregate_causal_window(
-                        articles=news_sub, cutoff_iso=f"{t_date}T20:00:00Z"
+                        articles=news_articles,
+                        target_ticker=sec_id,
+                        cutoff_iso=f"{t_date}T20:00:00Z",
                     )
                     news_arr = news_agg.to_array()
+
+                    # Causal Delayed Control B: News from 10 sessions prior
+                    delayed_t_idx = max(0, t_idx - 10)
+                    delayed_date = dates[delayed_t_idx]
+                    delayed_agg = MultiDimensionalNewsAggregator.aggregate_causal_window(
+                        articles=news_articles,
+                        target_ticker=sec_id,
+                        cutoff_iso=f"{delayed_date}T20:00:00Z",
+                    )
+                    delayed_news_arr = delayed_agg.to_array()
                 else:
                     news_arr = np.zeros(len(MULTIMODAL_NEWS_FEATURE_COLUMNS_V11), dtype=float)
+                    delayed_news_arr = np.zeros(
+                        len(MULTIMODAL_NEWS_FEATURE_COLUMNS_V11), dtype=float
+                    )
 
-                # 3. Compute Targets for horizons in (1, 3, 5, 7)
-                # Cumulative log return: log(P_{t+h} / P_t)
-                # Realized variance: sum of squared daily log returns
+                # 3. Target Vectors for Horizons in (1, 3, 5, 7)
                 h_rets = []
                 h_rv = []
                 p0 = c[t_idx]
                 for h in horizons:
                     p_h = c[t_idx + h]
                     cum_ret = float(np.log(p_h / p0))
-                    # Daily returns from t_idx to t_idx + h
                     step_rets = daily_rets[t_idx : t_idx + h]
                     cum_rv = float(np.sum(step_rets**2))
                     h_rets.append(cum_ret)
@@ -129,32 +144,48 @@ class HistoricalPITDatasetBuilderV11:
                 all_sec_ids.append(sec_id)
                 all_num_feats.append(num_arr)
                 all_news_feats.append(news_arr)
+                all_delayed_news_feats.append(delayed_news_arr)
                 all_rets.append(np.array(h_rets, dtype=float))
                 all_rv.append(np.array(h_rv, dtype=float))
 
-        # Sort chronologically
-        sort_order = np.argsort(all_dates)
+        # Sort chronologically by date, then security_id
+        sort_order = np.lexsort((all_sec_ids, all_dates))
         dates_sorted = [all_dates[i] for i in sort_order]
         sec_ids_sorted = [all_sec_ids[i] for i in sort_order]
         num_mat = np.array(all_num_feats, dtype=float)[sort_order]
         news_mat = np.array(all_news_feats, dtype=float)[sort_order]
+        delayed_news_mat = np.array(all_delayed_news_feats, dtype=float)[sort_order]
         rets_mat = np.array(all_rets, dtype=float)[sort_order]
         rv_mat = np.array(all_rv, dtype=float)[sort_order]
 
-        # 4. Generate Shuffled Negative Control for News (M3)
-        rng = np.random.default_rng(1337)
-        shuffled_news = rng.permutation(news_mat)
+        # 4. Generate Causal Same-Origin Cross-Sectional Shuffle (M3 Control A)
+        # Groups rows by exact calendar date and permutes news across assets on the SAME day
+        same_origin_shuffled = news_mat.copy()
+        df_group = pd.DataFrame({"date": dates_sorted, "idx": np.arange(len(dates_sorted))})
+        rng = np.random.default_rng(2026)
+        for _, grp in df_group.groupby("date"):
+            grp_indices = grp["idx"].to_numpy()
+            if len(grp_indices) > 1:
+                shuffled_idx = rng.permutation(grp_indices)
+                same_origin_shuffled[grp_indices] = news_mat[shuffled_idx]
 
-        # 5. Compute SHA-256 Digest of Panel
-        raw_sig = f"{len(dates_sorted)}:{num_mat.shape}:{news_mat.shape}:{rets_mat.shape}"
-        panel_digest = hashlib.sha256(raw_sig.encode()).hexdigest()
+        # 5. Content-Addressed SHA-256 Digest of Full Dataset
+        h = hashlib.sha256()
+        h.update(f"{','.join(dates_sorted)}".encode())
+        h.update(f"{','.join(sec_ids_sorted)}".encode())
+        h.update(num_mat.tobytes())
+        h.update(news_mat.tobytes())
+        h.update(rets_mat.tobytes())
+        h.update(rv_mat.tobytes())
+        panel_digest = h.hexdigest()
 
         return HistoricalPanelDataset(
             dates=dates_sorted,
             security_ids=sec_ids_sorted,
             numeric_features=num_mat,
             news_features=news_mat,
-            shuffled_news_negative_control=shuffled_news,
+            same_origin_shuffled_news=same_origin_shuffled,
+            causal_delayed_news=delayed_news_mat,
             returns_targets=rets_mat,
             rv_targets=rv_mat,
             panel_sha256=panel_digest,
