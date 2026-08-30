@@ -43,6 +43,13 @@ optimizer update; epoch zero exactly represents the HAR variance and zero
 return-location prior. If updates do not improve validation CRPS, epoch zero is
 restored.
 
+The residual LSTM geometry is defined once in
+`research/volatility_forecasting/v11_2_model.py` and reconstructed through the
+same builder during development, one-shot certification, and ONNX export. The
+signed release records the architecture version and complete portable
+architecture manifest so those stages cannot silently disagree about the
+meaning of a frozen state dictionary.
+
 Each horizon is selected independently. A learned route must beat HAR on the
 untouched validation partition, pass the paired session-block uncertainty gate,
 pass Holm correction across the four horizon decisions, have non-worse QLIKE,
@@ -202,6 +209,12 @@ implementation would invalidate the frozen evidence. Horizons 14 and 30 are
 baseline passthroughs in the six-slot ONNX graph and are deliberately omitted
 from `certified_horizons`; the API abstains for them until a protocol that
 evaluates those horizons is certified.
+
+Automated release tests exercise both an all-HAR bundle and a bundle containing
+an actual residual-LSTM route. The learned fixture is signed, loaded through
+the production CPU runtime, and evaluated at a non-unit batch during ONNX
+parity. Unsupported research routes and a changed post-freeze selection record
+must fail before a release directory is created.
 
 ONNX Runtime CPU parity is mandatory before signing. The resulting metadata
 uses `metric_source=sealed_holdout_once` and

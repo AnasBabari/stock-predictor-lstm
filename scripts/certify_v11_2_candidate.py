@@ -29,14 +29,13 @@ for candidate in (ROOT, ROOT / "research"):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from research.volatility_forecasting.model import (  # noqa: E402
-    BaselineResidualLSTM,
-    BaselineResidualTCNConfig,
-    RobustSequenceScaler,
-)
+from research.volatility_forecasting.model import RobustSequenceScaler  # noqa: E402
 from research.volatility_forecasting.v11_2_evaluation import (  # noqa: E402
     evaluate_horizon_gates,
     evaluate_m0_adequacy,
+)
+from research.volatility_forecasting.v11_2_model import (  # noqa: E402
+    build_v11_2_residual_model,
 )
 from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
     V112Protocol,
@@ -182,19 +181,10 @@ def _load_m1_forecast(
         raise SystemExit(f"M1 artifact cannot be loaded safely: {path.name}") from exc
     if not isinstance(state, dict):
         raise SystemExit("M1 artifact is not a state dictionary")
-    config = BaselineResidualTCNConfig(
+    model = build_v11_2_residual_model(
         feature_count=len(protocol.feature_names),
-        horizon_count=1,
-        encoder_family="lstm",
         window_size=protocol.window_size,
-        channels=32,
-        lstm_hidden=32,
-        lstm_layers=1,
-        dropout=0.15,
-        patch_length=2,
-        patch_stride=1,
     )
-    model = BaselineResidualLSTM(config)
     try:
         model.load_state_dict(state, strict=True)
     except (RuntimeError, KeyError) as exc:

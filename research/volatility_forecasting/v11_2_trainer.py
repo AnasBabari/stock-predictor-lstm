@@ -19,9 +19,10 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
 from torch import nn
 
-from .model import BaselineResidualLSTM, BaselineResidualTCNConfig
+from .model import BaselineResidualLSTM
 from .proper_scoring_v11 import student_t_crps
 from .v11_2_evaluation import HorizonGate, evaluate_horizon_gates
+from .v11_2_model import build_v11_2_residual_model
 
 
 @dataclass(frozen=True)
@@ -179,19 +180,10 @@ def train_epoch_zero_residual_model(
     validation_x = _as_sequence(x_validation)
     feature_count = train_x.shape[-1]
     window_size = train_x.shape[1]
-    config = BaselineResidualTCNConfig(
+    model = build_v11_2_residual_model(
         feature_count=feature_count,
-        horizon_count=1,
-        encoder_family="lstm",
         window_size=max(window_size, 2),
-        channels=32,
-        lstm_hidden=32,
-        lstm_layers=1,
-        dropout=0.15,
-        patch_length=2,
-        patch_stride=1,
     )
-    model = BaselineResidualLSTM(config)
     selected_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     if selected_device.type == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA device requested but CUDA is unavailable")

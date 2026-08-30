@@ -25,7 +25,12 @@ import numpy as np
 import torch
 from torch import nn
 
-from .model import BaselineResidualLSTM, BaselineResidualTCNConfig, RobustSequenceScaler
+from .model import BaselineResidualLSTM, RobustSequenceScaler
+from .v11_2_model import (
+    V11_2_RESIDUAL_ARCHITECTURE_VERSION,
+    build_v11_2_residual_model,
+    v11_2_residual_architecture_manifest,
+)
 from .v11_2_protocol import (
     V11_2_HORIZONS,
     V11_2_MODEL_VERSION,
@@ -256,20 +261,42 @@ def _load_certification_report(
         raise ValueError("V11.2 certification report digest does not match its contents")
     if (
         report.get("protocol_id") != protocol.protocol_id
+        or report.get("protocol_sha256") != protocol.digest()
+        or report.get("feature_schema_sha256") != feature_schema_digest(protocol)
         or report.get("candidate_digest") != routing_digest
+        or report.get("metric_source") != "sealed_holdout_once"
         or report.get("status") != "passed"
         or report.get("sealed_test_status") != "OPENED_ONCE"
         or report.get("m0_adequacy_passed") is not True
     ):
         raise ValueError("V11.2 certification report does not authorize a release")
     adequacy = report.get("m0_adequacy")
-    if not isinstance(adequacy, dict) or not adequacy:
+    expected_comparators = {
+        "har_vs_constant": "ZERO_RETURN_CONST_VAR",
+        "har_vs_persistence": "ZERO_RETURN_PERSISTENCE_VOL",
+    }
+    if not isinstance(adequacy, dict) or set(adequacy) != set(expected_comparators):
         raise ValueError("V11.2 M0 adequacy evidence is incomplete")
-    for gates in adequacy.values():
+    for comparison, comparator in expected_comparators.items():
+        gates = adequacy[comparison]
         if (
             not isinstance(gates, list)
-            or not gates
-            or any(not isinstance(gate, dict) or gate.get("passed") is not True for gate in gates)
+            or len(gates) != len(V11_2_HORIZONS)
+            or sorted(
+                gate.get("horizon")
+                for gate in gates
+                if isinstance(gate, dict)
+                and isinstance(gate.get("horizon"), int)
+                and not isinstance(gate.get("horizon"), bool)
+            )
+            != list(V11_2_HORIZONS)
+            or any(
+                not isinstance(gate, dict)
+                or gate.get("candidate") != "M0_HAR_BASELINE"
+                or gate.get("comparator") != comparator
+                or gate.get("passed") is not True
+                for gate in gates
+            )
         ):
             raise ValueError("V11.2 M0 adequacy evidence is incomplete")
     route_results = report.get("routes")
@@ -307,19 +334,10 @@ def _load_m1_model(
     artifact = _safe_relative(results_dir, route.get("artifact_path"), f"horizon {horizon} model")
     if _sha256_file(artifact) != route.get("model_digest"):
         raise ValueError(f"V11.2 horizon {horizon} model digest does not match its route")
-    config = BaselineResidualTCNConfig(
+    model = build_v11_2_residual_model(
         feature_count=len(protocol.feature_names),
-        horizon_count=1,
-        encoder_family="lstm",
         window_size=protocol.window_size,
-        channels=32,
-        lstm_hidden=32,
-        lstm_layers=1,
-        dropout=0.15,
-        patch_length=2,
-        patch_stride=1,
     )
-    model = BaselineResidualLSTM(config)
     try:
         state = torch.load(artifact, map_location="cpu", weights_only=True)
         model.load_state_dict(state, strict=True)
@@ -509,6 +527,11 @@ def assemble_v11_2_release(
         "runtime_schema": "volatility-runtime-v1",
         "model_id": model_id,
         "model_version": V11_2_MODEL_VERSION,
+        "architecture_version": V11_2_RESIDUAL_ARCHITECTURE_VERSION,
+        "architecture": v11_2_residual_architecture_manifest(
+            feature_count=len(protocol.feature_names),
+            window_size=protocol.window_size,
+        ),
         "protocol_version": V11_2_PROTOCOL_VERSION,
         "protocol_id": V11_2_PROTOCOL_ID,
         "artifact_role": "locked_v11_2_certification_release",
