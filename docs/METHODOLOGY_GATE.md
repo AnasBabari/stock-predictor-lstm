@@ -11,7 +11,7 @@ ordering, causal Deployable Schema v5 inputs, and explicit fail-closed abstentio
 on uncertified horizons or unverified bundles.
 
 recorded_sha: 95f643dc67acf9aebb136a6f1e55581a70ecc992
-freeze_record_commit: 1ac58d4bd461382b57baeebfa0af7e4aa261488e
+freeze_record_commit: 8f285822bb8405e23ad7801e4696d1f4ae99ce99
 
 **Field conventions.** `recorded_sha` identifies the battery-verified tree the
 evidence was produced on (short or full SHA). `freeze_record_commit` is the
