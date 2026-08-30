@@ -211,6 +211,26 @@ def _load_routing_bundle(results_dir: Path, protocol: V112Protocol) -> tuple[dic
         protocol_manifest(protocol)
     ):
         raise ValueError("V11.2 routing bundle protocol is incompatible")
+    for label in (
+        "universe_sha256",
+        "panel_sha256",
+        "schema_sha256",
+        "split_sha256",
+        "development_evidence_sha256",
+        "sealed_ciphertext_sha256",
+    ):
+        _require_digest(bundle.get(label), f"routing bundle {label}")
+    if bundle.get("schema_sha256") != feature_schema_digest(protocol):
+        raise ValueError("V11.2 routing bundle schema is incompatible")
+    seed_evidence = bundle.get("seed_evidence_sha256")
+    if (
+        not isinstance(seed_evidence, list)
+        or len(seed_evidence) != len(V11_2_HORIZONS) * len(protocol.seeds)
+        or len(set(seed_evidence)) != len(seed_evidence)
+    ):
+        raise ValueError("V11.2 routing bundle seed evidence is incomplete")
+    for digest in seed_evidence:
+        _require_digest(digest, "routing bundle seed evidence")
     routes = bundle.get("routes")
     if not isinstance(routes, list) or len(routes) != len(V11_2_HORIZONS):
         raise ValueError("V11.2 routing bundle must contain exactly four routes")
