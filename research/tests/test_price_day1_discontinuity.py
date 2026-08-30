@@ -70,7 +70,9 @@ def test_reproduce_unanchored_absolute_price_day1_cliff():
     # The unanchored model produces a massive, artificial Day-1 cliff (> 5 sigma)
     assert p1_abs < 35.0, f"Expected regression toward historical center, got {p1_abs}"
     assert day1_z_score_abs > 5.0, f"Expected massive jump z-score, got {day1_z_score_abs}"
-    assert day1_log_return_abs < -0.15, f"Expected Day 1 log return cliff < -15%, got {day1_log_return_abs}"
+    assert day1_log_return_abs < -0.15, (
+        f"Expected Day 1 log return cliff < -15%, got {day1_log_return_abs}"
+    )
 
     # Now verify anchored return formulation
     # Model predicts plausible 7-day cumulative returns: [-0.002, +0.001, -0.003, ...]
@@ -87,7 +89,9 @@ def test_reproduce_unanchored_absolute_price_day1_cliff():
     day1_log_return_anchored = float(np.log(p1_anchored / p0))
     day1_z_score_anchored = abs(day1_log_return_anchored) / daily_vol
 
-    assert day1_z_score_anchored < 1.0, f"Anchored return produced unphysical jump: {day1_z_score_anchored}"
+    assert day1_z_score_anchored < 1.0, (
+        f"Anchored return produced unphysical jump: {day1_z_score_anchored}"
+    )
     assert abs(p1_anchored - p0) < 1.0, "Anchored Day 1 price deviated dramatically from P0"
 
 
