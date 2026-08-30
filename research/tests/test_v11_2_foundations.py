@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ from research.volatility_forecasting.v11_2_evaluation import (
 )
 from research.volatility_forecasting.v11_2_protocol import V112Protocol, feature_schema_digest
 from research.volatility_forecasting.v11_2_sealed_store import (
+    V11_2_SEALED_FORMAT_VERSION,
     V112SealedAccessError,
     load_v112_development,
     seal_v112_dataset,
@@ -144,6 +146,34 @@ def test_m0_adequacy_holm_corrects_all_eight_comparisons() -> None:
     )
 
 
+def test_m0_adequacy_rejects_out_of_band_har_coverage() -> None:
+    dates = _dates(100)
+    horizons = (1, 3, 5, 7)
+    har_losses = {horizon: np.full(100, 0.1) for horizon in horizons}
+    constant_losses = {horizon: np.full(100, 0.2) for horizon in horizons}
+    persistence_losses = {horizon: np.full(100, 0.3) for horizon in horizons}
+    result = evaluate_m0_adequacy(
+        dates=dates,
+        horizons=horizons,
+        har_losses_by_horizon=har_losses,
+        constant_losses_by_horizon=constant_losses,
+        persistence_losses_by_horizon=persistence_losses,
+        har_crps_by_horizon={horizon: 0.1 for horizon in horizons},
+        constant_crps_by_horizon={horizon: 0.2 for horizon in horizons},
+        persistence_crps_by_horizon={horizon: 0.3 for horizon in horizons},
+        har_coverage_by_horizon={horizon: 0.50 for horizon in horizons},
+        block_sessions=20,
+        n_replicates=200,
+        seed=42,
+    )
+    assert all(not gate.passed for gates in result.values() for gate in gates)
+    assert all(
+        gate.coverage_candidate_80 == pytest.approx(0.50)
+        for gates in result.values()
+        for gate in gates
+    )
+
+
 def test_holm_adjust_preserves_order() -> None:
     assert holm_adjust([0.01, 0.04, 0.2]) == pytest.approx([0.03, 0.08, 0.2])
 
@@ -252,6 +282,7 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
         key_path=key_path,
         repository_root=tmp_path / "repository",
     )
+    assert metadata.sealed_format_version == V11_2_SEALED_FORMAT_VERSION
     development = load_v112_development(output_dir)
     assert len(development.train_dates) == split.train_rows
     assert metadata.test_stock_origin_observations == split.test_rows
@@ -264,6 +295,15 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
     with pytest.raises(V112SealedAccessError, match="train bytes"):
         load_v112_development(output_dir)
     train_path.write_bytes(original_train)
+
+    manifest_path = output_dir / "manifests" / "development_manifest.json"
+    original_manifest = manifest_path.read_bytes()
+    manifest = json.loads(original_manifest)
+    manifest.pop("sealed_format_version")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(V112SealedAccessError, match="sealed format version"):
+        load_v112_development(output_dir)
+    manifest_path.write_bytes(original_manifest)
 
     payload = unseal_v112_test_once(
         output_dir=output_dir,

@@ -33,6 +33,11 @@ from .v11_2_protocol import (
 )
 from .v11_2_split import V112Split
 
+# The security-identity fields were added after the first V11.2 prototype.
+# Keep the payload format explicit so an older directory fails closed with a
+# useful contract error instead of being interpreted as current evidence.
+V11_2_SEALED_FORMAT_VERSION = "v11.2-sealed-v2-security-identities"
+
 
 class V112SealedAccessError(RuntimeError):
     """Raised when sealed data cannot be safely consumed."""
@@ -57,6 +62,7 @@ class V112DevelopmentData:
 
 @dataclass(frozen=True)
 class V112SealedMetadata:
+    sealed_format_version: str
     protocol_id: str
     panel_sha256: str
     split_sha256: str
@@ -71,6 +77,7 @@ class V112SealedMetadata:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "sealed_format_version": self.sealed_format_version,
             "protocol_id": self.protocol_id,
             "panel_sha256": self.panel_sha256,
             "split_sha256": self.split_sha256,
@@ -195,14 +202,18 @@ def _array_payload(
     dates: Iterable[str],
     security_ids: Iterable[str],
 ) -> bytes:
+    date_values = [str(value) for value in dates]
+    security_values = [str(value) for value in security_ids]
+    if len(date_values) != len(security_values):
+        raise ValueError("payload identity arrays must have equal lengths")
     with tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024) as buffer:
         np.savez_compressed(
             buffer,
             features=np.asarray(features, dtype=np.float32),
             returns=np.asarray(returns, dtype=np.float32),
             rv=np.asarray(rv, dtype=np.float32),
-            dates=np.asarray(list(dates), dtype="U32"),
-            security_ids=np.asarray(list(security_ids), dtype="U128"),
+            dates=np.asarray(date_values, dtype="U32"),
+            security_ids=np.asarray(security_values, dtype="U128"),
         )
         buffer.seek(0)
         return buffer.read()
@@ -215,7 +226,8 @@ def _validate_arrays(
     dates: Iterable[str],
     security_ids: Iterable[str],
 ) -> None:
-    n = len(dates)
+    date_list = [str(value) for value in dates]
+    n = len(date_list)
     security_list = [str(value) for value in security_ids]
     feature_values = np.asarray(features)
     return_values = np.asarray(returns)
@@ -230,7 +242,7 @@ def _validate_arrays(
         raise ValueError("feature, target, and date row counts must match and be non-zero")
     if any(not value.strip() for value in security_list):
         raise ValueError("security IDs must be non-empty")
-    if len(set(zip(security_list, dates, strict=True))) != n:
+    if len(set(zip(security_list, date_list, strict=True))) != n:
         raise ValueError("security/session observations must be unique")
     if feature_values.ndim not in (2, 3):
         raise ValueError("features must have shape [rows, features] or [rows, window, features]")
@@ -348,6 +360,7 @@ def seal_v112_dataset(
     _atomic_write(sealed_dir / "test_payload.aesgcm", ciphertext)
     _atomic_write((sealed_dir / "test_payload.sha256"), ciphertext_sha.encode("ascii"))
     metadata = V112SealedMetadata(
+        sealed_format_version=V11_2_SEALED_FORMAT_VERSION,
         protocol_id=V11_2_PROTOCOL_ID,
         panel_sha256=panel_sha256,
         split_sha256=split.split_sha256,
@@ -370,6 +383,7 @@ def seal_v112_dataset(
         manifests_dir / "development_manifest.json",
         json.dumps(
             {
+                "sealed_format_version": V11_2_SEALED_FORMAT_VERSION,
                 "protocol_id": V11_2_PROTOCOL_ID,
                 "panel_sha256": panel_sha256,
                 "schema_sha256": schema_sha256,
@@ -411,6 +425,8 @@ def load_v112_development(output_dir: Path) -> V112DevelopmentData:
     protocol = V112Protocol()
     if manifest.get("protocol_id") != protocol.protocol_id:
         raise V112SealedAccessError("V11.2 development manifest protocol mismatch")
+    if manifest.get("sealed_format_version") != V11_2_SEALED_FORMAT_VERSION:
+        raise V112SealedAccessError("V11.2 development sealed format version mismatch")
     if manifest.get("sealed_test_status") != "LOCKED_UNOPENED":
         raise V112SealedAccessError("V11.2 development manifest does not prove an unopened holdout")
     if manifest.get("schema_sha256") != feature_schema_digest():
@@ -525,6 +541,8 @@ def unseal_v112_test_once(
     if lock_path.exists():
         raise V112SealedAccessError("V11.2 sealed test has already been opened")
     metadata = _read_json_object(metadata_path, "V11.2 sealed metadata")
+    if metadata.get("sealed_format_version") != V11_2_SEALED_FORMAT_VERSION:
+        raise V112SealedAccessError("sealed metadata format version mismatch")
     if metadata.get("protocol_id") != V11_2_PROTOCOL_ID:
         raise V112SealedAccessError("sealed metadata protocol mismatch")
     if metadata.get("sealed_test_status") != "LOCKED_UNOPENED":

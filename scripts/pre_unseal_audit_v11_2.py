@@ -20,6 +20,9 @@ from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
     feature_schema_digest,
     protocol_manifest,
 )
+from research.volatility_forecasting.v11_2_sealed_store import (  # noqa: E402
+    V11_2_SEALED_FORMAT_VERSION,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -120,8 +123,12 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
         raise SystemExit("stored protocol manifest does not match V11.2")
     if development.get("protocol_id") != protocol.protocol_id:
         raise SystemExit("development manifest protocol does not match V11.2")
+    if development.get("sealed_format_version") != V11_2_SEALED_FORMAT_VERSION:
+        raise SystemExit("development manifest format version does not match V11.2")
     if metadata.get("protocol_id") != protocol.protocol_id:
         raise SystemExit("sealed metadata protocol does not match V11.2")
+    if metadata.get("sealed_format_version") != V11_2_SEALED_FORMAT_VERSION:
+        raise SystemExit("sealed metadata format version does not match V11.2")
     if metadata.get("sealed_test_status") != "LOCKED_UNOPENED":
         raise SystemExit("sealed metadata does not prove an unopened holdout")
     metadata_panel = _require_sha256(metadata.get("panel_sha256"), "sealed metadata panel digest")

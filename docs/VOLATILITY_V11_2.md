@@ -57,10 +57,11 @@ circular moving-block bootstrap then resamples contiguous blocks of 20 sessions
 for 10,000 replicates with seed 42. A learned route requires a two-sided 95%
 interval whose upper bound for candidate-minus-HAR CRPS is below zero; the
 one-sided p-value is computed from a null-centered block bootstrap rather than
-from the observed effect distribution. M0
-adequacy comparisons against constant variance and persistence use the same
-session-block method and are corrected across eight comparisons at final
-certification time.
+from the observed effect distribution. M0 adequacy comparisons against constant
+variance and persistence use the same session-block method, are corrected across
+all eight comparisons, and require the HAR prior's central 80% interval coverage
+to remain in `[0.65, 0.95]`. The development report records these intervals before
+any route is frozen, and certification recomputes them on the sealed holdout.
 
 All seed artifacts retain unrounded metrics, prediction and state digests,
 fold ranges, runtime information, and stop reasons. Human-readable values may
@@ -73,7 +74,9 @@ AES-256-GCM encrypted test payload. Every partition carries the stable
 `security_id` beside its origin date, and the manifests bind the ordered
 security/session identity digest. Certification therefore verifies that the
 holdout rows still belong to the audited PIT64 universe rather than trusting
-row counts alone. The key is generated outside the repository and never passed
+row counts alone. Machine-readable reports call these records
+`stock_origin_observations` and separately report `unique_sessions`; a row is
+not a market session. The key is generated outside the repository and never passed
 to the development command. A future certification command writes its one-shot
 open marker before decrypting, evaluates only the frozen bundle, writes an
 immutable receipt, and removes temporary plaintext.

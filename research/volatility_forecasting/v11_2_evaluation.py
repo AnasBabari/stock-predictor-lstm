@@ -234,12 +234,35 @@ def evaluate_m0_adequacy(
     har_crps_by_horizon: dict[int, float],
     constant_crps_by_horizon: dict[int, float],
     persistence_crps_by_horizon: dict[int, float],
+    har_coverage_by_horizon: dict[int, float] | None = None,
+    minimum_coverage_80: float = V11_2_MIN_COVERAGE_80,
+    maximum_coverage_80: float = V11_2_MAX_COVERAGE_80,
     block_sessions: int = 20,
     n_replicates: int = 10_000,
     seed: int = 42,
 ) -> dict[str, list[HorizonGate]]:
-    """Pre-register the two four-horizon M0 adequacy comparisons."""
+    """Pre-register the two four-horizon M0 adequacy comparisons.
+
+    When ``har_coverage_by_horizon`` is supplied, the HAR prior must also
+    keep its central 80% interval inside the preregistered calibration band.
+    The argument is optional for backwards-compatible diagnostic callers, but
+    certification and the development runner always provide it.
+    """
     horizon_list = [int(value) for value in horizons]
+    if not horizon_list or len(set(horizon_list)) != len(horizon_list):
+        raise ValueError("horizons must be a non-empty unique sequence")
+    if not 0.0 < minimum_coverage_80 < maximum_coverage_80 < 1.0:
+        raise ValueError("coverage bounds must satisfy 0 < minimum < maximum < 1")
+    if har_coverage_by_horizon is not None:
+        missing = [horizon for horizon in horizon_list if horizon not in har_coverage_by_horizon]
+        if missing:
+            raise ValueError(f"HAR coverage is missing horizons: {missing}")
+        if any(
+            not np.isfinite(float(har_coverage_by_horizon[horizon]))
+            or not 0.0 <= float(har_coverage_by_horizon[horizon]) <= 1.0
+            for horizon in horizon_list
+        ):
+            raise ValueError("HAR coverage values must be finite and in [0, 1]")
     date_values = list(dates)
     comparisons = [
         ("ZERO_RETURN_CONST_VAR", constant_losses_by_horizon, constant_crps_by_horizon),
@@ -266,6 +289,20 @@ def evaluate_m0_adequacy(
         for horizon_index, horizon in enumerate(horizon_list):
             interval = intervals[offset + horizon_index]
             adjusted_p = adjusted[offset + horizon_index]
+            har_coverage = (
+                float(har_coverage_by_horizon[horizon])
+                if har_coverage_by_horizon is not None
+                else None
+            )
+            coverage_ok = (
+                har_coverage is None or minimum_coverage_80 <= har_coverage <= maximum_coverage_80
+            )
+            passed = (
+                har_crps_by_horizon[horizon] < crps[horizon]
+                and interval.ci_upper_95 < 0.0
+                and adjusted_p < 0.05
+                and coverage_ok
+            )
             gates.append(
                 HorizonGate(
                     horizon=horizon,
@@ -275,18 +312,13 @@ def evaluate_m0_adequacy(
                     mean_crps_comparator=float(crps[horizon]),
                     interval=interval,
                     holm_p_value=float(adjusted_p),
-                    passed=(
-                        har_crps_by_horizon[horizon] < crps[horizon]
-                        and interval.ci_upper_95 < 0.0
-                        and adjusted_p < 0.05
+                    passed=passed,
+                    reason=(
+                        "passed"
+                        if passed
+                        else "HAR did not pass the corrected adequacy or coverage gate"
                     ),
-                    reason="passed"
-                    if (
-                        har_crps_by_horizon[horizon] < crps[horizon]
-                        and interval.ci_upper_95 < 0.0
-                        and adjusted_p < 0.05
-                    )
-                    else "HAR did not pass the corrected adequacy gate",
+                    coverage_candidate_80=har_coverage,
                 )
             )
         output[

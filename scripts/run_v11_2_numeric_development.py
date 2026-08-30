@@ -31,6 +31,7 @@ from research.volatility_forecasting.global_multimodal_trainer_v11 import (  # n
     EconometricHARBaseline,
 )
 from research.volatility_forecasting.model import RobustSequenceScaler  # noqa: E402
+from research.volatility_forecasting.v11_2_evaluation import evaluate_m0_adequacy  # noqa: E402
 from research.volatility_forecasting.v11_2_evidence import (  # noqa: E402
     seed_evidence_from_forecast,
     write_development_report,
@@ -412,6 +413,40 @@ def main() -> int:
             "purge_sessions": V11_2_MAX_HORIZON,
             "embargo_sessions": V11_2_EMBARGO_SESSIONS,
         }
+
+    # Record uncertainty and calibration evidence for the HAR prior before
+    # route selection.  These comparisons use only the development validation
+    # partition and are corrected jointly across both comparator families and
+    # all four horizons (eight decisions).
+    m0_adequacy = evaluate_m0_adequacy(
+        dates=list(development.validation_dates),
+        horizons=protocol.horizons,
+        har_losses_by_horizon={h: har_forecasts_by_horizon[h].crps for h in protocol.horizons},
+        constant_losses_by_horizon={
+            h: constant_forecasts_by_horizon[h].crps for h in protocol.horizons
+        },
+        persistence_losses_by_horizon={
+            h: persistence_forecasts_by_horizon[h].crps for h in protocol.horizons
+        },
+        har_crps_by_horizon={
+            h: float(np.mean(har_forecasts_by_horizon[h].crps)) for h in protocol.horizons
+        },
+        constant_crps_by_horizon={
+            h: float(np.mean(constant_forecasts_by_horizon[h].crps)) for h in protocol.horizons
+        },
+        persistence_crps_by_horizon={
+            h: float(np.mean(persistence_forecasts_by_horizon[h].crps)) for h in protocol.horizons
+        },
+        har_coverage_by_horizon={
+            h: har_forecasts_by_horizon[h].coverage_80 for h in protocol.horizons
+        },
+        block_sessions=protocol.bootstrap_block_sessions,
+        n_replicates=protocol.bootstrap_replicates,
+        seed=protocol.bootstrap_seed,
+    )
+    all_comparisons["m0_adequacy"] = {
+        name: [gate.to_dict() for gate in gates] for name, gates in m0_adequacy.items()
+    }
 
     # Candidate ranking is horizon-specific, but the inferential gate is
     # family-wise across all four horizons.  Do this once before any route or

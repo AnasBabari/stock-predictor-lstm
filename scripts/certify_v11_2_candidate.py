@@ -441,6 +441,7 @@ def certify(
         persistence_crps_by_horizon={
             h: float(np.mean(f.crps)) for h, f in persistence_forecasts.items()
         },
+        har_coverage_by_horizon={h: f.coverage_80 for h, f in har_forecasts.items()},
         block_sessions=protocol.bootstrap_block_sessions,
         n_replicates=protocol.bootstrap_replicates,
         seed=protocol.bootstrap_seed,
@@ -518,7 +519,7 @@ def certify(
         "metric_source": "sealed_holdout_once",
         "sealed_test_status": "OPENED_ONCE",
         "status": status,
-        "test_rows": len(payload.dates),
+        "test_stock_origin_observations": len(payload.dates),
         "test_unique_sessions": len(set(payload.dates)),
         "test_sessions": [min(payload.dates), max(payload.dates)],
         "routes": route_results,
