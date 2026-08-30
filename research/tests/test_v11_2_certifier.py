@@ -30,16 +30,26 @@ def _make_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     ]
     security_ids = [f"SECURITY-{index % 64:03d}" for index in range(len(dates))]
     rng = np.random.default_rng(42)
+    session_index = np.repeat(np.arange(500), 2)
+    # Use a deliberately strong, observed volatility regime so the fixture
+    # tests the adequacy gate rather than relying on a near-tie against the
+    # constant-variance comparator.
+    regime = np.where((session_index // 10) % 2 == 0, 0.0001, 0.04)
     features = np.zeros(
         (len(dates), protocol.window_size, len(protocol.feature_names)), dtype=np.float32
     )
     features[:, :, 0] = 0.01
-    features[:, :, 13] = 0.05
-    features[:, :, 15] = 0.06
-    features[:, :, 16] = 0.07
-    features += rng.normal(0.0, 1e-4, size=features.shape).astype(np.float32)
-    returns = np.zeros((len(dates), len(protocol.horizons)), dtype=np.float32)
-    rv = np.full_like(returns, 0.01)
+    features[:, :, 13] = np.sqrt(regime * 0.80)[:, None]
+    features[:, :, 15] = np.sqrt(regime * 0.95)[:, None]
+    features[:, :, 16] = np.sqrt(regime)[:, None]
+    features += rng.normal(0.0, 1e-6, size=features.shape).astype(np.float32)
+    rv = np.column_stack([regime * horizon for horizon in protocol.horizons]).astype(np.float32)
+    returns = np.column_stack(
+        [
+            rng.standard_t(5, len(dates)) * np.sqrt(rv[:, column] * (5.0 - 2.0) / 5.0)
+            for column in range(len(protocol.horizons))
+        ]
+    ).astype(np.float32)
     split = create_v112_split(dates, security_ids)
     dataset = tmp_path / "dataset"
     key_path = tmp_path / "private" / "v11_2.key"
@@ -152,6 +162,8 @@ def test_certifier_scores_frozen_baseline_routes_once(tmp_path: Path) -> None:
         repository_root=tmp_path / "repository",
     )
     assert report["status"] == "passed"
+    assert report["m0_adequacy_passed"] is True
+    assert all(gate["passed"] for gates in report["m0_adequacy"].values() for gate in gates)
     assert report["metric_source"] == "sealed_holdout_once"
     assert report["sealed_test_status"] == "OPENED_ONCE"
     assert len(report["routes"]) == 4

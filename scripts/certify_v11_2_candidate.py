@@ -510,7 +510,8 @@ def certify(
             }
         )
 
-    status = "passed" if all_learned_passed else "failed"
+    m0_adequacy_passed = all(gate.passed for gates in m0_adequacy.values() for gate in gates)
+    status = "passed" if all_learned_passed and m0_adequacy_passed else "failed"
     report_body: dict[str, Any] = {
         "protocol_id": protocol.protocol_id,
         "protocol_sha256": protocol.digest(),
@@ -519,6 +520,7 @@ def certify(
         "metric_source": "sealed_holdout_once",
         "sealed_test_status": "OPENED_ONCE",
         "status": status,
+        "m0_adequacy_passed": m0_adequacy_passed,
         "test_stock_origin_observations": len(payload.dates),
         "test_unique_sessions": len(set(payload.dates)),
         "test_sessions": [min(payload.dates), max(payload.dates)],
