@@ -177,13 +177,22 @@ market_circuit_breaker = MarketCircuitBreaker()
 def _download_ohlcv(ticker: str) -> pd.DataFrame:
     market_circuit_breaker.check_can_execute(ticker)
     try:
-        data = yf.download(
-            ticker,
-            period=f"{HISTORICAL_YEARS}y",
-            progress=False,
-            auto_adjust=True,
-            timeout=30,
-        )
+        data = None
+        try:
+            data = yf.download(
+                ticker,
+                period=f"{HISTORICAL_YEARS}y",
+                progress=False,
+                auto_adjust=True,
+                timeout=15,
+            )
+        except Exception:
+            pass
+        if data is None or not isinstance(data, pd.DataFrame) or data.empty:
+            try:
+                data = yf.Ticker(ticker).history(period=f"{HISTORICAL_YEARS}y", auto_adjust=True)
+            except Exception:
+                pass
         if not isinstance(data, pd.DataFrame) or data.empty:
             raise UnknownTickerError(f"No market data is available for {ticker}.")
         if isinstance(data.columns, pd.MultiIndex):
