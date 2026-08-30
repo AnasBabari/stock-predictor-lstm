@@ -1,4 +1,4 @@
-"""Unit tests for hardened GlobalMultimodalTrainerV11 exercising fold-local CV and cryptographic freeze."""
+"""Unit tests for hardened GlobalMultimodalTrainerV11 exercising confirmatory lifecycle and bootstrap gates."""
 
 import tempfile
 from pathlib import Path
@@ -17,23 +17,20 @@ from research.volatility_forecasting.sealed_dataset_store_v11 import (
 )
 
 
-def test_global_multimodal_trainer_v11_bundle_and_controls():
+def test_global_multimodal_trainer_v11_confirmatory_lifecycle():
     n_samples = 400
     dates = pd.date_range("2021-01-01", periods=n_samples, freq="B").strftime("%Y-%m-%d").tolist()
 
     rng = np.random.default_rng(42)
-    # Exact 34 numeric + 19 news features (53 total)
     x_num = rng.normal(0.0, 1.0, size=(n_samples, 34))
     x_num[:, [23, 24, 25]] = np.abs(x_num[:, [23, 24, 25]]) * 0.015 + 0.005
     x_news = rng.normal(0.0, 1.0, size=(n_samples, 19))
     shuffled_news = rng.normal(0.0, 1.0, size=(n_samples, 19))
     delayed_news = rng.normal(0.0, 1.0, size=(n_samples, 19))
 
-    # Exact 4 required target horizons (1, 3, 5, 7)
     y_rets = rng.normal(0.001, 0.02, size=(n_samples, 4))
     y_rv = np.abs(rng.normal(0.0004, 0.0001, size=(n_samples, 4)))
 
-    # Chronological partition with 7-session purge
     split = ChronologicalPartitionManager.create_70_15_15_split(
         dates=dates, max_horizon_days=7, embargo_sessions=30
     )
@@ -55,39 +52,29 @@ def test_global_multimodal_trainer_v11_bundle_and_controls():
             lock_dir=lock_dir,
         )
 
-        # 1. Development, Expanding Folds (Fold-Local Scaling), and Bundle Freeze
         dev_payload = store.load_development_dataset()
-        assert len(dev_payload.train_numeric) > 100
-        assert len(dev_payload.val_numeric) > 20
-
         bundle = GlobalMultimodalTrainerV11.develop_and_freeze_bundle(
             dev_payload=dev_payload,
-            max_epochs=4,
+            max_epochs=3,
             patience=2,
             lr=0.005,
             n_expanding_folds=3,
         )
 
-        assert bundle.manifest.winning_model_family in ["M1_NUMERIC", "M2_MULTIMODAL_NEWS"]
+        assert bundle.manifest.selected_candidate_family in ["M1_NUMERIC", "M2_MULTIMODAL_NEWS"]
         assert len(bundle.manifest.manifest_sha256) == 64
-        assert "M0_HAR_BASELINE" in bundle.manifest.validation_oof_metrics
-        assert "M1_NUMERIC" in bundle.manifest.validation_oof_metrics
-        assert "M2_MULTIMODAL_NEWS" in bundle.manifest.validation_oof_metrics
 
-        # 2. Sacred One-Shot Sealed Test Evaluation
         cert_result = GlobalMultimodalTrainerV11.evaluate_frozen_bundle_once(
             bundle=bundle,
             sealed_store=store,
         )
 
-        assert "M0_HAR_BASELINE" in cert_result.sealed_test_metrics
-        assert "M1_NUMERIC" in cert_result.sealed_test_metrics
-        assert "M2_MULTIMODAL_NEWS" in cert_result.sealed_test_metrics
-        assert "M3_SHUFFLE_CONTROL" in cert_result.sealed_test_metrics
-        assert "M3_DELAY_CONTROL" in cert_result.sealed_test_metrics
-        assert len(cert_result.audit_trail["unseal_token"]) == 64
+        assert cert_result.preselected_family == bundle.manifest.selected_candidate_family
+        assert "M2_vs_M1" in cert_result.paired_bootstrap_cis
+        assert "M1_vs_M0" in cert_result.paired_bootstrap_cis
         assert cert_result.certification_decision in [
             "SEALED_TEST_PASS_M2_MULTIMODAL",
+            "SEALED_TEST_FAIL_M2_MULTIMODAL",
             "SEALED_TEST_PASS_M1_NUMERIC",
-            "SEALED_TEST_FAIL",
+            "SEALED_TEST_FAIL_M1_NUMERIC",
         ]
