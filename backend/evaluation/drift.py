@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from evaluation.evidence import moving_block_bootstrap_interval
+from .evidence import moving_block_bootstrap_interval
 
 _EPSILON = 1e-4
 
