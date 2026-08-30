@@ -35,7 +35,7 @@ _SECTORS = (
 )
 
 
-def _universe() -> V112UniverseManifest:
+def _universe(*, certification_eligible: bool = True) -> V112UniverseManifest:
     securities = []
     for index in range(64):
         ticker = f"T{index:03d}"
@@ -59,6 +59,7 @@ def _universe() -> V112UniverseManifest:
         securities,
         protocol_id=V11_2_PROTOCOL_ID,
         membership_sources=["test-source"],
+        certification_eligible=certification_eligible,
     )
 
 
@@ -97,6 +98,7 @@ def test_valid_panel_and_external_key_pass_preflight(tmp_path: Path) -> None:
         "protocol_id": protocol.protocol_id,
         "schema_sha256": feature_schema_digest(protocol),
         "universe_manifest_sha256": universe.manifest_sha256,
+        "certification_eligible": True,
         "stock_origin_observations": 64,
         "unique_sessions": 1,
         "snapshot_manifest_sha256": "b" * 64,
@@ -115,6 +117,23 @@ def test_valid_panel_and_external_key_pass_preflight(tmp_path: Path) -> None:
     )
     assert report["ready"] is True
     assert report["panel_summary"]["security_count"] == 64
+
+
+def test_development_only_universe_cannot_pass_certification_preflight(tmp_path: Path) -> None:
+    universe = _universe(certification_eligible=False)
+    universe_path = tmp_path / "universe.json"
+    save_universe_manifest(universe, universe_path)
+    report = check_inputs(
+        panel_path=tmp_path / "missing.npz",
+        universe_path=universe_path,
+        key_path=tmp_path / "private" / "missing.key",
+        repository_root=tmp_path / "repository",
+    )
+    eligibility = next(
+        item for item in report["checks"] if item["name"] == "universe_certification_eligible"
+    )
+    assert eligibility["passed"] is False
+    assert report["ready"] is False
 
 
 def test_secondary_ndx_cache_is_rejected(tmp_path: Path) -> None:

@@ -131,6 +131,7 @@ class V112UniverseManifest:
     securities: tuple[PITSecurity, ...]
     selection_method: str
     membership_sources: tuple[str, ...]
+    certification_eligible: bool
     manifest_sha256: str
 
     @property
@@ -144,6 +145,7 @@ class V112UniverseManifest:
             "universe_size": self.universe_size,
             "selection_method": self.selection_method,
             "membership_sources": list(self.membership_sources),
+            "certification_eligible": self.certification_eligible,
             "securities": [security.to_dict() for security in self.securities],
             "manifest_sha256": self.manifest_sha256,
         }
@@ -166,6 +168,7 @@ def build_universe_manifest(
     universe_version: str = "v11.2-pit64-r1",
     membership_sources: Iterable[str] = (),
     selection_method: str = "curated_stratified_pit64",
+    certification_eligible: bool = True,
 ) -> V112UniverseManifest:
     """Validate and hash the exact 64-security curated manifest."""
     ordered = sorted(list(securities), key=lambda item: item.security_id)
@@ -187,6 +190,7 @@ def build_universe_manifest(
         "universe_version": universe_version,
         "selection_method": selection_method,
         "membership_sources": list(source_list),
+        "certification_eligible": certification_eligible,
         "securities": [item.to_dict() for item in ordered],
     }
     return V112UniverseManifest(
@@ -195,6 +199,7 @@ def build_universe_manifest(
         securities=tuple(ordered),
         selection_method=selection_method,
         membership_sources=source_list,
+        certification_eligible=certification_eligible,
         manifest_sha256=canonical_json_digest(payload),
     )
 
@@ -251,12 +256,16 @@ def load_universe_manifest(path: Path) -> V112UniverseManifest:
             )
             for item in payload["securities"]
         ]
+        certification_eligible = payload["certification_eligible"]
+        if not isinstance(certification_eligible, bool):
+            raise ValueError("certification_eligible must be a JSON boolean")
         manifest = build_universe_manifest(
             securities,
             protocol_id=str(payload["protocol_id"]),
             universe_version=str(payload["universe_version"]),
             membership_sources=tuple(str(value) for value in payload["membership_sources"]),
             selection_method=str(payload["selection_method"]),
+            certification_eligible=certification_eligible,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("universe manifest is malformed") from exc

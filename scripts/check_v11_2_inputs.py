@@ -153,6 +153,11 @@ def check_inputs(
             universe = load_universe_manifest(universe_file)
             check("universe_manifest", universe.protocol_id == V11_2_PROTOCOL_ID)
             check("universe_size", universe.universe_size == V112Protocol().universe_size)
+            check(
+                "universe_certification_eligible",
+                universe.certification_eligible,
+                f"certification_eligible={universe.certification_eligible}",
+            )
         except (OSError, ValueError, TypeError) as exc:
             check("universe_manifest", False, str(exc))
     else:
@@ -178,6 +183,11 @@ def check_inputs(
             check(
                 "panel_sidecar_universe",
                 payload.get("universe_manifest_sha256") == universe.manifest_sha256,
+            )
+            check(
+                "panel_sidecar_certification_eligible",
+                payload.get("certification_eligible") is True,
+                f"certification_eligible={payload.get('certification_eligible')!r}",
             )
             sidecar_rows = payload.get("stock_origin_observations")
             sidecar_sessions = payload.get("unique_sessions")

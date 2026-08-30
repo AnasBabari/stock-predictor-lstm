@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from research.volatility_forecasting.model import RobustSequenceScaler
 from research.volatility_forecasting.v11_2_freezer import V112Route, freeze_routing_bundle
@@ -21,7 +22,9 @@ from research.volatility_forecasting.v11_2_split import create_v112_split
 from scripts.certify_v11_2_candidate import certify
 
 
-def _make_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
+def _make_inputs(
+    tmp_path: Path, *, certification_eligible: bool = True
+) -> tuple[Path, Path, Path]:
     protocol = V112Protocol()
     dates = [
         (dt.date(2020, 1, 1) + dt.timedelta(days=index)).isoformat()
@@ -74,6 +77,7 @@ def _make_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
         "universe_version": "synthetic-v11.2",
         "selection_method": "synthetic_fixture",
         "membership_sources": ["synthetic_fixture"],
+        "certification_eligible": certification_eligible,
         "securities": [{"security_id": f"SECURITY-{index:03d}"} for index in range(64)],
     }
     universe_payload = {
@@ -167,3 +171,18 @@ def test_certifier_scores_frozen_baseline_routes_once(tmp_path: Path) -> None:
     assert report["metric_source"] == "sealed_holdout_once"
     assert report["sealed_test_status"] == "OPENED_ONCE"
     assert len(report["routes"]) == 4
+
+
+def test_certifier_rejects_development_only_universe_before_opening_holdout(
+    tmp_path: Path,
+) -> None:
+    dataset, results, key_path = _make_inputs(tmp_path, certification_eligible=False)
+    with pytest.raises(SystemExit, match="certification-eligible universe"):
+        certify(
+            dataset_dir=dataset,
+            results_dir=results,
+            key_path=key_path,
+            output_dir=tmp_path / "certification",
+            repository_root=tmp_path / "repository",
+        )
+    assert not (dataset / "sealed" / "SEALED_TEST_OPENED.json").exists()

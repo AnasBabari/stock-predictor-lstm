@@ -73,6 +73,7 @@ def main() -> int:
             "universe_version",
             "selection_method",
             "membership_sources",
+            "certification_eligible",
             "securities",
         )
         if key in universe_payload

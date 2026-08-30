@@ -159,12 +159,17 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
             "universe_version",
             "selection_method",
             "membership_sources",
+            "certification_eligible",
             "securities",
         )
         if key in universe
     }
     if canonical_json_digest(universe_body) != universe_digest:
         raise SystemExit("universe manifest digest does not match its canonical contents")
+    if universe.get("certification_eligible") is not True:
+        raise SystemExit(
+            "V11.2 certification requires an explicitly certification-eligible universe"
+        )
     if (
         universe.get("protocol_id") != protocol.protocol_id
         or universe.get("universe_size") != protocol.universe_size

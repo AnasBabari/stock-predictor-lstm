@@ -54,6 +54,7 @@ def test_manifest_requires_exact_eight_by_eight_strata() -> None:
         membership_sources=["test-source"],
     )
     assert manifest.universe_size == 64
+    assert manifest.certification_eligible is True
     assert len(manifest.manifest_sha256) == 64
     assert PITUniverseResolver(manifest).resolve("t000", "2025-01-01") is not None
 
@@ -85,3 +86,17 @@ def test_manifest_round_trip_rehashes_canonical_payload(tmp_path: Path) -> None:
     path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     with pytest.raises(ValueError, match="canonical|digest"):
         load_universe_manifest(path)
+
+
+def test_manifest_round_trip_preserves_development_only_eligibility(tmp_path: Path) -> None:
+    securities = [_security(i, SECTORS[i // 8]) for i in range(64)]
+    manifest = build_universe_manifest(
+        securities,
+        protocol_id="stocklstm-volatility-v11.2-numeric-pit64",
+        membership_sources=["development-secondary-source"],
+        selection_method="development_secondary_source_reviewed_pit64",
+        certification_eligible=False,
+    )
+    path = tmp_path / "development-universe.json"
+    path.write_text(json.dumps(manifest.to_dict(), sort_keys=True), encoding="utf-8")
+    assert load_universe_manifest(path).certification_eligible is False

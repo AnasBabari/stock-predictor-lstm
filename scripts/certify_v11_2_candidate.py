@@ -350,6 +350,10 @@ def certify(
     if development.protocol_id != protocol.protocol_id:
         raise SystemExit("development dataset protocol does not match V11.2")
     universe = _json_object(dataset_dir / "manifests" / "universe.json", "universe manifest")
+    if universe.get("certification_eligible") is not True:
+        raise SystemExit(
+            "V11.2 certification requires an explicitly certification-eligible universe"
+        )
     universe_entries = universe.get("securities")
     if not isinstance(universe_entries, list):
         raise SystemExit("universe manifest security entries are malformed")
