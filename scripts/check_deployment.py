@@ -45,6 +45,11 @@ EXPECTED_FEATURES = [
 
 EXPECTED_TARGET_MODE = "cumulative_log_return_v1"
 EXPECTED_VOLATILITY_HORIZONS = (1, 3, 5, 7, 14, 30)
+EXPECTED_VOLATILITY_METRIC_SOURCES = {
+    "locked_purged_walk_forward",
+    "locked_historical_temporal_test_plus_asset_transfer",
+    "sealed_holdout_once",
+}
 
 
 @dataclass
@@ -237,7 +242,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "volatility_evidence",
                 evidence.get("certified") is True
                 and (evidence.get("certified_heads") or {}).get("volatility") is True
-                and evidence.get("metric_source") == "locked_purged_walk_forward",
+                and evidence.get("metric_source") in EXPECTED_VOLATILITY_METRIC_SOURCES,
                 "volatility response did not disclose locked certified evidence",
             )
             passed = all(item.passed for item in results)

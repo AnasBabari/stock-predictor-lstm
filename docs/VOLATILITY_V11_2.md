@@ -176,3 +176,35 @@ The exit status is zero only when every frozen learned route passes its
 holdout CRPS/uncertainty/QLIKE/coverage gate (explicit baseline routes are
 reported as baselines). The report's metric source is
 `sealed_holdout_once`; it must not be relabelled as a walk-forward result.
+
+## Production release conversion
+
+V11.2 evaluates four horizons, whereas the existing CPU serving contract has
+six output slots (`1, 3, 5, 7, 14, 30`). A V11.2 release may be assembled only
+after the one-shot certification report has status `passed`. The conversion
+command verifies the routing digest, certification report, route checksums,
+train-only scaler, and every selected gate before it exports or signs anything:
+
+```powershell
+python scripts/assemble_v11_2_release.py `
+  --results-dir artifacts/v11_2_numeric/development_results `
+  --certification-dir artifacts/v11_2_numeric/certification `
+  --output-dir artifacts/releases/volatility-v11-2 `
+  --private-key-path "$env:USERPROFILE\.stocklstm\secrets\volatility-release.key" `
+  --public-key-path backend/release_keys/volatility-v1.public.pem
+```
+
+The adapter composes the canonical seed-42 residual-LSTM route for each
+selected V11.2 horizon. Explicit HAR/constant/persistence routes remain
+labelled baselines. Ridge and HistGB routes are valid research diagnostics but
+are rejected by the release adapter because silently changing their
+implementation would invalidate the frozen evidence. Horizons 14 and 30 are
+baseline passthroughs in the six-slot ONNX graph and are deliberately omitted
+from `certified_horizons`; the API abstains for them until a protocol that
+evaluates those horizons is certified.
+
+ONNX Runtime CPU parity is mandatory before signing. The resulting metadata
+uses `metric_source=sealed_holdout_once` and
+`certification_scope=sealed_holdout_once`, preserving the distinction from
+walk-forward evidence. No private key, release binary, or opened holdout is
+committed to Git.

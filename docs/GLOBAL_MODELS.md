@@ -52,6 +52,16 @@ When that reserve matures, `scripts/certify_prospective_volatility_candidate.py`
 
 backend/release/bundle.py signs a directory containing ONNX members and manifest.json. The manifest binds runtime schema, feature order, window, horizon list, model id, member seeds/files, certified horizon decisions, certification metrics, and SHA-256 checksums. The serving runtime verifies Ed25519, checksums, paths, input/output names, feature schema, model size, and CPU inference before caching the runtime.
 
+The V11.2 numeric PIT64 cycle has a dedicated release seam in
+`scripts/assemble_v11_2_release.py`. It consumes only a `status=passed`
+one-shot V11.2 certification and composes its 1/3/5/7 per-horizon routes into
+the six-slot serving graph. The 14/30 slots are explicit, uncertified baseline
+passthroughs, so `/api/v2/forecast` abstains for those horizons. The adapter
+rejects Ridge/HistGB routes rather than exporting a different implementation
+than the one evaluated. Its signed metadata reports
+`metric_source=sealed_holdout_once` and `certification_scope=sealed_holdout_once`;
+it never relabels the result as walk-forward evidence.
+
 No model binary or private key belongs in Git. Release storage is immutable; promotion updates a pointer only after all checks pass. Response-cache keys include the signed model id so a new release cannot reuse a prior generation's forecast.
 
 ## News methodology

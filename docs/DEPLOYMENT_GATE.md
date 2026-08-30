@@ -83,7 +83,7 @@ If Playwright is not installed, local browser E2E is skipped. CI runs it only wh
 1. `/health` reports the expected commit and environment.
 2. `/ready` is 200 only when market data and the required signed release are available.
 3. `/models` reports `global_volatility.status=ready`, the model id, and certified horizons; `browser_training.status=disabled`.
-4. `/api/v2/forecast?ticker=MSFT&horizon=7` returns seven strictly increasing dates, p05/p50/p95 arrays, and `locked_purged_walk_forward` evidence.
+4. `/api/v2/forecast?ticker=MSFT&horizon=7` returns seven strictly increasing dates, p05/p50/p95 arrays, and an allowed certified evidence source (`locked_purged_walk_forward`, `locked_historical_temporal_test_plus_asset_transfer`, or `sealed_holdout_once`).
 5. A failed horizon or tampered bundle returns structured 503 abstention; no baseline is relabelled as learned.
 6. Vercel renders the volatility-only labels and retains the response evidence in exports.
 

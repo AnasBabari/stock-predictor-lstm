@@ -52,7 +52,7 @@ price only, OHLCV, OHLCV plus technical values, OHLCV plus market context,
 OHLCV plus technical and market context, and all production market features.
 The news set appears only after timestamp-safe news columns have been merged.
 
-The benchmark CLI evaluates deterministic baselines and the opt-in CUDA global-volatility candidates. Production evidence comes only from the global volatility protocol and is labelled `locked_purged_walk_forward`; legacy browser metrics are historical research evidence and are not a production claim.
+The benchmark CLI evaluates deterministic baselines and the opt-in CUDA global-volatility candidates. Production evidence comes only from a frozen global-volatility protocol and is labelled with its actual source: `locked_purged_walk_forward`, `locked_historical_temporal_test_plus_asset_transfer`, or V11.2's `sealed_holdout_once`. Legacy browser metrics are historical research evidence and are not a production claim.
 
 ## Promotion gate
 
