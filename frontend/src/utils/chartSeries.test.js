@@ -95,6 +95,33 @@ describe('buildPriceSeries — core contract', () => {
     ]);
     expect(labels.join(' ')).not.toMatch(/unchanged|persistence|model forecast/i);
   });
+
+  it('draws the learned median path when the return-distribution head is certified', () => {
+    const distribution = {
+      ...samplePayload,
+      predicted_prices: [103, 106],
+      metadata: { engine: { certified_head: 'return_distribution' } },
+      volatility_cone: { p05: [95, 94], p95: [109, 112] },
+      historical_error_band: {
+        lower_prices: [95, 94],
+        upper_prices: [109, 112],
+      },
+      validation: { promoted: true },
+      forecast_status: { state: 'certified_return_distribution' },
+    };
+    const series = buildPriceSeries(distribution, 21, true, true);
+    const labels = series.datasets.map((dataset) => dataset.label);
+    expect(labels).toEqual([
+      'Historical Price',
+      'Certified median path',
+      'Certified return distribution (upper)',
+      'Certified return distribution (lower)',
+      'Persistence Benchmark',
+    ]);
+    expect(series.volatilityOnly).toBe(false);
+    expect(series.promoted).toBe(true);
+    expect(series.datasets[1].data.at(-1)).toBe(106);
+  });
 });
 
 describe('buildPriceSeries — guards', () => {

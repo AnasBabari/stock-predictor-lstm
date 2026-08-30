@@ -54,6 +54,20 @@ describe('forecast horizon request contract', () => {
     expect(assertForecastIdentity(response, 'MSFT', 3, FORECAST_TYPES.PRICE)).toBe(response);
   });
 
+  it('accepts a certified return-distribution median path', () => {
+    const response = {
+      ticker: 'MSFT',
+      forecast_days: 3,
+      future_dates: ['2026-08-25', '2026-08-26', '2026-08-27'],
+      predicted_prices: [101, 102, 103],
+      volatility_cone: Object.fromEntries(
+        ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'].map((key) => [key, [99, 100, 103]]),
+      ),
+      metadata: { engine: { certified_head: 'return_distribution' } },
+    };
+    expect(assertForecastIdentity(response, 'MSFT', 3, FORECAST_TYPES.PRICE)).toBe(response);
+  });
+
   it('explains strict abstention instead of mislabelling it as capacity pressure', () => {
     const error = new VolatilityApiError('no certified release', {
       code: 'abstain_no_certified_model',

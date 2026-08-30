@@ -13,6 +13,12 @@ const BADGE_CONFIG = {
     title: 'The conditional-volatility head passed locked certification; price direction is not certified.',
     icon: '✓',
   },
+  certified_return_distribution: {
+    label: 'DISTRIBUTION CERTIFIED',
+    className: 'badge--promoted',
+    title: 'The terminal Student-t return distribution passed locked CRPS, QLIKE, and coverage certification; direction is not certified.',
+    icon: '✓',
+  },
   candidate: {
     label: 'CANDIDATE',
     className: 'badge--candidate',

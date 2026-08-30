@@ -13,6 +13,8 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
   const engine = meta.engine || {};
   const isTrend = forecastType === 'trend';
   const isVolatility = engine.certified_head === 'volatility' || stockData.volatility_cone != null;
+  const hasReturnDistribution = engine.certified_head === 'return_distribution'
+    && Array.isArray(stockData.predicted_prices);
   const perHorizon = Array.isArray(m.per_horizon) ? m.per_horizon : [];
   const selectedHorizon = Number(val.selected_horizon || m.horizon || stockData.forecast_days || 7);
   const bestValidatedHorizon = val.best_validated_horizon;
@@ -78,15 +80,37 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
                   <ValidationBadge state={val.state || (val.promoted ? 'promoted' : 'experimental')} />
                 </div>
                 <span className="card-subtext">
-                  {isVolatility
-                    ? 'Conditional volatility cleared the locked evidence gate; no learned return-location or direction claim is shown.'
-                    : val.promoted
-                      ? 'Validated against persistence on held-out data.'
-                      : 'Model forecast shown; holdout validation gates were not met.'}
+                  {hasReturnDistribution
+                    ? 'The terminal Student-t return distribution cleared sealed CRPS, QLIKE, and coverage gates; direction remains uncertified.'
+                    : isVolatility
+                      ? 'Conditional volatility cleared the locked evidence gate; no learned return-location or direction claim is shown.'
+                      : val.promoted
+                        ? 'Validated against persistence on held-out data.'
+                        : 'Model forecast shown; holdout validation gates were not met.'}
                 </span>
               </div>
 
-              {isVolatility ? (
+              {hasReturnDistribution ? (
+                <>
+                  <div className="summary-card">
+                    <span className="card-label">Certified Median Endpoint</span>
+                    <span className="card-value mono text-teal">{formatPrice(forecastPrice)}</span>
+                    <span className="card-subtext">Student-t return-location head</span>
+                  </div>
+                  <div className="summary-card">
+                    <span className="card-label">Expected Return</span>
+                    <span className="card-value mono">{formatPercent(priceChangePct)}</span>
+                    <span className="card-subtext">{selectedHorizon}-day certified location</span>
+                  </div>
+                  <div className="summary-card">
+                    <span className="card-label">90% Forecast Range</span>
+                    <span className="card-value mono text-teal">
+                      {formatPrice(volatilityLow)} – {formatPrice(volatilityHigh)}
+                    </span>
+                    <span className="card-subtext">Certified Student-t uncertainty</span>
+                  </div>
+                </>
+              ) : isVolatility ? (
                 <>
                   <div className="summary-card">
                     <span className="card-label">90% Forecast Range</span>
@@ -151,7 +175,30 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
         {activeTab === 'evaluation' && (
           <div className="tab-pane">
             <div className="kpi-cards-grid">
-              {isVolatility ? (
+              {hasReturnDistribution ? (
+                <>
+                  <div className="kpi-card">
+                    <span className="kpi-label">{m.relative_crps != null ? 'Relative CRPS' : 'CRPS'}</span>
+                    <span className="kpi-value mono">{m.relative_crps != null ? formatMultiplier(m.relative_crps) : formatNumber(m.crps, { decimals: 6 })}</span>
+                    <span className="kpi-note">{m.relative_crps != null ? '< 1.000× beats matched distribution baseline' : 'Student-t proper score on sealed evidence'}</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Relative QLIKE</span>
+                    <span className="kpi-value mono">{formatMultiplier(m.relative_qlike)}</span>
+                    <span className="kpi-note">&lt; 1.000× beats the matched variance baseline</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">80% Coverage</span>
+                    <span className="kpi-value mono">{formatPercent(m.coverage_80 != null ? m.coverage_80 * 100 : null, { includePlus: false })}</span>
+                    <span className="kpi-note">Sealed endpoint distribution</span>
+                  </div>
+                  <div className="kpi-card">
+                    <span className="kpi-label">Direction</span>
+                    <span className="kpi-value mono">Not certified</span>
+                    <span className="kpi-note">No learned price-direction claim</span>
+                  </div>
+                </>
+              ) : isVolatility ? (
                 <>
                   <div className="kpi-card">
                     <span className="kpi-label">Relative QLIKE</span>
@@ -306,7 +353,9 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
               <h4>Holdout Evaluation Protocol</h4>
               <p className="text-sm text-secondary mb-3">
                 {isVolatility
-                  ? 'Volatility evidence is locked to purged expanding walk-forward evaluation with temporal and ticker-transfer holdouts.'
+                  ? meta.metric_source === 'sealed_holdout_once'
+                    ? 'Evidence comes from one physically sealed holdout opened after frozen routing; the final refit is not the metric source.'
+                    : 'Volatility evidence is locked to purged expanding walk-forward evaluation with temporal and ticker-transfer holdouts.'
                   : 'Evaluation was conducted on an untouched chronological holdout partition with strict horizon purging to eliminate lookahead leakage.'}
               </p>
 
@@ -328,7 +377,7 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
                 </div>
                 <div className="metric-summary-row">
                   <span>Evaluated Rows:</span>
-                  <span className="mono">{m.evaluation_rows || '—'} sessions</span>
+                  <span className="mono">{m.evaluation_rows || '—'} observations</span>
                 </div>
                 <div className="metric-summary-row">
                   <span>Dollar RMSE / MAE:</span>

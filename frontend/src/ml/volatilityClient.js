@@ -1,10 +1,10 @@
 /**
  * Client for the signed global-volatility serving contract.
  *
- * The server model certifies conditional volatility, not a directional price
- * level. This adapter deliberately keeps the p50 path at the latest close and
- * labels the uncertainty cone and its metric source so the UI cannot present
- * a zero-return baseline as a learned price claim.
+ * Releases may certify either conditional volatility alone (the legacy
+ * zero-location cone) or a full Student-t return distribution. The latter
+ * includes a learned return location, which is safe to expose as a median
+ * price path only when the signed head-level evidence says it is certified.
  */
 
 export const VOLATILITY_HORIZONS = [1, 3, 5, 7, 14, 30];
@@ -82,11 +82,34 @@ export function validateVolatilityResponse(body, ticker, days) {
   const quantiles = Object.fromEntries(
     QUANTILE_KEYS.map((key) => [key, quantileSeries(body.forecast, key, days)])
   );
-  if (Math.abs(quantiles.p50.at(-1) - currentPrice) > Math.max(currentPrice * 1e-6, 1e-6)) {
-    throw new Error('Volatility response p50 path is not anchored to the unchanged close.');
-  }
   if (body.evidence?.certified !== true || body.evidence?.certified_heads?.volatility !== true) {
     throw new Error('Volatility response is not backed by a certified volatility head.');
+  }
+  const hasReturnDistribution = body.evidence?.certified_heads?.return_distribution === true;
+  if (hasReturnDistribution) {
+    if (body.forecast?.return_distribution_family !== 'student_t') {
+      throw new Error('Certified return distribution must declare the Student-t family.');
+    }
+    const expectedReturn = body.forecast?.expected_cumulative_return;
+    if (
+      expectedReturn == null
+      || typeof expectedReturn === 'boolean'
+      || !Number.isFinite(Number(expectedReturn))
+    ) {
+      throw new Error('Certified return distribution is missing its expected return location.');
+    }
+    if (!finitePositive(body.forecast?.return_distribution_variance, 'return distribution variance')) {
+      throw new Error('Certified return distribution variance is invalid.');
+    }
+    const expectedMedian = currentPrice * Math.exp(Number(expectedReturn));
+    if (
+      !Number.isFinite(expectedMedian)
+      || Math.abs(quantiles.p50.at(-1) - expectedMedian) > Math.max(expectedMedian * 1e-5, 1e-5)
+    ) {
+      throw new Error('Certified return-distribution location does not match the p50 path.');
+    }
+  } else if (Math.abs(quantiles.p50.at(-1) - currentPrice) > Math.max(currentPrice * 1e-6, 1e-6)) {
+    throw new Error('Volatility-only response p50 path is not anchored to the unchanged close.');
   }
   return { ...body, current_price: currentPrice, historical_dates: historicalDates, historical_prices: historicalPrices, quantiles };
 }
@@ -95,6 +118,11 @@ export function mapVolatilityResponse(body, ticker, days) {
   const data = validateVolatilityResponse(body, ticker, days);
   const summary = data.evidence?.horizon_certification?.[String(days)] || {};
   const metricSource = data.evidence?.metric_source || 'locked_purged_walk_forward';
+  const hasReturnDistribution = data.evidence?.certified_heads?.return_distribution === true;
+  const learnedMedian = hasReturnDistribution ? data.quantiles.p50 : null;
+  const summaryMetrics = summary?.metrics && typeof summary.metrics === 'object'
+    ? summary.metrics
+    : {};
   return {
     ticker: data.ticker,
     forecast_days: days,
@@ -104,43 +132,48 @@ export function mapVolatilityResponse(body, ticker, days) {
     historical_dates: data.historical_dates,
     historical_prices: data.historical_prices,
     future_dates: data.forecast.future_dates,
-    // p50 is retained inside the signed distribution contract, but is not a
-    // learned location forecast. Keep it out of the generic price fields so
-    // presentation code cannot accidentally render a flat path as a model
-    // prediction.
-    predicted_prices: null,
-    persistence_forecast: null,
-    learned_prices: null,
+    // A certified Student-t return-distribution location is a learned median
+    // path. Legacy volatility-only releases deliberately expose no point path.
+    predicted_prices: learnedMedian,
+    persistence_forecast: hasReturnDistribution ? Array(days).fill(data.current_price) : null,
+    learned_prices: learnedMedian,
     benchmark: null,
     historical_error_band: {
       lower_prices: data.quantiles.p05,
       upper_prices: data.quantiles.p95,
-      source: 'certified_volatility_cone',
+      source: hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility_cone',
     },
     volatility_cone: data.quantiles,
     forecast_status: {
-      state: 'certified_volatility',
-      decision: 'volatility_cone',
+      state: hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility',
+      decision: hasReturnDistribution ? 'return_distribution' : 'volatility_cone',
       alpha: 1,
-      label: 'Certified conditional-volatility forecast',
+      label: hasReturnDistribution
+        ? 'Certified Student-t return-distribution forecast'
+        : 'Certified conditional-volatility forecast',
     },
     validation: {
-      state: 'certified_volatility',
+      state: hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility',
       promoted: true,
       selected_horizon: days,
       best_validated_horizon: days,
       promoted_horizons: data.evidence?.certified_heads?.volatility ? [days] : [],
-      reasons: ['Conditional volatility is certified; no learned return-location or direction claim is made.'],
+      reasons: [hasReturnDistribution
+        ? 'Terminal Student-t return location and variance cleared the sealed CRPS, QLIKE, and coverage gates; direction remains uncertified.'
+        : 'Conditional volatility is certified; no learned return-location or direction claim is made.'],
     },
     metrics: {
       metric_source: metricSource,
+      crps: summary.crps ?? summary.crps_mean ?? summaryMetrics.crps ?? summaryMetrics.crps_mean ?? null,
+      relative_crps: summary.relative_crps ?? summary.relative_student_t_crps ?? summaryMetrics.relative_crps ?? null,
       relative_qlike: summary.relative_qlike ?? null,
+      qlike: summary.qlike ?? summary.qlike_mean ?? summaryMetrics.qlike ?? summaryMetrics.qlike_mean ?? null,
       ratio_upper_95: summary.ratio_upper_95 ?? null,
       dm_p_value: summary.dm_p_value ?? null,
       coverage_80: summary.coverage_80 ?? null,
       coverage_95: summary.coverage_95 ?? null,
       evaluation_rows: summary.evaluation_rows ?? null,
-      model_head: 'volatility',
+      model_head: hasReturnDistribution ? 'return_distribution' : 'volatility',
     },
     metadata: {
       schema_version: 'deployable_v5',
@@ -155,8 +188,9 @@ export function mapVolatilityResponse(body, ticker, days) {
         role: 'server_artifact_loaded',
         execution_mode: 'server_artifact_loaded',
         baseline_fallback: false,
-        certified_head: 'volatility',
-        location_source: 'matched_persistence',
+        certified_head: hasReturnDistribution ? 'return_distribution' : 'volatility',
+        location_source: hasReturnDistribution ? 'certified_return_location' : 'matched_persistence',
+        return_distribution_family: data.forecast?.return_distribution_family || 'zero_location_normal',
       },
       data_snapshot: { as_of: data.as_of, source: 'server_causal_market_snapshot' },
     },

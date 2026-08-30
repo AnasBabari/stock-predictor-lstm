@@ -11,6 +11,8 @@ export default function StatsBar({ stockData, forecastType }) {
     const valState = stockData.validation?.state || (stockData.validation?.promoted ? 'promoted' : 'experimental');
     const isVolatility = stockData.metadata?.engine?.certified_head === 'volatility'
       || stockData.volatility_cone != null;
+    const hasReturnDistribution = stockData.metadata?.engine?.certified_head === 'return_distribution'
+      && Array.isArray(stockData.predicted_prices);
 
     if (forecastType === 'trend') {
       const direction = stockData.direction || '—';
@@ -36,7 +38,7 @@ export default function StatsBar({ stockData, forecastType }) {
 
     const lastClose = Number(stockData.historical_prices.at(-1));
 
-    if (isVolatility) {
+    if (isVolatility && !hasReturnDistribution) {
       const low = Number(stockData.volatility_cone?.p05?.at(-1));
       const high = Number(stockData.volatility_cone?.p95?.at(-1));
       const annualizedVolatility = Number(stockData.forecast?.expected_annualized_volatility);
@@ -67,14 +69,17 @@ export default function StatsBar({ stockData, forecastType }) {
 
     return {
       ticker: stockData.ticker,
-      forecastLabel: `Price (${stockData.forecast_days || 7}d)`,
+      forecastLabel: `${hasReturnDistribution ? 'Return distribution' : 'Price'} (${stockData.forecast_days || 7}d)`,
       lastClose: formatPrice(lastClose),
       forecast: formatPrice(forecast),
       changeText: formatPercent(changePct),
-      trendText: isFlat ? 'Neutral' : isUp ? '▲ Bullish' : '▼ Bearish',
+      trendText: hasReturnDistribution
+        ? (isFlat ? 'Neutral' : isUp ? '▲ Distribution up' : '▼ Distribution down')
+        : (isFlat ? 'Neutral' : isUp ? '▲ Bullish' : '▼ Bearish'),
       valState,
       isUp,
       isFlat,
+      volatilityOnly: false,
     };
   }, [forecastType, stockData]);
 

@@ -104,11 +104,13 @@ export function assertForecastIdentity(data, ticker, days, type) {
   if (!data || data.ticker !== symbol || !horizonMatches) {
     throw new Error('The forecast response does not match the selected ticker and horizon.');
   }
-  const isCertifiedVolatility =
-    data?.metadata?.engine?.certified_head === 'volatility' && data?.volatility_cone != null;
+  const certifiedHead = data?.metadata?.engine?.certified_head;
+  const isCertifiedDistribution =
+    (certifiedHead === 'volatility' || certifiedHead === 'return_distribution')
+    && data?.volatility_cone != null;
   const hasExpectedPayload =
     type === FORECAST_TYPES.PRICE
-      ? isCertifiedVolatility
+      ? isCertifiedDistribution
         ? ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'].every(
           (key) => data.volatility_cone?.[key]?.length === selectedDays,
         )

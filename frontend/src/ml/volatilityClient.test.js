@@ -55,6 +55,55 @@ describe('volatility client contract', () => {
     expect(result.metrics.relative_qlike).toBe(0.91);
   });
 
+  it('maps a certified Student-t return distribution to a learned median path', () => {
+    const location = 0.035;
+    const distribution = body({
+      forecast: {
+        ...body().forecast,
+        price_quantiles: {
+          ...body().forecast.price_quantiles,
+          p50: Array.from({ length: 7 }, (_, index) => 100 * Math.exp(location * (index + 1) / 7)),
+        },
+        expected_cumulative_return: location,
+        return_distribution_variance: 0.0006,
+        return_distribution_family: 'student_t',
+      },
+      evidence: {
+        ...body().evidence,
+        certified_heads: { volatility: true, return_distribution: true, direction: false },
+      },
+    });
+    const result = mapVolatilityResponse(distribution, 'MSFT', 7);
+    expect(result.predicted_prices).toEqual(result.volatility_cone.p50);
+    expect(result.learned_prices).toEqual(result.volatility_cone.p50);
+    expect(result.predicted_prices.at(-1)).toBeCloseTo(100 * Math.exp(location), 8);
+    expect(result.persistence_forecast).toEqual(Array(7).fill(100));
+    expect(result.forecast_status).toMatchObject({
+      state: 'certified_return_distribution',
+      decision: 'return_distribution',
+    });
+    expect(result.metadata.engine).toMatchObject({
+      certified_head: 'return_distribution',
+      location_source: 'certified_return_location',
+    });
+  });
+
+  it('rejects a certified return distribution with a mismatched median path', () => {
+    const invalid = body({
+      forecast: {
+        ...body().forecast,
+        expected_cumulative_return: 0.035,
+        return_distribution_variance: 0.0006,
+        return_distribution_family: 'student_t',
+      },
+      evidence: {
+        ...body().evidence,
+        certified_heads: { volatility: true, return_distribution: true, direction: false },
+      },
+    });
+    expect(() => validateVolatilityResponse(invalid, 'MSFT', 7)).toThrow(/p50 path/);
+  });
+
   it('preserves the structured abstention code for safe UI mapping', async () => {
     const fetchImpl = vi.fn(async () => ({
       ok: false,

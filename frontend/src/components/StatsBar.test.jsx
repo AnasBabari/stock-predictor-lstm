@@ -27,4 +27,28 @@ describe('StatsBar certified volatility presentation', () => {
     expect(screen.getByText('VOLATILITY CERTIFIED')).toBeInTheDocument();
     expect(screen.queryByText(/unchanged close|0\.00%/i)).not.toBeInTheDocument();
   });
+
+  it('shows the certified return-distribution median and expected return', () => {
+    render(
+      <StatsBar
+        forecastType="price"
+        stockData={{
+          ticker: 'MSFT',
+          forecast_days: 7,
+          historical_prices: [100],
+          predicted_prices: [101, 103],
+          volatility_cone: { p05: [94, 95], p95: [109, 112] },
+          forecast: { expected_annualized_volatility: 0.27 },
+          validation: { state: 'certified_return_distribution', promoted: true },
+          metadata: { engine: { certified_head: 'return_distribution' } },
+        }}
+      />,
+    );
+    expect(screen.getByText('Return distribution (7d)')).toBeInTheDocument();
+    expect(screen.getByText('$103.00')).toBeInTheDocument();
+    expect(screen.getByText('Expected Return')).toBeInTheDocument();
+    expect(screen.getByText('+3.00%')).toBeInTheDocument();
+    expect(screen.getByText('DISTRIBUTION CERTIFIED')).toBeInTheDocument();
+    expect(screen.queryByText('Volatility certified')).not.toBeInTheDocument();
+  });
 });

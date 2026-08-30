@@ -2,7 +2,8 @@
  * Pure price-chart dataset assembly.
  *
  * Core Product Contract:
- * - The primary series is ALWAYS the Model Forecast (solid bright teal/green line).
+ * - The primary series is the model forecast, or the certified median path
+ *   when a signed return-distribution head is available.
  * - Promotion status controls the badge and scientific claim, never mutates the forecast into a flat line.
  * - Persistence Benchmark is optional and hidden by default, drawn as a thin dashed grey line only when showBenchmark is enabled.
  */
@@ -29,6 +30,8 @@ function padForecast(values, leadNulls, anchorPrice) {
 export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = false) {
   const isVolatility = stockData?.metadata?.engine?.certified_head === 'volatility'
     || stockData?.volatility_cone != null;
+  const hasCertifiedLocation = stockData?.metadata?.engine?.certified_head === 'return_distribution'
+    && Array.isArray(stockData.predicted_prices);
   if (!stockData || !stockData.historical_prices || (!isVolatility && !stockData.predicted_prices)) {
     return null;
   }
@@ -74,9 +77,9 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
     },
   ];
 
-  if (!isVolatility) {
+  if (!isVolatility || hasCertifiedLocation) {
     datasets.push({
-      label: 'Model Forecast',
+      label: hasCertifiedLocation ? 'Certified median path' : 'Model Forecast',
       data: padForecast(stockData.predicted_prices, forecastLead, lastClose),
       borderColor: modelColor,
       backgroundColor: (context) => {
@@ -101,7 +104,9 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
   const errorBand = stockData.historical_error_band;
   if (errorBand && Array.isArray(errorBand.upper_prices) && Array.isArray(errorBand.lower_prices)) {
     datasets.push({
-      label: isVolatility ? 'Certified volatility cone (upper)' : '90% Empirical Error Range (Upper)',
+      label: isVolatility
+        ? (hasCertifiedLocation ? 'Certified return distribution (upper)' : 'Certified volatility cone (upper)')
+        : '90% Empirical Error Range (Upper)',
       data: padForecast(errorBand.upper_prices, forecastLead, lastClose),
       borderColor: 'transparent',
       backgroundColor: isDark ? COLORS.bandFillDark : COLORS.bandFillLight,
@@ -111,7 +116,9 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
       spanGaps: false,
     });
     datasets.push({
-      label: isVolatility ? 'Certified volatility cone (lower)' : '90% Empirical Error Range (Lower)',
+      label: isVolatility
+        ? (hasCertifiedLocation ? 'Certified return distribution (lower)' : 'Certified volatility cone (lower)')
+        : '90% Empirical Error Range (Lower)',
       data: padForecast(errorBand.lower_prices, forecastLead, lastClose),
       borderColor: 'transparent',
       backgroundColor: 'transparent',
@@ -145,8 +152,9 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
     datasets,
     forecastSplitIndex,
     lastClose,
-    promoted: !isVolatility && (stockData.validation?.promoted === true || stockData.forecast_status?.state === 'promoted'),
-    volatilityOnly: isVolatility,
+    promoted: (hasCertifiedLocation || !isVolatility)
+      && (stockData.validation?.promoted === true || stockData.forecast_status?.state === 'promoted' || stockData.forecast_status?.state === 'certified_return_distribution'),
+    volatilityOnly: isVolatility && !hasCertifiedLocation,
   };
 }
 

@@ -106,6 +106,31 @@ describe('complete analysis export identity', () => {
     expect(zip.file('direction_forecast.csv')).toBeNull();
   });
 
+  it('exports a certified return-distribution median alongside quantiles', async () => {
+    const distribution = {
+      ticker: 'MSFT',
+      forecast_days: 2,
+      historical_dates: ['2026-07-31'],
+      historical_prices: [100],
+      future_dates: ['2026-08-04', '2026-08-05'],
+      predicted_prices: [101, 102],
+      volatility_cone: {
+        p05: [95, 96], p10: [97, 98], p25: [99, 100], p50: [101, 102],
+        p75: [103, 104], p90: [105, 106], p95: [107, 108],
+      },
+      evidence: { certified: true, metric_source: 'sealed_holdout_once' },
+      metadata: { engine: { certified_head: 'return_distribution' } },
+    };
+    const { blob, filename } = await exportCompleteAnalysis({
+      priceData: distribution,
+      directionData: null,
+      metadata: { ticker: 'MSFT', forecast_days: 2, serving_mode: 'signed_global_volatility' },
+    });
+    const zip = await JSZip.loadAsync(blob);
+    expect(filename).toBe('MSFT_volatility_evidence.zip');
+    expect(zip.file('median_price_forecast.csv')).not.toBeNull();
+  });
+
   it('rejects incomplete volatility quantile paths', async () => {
     const payload = {
       ticker: 'MSFT',

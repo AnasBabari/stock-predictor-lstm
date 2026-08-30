@@ -49,7 +49,8 @@ function assertCompleteIdentity(priceData, directionData, metadata) {
 export async function exportPriceCSV(stockData) {
   if (!stockData) return;
 
-  if (stockData.metadata?.engine?.certified_head === 'volatility') {
+  const certifiedHead = stockData.metadata?.engine?.certified_head;
+  if (certifiedHead === 'volatility' || certifiedHead === 'return_distribution') {
     const keys = ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'];
     const rows = [['Date', 'P05', 'P10', 'P25', 'P50', 'P75', 'P90', 'P95']];
     stockData.future_dates.forEach((date, index) => {
@@ -57,7 +58,7 @@ export async function exportPriceCSV(stockData) {
     });
     downloadBlob(
       new Blob([csvFromRows(rows)], { type: 'text/csv' }),
-      `${stockData.ticker}_volatility_forecast.csv`,
+      `${stockData.ticker}_${certifiedHead === 'return_distribution' ? 'return_distribution' : 'volatility'}_forecast.csv`,
     );
     return;
   }
@@ -114,8 +115,9 @@ export async function exportCompleteAnalysis({ priceData, directionData, metadat
     if (Number(priceData.forecast_days) !== Number(metadata.forecast_days)) {
       throw new Error('Volatility evidence horizon does not match the requested export.');
     }
-    if (priceData.metadata?.engine?.certified_head !== 'volatility') {
-      throw new Error('The export is not backed by the certified volatility head.');
+    const certifiedHead = priceData.metadata?.engine?.certified_head;
+    if (certifiedHead !== 'volatility' && certifiedHead !== 'return_distribution') {
+      throw new Error('The export is not backed by a certified volatility or return-distribution head.');
     }
     const expectedDays = Number(metadata.forecast_days);
     const quantileKeys = ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'];
@@ -155,6 +157,13 @@ export async function exportCompleteAnalysis({ priceData, directionData, metadat
       historyRows.push([date, priceData.historical_prices[index], 'Historical']);
     });
     zip.file('volatility_forecast.csv', csvFromRows(volatilityRows));
+    if (certifiedHead === 'return_distribution') {
+      const medianRows = [['Date', 'Median Price', 'Type']];
+      priceData.future_dates.forEach((date, index) => {
+        medianRows.push([date, quantiles.p50?.[index], 'Certified median']);
+      });
+      zip.file('median_price_forecast.csv', csvFromRows(medianRows));
+    }
     zip.file('market_history.csv', csvFromRows(historyRows));
     zip.file('metadata.json', JSON.stringify(metadata, null, 2));
     zip.file('evidence.json', JSON.stringify(priceData.evidence || {}, null, 2));
