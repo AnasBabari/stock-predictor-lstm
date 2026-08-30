@@ -44,10 +44,12 @@ class V112DevelopmentData:
     train_returns: np.ndarray
     train_rv: np.ndarray
     train_dates: tuple[str, ...]
+    train_security_ids: tuple[str, ...]
     validation_features: np.ndarray
     validation_returns: np.ndarray
     validation_rv: np.ndarray
     validation_dates: tuple[str, ...]
+    validation_security_ids: tuple[str, ...]
     protocol_id: str
     panel_sha256: str
     split_sha256: str
@@ -63,6 +65,8 @@ class V112SealedMetadata:
     nonce_hex: str
     test_stock_origin_observations: int
     test_unique_sessions: int
+    test_unique_securities: int
+    test_identity_sha256: str
     test_sessions: tuple[str, str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,6 +79,8 @@ class V112SealedMetadata:
             "nonce_hex": self.nonce_hex,
             "test_stock_origin_observations": self.test_stock_origin_observations,
             "test_unique_sessions": self.test_unique_sessions,
+            "test_unique_securities": self.test_unique_securities,
+            "test_identity_sha256": self.test_identity_sha256,
             "test_sessions": self.test_sessions,
             "sealed_test_status": "LOCKED_UNOPENED",
         }
@@ -86,6 +92,7 @@ class V112SealedTestPayload:
     returns: np.ndarray
     rv: np.ndarray
     dates: tuple[str, ...]
+    security_ids: tuple[str, ...]
     unseal_token: str
     split_sha256: str
 
@@ -186,6 +193,7 @@ def _array_payload(
     returns: np.ndarray,
     rv: np.ndarray,
     dates: Iterable[str],
+    security_ids: Iterable[str],
 ) -> bytes:
     with tempfile.SpooledTemporaryFile(max_size=64 * 1024 * 1024) as buffer:
         np.savez_compressed(
@@ -194,6 +202,7 @@ def _array_payload(
             returns=np.asarray(returns, dtype=np.float32),
             rv=np.asarray(rv, dtype=np.float32),
             dates=np.asarray(list(dates), dtype="U32"),
+            security_ids=np.asarray(list(security_ids), dtype="U128"),
         )
         buffer.seek(0)
         return buffer.read()
@@ -204,13 +213,25 @@ def _validate_arrays(
     returns: np.ndarray,
     rv: np.ndarray,
     dates: Iterable[str],
+    security_ids: Iterable[str],
 ) -> None:
     n = len(dates)
+    security_list = [str(value) for value in security_ids]
     feature_values = np.asarray(features)
     return_values = np.asarray(returns)
     rv_values = np.asarray(rv)
-    if n == 0 or len(feature_values) != n or len(return_values) != n or len(rv_values) != n:
+    if (
+        n == 0
+        or len(feature_values) != n
+        or len(return_values) != n
+        or len(rv_values) != n
+        or len(security_list) != n
+    ):
         raise ValueError("feature, target, and date row counts must match and be non-zero")
+    if any(not value.strip() for value in security_list):
+        raise ValueError("security IDs must be non-empty")
+    if len(set(zip(security_list, dates, strict=True))) != n:
+        raise ValueError("security/session observations must be unique")
     if feature_values.ndim not in (2, 3):
         raise ValueError("features must have shape [rows, features] or [rows, window, features]")
     if return_values.ndim != 2 or return_values.shape[1] != len(V11_2_HORIZONS):
@@ -221,9 +242,22 @@ def _validate_arrays(
         raise ValueError("V11.2 sealed payload contains non-finite values")
 
 
+def security_identity_digest(security_ids: Iterable[str], dates: Iterable[str]) -> str:
+    """Hash the ordered security/session identity paired with each row."""
+    ids = [str(value) for value in security_ids]
+    date_values = [str(value) for value in dates]
+    if len(ids) != len(date_values) or not ids:
+        raise ValueError("security IDs and dates must have equal non-zero length")
+    payload = "\n".join(
+        f"{security}|{date}" for security, date in zip(ids, date_values, strict=True)
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def seal_v112_dataset(
     *,
     dates: list[str],
+    security_ids: list[str],
     features: np.ndarray,
     returns: np.ndarray,
     rv: np.ndarray,
@@ -242,7 +276,8 @@ def seal_v112_dataset(
     if schema_sha256 != feature_schema_digest():
         raise V112SealedAccessError("schema digest does not match the V11.2 feature contract")
     dates_list = list(dates)
-    _validate_arrays(features, returns, rv, dates_list)
+    security_list = [str(value) for value in security_ids]
+    _validate_arrays(features, returns, rv, dates_list, security_list)
     if max(split.test_indices, default=-1) >= len(dates_list):
         raise ValueError("split index exceeds panel length")
     all_indices = np.concatenate(
@@ -277,6 +312,7 @@ def seal_v112_dataset(
         returns=np.asarray(returns[train], dtype=np.float32),
         rv=np.asarray(rv[train], dtype=np.float32),
         dates=np.asarray([dates_list[i] for i in train], dtype="U32"),
+        security_ids=np.asarray([security_list[i] for i in train], dtype="U128"),
     )
     np.savez_compressed(
         development_dir / "validation.npz",
@@ -284,6 +320,7 @@ def seal_v112_dataset(
         returns=np.asarray(returns[validation], dtype=np.float32),
         rv=np.asarray(rv[validation], dtype=np.float32),
         dates=np.asarray([dates_list[i] for i in validation], dtype="U32"),
+        security_ids=np.asarray([security_list[i] for i in validation], dtype="U128"),
     )
     train_path = development_dir / "train.npz"
     validation_path = development_dir / "validation.npz"
@@ -300,7 +337,11 @@ def seal_v112_dataset(
         separators=(",", ":"),
     ).encode("utf-8")
     plaintext = _array_payload(
-        features[test], returns[test], rv[test], [dates_list[i] for i in test]
+        features[test],
+        returns[test],
+        rv[test],
+        [dates_list[i] for i in test],
+        [security_list[i] for i in test],
     )
     ciphertext = AESGCM(_key_bytes(key_path, create=True)).encrypt(nonce, plaintext, associated)
     ciphertext_sha = hashlib.sha256(ciphertext).hexdigest()
@@ -315,6 +356,10 @@ def seal_v112_dataset(
         nonce_hex=nonce.hex(),
         test_stock_origin_observations=len(test),
         test_unique_sessions=len({dates_list[i] for i in test}),
+        test_unique_securities=len({security_list[i] for i in test}),
+        test_identity_sha256=security_identity_digest(
+            [security_list[i] for i in test], [dates_list[i] for i in test]
+        ),
         test_sessions=split.test_sessions,
     )
     _atomic_write(
@@ -335,6 +380,12 @@ def seal_v112_dataset(
                 "horizons": list(V11_2_HORIZONS),
                 "train_sha256": _sha256_file(train_path),
                 "validation_sha256": _sha256_file(validation_path),
+                "train_identity_sha256": security_identity_digest(
+                    [security_list[i] for i in train], [dates_list[i] for i in train]
+                ),
+                "validation_identity_sha256": security_identity_digest(
+                    [security_list[i] for i in validation], [dates_list[i] for i in validation]
+                ),
                 "train_rows": len(train),
                 "validation_rows": len(validation),
                 "sealed_test_status": "LOCKED_UNOPENED",
@@ -387,18 +438,36 @@ def load_v112_development(output_dir: Path) -> V112DevelopmentData:
             train_returns = np.asarray(train["returns"], dtype=np.float32)
             train_rv = np.asarray(train["rv"], dtype=np.float32)
             train_dates = tuple(str(value) for value in train["dates"].tolist())
+            train_security_ids = tuple(str(value) for value in train["security_ids"].tolist())
             validation_features = np.asarray(validation["features"], dtype=np.float32)
             validation_returns = np.asarray(validation["returns"], dtype=np.float32)
             validation_rv = np.asarray(validation["rv"], dtype=np.float32)
             validation_dates = tuple(str(value) for value in validation["dates"].tolist())
+            validation_security_ids = tuple(
+                str(value) for value in validation["security_ids"].tolist()
+            )
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise V112SealedAccessError("V11.2 development arrays are malformed") from exc
-    for values, returns, rv, dates, label in (
-        (train_features, train_returns, train_rv, train_dates, "train"),
-        (validation_features, validation_returns, validation_rv, validation_dates, "validation"),
+    for values, returns, rv, dates, security_ids, label in (
+        (
+            train_features,
+            train_returns,
+            train_rv,
+            train_dates,
+            train_security_ids,
+            "train",
+        ),
+        (
+            validation_features,
+            validation_returns,
+            validation_rv,
+            validation_dates,
+            validation_security_ids,
+            "validation",
+        ),
     ):
         try:
-            _validate_arrays(values, returns, rv, dates)
+            _validate_arrays(values, returns, rv, dates, security_ids)
         except ValueError as exc:
             raise V112SealedAccessError(f"V11.2 {label} arrays are invalid") from exc
         if values.ndim != 3 or values.shape[1:] != (
@@ -410,6 +479,14 @@ def load_v112_development(output_dir: Path) -> V112DevelopmentData:
         validation_dates
     ):
         raise V112SealedAccessError("V11.2 development row counts do not match the manifest")
+    if manifest.get("train_identity_sha256") != security_identity_digest(
+        train_security_ids, train_dates
+    ) or manifest.get("validation_identity_sha256") != security_identity_digest(
+        validation_security_ids, validation_dates
+    ):
+        raise V112SealedAccessError(
+            "V11.2 development security identity does not match the manifest"
+        )
     if manifest.get("panel_sha256") is None or manifest.get("split_sha256") is None:
         raise V112SealedAccessError("V11.2 development panel/split identity is missing")
     _require_digest(manifest.get("panel_sha256"), "panel digest")
@@ -419,10 +496,12 @@ def load_v112_development(output_dir: Path) -> V112DevelopmentData:
         train_returns=train_returns,
         train_rv=train_rv,
         train_dates=train_dates,
+        train_security_ids=train_security_ids,
         validation_features=validation_features,
         validation_returns=validation_returns,
         validation_rv=validation_rv,
         validation_dates=validation_dates,
+        validation_security_ids=validation_security_ids,
         protocol_id=str(manifest["protocol_id"]),
         panel_sha256=str(manifest["panel_sha256"]),
         split_sha256=str(manifest["split_sha256"]),
@@ -501,11 +580,12 @@ def unseal_v112_test_once(
             returns = np.asarray(payload["returns"], dtype=np.float32)
             rv = np.asarray(payload["rv"], dtype=np.float32)
             dates = tuple(str(value) for value in payload["dates"].tolist())
+            security_ids = tuple(str(value) for value in payload["security_ids"].tolist())
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise V112SealedAccessError("sealed test payload is malformed") from exc
     protocol = V112Protocol()
     try:
-        _validate_arrays(features, returns, rv, dates)
+        _validate_arrays(features, returns, rv, dates, security_ids)
     except ValueError as exc:
         raise V112SealedAccessError("sealed test payload arrays are invalid") from exc
     if features.ndim != 3 or features.shape[1:] != (
@@ -513,6 +593,13 @@ def unseal_v112_test_once(
         len(protocol.feature_names),
     ):
         raise V112SealedAccessError("sealed test feature geometry is invalid")
+    metadata_identity = _require_digest(
+        metadata.get("test_identity_sha256"), "sealed test identity digest"
+    )
+    if metadata_identity != security_identity_digest(security_ids, dates):
+        raise V112SealedAccessError("sealed test security identity digest mismatch")
+    if metadata.get("test_unique_securities") != len(set(security_ids)):
+        raise V112SealedAccessError("sealed test security count does not match metadata")
     del plaintext, ciphertext
     gc.collect()
     return V112SealedTestPayload(
@@ -520,6 +607,7 @@ def unseal_v112_test_once(
         returns=returns,
         rv=rv,
         dates=dates,
+        security_ids=security_ids,
         unseal_token=token,
         split_sha256=split_sha,
     )

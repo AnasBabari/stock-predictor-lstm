@@ -69,10 +69,14 @@ be rounded, but machine-readable evidence is not.
 ## Sealing and certification boundary
 
 The split command writes train and validation NPZ files separately from an
-AES-256-GCM encrypted test payload. The key is generated outside the repository
-and never passed to the development command. A future certification command
-writes its one-shot open marker before decrypting, evaluates only the frozen
-bundle, writes an immutable receipt, and removes temporary plaintext.
+AES-256-GCM encrypted test payload. Every partition carries the stable
+`security_id` beside its origin date, and the manifests bind the ordered
+security/session identity digest. Certification therefore verifies that the
+holdout rows still belong to the audited PIT64 universe rather than trusting
+row counts alone. The key is generated outside the repository and never passed
+to the development command. A future certification command writes its one-shot
+open marker before decrypting, evaluates only the frozen bundle, writes an
+immutable receipt, and removes temporary plaintext.
 
 The V11.2 development run must finish with:
 

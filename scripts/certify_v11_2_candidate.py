@@ -102,16 +102,24 @@ def _validate_payload(
     development: Any,
     protocol: V112Protocol,
     sealed_metadata: dict[str, Any],
+    universe_security_ids: set[str],
 ) -> None:
     features = np.asarray(payload.features)
     returns = np.asarray(payload.returns)
     rv = np.asarray(payload.rv)
+    security_ids = tuple(str(value) for value in payload.security_ids)
     rows = len(payload.dates)
     expected_shape = (protocol.window_size, len(protocol.feature_names))
     if features.ndim != 3 or features.shape[1:] != expected_shape:
         raise SystemExit("sealed test features do not match the V11.2 [rows, 60, 26] contract")
     if returns.shape != (rows, len(protocol.horizons)) or rv.shape != returns.shape:
         raise SystemExit("sealed test targets do not match the V11.2 four-horizon contract")
+    if len(security_ids) != rows or any(not value.strip() for value in security_ids):
+        raise SystemExit("sealed test security identities are malformed")
+    if not set(security_ids).issubset(universe_security_ids):
+        raise SystemExit("sealed test contains a security outside the audited PIT64 universe")
+    if len(set(security_ids)) != int(sealed_metadata.get("test_unique_securities", -1)):
+        raise SystemExit("sealed test security count does not match sealed metadata")
     if not rows or not all(np.isfinite(values).all() for values in (features, returns, rv)):
         raise SystemExit("sealed test payload contains no rows or non-finite values")
     for value in payload.dates:
@@ -351,6 +359,21 @@ def certify(
     development = load_v112_development(dataset_dir)
     if development.protocol_id != protocol.protocol_id:
         raise SystemExit("development dataset protocol does not match V11.2")
+    universe = _json_object(dataset_dir / "manifests" / "universe.json", "universe manifest")
+    universe_entries = universe.get("securities")
+    if not isinstance(universe_entries, list):
+        raise SystemExit("universe manifest security entries are malformed")
+    universe_security_ids = {
+        str(item.get("security_id"))
+        for item in universe_entries
+        if isinstance(item, dict) and isinstance(item.get("security_id"), str)
+    }
+    if len(universe_security_ids) != protocol.universe_size:
+        raise SystemExit("universe manifest does not contain the frozen PIT64 identities")
+    if not set(development.train_security_ids).issubset(universe_security_ids) or not set(
+        development.validation_security_ids
+    ).issubset(universe_security_ids):
+        raise SystemExit("development data contains a security outside the audited PIT64 universe")
     scaler, scaler_payload = _load_scaler(results_dir.resolve(), protocol)
 
     payload = unseal_v112_test_once(
@@ -359,7 +382,7 @@ def certify(
         candidate_digest=bundle_digest,
         repository_root=repository_root,
     )
-    _validate_payload(payload, development, protocol, sealed_metadata)
+    _validate_payload(payload, development, protocol, sealed_metadata, universe_security_ids)
 
     test_features = np.asarray(payload.features, dtype=np.float32)
     test_returns = np.asarray(payload.returns, dtype=np.float32)

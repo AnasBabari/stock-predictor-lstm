@@ -129,6 +129,15 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
         metadata.get("schema_sha256"), "sealed metadata schema digest"
     )
     metadata_split = _require_sha256(metadata.get("split_sha256"), "sealed metadata split digest")
+    metadata_identity = _require_sha256(
+        metadata.get("test_identity_sha256"), "sealed test identity digest"
+    )
+    if (
+        isinstance(metadata.get("test_unique_securities"), bool)
+        or not isinstance(metadata.get("test_unique_securities"), int)
+        or metadata["test_unique_securities"] < 1
+    ):
+        raise SystemExit("sealed metadata test security count is invalid")
     if metadata_schema != feature_schema_digest(protocol):
         raise SystemExit("sealed metadata schema digest does not match V11.2")
     if metadata_panel != development.get("panel_sha256"):
@@ -307,6 +316,8 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
         "sealed_ciphertext_sha256": ciphertext_sha,
         "test_stock_origin_observations": metadata.get("test_stock_origin_observations"),
         "test_unique_sessions": metadata.get("test_unique_sessions"),
+        "test_unique_securities": metadata.get("test_unique_securities"),
+        "test_identity_sha256": metadata_identity,
         "test_sessions": metadata.get("test_sessions"),
         "sealed_test_status": "LOCKED_UNOPENED",
         "audited_at": datetime.now(UTC).isoformat(),

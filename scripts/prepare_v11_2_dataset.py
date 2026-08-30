@@ -134,6 +134,7 @@ def main() -> int:
     panel_sha = _sha256_file(args.panel)
     metadata = seal_v112_dataset(
         dates=dates,
+        security_ids=security_ids,
         features=features,
         returns=returns,
         rv=rv,

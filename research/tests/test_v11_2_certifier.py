@@ -28,7 +28,7 @@ def _make_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
         for index in range(500)
         for _ in range(2)
     ]
-    security_ids = [f"SEC-{index % 2}" for index in range(len(dates))]
+    security_ids = [f"SECURITY-{index % 64:03d}" for index in range(len(dates))]
     rng = np.random.default_rng(42)
     features = np.zeros(
         (len(dates), protocol.window_size, len(protocol.feature_names)), dtype=np.float32
@@ -45,6 +45,7 @@ def _make_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
     key_path = tmp_path / "private" / "v11_2.key"
     metadata = seal_v112_dataset(
         dates=dates,
+        security_ids=security_ids,
         features=features,
         returns=returns,
         rv=rv,

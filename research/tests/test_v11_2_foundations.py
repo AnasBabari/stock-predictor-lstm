@@ -241,6 +241,7 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
     key_path = tmp_path / "private" / "holdout.key"
     metadata = seal_v112_dataset(
         dates=dates,
+        security_ids=security_ids,
         features=features,
         returns=returns,
         rv=rv,
@@ -271,6 +272,7 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
         repository_root=tmp_path / "repository",
     )
     assert len(payload.dates) == split.test_rows
+    assert len(payload.security_ids) == split.test_rows
     with pytest.raises(V112SealedAccessError, match="already been opened"):
         unseal_v112_test_once(
             output_dir=output_dir,
