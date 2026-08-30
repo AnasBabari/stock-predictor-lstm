@@ -171,7 +171,7 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
     dates = _dates(500)
     security_ids = [f"SEC-{i % 2}" for i in range(len(dates))]
     split = create_v112_split(dates, security_ids)
-    features = np.arange(len(dates) * 3, dtype=np.float32).reshape(len(dates), 3)
+    features = np.arange(len(dates) * 60 * 26, dtype=np.float32).reshape(len(dates), 60, 26)
     returns = np.zeros((len(dates), 4), dtype=np.float32)
     rv = np.ones((len(dates), 4), dtype=np.float32)
     output_dir = tmp_path / "v112"
@@ -193,6 +193,13 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
     assert metadata.test_stock_origin_observations == split.test_rows
     assert not (output_dir / "sealed" / "SEALED_TEST_OPENED.json").exists()
     assert not hasattr(development, "test_features")
+
+    train_path = output_dir / "development" / "train.npz"
+    original_train = train_path.read_bytes()
+    train_path.write_bytes(original_train + b"tamper")
+    with pytest.raises(V112SealedAccessError, match="train bytes"):
+        load_v112_development(output_dir)
+    train_path.write_bytes(original_train)
 
     payload = unseal_v112_test_once(
         output_dir=output_dir,

@@ -77,7 +77,17 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
     bundle_path = results / "v11_2_routing_bundle.json"
     bundle_sha_path = results / "v11_2_routing_bundle.sha256"
     dev_manifest_path = dataset / "manifests" / "development_manifest.json"
-    required = [metadata_path, payload_path, bundle_path, bundle_sha_path, dev_manifest_path]
+    train_path = dataset / "development" / "train.npz"
+    validation_path = dataset / "development" / "validation.npz"
+    required = [
+        metadata_path,
+        payload_path,
+        bundle_path,
+        bundle_sha_path,
+        dev_manifest_path,
+        train_path,
+        validation_path,
+    ]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise SystemExit(f"missing pre-unseal artifact(s): {missing}")
@@ -94,6 +104,20 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
         raise SystemExit("sealed ciphertext digest does not match metadata")
     if development.get("sealed_test_status") != "LOCKED_UNOPENED":
         raise SystemExit("development manifest does not prove an unopened holdout")
+    if development.get("schema_sha256") != feature_schema_digest(protocol):
+        raise SystemExit("development manifest schema digest does not match V11.2")
+    if development.get("feature_names") != list(protocol.feature_names):
+        raise SystemExit("development manifest feature ordering does not match V11.2")
+    if development.get("window_size") != protocol.window_size or development.get(
+        "horizons"
+    ) != list(protocol.horizons):
+        raise SystemExit("development manifest target geometry does not match V11.2")
+    if _sha256(train_path) != _require_sha256(development.get("train_sha256"), "train digest"):
+        raise SystemExit("development train bytes do not match their manifest digest")
+    if _sha256(validation_path) != _require_sha256(
+        development.get("validation_sha256"), "validation digest"
+    ):
+        raise SystemExit("development validation bytes do not match their manifest digest")
     if manifest.get("sealed_test_status") != "LOCKED_UNOPENED":
         raise SystemExit("routing bundle does not prove an unopened holdout")
     protocol_payload = manifest.get("protocol")

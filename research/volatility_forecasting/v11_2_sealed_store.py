@@ -24,7 +24,12 @@ from typing import Any
 import numpy as np
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from .v11_2_protocol import V11_2_HORIZONS, V11_2_PROTOCOL_ID
+from .v11_2_protocol import (
+    V11_2_HORIZONS,
+    V11_2_PROTOCOL_ID,
+    V112Protocol,
+    feature_schema_digest,
+)
 from .v11_2_split import V112Split
 
 
@@ -116,6 +121,21 @@ def _atomic_create(path: Path, data: bytes) -> None:
         raise
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _require_digest(value: object, label: str) -> str:
+    digest = str(value)
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise V112SealedAccessError(f"{label} must be a lowercase SHA-256 digest")
+    return digest
+
+
 def _key_bytes(key_path: Path, *, create: bool) -> bytes:
     if key_path.exists():
         key = key_path.read_bytes()
@@ -177,12 +197,7 @@ def _validate_arrays(
     feature_values = np.asarray(features)
     return_values = np.asarray(returns)
     rv_values = np.asarray(rv)
-    if (
-        n == 0
-        or len(feature_values) != n
-        or len(return_values) != n
-        or len(rv_values) != n
-    ):
+    if n == 0 or len(feature_values) != n or len(return_values) != n or len(rv_values) != n:
         raise ValueError("feature, target, and date row counts must match and be non-zero")
     if feature_values.ndim not in (2, 3):
         raise ValueError("features must have shape [rows, features] or [rows, window, features]")
@@ -209,6 +224,11 @@ def seal_v112_dataset(
 ) -> V112SealedMetadata:
     """Write development files and encrypted test bytes, never test plaintext."""
     _assert_external_key(key_path, repository_root)
+    _require_digest(panel_sha256, "panel digest")
+    _require_digest(split.split_sha256, "split digest")
+    _require_digest(schema_sha256, "schema digest")
+    if schema_sha256 != feature_schema_digest():
+        raise V112SealedAccessError("schema digest does not match the V11.2 feature contract")
     dates_list = list(dates)
     _validate_arrays(features, returns, rv, dates_list)
     if max(split.test_indices, default=-1) >= len(dates_list):
@@ -253,6 +273,8 @@ def seal_v112_dataset(
         rv=np.asarray(rv[validation], dtype=np.float32),
         dates=np.asarray([dates_list[i] for i in validation], dtype="U32"),
     )
+    train_path = development_dir / "train.npz"
+    validation_path = development_dir / "validation.npz"
 
     nonce = secrets.token_bytes(12)
     associated = json.dumps(
@@ -295,6 +317,14 @@ def seal_v112_dataset(
                 "panel_sha256": panel_sha256,
                 "schema_sha256": schema_sha256,
                 "split_sha256": split.split_sha256,
+                "feature_schema_version": V112Protocol().feature_schema_version,
+                "feature_names": list(V112Protocol().feature_names),
+                "window_size": V112Protocol().window_size,
+                "horizons": list(V11_2_HORIZONS),
+                "train_sha256": _sha256_file(train_path),
+                "validation_sha256": _sha256_file(validation_path),
+                "train_rows": len(train),
+                "validation_rows": len(validation),
                 "sealed_test_status": "LOCKED_UNOPENED",
             },
             indent=2,
@@ -315,23 +345,72 @@ def load_v112_development(output_dir: Path) -> V112DevelopmentData:
     if not train_path.exists() or not validation_path.exists() or not manifest_path.exists():
         raise V112SealedAccessError("V11.2 development dataset is incomplete")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise V112SealedAccessError("V11.2 development manifest is malformed")
+    protocol = V112Protocol()
+    if manifest.get("protocol_id") != protocol.protocol_id:
+        raise V112SealedAccessError("V11.2 development manifest protocol mismatch")
+    if manifest.get("sealed_test_status") != "LOCKED_UNOPENED":
+        raise V112SealedAccessError("V11.2 development manifest does not prove an unopened holdout")
+    if manifest.get("schema_sha256") != feature_schema_digest():
+        raise V112SealedAccessError("V11.2 development schema digest mismatch")
+    if manifest.get("feature_schema_version") != protocol.feature_schema_version:
+        raise V112SealedAccessError("V11.2 development feature schema version mismatch")
+    if manifest.get("feature_names") != list(protocol.feature_names):
+        raise V112SealedAccessError("V11.2 development feature ordering mismatch")
+    if manifest.get("window_size") != protocol.window_size or manifest.get("horizons") != list(
+        protocol.horizons
+    ):
+        raise V112SealedAccessError("V11.2 development target geometry mismatch")
+    if _sha256_file(train_path) != _require_digest(manifest.get("train_sha256"), "train digest"):
+        raise V112SealedAccessError("V11.2 train bytes do not match the development manifest")
+    if _sha256_file(validation_path) != _require_digest(
+        manifest.get("validation_sha256"), "validation digest"
+    ):
+        raise V112SealedAccessError("V11.2 validation bytes do not match the development manifest")
     with (
         np.load(train_path, allow_pickle=False) as train,
         np.load(validation_path, allow_pickle=False) as validation,
     ):
-        return V112DevelopmentData(
-            train_features=np.asarray(train["features"], dtype=np.float32),
-            train_returns=np.asarray(train["returns"], dtype=np.float32),
-            train_rv=np.asarray(train["rv"], dtype=np.float32),
-            train_dates=tuple(str(value) for value in train["dates"].tolist()),
-            validation_features=np.asarray(validation["features"], dtype=np.float32),
-            validation_returns=np.asarray(validation["returns"], dtype=np.float32),
-            validation_rv=np.asarray(validation["rv"], dtype=np.float32),
-            validation_dates=tuple(str(value) for value in validation["dates"].tolist()),
-            protocol_id=str(manifest["protocol_id"]),
-            panel_sha256=str(manifest["panel_sha256"]),
-            split_sha256=str(manifest["split_sha256"]),
-        )
+        train_features = np.asarray(train["features"], dtype=np.float32)
+        train_returns = np.asarray(train["returns"], dtype=np.float32)
+        train_rv = np.asarray(train["rv"], dtype=np.float32)
+        train_dates = tuple(str(value) for value in train["dates"].tolist())
+        validation_features = np.asarray(validation["features"], dtype=np.float32)
+        validation_returns = np.asarray(validation["returns"], dtype=np.float32)
+        validation_rv = np.asarray(validation["rv"], dtype=np.float32)
+        validation_dates = tuple(str(value) for value in validation["dates"].tolist())
+    for values, returns, rv, dates, label in (
+        (train_features, train_returns, train_rv, train_dates, "train"),
+        (validation_features, validation_returns, validation_rv, validation_dates, "validation"),
+    ):
+        _validate_arrays(values, returns, rv, dates)
+        if values.ndim != 3 or values.shape[1:] != (
+            protocol.window_size,
+            len(protocol.feature_names),
+        ):
+            raise V112SealedAccessError(f"V11.2 {label} feature geometry is invalid")
+    if manifest.get("train_rows") != len(train_dates) or manifest.get("validation_rows") != len(
+        validation_dates
+    ):
+        raise V112SealedAccessError("V11.2 development row counts do not match the manifest")
+    if manifest.get("panel_sha256") is None or manifest.get("split_sha256") is None:
+        raise V112SealedAccessError("V11.2 development panel/split identity is missing")
+    _require_digest(manifest.get("panel_sha256"), "panel digest")
+    _require_digest(manifest.get("split_sha256"), "split digest")
+    return V112DevelopmentData(
+        train_features=train_features,
+        train_returns=train_returns,
+        train_rv=train_rv,
+        train_dates=train_dates,
+        validation_features=validation_features,
+        validation_returns=validation_returns,
+        validation_rv=validation_rv,
+        validation_dates=validation_dates,
+        protocol_id=str(manifest["protocol_id"]),
+        panel_sha256=str(manifest["panel_sha256"]),
+        split_sha256=str(manifest["split_sha256"]),
+    )
 
 
 def unseal_v112_test_once(
