@@ -149,11 +149,32 @@ Run development only on the unsealed train/validation files:
 python scripts/run_v11_2_numeric_development.py `
   --dataset-dir artifacts/v11_2_numeric `
   --output-dir artifacts/v11_2_numeric/development_results `
-  --device cuda
+  --device cuda `
+  --batch-size 256
 ```
 
 The runner automatically uses CUDA when available, but can be forced to CPU
-for a controlled comparison. It does not accept a sealed-test key.
+for a controlled comparison. Training uses deterministic chronological batches
+with weighted gradient accumulation, so the objective remains the full-sample
+mean while activation memory stays bounded on 6 GiB GPUs. It does not accept a
+sealed-test key.
+
+### Development-only hardware diagnostic
+
+When licensed, independently attested PIT64 inputs are not yet available, the
+existing secondary NDX100 cache may be used only to exercise the CUDA pipeline:
+
+```powershell
+python scripts/build_v11_2_diagnostic_pit64.py
+```
+
+The command resolves stable CIK/FIGI identity metadata, constructs eight
+balanced research strata, writes a content-addressed snapshot, and stamps the
+canonical universe with `certification_eligible=false`. The input preflight,
+pre-unseal audit, and one-shot certifier reject that universe even if its files
+are copied outside `data/ndx100/cache`. Diagnostic development results may
+inform engineering and future candidate design, but they cannot be described
+as certified, used to open the holdout, signed, or deployed.
 
 Before opening the holdout, run the non-decrypting audit:
 
