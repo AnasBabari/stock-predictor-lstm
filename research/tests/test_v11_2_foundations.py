@@ -339,6 +339,7 @@ def test_epoch_zero_is_evaluated_before_updates_and_can_be_selected() -> None:
         rv_validation=rv[40:],
         max_epochs=2,
         patience=2,
+        batch_size=7,
         seed=42,
         device="cpu",
     )
@@ -347,3 +348,23 @@ def test_epoch_zero_is_evaluated_before_updates_and_can_be_selected() -> None:
     assert result.epoch_zero_crps == pytest.approx(result.epoch_evidence[0].validation_crps)
     assert result.epoch_zero_qlike == pytest.approx(result.epoch_evidence[0].validation_qlike)
     assert result.epoch_zero_state_sha256 == result.epoch_evidence[0].state_sha256
+
+
+def test_epoch_zero_training_rejects_nonpositive_batch_size() -> None:
+    x = np.zeros((4, 2, 3), dtype=np.float32)
+    values = np.ones(4, dtype=np.float32)
+    with pytest.raises(ValueError, match="batch_size"):
+        train_epoch_zero_residual_model(
+            x_train=x,
+            base_variance_train=values,
+            returns_train=values,
+            rv_train=values,
+            x_validation=x,
+            base_variance_validation=values,
+            returns_validation=values,
+            rv_validation=values,
+            max_epochs=1,
+            patience=1,
+            batch_size=0,
+            device="cpu",
+        )

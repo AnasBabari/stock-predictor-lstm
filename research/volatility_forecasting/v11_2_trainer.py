@@ -156,6 +156,33 @@ def _loss(
     return qlike + 0.25 * location_loss
 
 
+def _predict_batched(
+    model: BaselineResidualLSTM,
+    features: np.ndarray,
+    baseline_variance: np.ndarray,
+    *,
+    device: torch.device,
+    batch_size: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run bounded-memory inference without changing chronological ordering."""
+    x_values = _as_sequence(features)
+    baseline = np.asarray(baseline_variance, dtype=np.float32).reshape(-1, 1)
+    if len(x_values) != len(baseline):
+        raise ValueError("features and baseline variance must have equal row counts")
+    variances: list[np.ndarray] = []
+    locations: list[np.ndarray] = []
+    model.eval()
+    with torch.no_grad():
+        for start in range(0, len(x_values), batch_size):
+            stop = min(start + batch_size, len(x_values))
+            x_batch = torch.as_tensor(x_values[start:stop], dtype=torch.float32, device=device)
+            b_batch = torch.as_tensor(baseline[start:stop], dtype=torch.float32, device=device)
+            variance, location, _direction, _residual = model(x_batch, b_batch)
+            variances.append(variance.detach().cpu().numpy())
+            locations.append(location.detach().cpu().numpy())
+    return np.concatenate(variances), np.concatenate(locations)
+
+
 def train_epoch_zero_residual_model(
     *,
     x_train: np.ndarray,
@@ -169,12 +196,13 @@ def train_epoch_zero_residual_model(
     max_epochs: int = 15,
     patience: int = 4,
     learning_rate: float = 0.003,
+    batch_size: int = 256,
     seed: int = 42,
     device: str | torch.device | None = None,
 ) -> V112ResidualTrainingResult:
     """Train one horizon while evaluating and preserving exact epoch zero."""
-    if max_epochs < 1 or patience < 1:
-        raise ValueError("max_epochs and patience must be positive")
+    if max_epochs < 1 or patience < 1 or batch_size < 1:
+        raise ValueError("max_epochs, patience, and batch_size must be positive")
     torch.manual_seed(seed)
     train_x = _as_sequence(x_train)
     validation_x = _as_sequence(x_validation)
@@ -189,31 +217,27 @@ def train_epoch_zero_residual_model(
         raise ValueError("CUDA device requested but CUDA is unavailable")
     model.to(selected_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-    t_x = torch.tensor(train_x, dtype=torch.float32, device=selected_device)
-    t_b = torch.tensor(
-        np.asarray(base_variance_train, dtype=np.float32).reshape(-1, 1), device=selected_device
-    )
-    t_y = torch.tensor(
-        np.asarray(returns_train, dtype=np.float32).reshape(-1, 1), device=selected_device
-    )
-    t_rv = torch.tensor(
-        np.asarray(rv_train, dtype=np.float32).reshape(-1, 1), device=selected_device
-    )
-    v_x = torch.tensor(validation_x, dtype=torch.float32, device=selected_device)
+    train_b = np.asarray(base_variance_train, dtype=np.float32).reshape(-1, 1)
+    train_y = np.asarray(returns_train, dtype=np.float32).reshape(-1, 1)
+    train_rv = np.asarray(rv_train, dtype=np.float32).reshape(-1, 1)
+    if not (len(train_x) == len(train_b) == len(train_y) == len(train_rv)):
+        raise ValueError("training features, priors, and targets must have equal row counts")
     v_b_np = np.asarray(base_variance_validation, dtype=np.float64).reshape(-1, 1)
     v_y_np = np.asarray(returns_validation, dtype=np.float64).reshape(-1, 1)
     v_rv_np = np.asarray(rv_validation, dtype=np.float64).reshape(-1, 1)
     epoch_evidence: list[V112EpochEvidence] = []
 
     def evaluate(epoch: int) -> tuple[float, float, str]:
-        model.eval()
-        with torch.no_grad():
-            variance, location, _direction, _residual = model(
-                v_x, torch.tensor(v_b_np.astype(np.float32), device=selected_device)
-            )
+        variance, location = _predict_batched(
+            model,
+            validation_x,
+            v_b_np,
+            device=selected_device,
+            batch_size=batch_size,
+        )
         crps, qlike = _metric_arrays(
-            location.detach().cpu().numpy(),
-            variance.detach().cpu().numpy(),
+            location,
+            variance,
             v_y_np,
             v_rv_np,
         )
@@ -233,12 +257,32 @@ def train_epoch_zero_residual_model(
     for epoch in range(1, max_epochs + 1):
         model.train()
         optimizer.zero_grad(set_to_none=True)
-        prediction = model(t_x, t_b)
-        loss = _loss(prediction, t_b, t_rv, t_y)
-        if not torch.isfinite(loss):
+        finite_epoch = True
+        for start in range(0, len(train_x), batch_size):
+            stop = min(start + batch_size, len(train_x))
+            x_batch = torch.as_tensor(
+                train_x[start:stop], dtype=torch.float32, device=selected_device
+            )
+            b_batch = torch.as_tensor(
+                train_b[start:stop], dtype=torch.float32, device=selected_device
+            )
+            y_batch = torch.as_tensor(
+                train_y[start:stop], dtype=torch.float32, device=selected_device
+            )
+            rv_batch = torch.as_tensor(
+                train_rv[start:stop], dtype=torch.float32, device=selected_device
+            )
+            batch_loss = _loss(model(x_batch, b_batch), b_batch, rv_batch, y_batch)
+            if not torch.isfinite(batch_loss):
+                finite_epoch = False
+                break
+            # Accumulate the exact full-sample mean gradient while bounding
+            # activation memory.  Ordering is chronological and never shuffled.
+            (batch_loss * ((stop - start) / len(train_x))).backward()
+        if not finite_epoch:
+            optimizer.zero_grad(set_to_none=True)
             stop_reason = "nonfinite_training_loss"
             break
-        loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         val_crps, val_qlike, state_digest = evaluate(epoch)
@@ -327,20 +371,23 @@ def evaluate_residual_model(
     returns_eval: np.ndarray,
     rv_eval: np.ndarray,
     horizon: int,
+    batch_size: int = 1024,
 ) -> V112Forecast:
-    x_values = torch.tensor(_as_sequence(x_eval), dtype=torch.float32)
-    base = np.asarray(base_variance_eval, dtype=np.float32).reshape(-1, 1)
-    with torch.no_grad():
-        model_device = next(result.model.parameters()).device
-        variance, location, _direction, _residual = result.model(
-            x_values.to(model_device),
-            torch.tensor(base, dtype=torch.float32, device=model_device),
-        )
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    model_device = next(result.model.parameters()).device
+    variance, location = _predict_batched(
+        result.model,
+        x_eval,
+        base_variance_eval,
+        device=model_device,
+        batch_size=batch_size,
+    )
     return make_forecast(
         "M1_NUMERIC_RESIDUAL",
         horizon,
-        location.detach().cpu().numpy().reshape(-1),
-        variance.detach().cpu().numpy().reshape(-1),
+        location.reshape(-1),
+        variance.reshape(-1),
         returns_eval,
         rv_eval,
     )

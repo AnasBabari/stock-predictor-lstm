@@ -146,6 +146,7 @@ def _training_only_ranking_scores(
     horizon: int,
     max_epochs: int,
     patience: int,
+    batch_size: int,
     device: str | None,
 ) -> dict[str, float]:
     """Rank fixed candidate families using only an inner chronological split."""
@@ -191,6 +192,7 @@ def _training_only_ranking_scores(
         rv_validation=rv_validation,
         max_epochs=max_epochs,
         patience=patience,
+        batch_size=batch_size,
         seed=42,
         device=device,
     )
@@ -219,6 +221,7 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--max-epochs", type=int, default=15)
     parser.add_argument("--patience", type=int, default=4)
+    parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument(
         "--device", default=None, help="cuda, cpu, or omitted for automatic selection"
     )
@@ -328,6 +331,7 @@ def main() -> int:
                 rv_validation=validation_rv,
                 max_epochs=args.max_epochs,
                 patience=args.patience,
+                batch_size=args.batch_size,
                 seed=seed,
                 device=args.device,
             )
@@ -358,6 +362,9 @@ def main() -> int:
                 state_path = model_dir / f"horizon_{horizon}" / "seed_42.pt"
                 state_path.parent.mkdir(parents=True, exist_ok=True)
                 torch.save(training.model.state_dict(), state_path)
+            training.model.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Simple baselines are recorded but can never be promoted as learned.
         constant_forecast = make_forecast(
@@ -385,6 +392,7 @@ def main() -> int:
             horizon=horizon,
             max_epochs=args.max_epochs,
             patience=args.patience,
+            batch_size=args.batch_size,
             device=args.device,
         )
         inner_train_indices, inner_validation_indices = _inner_development_indices(
