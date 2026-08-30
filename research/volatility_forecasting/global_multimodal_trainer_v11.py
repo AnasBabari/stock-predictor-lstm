@@ -325,6 +325,7 @@ class GlobalMultimodalTrainerV11:
 
             total_loss = loss_ret + lambda_qlike * loss_vol
             total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             if has_val:
@@ -337,9 +338,10 @@ class GlobalMultimodalTrainerV11:
                         else None
                     )
                     v_mu, v_logvol = model(v_t_num, v_t_news)
-                    val_scale = np.sqrt(base_har_var_val * (df - 2.0) / df) * np.exp(
-                        v_logvol.numpy()
-                    )
+                    raw_scale = np.sqrt(
+                        np.maximum(base_har_var_val * (df - 2.0) / df, 1e-8)
+                    ) * np.exp(np.clip(v_logvol.numpy(), -3.0, 3.0))
+                    val_scale = np.clip(raw_scale, 1e-5, 10.0)
                     val_crps = float(
                         np.mean(
                             student_t_crps(
@@ -436,7 +438,9 @@ class GlobalMultimodalTrainerV11:
             )
             with torch.no_grad():
                 m1_mu_v, m1_lv_v = f_m1(torch.tensor(f_x_num_val, dtype=torch.float32), None)
-                f_m1_scale = f_val_scale_har * np.exp(m1_lv_v.numpy())
+                f_m1_scale = np.clip(
+                    f_val_scale_har * np.exp(np.clip(m1_lv_v.numpy(), -3.0, 3.0)), 1e-5, 10.0
+                )
                 f_m1_crps = float(
                     np.mean(
                         student_t_crps(
@@ -470,7 +474,9 @@ class GlobalMultimodalTrainerV11:
                     torch.tensor(f_x_num_val, dtype=torch.float32),
                     torch.tensor(f_x_news_val, dtype=torch.float32),
                 )
-                f_m2_scale = f_val_scale_har * np.exp(m2_lv_v.numpy())
+                f_m2_scale = np.clip(
+                    f_val_scale_har * np.exp(np.clip(m2_lv_v.numpy(), -3.0, 3.0)), 1e-5, 10.0
+                )
                 f_m2_crps = float(
                     np.mean(
                         student_t_crps(
@@ -548,7 +554,9 @@ class GlobalMultimodalTrainerV11:
 
         with torch.no_grad():
             m1_mu_v, m1_lv_v = m1_final(torch.tensor(val_x_num, dtype=torch.float32), None)
-            m1_scale_v = val_scale_har * np.exp(m1_lv_v.numpy())
+            m1_scale_v = np.clip(
+                val_scale_har * np.exp(np.clip(m1_lv_v.numpy(), -3.0, 3.0)), 1e-5, 10.0
+            )
             m1_val, _ = cls.evaluate_partition(
                 "M1_NUMERIC",
                 m1_mu_v.numpy(),
@@ -562,7 +570,9 @@ class GlobalMultimodalTrainerV11:
                 torch.tensor(val_x_num, dtype=torch.float32),
                 torch.tensor(val_x_news, dtype=torch.float32),
             )
-            m2_scale_v = val_scale_har * np.exp(m2_lv_v.numpy())
+            m2_scale_v = np.clip(
+                val_scale_har * np.exp(np.clip(m2_lv_v.numpy(), -3.0, 3.0)), 1e-5, 10.0
+            )
             m2_val, _ = cls.evaluate_partition(
                 "M2_MULTIMODAL_NEWS",
                 m2_mu_v.numpy(),
@@ -690,7 +700,9 @@ class GlobalMultimodalTrainerV11:
             m1_mu_t, m1_logvol_t = bundle.m1_numeric_model(
                 torch.tensor(test_x_num, dtype=torch.float32), None
             )
-            m1_scale = test_scale_har * np.exp(m1_logvol_t.numpy())
+            m1_scale = np.clip(
+                test_scale_har * np.exp(np.clip(m1_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
+            )
             m1_test, m1_sample_crps = cls.evaluate_partition(
                 "M1_NUMERIC",
                 m1_mu_t.numpy(),
@@ -706,7 +718,9 @@ class GlobalMultimodalTrainerV11:
                 torch.tensor(test_x_num, dtype=torch.float32),
                 torch.tensor(test_x_news, dtype=torch.float32),
             )
-            m2_scale = test_scale_har * np.exp(m2_logvol_t.numpy())
+            m2_scale = np.clip(
+                test_scale_har * np.exp(np.clip(m2_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
+            )
             m2_test, m2_sample_crps = cls.evaluate_partition(
                 "M2_MULTIMODAL_NEWS",
                 m2_mu_t.numpy(),
@@ -722,7 +736,9 @@ class GlobalMultimodalTrainerV11:
                 torch.tensor(test_x_num, dtype=torch.float32),
                 torch.tensor(shuffled_test_news, dtype=torch.float32),
             )
-            m3s_scale = test_scale_har * np.exp(m3s_logvol_t.numpy())
+            m3s_scale = np.clip(
+                test_scale_har * np.exp(np.clip(m3s_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
+            )
             m3s_test, m3s_sample_crps = cls.evaluate_partition(
                 "M3_SHUFFLE_CONTROL",
                 m3s_mu_t.numpy(),
@@ -738,7 +754,9 @@ class GlobalMultimodalTrainerV11:
                 torch.tensor(test_x_num, dtype=torch.float32),
                 torch.tensor(delayed_test_news, dtype=torch.float32),
             )
-            m3d_scale = test_scale_har * np.exp(m3d_logvol_t.numpy())
+            m3d_scale = np.clip(
+                test_scale_har * np.exp(np.clip(m3d_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
+            )
             m3d_test, m3d_sample_crps = cls.evaluate_partition(
                 "M3_DELAY_CONTROL",
                 m3d_mu_t.numpy(),

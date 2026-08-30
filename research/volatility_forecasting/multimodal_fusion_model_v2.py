@@ -87,8 +87,8 @@ class MultimodalFusionModel(nn.Module):
 
         fused = self.fusion(torch.cat([num_emb, news_emb], dim=-1))
 
-        delta_mu = self.location_head(fused)
-        delta_log_vol = self.volatility_head(fused)
+        delta_mu = torch.clamp(self.location_head(fused), min=-1.0, max=1.0)
+        delta_log_vol = torch.clamp(self.volatility_head(fused), min=-3.0, max=3.0)
 
         return delta_mu, delta_log_vol
 
