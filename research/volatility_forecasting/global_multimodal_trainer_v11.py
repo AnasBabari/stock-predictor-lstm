@@ -51,6 +51,28 @@ class ModelMetricRecord:
 
 
 @dataclass(frozen=True)
+class DevelopmentSelectionDecision:
+    """Preregistered development selection outcome.
+
+    Hierarchy (fixed prior to any sealed test):
+      1. M1 is eligible only if M1 robustly beats M0 (aggregate CRPS, all required
+         horizons, and QLIKE). Otherwise the champion is M0_HAR_BASELINE and no
+         learned model is promoted.
+      2. Only if M1 is eligible may M2 compete. M2 is eligible only if M2 beats M1,
+         M3_SHUFFLE_CONTROL, and M3_DELAY_CONTROL at every required horizon and on
+         aggregate CRPS (with QLIKE no worse than M0).
+    """
+
+    selected_family: str  # M0_HAR_BASELINE | M1_NUMERIC | M2_MULTIMODAL_NEWS
+    is_learned_promotion: bool
+    reason: str
+    decision_steps: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class BootstrapConfidenceInterval:
     mean_delta: float
     ci_lower_95: float
@@ -65,7 +87,9 @@ class BootstrapConfidenceInterval:
 @dataclass(frozen=True)
 class FrozenCandidateManifest:
     candidate_id: str
-    selected_candidate_family: str  # M1_NUMERIC or M2_MULTIMODAL_NEWS (fixed prior to sealed test)
+    selected_candidate_family: (
+        str  # M0_HAR_BASELINE, M1_NUMERIC, or M2_MULTIMODAL_NEWS (fixed prior to sealed test)
+    )
     selected_hyperparameters: MappingProxyType
     validation_oof_metrics: dict[str, ModelMetricRecord]
     train_dates: tuple[str, str]
@@ -90,7 +114,7 @@ class FrozenCandidateManifest:
 class FrozenCandidateBundle:
     m0_har_baseline: EconometricHARBaseline
     m1_numeric_model: MultimodalFusionModel
-    m2_multimodal_model: MultimodalFusionModel
+    m2_multimodal_model: MultimodalFusionModel | None  # None when M2 was not trained
     num_scaler_mean: np.ndarray
     num_scaler_std: np.ndarray
     news_scaler_mean: np.ndarray
@@ -257,6 +281,98 @@ class GlobalMultimodalTrainerV11:
             pinball_loss_10_90=round(pinball, 6),
         )
         return record, sample_crps
+
+    @staticmethod
+    def select_development_family(
+        m0: ModelMetricRecord,
+        m1: ModelMetricRecord,
+        m2: ModelMetricRecord | None,
+        m3_shuffle: ModelMetricRecord | None,
+        m3_delay: ModelMetricRecord | None,
+        horizons: tuple[int, ...] = REQUIRED_TARGET_HORIZONS_V11,
+    ) -> DevelopmentSelectionDecision:
+        """Preregistered development selection hierarchy.
+
+        M1 is promoted only if M1 < M0 on aggregate CRPS, every required horizon,
+        and QLIKE. If M1 fails, the champion is M0_HAR_BASELINE with no learned
+        promotion. M2 may only compete once M1 has already beaten M0, and only beats
+        its own controls (M1, M3_shuffle, M3_delay) at every required horizon and on
+        aggregate CRPS with QLIKE no worse than M0.
+        """
+        steps: list[str] = []
+        m1_horizons_ok = all(m1.crps_per_horizon[h] < m0.crps_per_horizon[h] for h in horizons)
+        m1_agg_ok = m1.crps_mean < m0.crps_mean and m1.qlike_mean <= m0.qlike_mean
+        m1_eligible = m1_horizons_ok and m1_agg_ok
+
+        steps.append(
+            f"M1 vs M0: aggregate={m1_agg_ok}, all-horizons={m1_horizons_ok} "
+            f"(M1 CRPS {m1.crps_mean:.6f} vs M0 {m0.crps_mean:.6f})"
+        )
+
+        if not m1_eligible:
+            return DevelopmentSelectionDecision(
+                selected_family="M0_HAR_BASELINE",
+                is_learned_promotion=False,
+                reason=(
+                    "M1 did not robustly beat M0 on aggregate CRPS, every required "
+                    f"horizon {horizons}, and QLIKE. Learned promotion withheld."
+                ),
+                decision_steps=tuple(steps),
+            )
+
+        if m2 is None or m3_shuffle is None or m3_delay is None:
+            return DevelopmentSelectionDecision(
+                selected_family="M1_NUMERIC",
+                is_learned_promotion=True,
+                reason=(
+                    "M1 robustly beat M0, and M2 was not eligible "
+                    "(no real news archive or M2 not trained)."
+                ),
+                decision_steps=tuple(steps + ["M2: NOT ELIGIBLE (no trained M2 / controls)."]),
+            )
+
+        m2_horizons_ok = all(
+            m2.crps_per_horizon[h] < m1.crps_per_horizon[h]
+            and m2.crps_per_horizon[h] < m3_shuffle.crps_per_horizon[h]
+            and m2.crps_per_horizon[h] < m3_delay.crps_per_horizon[h]
+            for h in horizons
+        )
+        m2_agg_ok = (
+            m2.crps_mean < m1.crps_mean
+            and m2.crps_mean < m3_shuffle.crps_mean
+            and m2.crps_mean < m3_delay.crps_mean
+            and m2.qlike_mean <= m0.qlike_mean
+        )
+        m2_eligible = m2_horizons_ok and m2_agg_ok
+
+        steps.append(
+            f"M2 vs M1/M3s/M3d: aggregate={m2_agg_ok}, all-horizons={m2_horizons_ok} "
+            f"(M2 CRPS {m2.crps_mean:.6f} vs M1 {m1.crps_mean:.6f} / "
+            f"M3s {m3_shuffle.crps_mean:.6f} / M3d {m3_delay.crps_mean:.6f})"
+        )
+
+        if m2_eligible:
+            return DevelopmentSelectionDecision(
+                selected_family="M2_MULTIMODAL_NEWS",
+                is_learned_promotion=True,
+                reason=(
+                    "M1 robustly beat M0, and M2 beat M1, M3_shuffle, and M3_delay "
+                    f"at every required horizon {horizons} and on aggregate CRPS "
+                    "with QLIKE no worse than M0."
+                ),
+                decision_steps=tuple(steps),
+            )
+
+        return DevelopmentSelectionDecision(
+            selected_family="M1_NUMERIC",
+            is_learned_promotion=True,
+            reason=(
+                "M1 robustly beat M0; M2 failed to beat M1 and its own negative "
+                "controls (M3_shuffle / M3_delay) at the required horizons or on "
+                "aggregate CRPS, so M1 is the champion."
+            ),
+            decision_steps=tuple(steps),
+        )
 
     @classmethod
     def train_har_residual_model_with_early_stopping(
@@ -588,10 +704,22 @@ class GlobalMultimodalTrainerV11:
             "M2_MULTIMODAL_NEWS": m2_val,
         }
 
-        # Validation Alone Chooses Candidate Family
-        selected_family = (
-            "M2_MULTIMODAL_NEWS" if m2_val.crps_mean < m1_val.crps_mean else "M1_NUMERIC"
+        # Preregistered Model Selection Hierarchy:
+        # 1. Compare M1 against M0 baseline across aggregate and all required horizons
+        m1_beats_m0 = (m1_val.crps_mean < m0_val.crps_mean) and all(
+            m1_val.crps_per_horizon[h] < m0_val.crps_per_horizon[h]
+            for h in REQUIRED_TARGET_HORIZONS_V11
         )
+
+        if not m1_beats_m0:
+            selected_family = "M0_HAR_BASELINE"
+        else:
+            # 2. If M1 beats M0, check if M2 beats M1 across aggregate and all required horizons
+            m2_beats_m1 = (m2_val.crps_mean < m1_val.crps_mean) and all(
+                m2_val.crps_per_horizon[h] < m1_val.crps_per_horizon[h]
+                for h in REQUIRED_TARGET_HORIZONS_V11
+            )
+            selected_family = "M2_MULTIMODAL_NEWS" if m2_beats_m1 else "M1_NUMERIC"
 
         # Canonical Freeze Digest
         h = hashlib.sha256()
@@ -836,6 +964,9 @@ class GlobalMultimodalTrainerV11:
                 if (all_h_pass and agg_pass)
                 else "SEALED_TEST_FAIL_M1_NUMERIC"
             )
+
+        elif preselected == "M0_HAR_BASELINE":
+            decision = "SEALED_TEST_PASS_M0_HAR_BASELINE"
 
         else:
             decision = "SEALED_TEST_FAIL_UNRECOGNIZED_FAMILY"
