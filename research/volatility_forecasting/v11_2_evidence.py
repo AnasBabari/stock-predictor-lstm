@@ -21,6 +21,8 @@ class V112SeedEvidence:
     family: str
     best_epoch: int | None
     epoch_zero_crps: float | None
+    epoch_zero_qlike: float | None
+    epoch_zero_state_sha256: str | None
     validation_crps: float
     validation_qlike: float
     validation_coverage_80: float
@@ -59,6 +61,8 @@ def seed_evidence_from_forecast(
         family=forecast.family,
         best_epoch=training.best_epoch if training else None,
         epoch_zero_crps=training.epoch_zero_crps if training else None,
+        epoch_zero_qlike=training.epoch_zero_qlike if training else None,
+        epoch_zero_state_sha256=training.epoch_zero_state_sha256 if training else None,
         validation_crps=metrics["crps_mean"],
         validation_qlike=metrics["qlike_mean"],
         validation_coverage_80=metrics["coverage_80"],

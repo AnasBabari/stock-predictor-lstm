@@ -345,3 +345,5 @@ def test_epoch_zero_is_evaluated_before_updates_and_can_be_selected() -> None:
     assert result.epoch_evidence[0].epoch == 0
     assert result.best_epoch == 0
     assert result.epoch_zero_crps == pytest.approx(result.epoch_evidence[0].validation_crps)
+    assert result.epoch_zero_qlike == pytest.approx(result.epoch_evidence[0].validation_qlike)
+    assert result.epoch_zero_state_sha256 == result.epoch_evidence[0].state_sha256

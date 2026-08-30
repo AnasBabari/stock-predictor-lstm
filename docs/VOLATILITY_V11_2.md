@@ -64,8 +64,9 @@ to remain in `[0.65, 0.95]`. The development report records these intervals befo
 any route is frozen, and certification recomputes them on the sealed holdout.
 
 All seed artifacts retain unrounded metrics, prediction and state digests,
-fold ranges, runtime information, and stop reasons. Human-readable values may
-be rounded, but machine-readable evidence is not.
+including the epoch-zero CRPS/QLIKE and exact HAR-prior state digest, plus fold
+ranges, runtime information, and stop reasons. Human-readable values may be
+rounded, but machine-readable evidence is not.
 
 ## Sealing and certification boundary
 

@@ -60,6 +60,8 @@ class V112ResidualTrainingResult:
     best_epoch: int
     epoch_evidence: tuple[V112EpochEvidence, ...]
     epoch_zero_crps: float
+    epoch_zero_qlike: float
+    epoch_zero_state_sha256: str
     best_state_sha256: str
     stop_reason: str
 
@@ -266,6 +268,8 @@ def train_epoch_zero_residual_model(
         best_epoch=best_epoch,
         epoch_evidence=tuple(epoch_evidence),
         epoch_zero_crps=epoch_zero_crps,
+        epoch_zero_qlike=epoch_zero_qlike,
+        epoch_zero_state_sha256=epoch_zero_digest,
         best_state_sha256=_state_digest(model),
         stop_reason=stop_reason,
     )
