@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import threading
 import time
@@ -178,7 +179,7 @@ def _download_ohlcv(ticker: str) -> pd.DataFrame:
     market_circuit_breaker.check_can_execute(ticker)
     try:
         data = None
-        try:
+        with contextlib.suppress(Exception):
             data = yf.download(
                 ticker,
                 period=f"{HISTORICAL_YEARS}y",
@@ -186,13 +187,9 @@ def _download_ohlcv(ticker: str) -> pd.DataFrame:
                 auto_adjust=True,
                 timeout=15,
             )
-        except Exception:
-            pass
         if data is None or not isinstance(data, pd.DataFrame) or data.empty:
-            try:
+            with contextlib.suppress(Exception):
                 data = yf.Ticker(ticker).history(period=f"{HISTORICAL_YEARS}y", auto_adjust=True)
-            except Exception:
-                pass
         if not isinstance(data, pd.DataFrame) or data.empty:
             raise UnknownTickerError(f"No market data is available for {ticker}.")
         if isinstance(data.columns, pd.MultiIndex):
