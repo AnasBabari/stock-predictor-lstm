@@ -32,14 +32,16 @@ class CandidateFreezerV11:
         manifest_file = output_dir / "v11_candidate_freeze_manifest.json"
         sha_file = output_dir / "v11_candidate_freeze_manifest.sha256"
 
-        # Canonical parameter serialization
         buf_m1 = io.BytesIO()
         torch.save(bundle.m1_numeric_model.state_dict(), buf_m1)
         m1_bytes = buf_m1.getvalue()
 
-        buf_m2 = io.BytesIO()
-        torch.save(bundle.m2_multimodal_model.state_dict(), buf_m2)
-        m2_bytes = buf_m2.getvalue()
+        if bundle.m2_multimodal_model is not None:
+            buf_m2 = io.BytesIO()
+            torch.save(bundle.m2_multimodal_model.state_dict(), buf_m2)
+            m2_bytes = buf_m2.getvalue()
+        else:
+            m2_bytes = b"NO_M2_MODEL_TRAINED"
 
         # Combine all canonical components into master freeze hash
         h = hashlib.sha256()

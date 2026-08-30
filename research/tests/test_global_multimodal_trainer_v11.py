@@ -82,6 +82,7 @@ def test_global_multimodal_trainer_v11_confirmatory_lifecycle():
             "SEALED_TEST_PASS_M1_NUMERIC",
             "SEALED_TEST_FAIL_M1_NUMERIC",
             "SEALED_TEST_PASS_M0_HAR_BASELINE",
+            "SEALED_TEST_FAIL_M0_HAR_BASELINE",
         ]
 
 

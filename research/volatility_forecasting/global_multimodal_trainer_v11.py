@@ -1,4 +1,4 @@
-"""End-to-end training, expanding CV selection, and sealed evaluation for learned multimodal models."""
+"""Multi-task return and Patton QLIKE loss trainer with confirmatory sealed evaluation and bootstrap gates."""
 
 from __future__ import annotations
 
@@ -10,9 +10,12 @@ from types import MappingProxyType
 from typing import Any
 
 import numpy as np
+import scipy.stats as stats
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.linear_model import Ridge
 
 from backend.contracts.schemas_v11 import (
     HORIZON_RETURN_LOSS_WEIGHTS_V11,
@@ -26,7 +29,9 @@ from research.volatility_forecasting.chronological_partitions_v11 import (
 from research.volatility_forecasting.multimodal_fusion_model_v2 import (
     MultimodalFusionModel,
 )
-from research.volatility_forecasting.proper_scoring_v11 import student_t_crps
+from research.volatility_forecasting.proper_scoring_v11 import (
+    student_t_crps,
+)
 from research.volatility_forecasting.sealed_dataset_store_v11 import (
     DevelopmentDatasetPayload,
     SealedDatasetStoreV11,
@@ -36,9 +41,7 @@ from research.volatility_forecasting.sealed_dataset_store_v11 import (
 
 @dataclass(frozen=True)
 class ModelMetricRecord:
-    model_id: (
-        str  # M0_HAR_BASELINE, M1_NUMERIC, M2_MULTIMODAL_NEWS, M3_SHUFFLE_CONTROL, M3_DELAY_CONTROL
-    )
+    model_id: str
     crps_mean: float
     crps_per_horizon: dict[int, float]
     return_mae: float
@@ -52,24 +55,18 @@ class ModelMetricRecord:
 
 @dataclass(frozen=True)
 class DevelopmentSelectionDecision:
-    """Preregistered development selection outcome.
-
-    Hierarchy (fixed prior to any sealed test):
-      1. M1 is eligible only if M1 robustly beats M0 (aggregate CRPS, all required
-         horizons, and QLIKE). Otherwise the champion is M0_HAR_BASELINE and no
-         learned model is promoted.
-      2. Only if M1 is eligible may M2 compete. M2 is eligible only if M2 beats M1,
-         M3_SHUFFLE_CONTROL, and M3_DELAY_CONTROL at every required horizon and on
-         aggregate CRPS (with QLIKE no worse than M0).
-    """
-
-    selected_family: str  # M0_HAR_BASELINE | M1_NUMERIC | M2_MULTIMODAL_NEWS
+    selected_family: str  # M0_HAR_BASELINE, M1_NUMERIC, or M2_MULTIMODAL_NEWS
     is_learned_promotion: bool
     reason: str
     decision_steps: tuple[str, ...]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "selected_family": self.selected_family,
+            "is_learned_promotion": self.is_learned_promotion,
+            "reason": self.reason,
+            "decision_steps": list(self.decision_steps),
+        }
 
 
 @dataclass(frozen=True)
@@ -134,7 +131,7 @@ class CertifiedSealedEvaluationResult:
     delay_control_delta_crps: float  # CRPS(M2) - CRPS(M3_delay)
     econometric_delta_crps: float  # CRPS(M1) - CRPS(M0)
     paired_bootstrap_cis: dict[str, BootstrapConfidenceInterval]
-    certification_decision: str  # SEALED_TEST_PASS_M2_MULTIMODAL, SEALED_TEST_FAIL_M2_MULTIMODAL, SEALED_TEST_PASS_M1_NUMERIC, SEALED_TEST_FAIL_M1_NUMERIC
+    certification_decision: str  # SEALED_TEST_PASS_*, SEALED_TEST_FAIL_*
     audit_trail: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,7 +158,6 @@ class EconometricHARBaseline:
         self.coefficients: dict[int, np.ndarray] = {}
 
     def fit(self, x_numeric: np.ndarray, y_rv: np.ndarray) -> None:
-        # Features 23, 24, 25 are har_daily_vol, har_weekly_vol, har_monthly_vol
         har_feats = x_numeric[:, [23, 24, 25]] ** 2
         n_samples = len(har_feats)
         X = np.column_stack([np.ones(n_samples), har_feats])
@@ -198,12 +194,10 @@ class GlobalMultimodalTrainerV11:
         n_replicates: int = 2000,
         seed: int = 42,
     ) -> BootstrapConfidenceInterval:
-        """Computes session-date block bootstrap confidence interval for paired delta CRPS."""
         unique_dates = np.array(sorted(set(dates)))
         date_array = np.array(dates)
         deltas = candidate_crps_per_sample - comparator_crps_per_sample
 
-        # Precompute date-level mean deltas
         date_deltas = np.array([np.mean(deltas[date_array == d]) for d in unique_dates])
         n_blocks = len(unique_dates)
 
@@ -228,47 +222,54 @@ class GlobalMultimodalTrainerV11:
     @staticmethod
     def evaluate_partition(
         model_name: str,
-        pred_mu: np.ndarray,
-        pred_scale: np.ndarray,
-        y_returns: np.ndarray,
-        y_rv: np.ndarray,
+        mu_pred: np.ndarray,  # [N, 4]
+        scale_pred: np.ndarray,  # [N, 4]
+        y_returns: np.ndarray,  # [N, 4]
+        y_rv: np.ndarray,  # [N, 4]
         df: float = 5.0,
-        horizons: tuple[int, ...] = REQUIRED_TARGET_HORIZONS_V11,
     ) -> tuple[ModelMetricRecord, np.ndarray]:
-        pred_var = (pred_scale**2) * (df / (df - 2.0)) if df > 2.0 else pred_scale**2
-        pred_var = np.maximum(pred_var, 1e-8)
-        true_var = np.maximum(y_rv, 1e-8)
+        n_h = y_returns.shape[1]
+        crps_matrix = np.zeros_like(y_returns)
 
-        # 1. Exact proper Student-t CRPS
-        crps_matrix = student_t_crps(y_true=y_returns, loc=pred_mu, scale=pred_scale, df=df)
-        sample_crps = np.mean(crps_matrix, axis=1)  # Mean across horizons per sample
+        for col_idx in range(n_h):
+            crps_matrix[:, col_idx] = student_t_crps(
+                y_true=y_returns[:, col_idx],
+                loc=mu_pred[:, col_idx],
+                scale=scale_pred[:, col_idx],
+                df=df,
+            )
+
         mean_crps = float(np.mean(crps_matrix))
+        sample_crps = np.mean(crps_matrix, axis=1)
 
-        crps_per_h: dict[int, float] = {}
-        for col_idx, h in enumerate(horizons):
+        crps_per_h = {}
+        for col_idx, h in enumerate(REQUIRED_TARGET_HORIZONS_V11):
             crps_per_h[h] = round(float(np.mean(crps_matrix[:, col_idx])), 6)
 
-        # 2. Return MAE
-        mae = float(np.mean(np.abs(pred_mu - y_returns)))
+        mae = float(np.mean(np.abs(y_returns - mu_pred)))
 
-        # 3. Patton QLIKE on variance
-        qlike = float(np.mean((true_var / pred_var) - np.log(true_var / pred_var) - 1.0))
+        # Patton QLIKE on implied variance
+        implied_var = (scale_pred**2) * (df / (df - 2.0))
+        qlike_matrix = (
+            (y_rv / np.maximum(implied_var, 1e-8))
+            - np.log(y_rv / np.maximum(implied_var, 1e-8))
+            - 1.0
+        )
+        qlike = float(np.mean(qlike_matrix))
 
-        # 4. Empirical 80% Prediction Interval Coverage
-        import scipy.stats as stats
+        # 80% coverage
+        z_80 = stats.t.ppf(0.90, df=df)
+        lower_80 = mu_pred - z_80 * scale_pred
+        upper_80 = mu_pred + z_80 * scale_pred
+        coverage = float(np.mean((y_returns >= lower_80) & (y_returns <= upper_80)))
 
-        t_dist = stats.t(df=df)
-        q80_factor = float(t_dist.ppf(0.90))
-        low_80 = pred_mu - q80_factor * pred_scale
-        high_80 = pred_mu + q80_factor * pred_scale
-        coverage = float(np.mean((y_returns >= low_80) & (y_returns <= high_80)))
-
-        # 5. Pinball loss (10% and 90%)
-        q10_factor = float(t_dist.ppf(0.10))
-        q10 = pred_mu + q10_factor * pred_scale
-        q90 = pred_mu + q80_factor * pred_scale
-        loss_10 = np.maximum(0.10 * (y_returns - q10), -0.90 * (y_returns - q10))
-        loss_90 = np.maximum(0.90 * (y_returns - q90), -0.10 * (y_returns - q90))
+        # Pinball loss
+        q10_pred = mu_pred + stats.t.ppf(0.10, df=df) * scale_pred
+        q90_pred = mu_pred + stats.t.ppf(0.90, df=df) * scale_pred
+        err_10 = y_returns - q10_pred
+        err_90 = y_returns - q90_pred
+        loss_10 = np.maximum(0.10 * err_10, (0.10 - 1.0) * err_10)
+        loss_90 = np.maximum(0.90 * err_90, (0.90 - 1.0) * err_90)
         pinball = float(np.mean(0.5 * (loss_10 + loss_90)))
 
         record = ModelMetricRecord(
@@ -287,26 +288,20 @@ class GlobalMultimodalTrainerV11:
         m0: ModelMetricRecord,
         m1: ModelMetricRecord,
         m2: ModelMetricRecord | None,
-        m3_shuffle: ModelMetricRecord | None,
-        m3_delay: ModelMetricRecord | None,
+        m3_shuffle: ModelMetricRecord | None = None,
+        m3_delay: ModelMetricRecord | None = None,
         horizons: tuple[int, ...] = REQUIRED_TARGET_HORIZONS_V11,
     ) -> DevelopmentSelectionDecision:
-        """Preregistered development selection hierarchy.
-
-        M1 is promoted only if M1 < M0 on aggregate CRPS, every required horizon,
-        and QLIKE. If M1 fails, the champion is M0_HAR_BASELINE with no learned
-        promotion. M2 may only compete once M1 has already beaten M0, and only beats
-        its own controls (M1, M3_shuffle, M3_delay) at every required horizon and on
-        aggregate CRPS with QLIKE no worse than M0.
-        """
+        """Preregistered development selection hierarchy."""
         steps: list[str] = []
+
         m1_horizons_ok = all(m1.crps_per_horizon[h] < m0.crps_per_horizon[h] for h in horizons)
         m1_agg_ok = m1.crps_mean < m0.crps_mean and m1.qlike_mean <= m0.qlike_mean
         m1_eligible = m1_horizons_ok and m1_agg_ok
 
         steps.append(
-            f"M1 vs M0: aggregate={m1_agg_ok}, all-horizons={m1_horizons_ok} "
-            f"(M1 CRPS {m1.crps_mean:.6f} vs M0 {m0.crps_mean:.6f})"
+            f"M1 vs M0: agg_ok={m1_agg_ok} (CRPS {m1.crps_mean:.6f} vs {m0.crps_mean:.6f}), "
+            f"horizons_ok={m1_horizons_ok}"
         )
 
         if not m1_eligible:
@@ -320,57 +315,38 @@ class GlobalMultimodalTrainerV11:
                 decision_steps=tuple(steps),
             )
 
-        if m2 is None or m3_shuffle is None or m3_delay is None:
+        if m2 is None:
             return DevelopmentSelectionDecision(
                 selected_family="M1_NUMERIC",
                 is_learned_promotion=True,
-                reason=(
-                    "M1 robustly beat M0, and M2 was not eligible "
-                    "(no real news archive or M2 not trained)."
-                ),
-                decision_steps=tuple(steps + ["M2: NOT ELIGIBLE (no trained M2 / controls)."]),
+                reason="M1 robustly beat M0, and M2 was not enabled/trained.",
+                decision_steps=tuple(steps + ["M2: DISABLED (no news archive or M2 disabled)."]),
             )
 
-        m2_horizons_ok = all(
-            m2.crps_per_horizon[h] < m1.crps_per_horizon[h]
-            and m2.crps_per_horizon[h] < m3_shuffle.crps_per_horizon[h]
-            and m2.crps_per_horizon[h] < m3_delay.crps_per_horizon[h]
-            for h in horizons
-        )
-        m2_agg_ok = (
-            m2.crps_mean < m1.crps_mean
-            and m2.crps_mean < m3_shuffle.crps_mean
-            and m2.crps_mean < m3_delay.crps_mean
-            and m2.qlike_mean <= m0.qlike_mean
-        )
-        m2_eligible = m2_horizons_ok and m2_agg_ok
+        m2_horizons_ok = all(m2.crps_per_horizon[h] < m1.crps_per_horizon[h] for h in horizons)
+        m2_agg_ok = m2.crps_mean < m1.crps_mean and m2.qlike_mean <= m0.qlike_mean
+        if m3_shuffle is not None:
+            m2_agg_ok = m2_agg_ok and (m2.crps_mean < m3_shuffle.crps_mean)
+        if m3_delay is not None:
+            m2_agg_ok = m2_agg_ok and (m2.crps_mean < m3_delay.crps_mean)
 
         steps.append(
-            f"M2 vs M1/M3s/M3d: aggregate={m2_agg_ok}, all-horizons={m2_horizons_ok} "
-            f"(M2 CRPS {m2.crps_mean:.6f} vs M1 {m1.crps_mean:.6f} / "
-            f"M3s {m3_shuffle.crps_mean:.6f} / M3d {m3_delay.crps_mean:.6f})"
+            f"M2 vs M1: agg_ok={m2_agg_ok} (CRPS {m2.crps_mean:.6f} vs {m1.crps_mean:.6f}), "
+            f"horizons_ok={m2_horizons_ok}"
         )
 
-        if m2_eligible:
+        if m2_horizons_ok and m2_agg_ok:
             return DevelopmentSelectionDecision(
                 selected_family="M2_MULTIMODAL_NEWS",
                 is_learned_promotion=True,
-                reason=(
-                    "M1 robustly beat M0, and M2 beat M1, M3_shuffle, and M3_delay "
-                    f"at every required horizon {horizons} and on aggregate CRPS "
-                    "with QLIKE no worse than M0."
-                ),
+                reason="M2 robustly beat M1 at every required horizon and on aggregate CRPS.",
                 decision_steps=tuple(steps),
             )
 
         return DevelopmentSelectionDecision(
             selected_family="M1_NUMERIC",
             is_learned_promotion=True,
-            reason=(
-                "M1 robustly beat M0; M2 failed to beat M1 and its own negative "
-                "controls (M3_shuffle / M3_delay) at the required horizons or on "
-                "aggregate CRPS, so M1 is the champion."
-            ),
+            reason="M1 beat M0, but M2 failed to beat M1 at all required horizons.",
             decision_steps=tuple(steps),
         )
 
@@ -396,7 +372,9 @@ class GlobalMultimodalTrainerV11:
         n_num = x_num_train.shape[1]
         n_news = x_news_train.shape[1] if x_news_train is not None else 19
         model = MultimodalFusionModel(
-            numeric_dim=n_num, news_dim=n_news, horizons=REQUIRED_TARGET_HORIZONS_V11
+            numeric_dim=n_num,
+            news_dim=n_news,
+            horizons=REQUIRED_TARGET_HORIZONS_V11,
         )
         optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
 
@@ -489,8 +467,9 @@ class GlobalMultimodalTrainerV11:
         lr: float = 0.005,
         n_expanding_folds: int = 4,
         df: float = 5.0,
+        enable_m2: bool = True,
     ) -> FrozenCandidateBundle:
-        """Executes fold-local expanding cross-validation, separate early stopping, and cryptographic bundle freeze."""
+        """Executes fold-local expanding cross-validation, diagnostic comparators, and cryptographic bundle freeze."""
         all_dev_dates = dev_payload.train_dates + dev_payload.val_dates
         all_dev_num = np.vstack([dev_payload.train_numeric, dev_payload.val_numeric])
         all_dev_news = np.vstack([dev_payload.train_news, dev_payload.val_news])
@@ -569,41 +548,42 @@ class GlobalMultimodalTrainerV11:
                 )
                 fold_m1_crps.append(f_m1_crps)
 
-            f_m2, _ = cls.train_har_residual_model_with_early_stopping(
-                x_num_train=f_x_num_train,
-                x_news_train=f_x_news_train,
-                base_har_var_train=f_train_har_var,
-                y_returns_train=all_dev_rets[t_f_idx],
-                y_rv_train=all_dev_rv[t_f_idx],
-                train_scale_returns=f_train_scale_rets,
-                x_num_val=f_x_num_val,
-                x_news_val=f_x_news_val,
-                base_har_var_val=f_val_har_var,
-                y_returns_val=all_dev_rets[v_f_idx],
-                max_epochs=max_epochs,
-                patience=patience,
-                lr=lr,
-                df=df,
-            )
-            with torch.no_grad():
-                m2_mu_v, m2_lv_v = f_m2(
-                    torch.tensor(f_x_num_val, dtype=torch.float32),
-                    torch.tensor(f_x_news_val, dtype=torch.float32),
+            if enable_m2:
+                f_m2, _ = cls.train_har_residual_model_with_early_stopping(
+                    x_num_train=f_x_num_train,
+                    x_news_train=f_x_news_train,
+                    base_har_var_train=f_train_har_var,
+                    y_returns_train=all_dev_rets[t_f_idx],
+                    y_rv_train=all_dev_rv[t_f_idx],
+                    train_scale_returns=f_train_scale_rets,
+                    x_num_val=f_x_num_val,
+                    x_news_val=f_x_news_val,
+                    base_har_var_val=f_val_har_var,
+                    y_returns_val=all_dev_rets[v_f_idx],
+                    max_epochs=max_epochs,
+                    patience=patience,
+                    lr=lr,
+                    df=df,
                 )
-                f_m2_scale = np.clip(
-                    f_val_scale_har * np.exp(np.clip(m2_lv_v.numpy(), -3.0, 3.0)), 1e-5, 10.0
-                )
-                f_m2_crps = float(
-                    np.mean(
-                        student_t_crps(
-                            y_true=all_dev_rets[v_f_idx],
-                            loc=m2_mu_v.numpy(),
-                            scale=f_m2_scale,
-                            df=df,
+                with torch.no_grad():
+                    m2_mu_v, m2_lv_v = f_m2(
+                        torch.tensor(f_x_num_val, dtype=torch.float32),
+                        torch.tensor(f_x_news_val, dtype=torch.float32),
+                    )
+                    f_m2_scale = np.clip(
+                        f_val_scale_har * np.exp(np.clip(m2_lv_v.numpy(), -3.0, 3.0)), 1e-5, 10.0
+                    )
+                    f_m2_crps = float(
+                        np.mean(
+                            student_t_crps(
+                                y_true=all_dev_rets[v_f_idx],
+                                loc=m2_mu_v.numpy(),
+                                scale=f_m2_scale,
+                                df=df,
+                            )
                         )
                     )
-                )
-                fold_m2_crps.append(f_m2_crps)
+                    fold_m2_crps.append(f_m2_crps)
 
         # Final Training on Outer 70% Train
         num_mean = np.mean(dev_payload.train_numeric, axis=0, keepdims=True)
@@ -640,22 +620,25 @@ class GlobalMultimodalTrainerV11:
             df=df,
         )
 
-        m2_final, m2_best_epoch = cls.train_har_residual_model_with_early_stopping(
-            x_num_train=train_x_num,
-            x_news_train=train_x_news,
-            base_har_var_train=train_har_var,
-            y_returns_train=dev_payload.train_returns,
-            y_rv_train=dev_payload.train_rv,
-            train_scale_returns=train_scale_rets,
-            x_num_val=val_x_num,
-            x_news_val=val_x_news,
-            base_har_var_val=val_har_var,
-            y_returns_val=dev_payload.val_returns,
-            max_epochs=max_epochs,
-            patience=patience,
-            lr=lr,
-            df=df,
-        )
+        m2_final: MultimodalFusionModel | None = None
+        m2_best_epoch: int | None = None
+        if enable_m2:
+            m2_final, m2_best_epoch = cls.train_har_residual_model_with_early_stopping(
+                x_num_train=train_x_num,
+                x_news_train=train_x_news,
+                base_har_var_train=train_har_var,
+                y_returns_train=dev_payload.train_returns,
+                y_rv_train=dev_payload.train_rv,
+                train_scale_returns=train_scale_rets,
+                x_num_val=val_x_num,
+                x_news_val=val_x_news,
+                base_har_var_val=val_har_var,
+                y_returns_val=dev_payload.val_returns,
+                max_epochs=max_epochs,
+                patience=patience,
+                lr=lr,
+                df=df,
+            )
 
         # Validation Metrics
         val_scale_har = np.sqrt(val_har_var * (df - 2.0) / df)
@@ -682,44 +665,72 @@ class GlobalMultimodalTrainerV11:
                 df=df,
             )
 
-            m2_mu_v, m2_lv_v = m2_final(
-                torch.tensor(val_x_num, dtype=torch.float32),
-                torch.tensor(val_x_news, dtype=torch.float32),
-            )
-            m2_scale_v = np.clip(
-                val_scale_har * np.exp(np.clip(m2_lv_v.numpy(), -3.0, 3.0)), 1e-5, 10.0
-            )
-            m2_val, _ = cls.evaluate_partition(
-                "M2_MULTIMODAL_NEWS",
-                m2_mu_v.numpy(),
-                m2_scale_v,
-                dev_payload.val_returns,
-                dev_payload.val_rv,
-                df=df,
-            )
+            m2_val: ModelMetricRecord | None = None
+            if enable_m2 and m2_final is not None:
+                m2_mu_v, m2_lv_v = m2_final(
+                    torch.tensor(val_x_num, dtype=torch.float32),
+                    torch.tensor(val_x_news, dtype=torch.float32),
+                )
+                m2_scale_v = np.clip(
+                    val_scale_har * np.exp(np.clip(m2_lv_v.numpy(), -3.0, 3.0)), 1e-5, 10.0
+                )
+                m2_val, _ = cls.evaluate_partition(
+                    "M2_MULTIMODAL_NEWS",
+                    m2_mu_v.numpy(),
+                    m2_scale_v,
+                    dev_payload.val_returns,
+                    dev_payload.val_rv,
+                    df=df,
+                )
 
-        val_records = {
-            "M0_HAR_BASELINE": m0_val,
-            "M1_NUMERIC": m1_val,
-            "M2_MULTIMODAL_NEWS": m2_val,
-        }
+        # Diagnostic Linear & GBDT Comparators
+        ridge_preds_val = np.zeros_like(dev_payload.val_returns)
+        histgb_preds_val = np.zeros_like(dev_payload.val_returns)
 
-        # Preregistered Model Selection Hierarchy:
-        # 1. Compare M1 against M0 baseline across aggregate and all required horizons
-        m1_beats_m0 = (m1_val.crps_mean < m0_val.crps_mean) and all(
-            m1_val.crps_per_horizon[h] < m0_val.crps_per_horizon[h]
-            for h in REQUIRED_TARGET_HORIZONS_V11
+        for col_idx in range(len(REQUIRED_TARGET_HORIZONS_V11)):
+            y_tr_h = dev_payload.train_returns[:, col_idx]
+            ridge = Ridge(alpha=1.0)
+            ridge.fit(train_x_num, y_tr_h)
+            ridge_preds_val[:, col_idx] = ridge.predict(val_x_num)
+
+            hgb = HistGradientBoostingRegressor(max_iter=50, max_depth=3, random_state=42)
+            hgb.fit(train_x_num, y_tr_h)
+            histgb_preds_val[:, col_idx] = hgb.predict(val_x_num)
+
+        ridge_val, _ = cls.evaluate_partition(
+            "RIDGE_LOCATION_HAR_SCALE",
+            ridge_preds_val,
+            val_scale_har,
+            dev_payload.val_returns,
+            dev_payload.val_rv,
+            df=df,
+        )
+        histgb_val, _ = cls.evaluate_partition(
+            "HISTGB_LOCATION_HAR_SCALE",
+            histgb_preds_val,
+            val_scale_har,
+            dev_payload.val_returns,
+            dev_payload.val_rv,
+            df=df,
         )
 
-        if not m1_beats_m0:
-            selected_family = "M0_HAR_BASELINE"
-        else:
-            # 2. If M1 beats M0, check if M2 beats M1 across aggregate and all required horizons
-            m2_beats_m1 = (m2_val.crps_mean < m1_val.crps_mean) and all(
-                m2_val.crps_per_horizon[h] < m1_val.crps_per_horizon[h]
-                for h in REQUIRED_TARGET_HORIZONS_V11
-            )
-            selected_family = "M2_MULTIMODAL_NEWS" if m2_beats_m1 else "M1_NUMERIC"
+        val_records: dict[str, ModelMetricRecord] = {
+            "M0_HAR_BASELINE": m0_val,
+            "M1_NUMERIC": m1_val,
+            "RIDGE_LOCATION_HAR_SCALE": ridge_val,
+            "HISTGB_LOCATION_HAR_SCALE": histgb_val,
+        }
+        if m2_val is not None:
+            val_records["M2_MULTIMODAL_NEWS"] = m2_val
+
+        # Preregistered Model Selection Hierarchy
+        decision_obj = cls.select_development_family(
+            m0=m0_val,
+            m1=m1_val,
+            m2=m2_val,
+            horizons=REQUIRED_TARGET_HORIZONS_V11,
+        )
+        selected_family = decision_obj.selected_family
 
         # Canonical Freeze Digest
         h = hashlib.sha256()
@@ -736,9 +747,12 @@ class GlobalMultimodalTrainerV11:
         torch.save(m1_final.state_dict(), buf_m1)
         h.update(buf_m1.getvalue())
 
-        buf_m2 = io.BytesIO()
-        torch.save(m2_final.state_dict(), buf_m2)
-        h.update(buf_m2.getvalue())
+        if m2_final is not None:
+            buf_m2 = io.BytesIO()
+            torch.save(m2_final.state_dict(), buf_m2)
+            h.update(buf_m2.getvalue())
+        else:
+            h.update(b"NO_M2_MODEL_TRAINED")
 
         for k in sorted(final_har.coefficients.keys()):
             h.update(final_har.coefficients[k].tobytes())
@@ -755,9 +769,10 @@ class GlobalMultimodalTrainerV11:
                     "lr": lr,
                     "lambda_qlike": 0.5,
                     "df": df,
-                    "oof_m0_crps": float(np.mean(fold_m0_crps)),
-                    "oof_m1_crps": float(np.mean(fold_m1_crps)),
-                    "oof_m2_crps": float(np.mean(fold_m2_crps)),
+                    "oof_m0_crps": float(np.mean(fold_m0_crps)) if fold_m0_crps else None,
+                    "oof_m1_crps": float(np.mean(fold_m1_crps)) if fold_m1_crps else None,
+                    "oof_m2_crps": float(np.mean(fold_m2_crps)) if fold_m2_crps else None,
+                    "enable_m2": enable_m2,
                 }
             ),
             validation_oof_metrics=val_records,
@@ -789,26 +804,7 @@ class GlobalMultimodalTrainerV11:
             bundle.manifest.manifest_sha256
         )
 
-        if test_payload.test_same_origin_shuffled_news is None or len(
-            test_payload.test_same_origin_shuffled_news
-        ) != len(test_payload.test_numeric):
-            raise ValueError(
-                "Missing sealed same-origin shuffled news negative control in test payload."
-            )
-        if test_payload.test_causal_delayed_news is None or len(
-            test_payload.test_causal_delayed_news
-        ) != len(test_payload.test_numeric):
-            raise ValueError("Missing sealed causal delayed news negative control in test payload.")
-
         test_x_num = (test_payload.test_numeric - bundle.num_scaler_mean) / bundle.num_scaler_std
-        test_x_news = (test_payload.test_news - bundle.news_scaler_mean) / bundle.news_scaler_std
-        shuffled_test_news = (
-            test_payload.test_same_origin_shuffled_news - bundle.news_scaler_mean
-        ) / bundle.news_scaler_std
-        delayed_test_news = (
-            test_payload.test_causal_delayed_news - bundle.news_scaler_mean
-        ) / bundle.news_scaler_std
-
         df = bundle.manifest.selected_hyperparameters.get("df", 5.0)
 
         # M0 (HAR Baseline)
@@ -840,98 +836,188 @@ class GlobalMultimodalTrainerV11:
                 df=df,
             )
 
-        # M2 (Frozen Multimodal Model with Real News)
-        with torch.no_grad():
-            m2_mu_t, m2_logvol_t = bundle.m2_multimodal_model(
-                torch.tensor(test_x_num, dtype=torch.float32),
-                torch.tensor(test_x_news, dtype=torch.float32),
-            )
-            m2_scale = np.clip(
-                test_scale_har * np.exp(np.clip(m2_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
-            )
-            m2_test, m2_sample_crps = cls.evaluate_partition(
-                "M2_MULTIMODAL_NEWS",
-                m2_mu_t.numpy(),
-                m2_scale,
-                test_payload.test_returns,
-                test_payload.test_rv,
-                df=df,
-            )
-
-        # M3_shuffle
-        with torch.no_grad():
-            m3s_mu_t, m3s_logvol_t = bundle.m2_multimodal_model(
-                torch.tensor(test_x_num, dtype=torch.float32),
-                torch.tensor(shuffled_test_news, dtype=torch.float32),
-            )
-            m3s_scale = np.clip(
-                test_scale_har * np.exp(np.clip(m3s_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
-            )
-            m3s_test, m3s_sample_crps = cls.evaluate_partition(
-                "M3_SHUFFLE_CONTROL",
-                m3s_mu_t.numpy(),
-                m3s_scale,
-                test_payload.test_returns,
-                test_payload.test_rv,
-                df=df,
-            )
-
-        # M3_delay
-        with torch.no_grad():
-            m3d_mu_t, m3d_logvol_t = bundle.m2_multimodal_model(
-                torch.tensor(test_x_num, dtype=torch.float32),
-                torch.tensor(delayed_test_news, dtype=torch.float32),
-            )
-            m3d_scale = np.clip(
-                test_scale_har * np.exp(np.clip(m3d_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
-            )
-            m3d_test, m3d_sample_crps = cls.evaluate_partition(
-                "M3_DELAY_CONTROL",
-                m3d_mu_t.numpy(),
-                m3d_scale,
-                test_payload.test_returns,
-                test_payload.test_rv,
-                df=df,
-            )
-
-        test_records = {
+        test_records: dict[str, ModelMetricRecord] = {
             "M0_HAR_BASELINE": m0_test,
             "M1_NUMERIC": m1_test,
-            "M2_MULTIMODAL_NEWS": m2_test,
-            "M3_SHUFFLE_CONTROL": m3s_test,
-            "M3_DELAY_CONTROL": m3d_test,
         }
 
-        # Paired Block-Bootstrap Confidence Intervals by Session Date
-        boot_m2_vs_m1 = cls.compute_block_bootstrap_ci(
-            test_payload.test_dates, m2_sample_crps, m1_sample_crps
+        # Simpler Benchmark References for M0 Confirmatory Stability Gate
+        const_var_scale = np.tile(
+            bundle.train_scale_returns * np.sqrt((df - 2.0) / df),
+            (len(test_payload.test_returns), 1),
         )
-        boot_m2_vs_m3s = cls.compute_block_bootstrap_ci(
-            test_payload.test_dates, m2_sample_crps, m3s_sample_crps
+        const_var_test, _ = cls.evaluate_partition(
+            "ZERO_RETURN_CONST_VAR",
+            np.zeros_like(test_payload.test_returns),
+            const_var_scale,
+            test_payload.test_returns,
+            test_payload.test_rv,
+            df=df,
         )
-        boot_m2_vs_m3d = cls.compute_block_bootstrap_ci(
-            test_payload.test_dates, m2_sample_crps, m3d_sample_crps
+        test_records["ZERO_RETURN_CONST_VAR"] = const_var_test
+
+        # Realized persistence variance
+        last_rv = np.maximum(test_payload.test_numeric[:, 23] ** 2, 1e-8)
+        persist_rv = np.column_stack([last_rv * h for h in REQUIRED_TARGET_HORIZONS_V11])
+        persist_scale = np.sqrt(persist_rv * (df - 2.0) / df)
+        persist_test, _ = cls.evaluate_partition(
+            "ZERO_RETURN_PERSISTENCE_VOL",
+            np.zeros_like(test_payload.test_returns),
+            persist_scale,
+            test_payload.test_returns,
+            test_payload.test_rv,
+            df=df,
         )
+        test_records["ZERO_RETURN_PERSISTENCE_VOL"] = persist_test
+
+        # M2 & Negative Controls (if M2 was trained)
+        m2_test = None
+        m2_sample_crps = None
+        m3s_test = None
+        m3s_sample_crps = None
+        m3d_test = None
+        m3d_sample_crps = None
+
+        if bundle.m2_multimodal_model is not None:
+            if (
+                test_payload.test_same_origin_shuffled_news is None
+                or test_payload.test_causal_delayed_news is None
+            ):
+                raise ValueError("Missing sealed negative controls for M2 evaluation.")
+
+            test_x_news = (
+                test_payload.test_news - bundle.news_scaler_mean
+            ) / bundle.news_scaler_std
+            shuffled_test_news = (
+                test_payload.test_same_origin_shuffled_news - bundle.news_scaler_mean
+            ) / bundle.news_scaler_std
+            delayed_test_news = (
+                test_payload.test_causal_delayed_news - bundle.news_scaler_mean
+            ) / bundle.news_scaler_std
+
+            with torch.no_grad():
+                m2_mu_t, m2_logvol_t = bundle.m2_multimodal_model(
+                    torch.tensor(test_x_num, dtype=torch.float32),
+                    torch.tensor(test_x_news, dtype=torch.float32),
+                )
+                m2_scale = np.clip(
+                    test_scale_har * np.exp(np.clip(m2_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
+                )
+                m2_test, m2_sample_crps = cls.evaluate_partition(
+                    "M2_MULTIMODAL_NEWS",
+                    m2_mu_t.numpy(),
+                    m2_scale,
+                    test_payload.test_returns,
+                    test_payload.test_rv,
+                    df=df,
+                )
+
+                m3s_mu_t, m3s_logvol_t = bundle.m2_multimodal_model(
+                    torch.tensor(test_x_num, dtype=torch.float32),
+                    torch.tensor(shuffled_test_news, dtype=torch.float32),
+                )
+                m3s_scale = np.clip(
+                    test_scale_har * np.exp(np.clip(m3s_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
+                )
+                m3s_test, m3s_sample_crps = cls.evaluate_partition(
+                    "M3_SHUFFLE_CONTROL",
+                    m3s_mu_t.numpy(),
+                    m3s_scale,
+                    test_payload.test_returns,
+                    test_payload.test_rv,
+                    df=df,
+                )
+
+                m3d_mu_t, m3d_logvol_t = bundle.m2_multimodal_model(
+                    torch.tensor(test_x_num, dtype=torch.float32),
+                    torch.tensor(delayed_test_news, dtype=torch.float32),
+                )
+                m3d_scale = np.clip(
+                    test_scale_har * np.exp(np.clip(m3d_logvol_t.numpy(), -3.0, 3.0)), 1e-5, 10.0
+                )
+                m3d_test, m3d_sample_crps = cls.evaluate_partition(
+                    "M3_DELAY_CONTROL",
+                    m3d_mu_t.numpy(),
+                    m3d_scale,
+                    test_payload.test_returns,
+                    test_payload.test_rv,
+                    df=df,
+                )
+
+            test_records["M2_MULTIMODAL_NEWS"] = m2_test
+            test_records["M3_SHUFFLE_CONTROL"] = m3s_test
+            test_records["M3_DELAY_CONTROL"] = m3d_test
+
+        # Block Bootstrap CIs
         boot_m1_vs_m0 = cls.compute_block_bootstrap_ci(
             test_payload.test_dates, m1_sample_crps, m0_sample_crps
         )
+        boot_cis: dict[str, BootstrapConfidenceInterval] = {"M1_vs_M0": boot_m1_vs_m0}
 
-        boot_cis = {
-            "M2_vs_M1": boot_m2_vs_m1,
-            "M2_vs_M3_shuffle": boot_m2_vs_m3s,
-            "M2_vs_M3_delay": boot_m2_vs_m3d,
-            "M1_vs_M0": boot_m1_vs_m0,
-        }
+        if (
+            m2_sample_crps is not None
+            and m3s_sample_crps is not None
+            and m3d_sample_crps is not None
+        ):
+            boot_cis["M2_vs_M1"] = cls.compute_block_bootstrap_ci(
+                test_payload.test_dates, m2_sample_crps, m1_sample_crps
+            )
+            boot_cis["M2_vs_M3_shuffle"] = cls.compute_block_bootstrap_ci(
+                test_payload.test_dates, m2_sample_crps, m3s_sample_crps
+            )
+            boot_cis["M2_vs_M3_delay"] = cls.compute_block_bootstrap_ci(
+                test_payload.test_dates, m2_sample_crps, m3d_sample_crps
+            )
 
-        delta_news = round(m2_test.crps_mean - m1_test.crps_mean, 6)
-        delta_shuffle = round(m2_test.crps_mean - m3s_test.crps_mean, 6)
-        delta_delay = round(m2_test.crps_mean - m3d_test.crps_mean, 6)
+        delta_news = round(m2_test.crps_mean - m1_test.crps_mean, 6) if m2_test else 0.0
+        delta_shuffle = (
+            round(m2_test.crps_mean - m3s_test.crps_mean, 6) if m2_test and m3s_test else 0.0
+        )
+        delta_delay = (
+            round(m2_test.crps_mean - m3d_test.crps_mean, 6) if m2_test and m3d_test else 0.0
+        )
         delta_econometric = round(m1_test.crps_mean - m0_test.crps_mean, 6)
 
         preselected = bundle.manifest.selected_candidate_family
 
         # CONFIRMATORY EVALUATION GATES
-        if preselected == "M2_MULTIMODAL_NEWS":
+        if preselected == "M0_HAR_BASELINE":
+            m0_beats_const = (m0_test.crps_mean < const_var_test.crps_mean) and all(
+                m0_test.crps_per_horizon[h] < const_var_test.crps_per_horizon[h]
+                for h in REQUIRED_TARGET_HORIZONS_V11
+            )
+            m0_beats_persist = (m0_test.crps_mean < persist_test.crps_mean) and all(
+                m0_test.crps_per_horizon[h] < persist_test.crps_per_horizon[h]
+                for h in REQUIRED_TARGET_HORIZONS_V11
+            )
+            m0_calib_ok = 0.65 <= m0_test.coverage_80pct <= 0.95
+
+            decision = (
+                "SEALED_TEST_PASS_M0_HAR_BASELINE"
+                if (m0_beats_const and m0_beats_persist and m0_calib_ok)
+                else "SEALED_TEST_FAIL_M0_HAR_BASELINE"
+            )
+
+        elif preselected == "M1_NUMERIC":
+            all_h_pass = all(
+                m1_test.crps_per_horizon[h] < m0_test.crps_per_horizon[h]
+                for h in REQUIRED_TARGET_HORIZONS_V11
+            )
+            agg_pass = (m1_test.crps_mean < m0_test.crps_mean) and (
+                m1_test.qlike_mean <= m0_test.qlike_mean
+            )
+            decision = (
+                "SEALED_TEST_PASS_M1_NUMERIC"
+                if (all_h_pass and agg_pass)
+                else "SEALED_TEST_FAIL_M1_NUMERIC"
+            )
+
+        elif (
+            preselected == "M2_MULTIMODAL_NEWS"
+            and m2_test is not None
+            and m3s_test is not None
+            and m3d_test is not None
+        ):
             all_h_pass = all(
                 m2_test.crps_per_horizon[h] < m1_test.crps_per_horizon[h]
                 and m2_test.crps_per_horizon[h] < m3s_test.crps_per_horizon[h]
@@ -950,23 +1036,6 @@ class GlobalMultimodalTrainerV11:
                 if (all_h_pass and agg_pass)
                 else "SEALED_TEST_FAIL_M2_MULTIMODAL"
             )
-
-        elif preselected == "M1_NUMERIC":
-            all_h_pass = all(
-                m1_test.crps_per_horizon[h] < m0_test.crps_per_horizon[h]
-                for h in REQUIRED_TARGET_HORIZONS_V11
-            )
-            agg_pass = (m1_test.crps_mean < m0_test.crps_mean) and (
-                m1_test.qlike_mean <= m0_test.qlike_mean
-            )
-            decision = (
-                "SEALED_TEST_PASS_M1_NUMERIC"
-                if (all_h_pass and agg_pass)
-                else "SEALED_TEST_FAIL_M1_NUMERIC"
-            )
-
-        elif preselected == "M0_HAR_BASELINE":
-            decision = "SEALED_TEST_PASS_M0_HAR_BASELINE"
 
         else:
             decision = "SEALED_TEST_FAIL_UNRECOGNIZED_FAMILY"

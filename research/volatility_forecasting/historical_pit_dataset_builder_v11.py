@@ -71,8 +71,8 @@ class HistoricalPITDatasetBuilderV11:
     def construct_panel_from_series(
         cls,
         equities_ohlcv: dict[str, pd.DataFrame],
-        sector_ohlcv: pd.DataFrame,
-        market_ohlcv: pd.DataFrame,
+        sector_ohlcv: pd.DataFrame | dict[str, pd.DataFrame] | None,
+        market_ohlcv: pd.DataFrame | None,
         news_articles: list[EnrichedNewsArticle] | None = None,
         membership_masks: dict[str, list[tuple[str, str]]]
         | None = None,  # ticker -> [(start, end), ...]
@@ -104,6 +104,13 @@ class HistoricalPITDatasetBuilderV11:
 
             daily_rets = np.log(c[1:] / c[:-1])
 
+            # Resolve security-specific sector DataFrame
+            cur_sec_df = (
+                sector_ohlcv[sec_id]
+                if isinstance(sector_ohlcv, dict) and sec_id in sector_ohlcv
+                else (sector_ohlcv if isinstance(sector_ohlcv, pd.DataFrame) else None)
+            )
+
             # Iterate over causal origin sessions
             for t_idx in range(warmup_sessions, n - max_h):
                 t_date = dates[t_idx]
@@ -115,7 +122,7 @@ class HistoricalPITDatasetBuilderV11:
                         continue
 
                 history_df = df_sorted.iloc[: t_idx + 1]
-                sec_sub = sector_ohlcv.loc[:t_date] if sector_ohlcv is not None else None
+                sec_sub = cur_sec_df.loc[:t_date] if cur_sec_df is not None else None
                 mkt_sub = market_ohlcv.loc[:t_date] if market_ohlcv is not None else None
 
                 # 1. 34 Numeric Features

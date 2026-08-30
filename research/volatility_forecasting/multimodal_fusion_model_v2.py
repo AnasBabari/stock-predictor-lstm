@@ -69,9 +69,13 @@ class MultimodalFusionModel(nn.Module):
 
         # Location residual head (Delta mu_h)
         self.location_head = nn.Linear(hidden_dim, n_h)
+        nn.init.zeros_(self.location_head.weight)
+        nn.init.zeros_(self.location_head.bias)
 
         # Log-volatility residual head (Delta log_sigma_h)
         self.volatility_head = nn.Linear(hidden_dim, n_h)
+        nn.init.zeros_(self.volatility_head.weight)
+        nn.init.zeros_(self.volatility_head.bias)
 
     def forward(
         self,
