@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.preprocessing import StandardScaler
@@ -257,19 +258,25 @@ class VolatilityExamples:
     current_volatility: np.ndarray
     rolling_mean_volatility: np.ndarray
     ewma_volatility: np.ndarray
+    origin_close: np.ndarray | None = None
+    future_close: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         rows = len(self.sequences)
         if self.sequences.ndim != 3 or self.sequences.shape[0] != rows:
             raise ValueError("sequences must have shape [rows, lookback, features]")
-        arrays = (
+        arrays = [
             self.target,
             self.dates,
             self.har_features,
             self.current_volatility,
             self.rolling_mean_volatility,
             self.ewma_volatility,
-        )
+        ]
+        if self.origin_close is not None:
+            arrays.append(self.origin_close)
+        if self.future_close is not None:
+            arrays.append(self.future_close)
         if any(len(values) != rows for values in arrays):
             raise ValueError("example arrays must have matching row counts")
         if not np.isfinite(self.sequences).all() or not np.isfinite(self.target).all():
@@ -302,6 +309,8 @@ def build_examples(
     current: list[float] = []
     rolling: list[float] = []
     ewma: list[float] = []
+    origin_closes: list[float] = []
+    future_closes: list[float] = []
     first = max(settings.lookback - 1, 60)
     for origin in range(first, len(data) - settings.horizon):
         window = values[origin - settings.lookback + 1 : origin + 1]
@@ -319,6 +328,8 @@ def build_examples(
         current.append(float(features["realized_vol_22"].iloc[origin]))
         rolling.append(float(features["realized_vol_60"].iloc[origin]))
         ewma.append(float(features["ewma_vol"].iloc[origin]))
+        origin_closes.append(float(data["Close"].iloc[origin]))
+        future_closes.append(float(data["Close"].iloc[origin + settings.horizon]))
     if not rows:
         raise ValueError("history did not produce any complete volatility examples")
     return VolatilityExamples(
@@ -330,6 +341,8 @@ def build_examples(
         current_volatility=np.asarray(current, dtype=np.float64),
         rolling_mean_volatility=np.asarray(rolling, dtype=np.float64),
         ewma_volatility=np.asarray(ewma, dtype=np.float64),
+        origin_close=np.asarray(origin_closes, dtype=np.float64),
+        future_close=np.asarray(future_closes, dtype=np.float64),
     )
 
 
@@ -600,6 +613,107 @@ def volatility_metrics(actual: np.ndarray, forecast: np.ndarray) -> dict[str, fl
     }
 
 
+def evaluate_conformal_volatility_intervals(
+    actual_validation: np.ndarray,
+    forecast_validation: np.ndarray,
+    actual_test: np.ndarray,
+    forecast_test: np.ndarray,
+    *,
+    nominal_coverage: float = 0.90,
+) -> dict[str, Any]:
+    """Calibrate split-conformal intervals on validation residuals and evaluate on test."""
+
+    val_act = _positive(actual_validation)
+    val_pred = _positive(forecast_validation)
+    test_act = _positive(actual_test)
+    test_pred = _positive(forecast_test)
+    if len(val_act) < 4 or len(test_act) < 4:
+        raise ValueError("at least 4 validation and test observations required")
+
+    log_residuals = np.abs(np.log(val_act) - np.log(val_pred))
+    rank = min(int(np.ceil((len(log_residuals) + 1) * nominal_coverage)), len(log_residuals))
+    radius = float(np.sort(log_residuals)[rank - 1])
+
+    lower = test_pred * math.exp(-radius)
+    upper = test_pred * math.exp(radius)
+
+    inside = (test_act >= lower) & (test_act <= upper)
+    empirical_coverage = float(np.mean(inside))
+    average_width = float(np.mean(upper - lower))
+
+    tertiles = np.quantile(test_act, [1.0 / 3.0, 2.0 / 3.0])
+    regime_low = test_act <= tertiles[0]
+    regime_normal = (test_act > tertiles[0]) & (test_act <= tertiles[1])
+    regime_high = test_act > tertiles[1]
+
+    def _regime_cov(mask: np.ndarray) -> float | None:
+        count = int(np.sum(mask))
+        return float(np.mean(inside[mask])) if count > 0 else None
+
+    return {
+        "nominal_coverage": float(nominal_coverage),
+        "empirical_coverage": empirical_coverage,
+        "conformal_log_radius": radius,
+        "average_width": average_width,
+        "regime_coverage": {
+            "low_vol": _regime_cov(regime_low),
+            "normal_vol": _regime_cov(regime_normal),
+            "high_vol": _regime_cov(regime_high),
+        },
+    }
+
+
+def evaluate_price_diffusion_cone(
+    origin_close: np.ndarray,
+    future_close: np.ndarray,
+    forecast_annualized_vol: np.ndarray,
+    horizon: int,
+    *,
+    nominal_coverage: float = 0.90,
+    annualization: float = DEFAULT_ANNUALIZATION,
+) -> dict[str, Any]:
+    """Evaluate empirical coverage of the theoretical diffusion cone (e.g. p05-p95)."""
+
+    p_orig = np.asarray(origin_close, dtype=np.float64)
+    p_future = np.asarray(future_close, dtype=np.float64)
+    vol = _positive(forecast_annualized_vol)
+    if len(p_orig) != len(p_future) or len(p_orig) != len(vol) or len(p_orig) < 4:
+        raise ValueError("matched arrays of at least 4 observations required")
+
+    # Quantile z-scores for standard nominal coverages
+    z = float(norm.ppf(0.5 + float(nominal_coverage) / 2.0))
+
+    dt = horizon / annualization
+    horizon_sigma = vol * math.sqrt(dt)
+    lower = p_orig * np.exp(-z * horizon_sigma)
+    upper = p_orig * np.exp(+z * horizon_sigma)
+
+    inside = (p_future >= lower) & (p_future <= upper)
+    empirical_coverage = float(np.mean(inside))
+    avg_width_pct = float(np.mean((upper - lower) / p_orig))
+
+    tertiles = np.quantile(vol, [1.0 / 3.0, 2.0 / 3.0])
+    regime_low = vol <= tertiles[0]
+    regime_normal = (vol > tertiles[0]) & (vol <= tertiles[1])
+    regime_high = vol > tertiles[1]
+
+    def _regime_cov(mask: np.ndarray) -> float | None:
+        count = int(np.sum(mask))
+        return float(np.mean(inside[mask])) if count > 0 else None
+
+    return {
+        "nominal_coverage": float(nominal_coverage),
+        "empirical_coverage": empirical_coverage,
+        "average_width_pct": avg_width_pct,
+        "z_score": float(z),
+        "regime_coverage": {
+            "low_vol": _regime_cov(regime_low),
+            "normal_vol": _regime_cov(regime_normal),
+            "high_vol": _regime_cov(regime_high),
+        },
+    }
+
+
 def evaluate_benchmark(
     examples: VolatilityExamples,
     split: ChronologicalSplit,
@@ -607,7 +721,8 @@ def evaluate_benchmark(
     include_boosting: bool = True,
     include_lstm: bool = False,
     lstm_config: LSTMConfig | None = None,
-) -> dict[str, dict[str, dict[str, float | int]]]:
+    nominal_coverage: float = 0.90,
+) -> dict[str, dict[str, dict[str, Any]]]:
     """Evaluate all baselines and simple ML models on validation and test."""
 
     forecasts = baseline_predictions(examples, split.train)
@@ -620,17 +735,43 @@ def evaluate_benchmark(
             config=lstm_config,
         )
         forecasts["lstm"] = lstm_forecast
-    output: dict[str, dict[str, dict[str, float | int]]] = {}
+    output: dict[str, dict[str, dict[str, Any]]] = {}
     for name, prediction in forecasts.items():
         output[name] = {}
         for partition, indices in (("validation", split.validation), ("test", split.test)):
             metrics = volatility_metrics(examples.target[indices], prediction[indices])
             metrics["rows"] = int(len(indices))
             output[name][partition] = metrics
+
+        # Conformal prediction intervals on realized volatility
+        try:
+            val_act = examples.target[split.validation]
+            val_pred = prediction[split.validation]
+            test_act = examples.target[split.test]
+            test_pred = prediction[split.test]
+            output[name]["test"]["volatility_interval"] = evaluate_conformal_volatility_intervals(
+                val_act, val_pred, test_act, test_pred, nominal_coverage=nominal_coverage
+            )
+        except Exception:
+            pass
+
+        # Price diffusion cone calibration
+        if examples.origin_close is not None and examples.future_close is not None:
+            try:
+                output[name]["test"]["price_cone"] = evaluate_price_diffusion_cone(
+                    examples.origin_close[split.test],
+                    examples.future_close[split.test],
+                    prediction[split.test],
+                    horizon=split.embargo_sessions,
+                    nominal_coverage=nominal_coverage,
+                )
+            except Exception:
+                pass
+
     return output
 
 
-def select_validation_model(metrics: dict[str, dict[str, dict[str, float | int]]]) -> str:
+def select_validation_model(metrics: dict[str, dict[str, dict[str, Any]]]) -> str:
     """Select by validation QLIKE only; test scores never influence selection."""
 
     if not metrics:
@@ -647,7 +788,7 @@ def experiment_metadata(
     split: ChronologicalSplit,
     *,
     model: str,
-    metrics: dict[str, dict[str, float | int]],
+    metrics: dict[str, dict[str, Any]],
     git_commit: str | None = None,
 ) -> dict[str, Any]:
     """Build a small JSON-serialisable record for an experiment run."""
@@ -685,6 +826,8 @@ __all__ = [
     "build_feature_frame",
     "chronological_split",
     "evaluate_benchmark",
+    "evaluate_conformal_volatility_intervals",
+    "evaluate_price_diffusion_cone",
     "experiment_metadata",
     "learned_predictions",
     "lstm_predictions",

@@ -44,7 +44,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--csv", action="append", required=True, help="OHLCV CSV (repeat per symbol)"
     )
-    parser.add_argument("--horizon", type=int, default=5, choices=(1, 3, 5, 7, 14, 30))
+    parser.add_argument("--horizon", type=int, default=5, help="Forecast horizon in sessions (e.g. 1, 5, 10, 20)")
     parser.add_argument("--lookback", type=int, default=22)
     parser.add_argument("--include-lstm", action="store_true")
     parser.add_argument("--without-boosting", action="store_true")
@@ -86,12 +86,55 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
         output[model] = {}
         for partition in ("validation", "test"):
             rows = [result["metrics"][model][partition] for result in results]
-            numeric = {
-                key: float(np.mean([float(row[key]) for row in rows]))
-                for key in rows[0]
-                if key != "rows" and all(key in row for row in rows)
-            }
-            numeric["rows"] = int(sum(int(row.get("rows", 0)) for row in rows))
+            numeric: dict[str, Any] = {}
+            for key in rows[0]:
+                if key == "rows":
+                    numeric["rows"] = int(sum(int(row.get("rows", 0)) for row in rows))
+                elif isinstance(rows[0][key], (int, float, np.number)):
+                    values = [
+                        float(row[key])
+                        for row in rows
+                        if key in row and isinstance(row[key], (int, float, np.number))
+                    ]
+                    if values:
+                        numeric[key] = float(np.mean(values))
+            if partition == "test":
+                if "volatility_interval" in rows[0] and isinstance(rows[0]["volatility_interval"], dict):
+                    covs = [
+                        float(row["volatility_interval"]["empirical_coverage"])
+                        for row in rows
+                        if "volatility_interval" in row
+                        and row["volatility_interval"].get("empirical_coverage") is not None
+                    ]
+                    widths = [
+                        float(row["volatility_interval"]["average_width"])
+                        for row in rows
+                        if "volatility_interval" in row
+                        and row["volatility_interval"].get("average_width") is not None
+                    ]
+                    numeric["volatility_interval"] = {
+                        "nominal_coverage": rows[0]["volatility_interval"].get("nominal_coverage"),
+                        "empirical_coverage": float(np.mean(covs)) if covs else None,
+                        "average_width": float(np.mean(widths)) if widths else None,
+                    }
+                if "price_cone" in rows[0] and isinstance(rows[0]["price_cone"], dict):
+                    covs = [
+                        float(row["price_cone"]["empirical_coverage"])
+                        for row in rows
+                        if "price_cone" in row
+                        and row["price_cone"].get("empirical_coverage") is not None
+                    ]
+                    widths = [
+                        float(row["price_cone"]["average_width_pct"])
+                        for row in rows
+                        if "price_cone" in row
+                        and row["price_cone"].get("average_width_pct") is not None
+                    ]
+                    numeric["price_cone"] = {
+                        "nominal_coverage": rows[0]["price_cone"].get("nominal_coverage"),
+                        "empirical_coverage": float(np.mean(covs)) if covs else None,
+                        "average_width_pct": float(np.mean(widths)) if widths else None,
+                    }
             output[model][partition] = numeric
     return output
 

@@ -114,3 +114,37 @@ def test_optional_lstm_uses_train_only_rows_and_returns_metadata() -> None:
     assert predictions.shape == examples.target.shape
     assert np.isfinite(predictions).all() and (predictions > 0).all()
     assert metadata["scaler"] == "train_only_standard"
+
+
+def test_conformal_volatility_intervals_and_price_cone_calibration() -> None:
+    from volatility_forecasting.simple_pipeline import (
+        evaluate_conformal_volatility_intervals,
+        evaluate_price_diffusion_cone,
+    )
+
+    examples = build_examples(_frame(300))
+    split = chronological_split(len(examples.target), horizon=5)
+    forecasts = baseline_predictions(examples, split.train)
+    pred_val = forecasts["har_rv"][split.validation]
+    act_val = examples.target[split.validation]
+    pred_test = forecasts["har_rv"][split.test]
+    act_test = examples.target[split.test]
+
+    conf = evaluate_conformal_volatility_intervals(act_val, pred_val, act_test, pred_test, nominal_coverage=0.90)
+    assert conf["nominal_coverage"] == 0.90
+    assert 0.0 <= conf["empirical_coverage"] <= 1.0
+    assert conf["average_width"] > 0
+    assert "low_vol" in conf["regime_coverage"]
+
+    assert examples.origin_close is not None and examples.future_close is not None
+    cone = evaluate_price_diffusion_cone(
+        examples.origin_close[split.test],
+        examples.future_close[split.test],
+        pred_test,
+        horizon=5,
+        nominal_coverage=0.90,
+    )
+    assert cone["nominal_coverage"] == 0.90
+    assert 0.0 <= cone["empirical_coverage"] <= 1.0
+    assert cone["average_width_pct"] > 0
+    assert "high_vol" in cone["regime_coverage"]
