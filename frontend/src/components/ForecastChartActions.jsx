@@ -37,6 +37,11 @@ export default function ForecastChartActions({
 
   const showPriceActions = Boolean(stockData && forecastType === 'price');
   const showTrendActions = Boolean(stockData && forecastType === 'trend');
+  const isBaselineVolatility = volatilityServing && (
+    stockData?.metadata?.engine?.baseline_fallback === true
+    || stockData?.metadata?.engine?.execution_mode === 'baseline'
+    || stockData?.forecast_status?.state === 'baseline'
+  );
 
   return (
     <div className="chart-actions-row">
@@ -82,9 +87,11 @@ export default function ForecastChartActions({
           type="button"
           className="action-chip accent"
           onClick={onExportCompleteAnalysis}
-          title={volatilityServing ? 'Export volatility evidence and baseline context as a ZIP bundle' : 'Export both price and trend forecasts as a ZIP bundle'}
+          title={volatilityServing
+            ? 'Export the volatility forecast and causal baseline context as a ZIP bundle'
+            : 'Export both price and trend forecasts as a ZIP bundle'}
         >
-          {volatilityServing ? 'Export Evidence' : 'Complete Analysis'}
+          {volatilityServing ? (isBaselineVolatility ? 'Export Forecast' : 'Export Evidence') : 'Complete Analysis'}
         </button>
       </div>
     </div>

@@ -55,6 +55,40 @@ describe('volatility client contract', () => {
     expect(result.metrics.relative_qlike).toBe(0.91);
   });
 
+  it('maps the active causal baseline without claiming certification', () => {
+    const result = mapVolatilityResponse(body({
+      forecast: {
+        ...body().forecast,
+        model: 'har_rv',
+        expected_annualized_volatility: 0.21,
+      },
+      evidence: {
+        model_status: 'baseline',
+        model_family: 'statistical_baseline',
+        metric_source: 'baseline_definition',
+        schema_version: 'deployable_v5',
+        snapshot_id: 'snapshot-1',
+      },
+    }), 'MSFT', 7);
+    expect(result.predicted_prices).toBeNull();
+    expect(result.forecast_status).toMatchObject({ state: 'baseline', decision: 'baseline' });
+    expect(result.validation.promoted).toBe(false);
+    expect(result.metadata.engine).toMatchObject({
+      role: 'baseline_forecast',
+      execution_mode: 'baseline',
+      baseline_fallback: true,
+      volatility_forecast: true,
+    });
+    expect(result.metadata.engine.certified_head).toBeUndefined();
+    expect(result.metrics.metric_source).toBe('baseline_definition');
+  });
+
+  it('requests the active v1 volatility endpoint', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => body() }));
+    await fetchVolatilityForecast('MSFT', 7, undefined, { baseUrl: 'https://api.test', fetchImpl });
+    expect(fetchImpl.mock.calls[0][0]).toContain('/api/v1/volatility/forecast');
+  });
+
   it('maps a certified Student-t return distribution to a learned median path', () => {
     const location = 0.035;
     const distribution = body({
@@ -126,8 +160,8 @@ describe('volatility client contract', () => {
       .catch((error) => expect(error).toBeInstanceOf(VolatilityApiError));
   });
 
-  it('rejects missing or non-certified volatility evidence', () => {
-    expect(() => validateVolatilityResponse(body({ evidence: {} }), 'MSFT', 7)).toThrow(/certified/);
+  it('rejects missing or unrecognised volatility evidence', () => {
+    expect(() => validateVolatilityResponse(body({ evidence: {} }), 'MSFT', 7)).toThrow(/evidence/);
     expect(() => validateVolatilityResponse(body({ ticker: 'AAPL' }), 'MSFT', 7)).toThrow(/match/);
   });
 

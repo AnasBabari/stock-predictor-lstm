@@ -19,6 +19,12 @@ const BADGE_CONFIG = {
     title: 'The terminal Student-t return distribution passed locked CRPS, QLIKE, and coverage certification; direction is not certified.',
     icon: '✓',
   },
+  baseline: {
+    label: 'BASELINE',
+    className: 'badge--candidate',
+    title: 'Transparent causal statistical baseline; no learned-model claim is made.',
+    icon: '≈',
+  },
   candidate: {
     label: 'CANDIDATE',
     className: 'badge--candidate',

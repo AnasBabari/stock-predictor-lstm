@@ -11,6 +11,9 @@ export default function StatsBar({ stockData, forecastType }) {
     const valState = stockData.validation?.state || (stockData.validation?.promoted ? 'promoted' : 'experimental');
     const isVolatility = stockData.metadata?.engine?.certified_head === 'volatility'
       || stockData.volatility_cone != null;
+    const isBaseline = stockData.metadata?.engine?.baseline_fallback === true
+      || stockData.metadata?.engine?.execution_mode === 'baseline'
+      || stockData.forecast_status?.state === 'baseline';
     const hasReturnDistribution = stockData.metadata?.engine?.certified_head === 'return_distribution'
       && Array.isArray(stockData.predicted_prices);
 
@@ -52,7 +55,7 @@ export default function StatsBar({ stockData, forecastType }) {
         changeText: Number.isFinite(annualizedVolatility)
           ? formatPercent(annualizedVolatility * 100, { includePlus: false })
           : '—',
-        trendText: 'Volatility certified',
+        trendText: isBaseline ? 'Causal baseline' : 'Volatility certified',
         valState,
         isUp: false,
         isFlat: true,

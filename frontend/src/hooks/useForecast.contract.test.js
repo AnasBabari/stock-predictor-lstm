@@ -74,7 +74,7 @@ describe('forecast horizon request contract', () => {
       httpStatus: 503,
     });
     expect(predictionErrorMessage(error)).toBe(
-      'No certified global model is available yet. Forecasting is paused until a signed release passes validation.',
+      'The legacy global model is unavailable. Try the active volatility forecast again shortly.',
     );
   });
 
@@ -84,7 +84,7 @@ describe('forecast horizon request contract', () => {
       httpStatus: 503,
     });
     expect(predictionErrorMessage(error)).toBe(
-      'The certified forecast service is temporarily unavailable. No baseline forecast was substituted.',
+      'The volatility forecast service is temporarily unavailable. Please retry shortly.',
     );
   });
 });

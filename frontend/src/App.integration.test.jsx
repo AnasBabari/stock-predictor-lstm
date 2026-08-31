@@ -111,7 +111,7 @@ function mockFetchSequence() {
     if (requestUrl.includes('/api/v1/info')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ ...infoResponse, ticker }) });
     }
-    if (requestUrl.includes('/api/v2/forecast')) {
+    if (requestUrl.includes('/api/v1/volatility/forecast')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(makeVolatilityResponse(ticker, horizon)) });
     }
     return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
@@ -135,7 +135,7 @@ describe('forecast integration', () => {
       if (requestUrl.includes('/api/v1/info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
       }
-      if (requestUrl.includes('/api/v2/forecast')) {
+      if (requestUrl.includes('/api/v1/volatility/forecast')) {
         return Promise.reject(reason);
       }
       return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
@@ -198,7 +198,7 @@ describe('forecast integration', () => {
       if (requestUrl.includes('/api/v1/info')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(infoResponse) });
       }
-      if (requestUrl.includes('/api/v2/forecast')) {
+      if (requestUrl.includes('/api/v1/volatility/forecast')) {
         return new Promise((resolve, reject) => {
           options.signal.addEventListener(
             'abort',

@@ -20,12 +20,12 @@ export default function LoadingIndicator({ isLoading, stage, progress, onCancel 
           <path d="M9 21h6M10 17v4M14 17v4" />
         </svg>
       </div>
-      <p className="loading-text">{stage || 'Evaluating certified global volatility forecast…'}</p>
+      <p className="loading-text">{stage || 'Calculating causal volatility forecast…'}</p>
       <div className="loading-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
         <div className="loading-progress-fill indeterminate" />
       </div>
       <p className="loading-hint">
-        Signed global volatility model · fail-closed server serving
+        Causal market baseline · no model files written
         {progress?.elapsed_ms != null ? ` · elapsed ${formatDuration(progress.elapsed_ms)}` : ''}
       </p>
       <button type="button" className="training-cancel-button" onClick={onCancel}>

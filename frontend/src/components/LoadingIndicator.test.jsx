@@ -7,7 +7,7 @@ describe('LoadingIndicator', () => {
     render(<LoadingIndicator isLoading stage="Evaluating certified global volatility forecast…" />);
 
     expect(screen.getByText('Evaluating certified global volatility forecast…')).toBeInTheDocument();
-    expect(screen.getByText(/Signed global volatility model/)).toBeInTheDocument();
+    expect(screen.getByText(/Causal market baseline/)).toBeInTheDocument();
   });
 
   it('triggers onCancel when Cancel request button is clicked', () => {

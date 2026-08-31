@@ -13,6 +13,9 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
   const engine = meta.engine || {};
   const isTrend = forecastType === 'trend';
   const isVolatility = engine.certified_head === 'volatility' || stockData.volatility_cone != null;
+  const isBaseline = engine.baseline_fallback === true
+    || engine.execution_mode === 'baseline'
+    || val.state === 'baseline';
   const hasReturnDistribution = engine.certified_head === 'return_distribution'
     && Array.isArray(stockData.predicted_prices);
   const perHorizon = Array.isArray(m.per_horizon) ? m.per_horizon : [];
@@ -83,7 +86,9 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
                   {hasReturnDistribution
                     ? 'The terminal Student-t return distribution cleared sealed CRPS, QLIKE, and coverage gates; direction remains uncertified.'
                     : isVolatility
-                      ? 'Conditional volatility cleared the locked evidence gate; no learned return-location or direction claim is shown.'
+                      ? (isBaseline
+                        ? 'Transparent causal baseline; no learned-model or certification claim is made.'
+                        : 'Conditional volatility cleared the locked evidence gate; no learned return-location or direction claim is shown.')
                       : val.promoted
                         ? 'Validated against persistence on held-out data.'
                         : 'Model forecast shown; holdout validation gates were not met.'}
@@ -117,12 +122,12 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
                     <span className="card-value mono text-teal">
                       {formatPrice(volatilityLow)} – {formatPrice(volatilityHigh)}
                     </span>
-                    <span className="card-subtext">Certified endpoint uncertainty</span>
+                    <span className="card-subtext">{isBaseline ? 'Causal baseline uncertainty' : 'Certified endpoint uncertainty'}</span>
                   </div>
                   <div className="summary-card">
                     <span className="card-label">Annualized Volatility</span>
                     <span className="card-value mono">{formatPercent(stockData.forecast?.expected_annualized_volatility * 100)}</span>
-                    <span className="card-subtext">Certified volatility head</span>
+                    <span className="card-subtext">{isBaseline ? 'Historical baseline definition' : 'Certified volatility head'}</span>
                   </div>
                 </>
               ) : !isTrend ? (
@@ -148,8 +153,8 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
 
               <div className="summary-card">
                 <span className="card-label">Active Model Engine</span>
-                <span className="card-value font-medium">{isVolatility ? 'Global volatility ensemble' : engine.role === 'server_pretrained' ? 'server_pretrained' : engine.family ? engine.family.replaceAll('_', ' ') : 'Balanced LSTM'}</span>
-                <span className="card-subtext">Compute: {isVolatility ? 'server CPU / signed ONNX' : engine.role === 'server_pretrained' ? 'server-pretrained' : engine.backend?.toUpperCase() || 'WEBGPU'}</span>
+                <span className="card-value font-medium">{isVolatility ? (isBaseline ? 'Statistical volatility baseline' : 'Global volatility ensemble') : engine.role === 'server_pretrained' ? 'server_pretrained' : engine.family ? engine.family.replaceAll('_', ' ') : 'Balanced LSTM'}</span>
+                <span className="card-subtext">Compute: {isVolatility ? (isBaseline ? 'server data service' : 'server CPU / signed ONNX') : engine.role === 'server_pretrained' ? 'server-pretrained' : engine.backend?.toUpperCase() || 'WEBGPU'}</span>
               </div>
             </div>
 
@@ -316,7 +321,7 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
             <div className="specs-grid">
               <div className="spec-item">
                 <span className="spec-label">Model Architecture</span>
-                <span className="spec-value">{isVolatility ? 'Baseline-residual TCN ensemble (signed ONNX)' : meta.architecture || 'balanced_lstm_in_browser'}</span>
+                <span className="spec-value">{isVolatility ? (isBaseline ? 'Causal statistical baseline' : 'Baseline-residual TCN ensemble (signed ONNX)') : meta.architecture || 'balanced_lstm_in_browser'}</span>
               </div>
               <div className="spec-item">
                 <span className="spec-label">Feature Schema</span>
@@ -328,15 +333,15 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
               </div>
               <div className="spec-item">
                 <span className="spec-label">Training Duration</span>
-                <span className="spec-value mono">{isVolatility ? 'Offline RTX certification' : meta.training_duration_ms ? `${meta.training_duration_ms} ms` : '—'}</span>
+                <span className="spec-value mono">{isVolatility ? (isBaseline ? 'No training — causal baseline' : 'Offline RTX certification') : meta.training_duration_ms ? `${meta.training_duration_ms} ms` : '—'}</span>
               </div>
               <div className="spec-item">
                 <span className="spec-label">Selected Epochs</span>
-                <span className="spec-value mono">{isVolatility ? 'Frozen development budget' : meta.selected_epochs ?? '—'}</span>
+                <span className="spec-value mono">{isVolatility ? (isBaseline ? 'Not applicable' : 'Frozen development budget') : meta.selected_epochs ?? '—'}</span>
               </div>
               <div className="spec-item">
                 <span className="spec-label">Compute Backend</span>
-                <span className="spec-value mono">{isVolatility ? 'CPU / ONNX Runtime' : engine.backend?.toUpperCase() || 'WEBGPU'}</span>
+                <span className="spec-value mono">{isVolatility ? (isBaseline ? 'Python data service' : 'CPU / ONNX Runtime') : engine.backend?.toUpperCase() || 'WEBGPU'}</span>
               </div>
               <div className="spec-item full-width">
                 <span className="spec-label">Data Snapshot Hash</span>
@@ -353,7 +358,9 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
               <h4>Holdout Evaluation Protocol</h4>
               <p className="text-sm text-secondary mb-3">
                 {isVolatility
-                  ? meta.metric_source === 'sealed_holdout_once'
+                  ? isBaseline
+                    ? 'No learned model is claimed; this view is the causal baseline definition used for comparison.'
+                    : meta.metric_source === 'sealed_holdout_once'
                     ? 'Evidence comes from one physically sealed holdout opened after frozen routing; the final refit is not the metric source.'
                     : 'Volatility evidence is locked to purged expanding walk-forward evaluation with temporal and ticker-transfer holdouts.'
                   : 'Evaluation was conducted on an untouched chronological holdout partition with strict horizon purging to eliminate lookahead leakage.'}
@@ -373,7 +380,7 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
               <div className="metric-rows-summary">
                 <div className="metric-summary-row">
                   <span>Metric Source:</span>
-                  <span className="mono">{m.metric_source || (isVolatility ? 'locked_purged_walk_forward' : 'browser_purged_holdout')}</span>
+                  <span className="mono">{m.metric_source || (isVolatility ? (isBaseline ? 'baseline_definition' : 'locked_purged_walk_forward') : 'browser_purged_holdout')}</span>
                 </div>
                 <div className="metric-summary-row">
                   <span>Evaluated Rows:</span>

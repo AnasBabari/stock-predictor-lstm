@@ -234,7 +234,7 @@ export default function App() {
               onSwitchHorizon={handleSwitchHorizon}
             />
             <HoldoutComparisonChart data={predictionData} />
-            <ResearchSignalsPanel />
+            {!VOLATILITY_SERVING_ENABLED && <ResearchSignalsPanel />}
             <GlobalModelStatus data={predictionData} />
             <ModelCard data={predictionData} />
           </>
@@ -257,7 +257,7 @@ export default function App() {
 
       <footer className="footer">
         <p>
-          StockLSTM — signed global volatility forecasts with causal market snapshots, persistence location baselines, and leakage-safe evidence.
+          StockLSTM — causal volatility forecasts with transparent baselines and leakage-safe evaluation.
         </p>
       </footer>
 

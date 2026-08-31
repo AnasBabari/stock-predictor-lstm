@@ -58,6 +58,9 @@ const StockChart = forwardRef(function StockChart(
   const isDark = theme === 'dark';
   const isVolatility = stockData?.metadata?.engine?.certified_head === 'volatility'
     || stockData?.volatility_cone != null;
+  const isBaseline = stockData?.metadata?.engine?.baseline_fallback === true
+    || stockData?.metadata?.engine?.execution_mode === 'baseline'
+    || stockData?.forecast_status?.state === 'baseline';
   const hasReturnDistribution = stockData?.metadata?.engine?.certified_head === 'return_distribution'
     && Array.isArray(stockData?.predicted_prices);
   const [showBenchmark, setShowBenchmark] = useState(false);
@@ -157,7 +160,7 @@ const StockChart = forwardRef(function StockChart(
                 <h2 id="chartTitle">
                   {stockData.ticker} — {hasReturnDistribution
                     ? 'Historical vs Certified Return Distribution'
-                    : isVolatility ? 'Historical vs Volatility Cone' : 'Historical vs Predicted'}
+                    : isVolatility ? `Historical vs ${isBaseline ? 'Causal Volatility Baseline' : 'Volatility Cone'}` : 'Historical vs Predicted'}
                 </h2>
         <div className="chart-header-actions">
           {(!isVolatility || hasReturnDistribution) && <label className="benchmark-toggle" htmlFor="showBenchmarkCheck">

@@ -13,7 +13,7 @@ export const FORECAST_TYPES = {
 export const stageLabels = {
   queued: 'Preparing request…',
   volatility_snapshot: 'Building causal market snapshot…',
-  volatility_inference: 'Running signed global volatility model…',
+  volatility_inference: 'Calculating volatility baseline…',
   completed: 'Forecast ready.',
   failed: 'Forecast could not be completed.',
 };
@@ -21,10 +21,10 @@ export const stageLabels = {
 export function predictionErrorMessage(error) {
   const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
   if (error?.code === 'abstain_no_certified_model') {
-    return 'No certified global model is available yet. Forecasting is paused until a signed release passes validation.';
+    return 'The legacy global model is unavailable. Try the active volatility forecast again shortly.';
   }
   if (error?.code === 'certified_horizon_unavailable') {
-    return 'The selected horizon is not certified for the active global model.';
+    return 'The selected volatility horizon is not available from the active data service.';
   }
   if (
     error instanceof TypeError ||
@@ -58,7 +58,7 @@ export function predictionErrorMessage(error) {
     return 'No prepared forecast model is available for this ticker. Try an approved symbol.';
   }
   if (error?.name === 'VolatilityApiError' && error?.httpStatus === 503) {
-    return 'The certified forecast service is temporarily unavailable. No baseline forecast was substituted.';
+    return 'The volatility forecast service is temporarily unavailable. Please retry shortly.';
   }
   if (
     message.includes('capacity') ||
@@ -108,9 +108,11 @@ export function assertForecastIdentity(data, ticker, days, type) {
   const isCertifiedDistribution =
     (certifiedHead === 'volatility' || certifiedHead === 'return_distribution')
     && data?.volatility_cone != null;
+  const isVolatilityForecast = data?.metadata?.engine?.volatility_forecast === true
+    && data?.volatility_cone != null;
   const hasExpectedPayload =
     type === FORECAST_TYPES.PRICE
-      ? isCertifiedDistribution
+      ? (isCertifiedDistribution || isVolatilityForecast)
         ? ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'].every(
           (key) => data.volatility_cone?.[key]?.length === selectedDays,
         )
@@ -158,12 +160,12 @@ export function useForecast({ addToast, onNewTickerSearched }) {
       const explicitDays = horizonRequest.requested_horizon;
       if (type !== FORECAST_TYPES.PRICE) {
         throw new Error(
-          'Certified global serving currently provides volatility forecasts only; direction forecasts are not certified.',
+          'The active volatility service provides price uncertainty only; direction forecasts are not available.',
         );
       }
       if (explicitDays == null) {
         throw new Error(
-          'Certified volatility serving requires an explicit forecast horizon.',
+          'Volatility forecasting requires an explicit forecast horizon.',
         );
       }
       onProgress?.({ stage: 'volatility_snapshot' });

@@ -30,6 +30,9 @@ function padForecast(values, leadNulls, anchorPrice) {
 export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = false) {
   const isVolatility = stockData?.metadata?.engine?.certified_head === 'volatility'
     || stockData?.volatility_cone != null;
+  const isBaseline = stockData?.metadata?.engine?.baseline_fallback === true
+    || stockData?.metadata?.engine?.execution_mode === 'baseline'
+    || stockData?.forecast_status?.state === 'baseline';
   const hasCertifiedLocation = stockData?.metadata?.engine?.certified_head === 'return_distribution'
     && Array.isArray(stockData.predicted_prices);
   if (!stockData || !stockData.historical_prices || (!isVolatility && !stockData.predicted_prices)) {
@@ -105,7 +108,7 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
   if (errorBand && Array.isArray(errorBand.upper_prices) && Array.isArray(errorBand.lower_prices)) {
     datasets.push({
       label: isVolatility
-        ? (hasCertifiedLocation ? 'Certified return distribution (upper)' : 'Certified volatility cone (upper)')
+        ? (hasCertifiedLocation ? 'Certified return distribution (upper)' : `${isBaseline ? 'Baseline' : 'Certified'} volatility cone (upper)`)
         : '90% Empirical Error Range (Upper)',
       data: padForecast(errorBand.upper_prices, forecastLead, lastClose),
       borderColor: 'transparent',
@@ -117,7 +120,7 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
     });
     datasets.push({
       label: isVolatility
-        ? (hasCertifiedLocation ? 'Certified return distribution (lower)' : 'Certified volatility cone (lower)')
+        ? (hasCertifiedLocation ? 'Certified return distribution (lower)' : `${isBaseline ? 'Baseline' : 'Certified'} volatility cone (lower)`)
         : '90% Empirical Error Range (Lower)',
       data: padForecast(errorBand.lower_prices, forecastLead, lastClose),
       borderColor: 'transparent',

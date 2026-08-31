@@ -50,7 +50,11 @@ export async function exportPriceCSV(stockData) {
   if (!stockData) return;
 
   const certifiedHead = stockData.metadata?.engine?.certified_head;
-  if (certifiedHead === 'volatility' || certifiedHead === 'return_distribution') {
+  const isVolatility = stockData.metadata?.engine?.volatility_forecast === true
+    || certifiedHead === 'volatility'
+    || certifiedHead === 'return_distribution'
+    || stockData.volatility_cone != null;
+  if (isVolatility) {
     const keys = ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'];
     const rows = [['Date', 'P05', 'P10', 'P25', 'P50', 'P75', 'P90', 'P95']];
     stockData.future_dates.forEach((date, index) => {
@@ -108,7 +112,7 @@ export async function exportAttentionCSV(stockData) {
 }
 
 export async function exportCompleteAnalysis({ priceData, directionData, metadata }) {
-  if (metadata?.serving_mode === 'signed_global_volatility') {
+  if (metadata?.serving_mode === 'signed_global_volatility' || metadata?.serving_mode === 'causal_volatility_baseline') {
     if (!priceData || priceData.ticker !== String(metadata.ticker).toUpperCase()) {
       throw new Error('Volatility evidence identity does not match the requested export.');
     }
@@ -116,8 +120,12 @@ export async function exportCompleteAnalysis({ priceData, directionData, metadat
       throw new Error('Volatility evidence horizon does not match the requested export.');
     }
     const certifiedHead = priceData.metadata?.engine?.certified_head;
-    if (certifiedHead !== 'volatility' && certifiedHead !== 'return_distribution') {
-      throw new Error('The export is not backed by a certified volatility or return-distribution head.');
+    const isVolatility = priceData.metadata?.engine?.volatility_forecast === true
+      || certifiedHead === 'volatility'
+      || certifiedHead === 'return_distribution'
+      || priceData.volatility_cone != null;
+    if (!isVolatility) {
+      throw new Error('The export is not a volatility forecast payload.');
     }
     const expectedDays = Number(metadata.forecast_days);
     const quantileKeys = ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'];
@@ -140,7 +148,7 @@ export async function exportCompleteAnalysis({ priceData, directionData, metadat
     }
     const zip = new JSZip();
     const volatilityRows = [['Date', 'P05', 'P10', 'P25', 'P50', 'P75', 'P90', 'P95']];
-    priceData.future_dates.forEach((date, index) => {
+        priceData.future_dates.forEach((date, index) => {
       volatilityRows.push([
         date,
         quantiles.p05?.[index],
@@ -159,8 +167,8 @@ export async function exportCompleteAnalysis({ priceData, directionData, metadat
     zip.file('volatility_forecast.csv', csvFromRows(volatilityRows));
     if (certifiedHead === 'return_distribution') {
       const medianRows = [['Date', 'Median Price', 'Type']];
-      priceData.future_dates.forEach((date, index) => {
-        medianRows.push([date, quantiles.p50?.[index], 'Certified median']);
+        priceData.future_dates.forEach((date, index) => {
+          medianRows.push([date, quantiles.p50?.[index], 'Learned median']);
       });
       zip.file('median_price_forecast.csv', csvFromRows(medianRows));
     }
@@ -168,7 +176,9 @@ export async function exportCompleteAnalysis({ priceData, directionData, metadat
     zip.file('metadata.json', JSON.stringify(metadata, null, 2));
     zip.file('evidence.json', JSON.stringify(priceData.evidence || {}, null, 2));
     const blob = await zip.generateAsync({ type: 'blob' });
-    const filename = `${metadata.ticker}_volatility_evidence.zip`;
+    const filename = metadata.serving_mode === 'signed_global_volatility'
+      ? `${metadata.ticker}_volatility_evidence.zip`
+      : `${metadata.ticker}_volatility_forecast.zip`;
     downloadBlob(blob, filename);
     return { blob, filename };
   }

@@ -72,7 +72,9 @@ export function useCompleteAnalysisExport({
           ticker: tickerSymbol,
           generated_at: new Date().toISOString(),
           forecast_days: forecastDays,
-          serving_mode: 'signed_global_volatility',
+          serving_mode: priceData.metadata?.engine?.baseline_fallback
+            ? 'causal_volatility_baseline'
+            : 'signed_global_volatility',
           metric_source: priceData.metrics?.metric_source,
           model_id: priceData.metadata?.model_version,
           snapshot_id: priceData.metadata?.snapshot_id,
@@ -84,7 +86,12 @@ export function useCompleteAnalysisExport({
           metadata,
         });
         if (exportRequestIdRef.current === exportRequestId) {
-          addToast('success', 'Volatility evidence exported as ZIP');
+          addToast(
+            'success',
+            priceData.metadata?.engine?.baseline_fallback
+              ? 'Volatility forecast exported as ZIP'
+              : 'Volatility evidence exported as ZIP',
+          );
         }
         return;
       }

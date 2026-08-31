@@ -1,10 +1,9 @@
 /**
- * Client for the signed global-volatility serving contract.
+ * Client for the active causal volatility contract.
  *
- * Releases may certify either conditional volatility alone (the legacy
- * zero-location cone) or a full Student-t return distribution. The latter
- * includes a learned return location, which is safe to expose as a median
- * price path only when the signed head-level evidence says it is certified.
+ * The active endpoint returns a transparent statistical baseline.  The old
+ * signed global-release response is still accepted for compatibility, but it
+ * is no longer required for ordinary forecasts.
  */
 
 export const VOLATILITY_HORIZONS = [1, 3, 5, 7, 14, 30];
@@ -18,10 +17,10 @@ function apiErrorBody(body) {
   if (detail && typeof detail === 'object') {
     return {
       code: detail.status || detail.code || null,
-      reason: detail.reason || detail.message || 'Certified volatility model unavailable.',
+      reason: detail.reason || detail.message || 'Volatility forecast unavailable.',
     };
   }
-  return { code: null, reason: 'Certified volatility model unavailable.' };
+  return { code: null, reason: 'Volatility forecast unavailable.' };
 }
 
 export class VolatilityApiError extends Error {
@@ -82,10 +81,14 @@ export function validateVolatilityResponse(body, ticker, days) {
   const quantiles = Object.fromEntries(
     QUANTILE_KEYS.map((key) => [key, quantileSeries(body.forecast, key, days)])
   );
-  if (body.evidence?.certified !== true || body.evidence?.certified_heads?.volatility !== true) {
-    throw new Error('Volatility response is not backed by a certified volatility head.');
+  const isBaseline = body.evidence?.model_status === 'baseline';
+  const isLegacyCertified = body.evidence?.certified === true
+    && body.evidence?.certified_heads?.volatility === true;
+  if (!isBaseline && !isLegacyCertified) {
+    throw new Error('Volatility response has no recognised baseline or learned-model evidence.');
   }
-  const hasReturnDistribution = body.evidence?.certified_heads?.return_distribution === true;
+  const hasReturnDistribution = !isBaseline
+    && body.evidence?.certified_heads?.return_distribution === true;
   if (hasReturnDistribution) {
     if (body.forecast?.return_distribution_family !== 'student_t') {
       throw new Error('Certified return distribution must declare the Student-t family.');
@@ -116,8 +119,9 @@ export function validateVolatilityResponse(body, ticker, days) {
 
 export function mapVolatilityResponse(body, ticker, days) {
   const data = validateVolatilityResponse(body, ticker, days);
+  const isBaseline = data.evidence?.model_status === 'baseline';
   const summary = data.evidence?.horizon_certification?.[String(days)] || {};
-  const metricSource = data.evidence?.metric_source || 'locked_purged_walk_forward';
+  const metricSource = data.evidence?.metric_source || (isBaseline ? 'baseline_definition' : 'locked_purged_walk_forward');
   const hasReturnDistribution = data.evidence?.certified_heads?.return_distribution === true;
   const learnedMedian = hasReturnDistribution ? data.quantiles.p50 : null;
   const summaryMetrics = summary?.metrics && typeof summary.metrics === 'object'
@@ -141,29 +145,40 @@ export function mapVolatilityResponse(body, ticker, days) {
     historical_error_band: {
       lower_prices: data.quantiles.p05,
       upper_prices: data.quantiles.p95,
-      source: hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility_cone',
+      source: isBaseline
+        ? 'causal_statistical_baseline'
+        : hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility_cone',
     },
     volatility_cone: data.quantiles,
     forecast_status: {
-      state: hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility',
-      decision: hasReturnDistribution ? 'return_distribution' : 'volatility_cone',
-      alpha: 1,
-      label: hasReturnDistribution
+      state: isBaseline
+        ? 'baseline'
+        : hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility',
+      decision: isBaseline ? 'baseline' : hasReturnDistribution ? 'return_distribution' : 'volatility_cone',
+      alpha: isBaseline ? 0 : 1,
+      label: isBaseline
+        ? `Causal ${data.forecast?.model || 'statistical'} volatility baseline`
+        : hasReturnDistribution
         ? 'Certified Student-t return-distribution forecast'
         : 'Certified conditional-volatility forecast',
     },
     validation: {
-      state: hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility',
-      promoted: true,
+      state: isBaseline
+        ? 'baseline'
+        : hasReturnDistribution ? 'certified_return_distribution' : 'certified_volatility',
+      promoted: !isBaseline,
       selected_horizon: days,
       best_validated_horizon: days,
-      promoted_horizons: data.evidence?.certified_heads?.volatility ? [days] : [],
-      reasons: [hasReturnDistribution
+      promoted_horizons: !isBaseline && data.evidence?.certified_heads?.volatility ? [days] : [],
+      reasons: [isBaseline
+        ? 'This forecast is a transparent causal baseline; learned-model benchmark evidence is not loaded.'
+        : hasReturnDistribution
         ? 'Terminal Student-t return location and variance cleared the sealed CRPS, QLIKE, and coverage gates; direction remains uncertified.'
         : 'Conditional volatility is certified; no learned return-location or direction claim is made.'],
     },
     metrics: {
       metric_source: metricSource,
+      baseline: isBaseline,
       crps: summary.crps ?? summary.crps_mean ?? summaryMetrics.crps ?? summaryMetrics.crps_mean ?? null,
       relative_crps: summary.relative_crps ?? summary.relative_student_t_crps ?? summaryMetrics.relative_crps ?? null,
       relative_qlike: summary.relative_qlike ?? null,
@@ -173,26 +188,27 @@ export function mapVolatilityResponse(body, ticker, days) {
       coverage_80: summary.coverage_80 ?? null,
       coverage_95: summary.coverage_95 ?? null,
       evaluation_rows: summary.evaluation_rows ?? null,
-      model_head: hasReturnDistribution ? 'return_distribution' : 'volatility',
+      model_head: isBaseline ? 'baseline' : hasReturnDistribution ? 'return_distribution' : 'volatility',
     },
     metadata: {
-      schema_version: 'deployable_v5',
+      schema_version: data.evidence?.schema_version || 'deployable_v5',
       feature_count: data.evidence?.feature_count ?? null,
       window_size: 60,
       snapshot_id: data.evidence?.snapshot_id,
-      model_version: data.evidence?.model_id,
+      model_version: data.evidence?.model_id || data.forecast?.model,
       metric_source: metricSource,
       browser_training: false,
       engine: {
-        family: 'global_volatility_tcn',
-        role: 'server_artifact_loaded',
-        execution_mode: 'server_artifact_loaded',
-        baseline_fallback: false,
-        certified_head: hasReturnDistribution ? 'return_distribution' : 'volatility',
-        location_source: hasReturnDistribution ? 'certified_return_location' : 'matched_persistence',
+        family: data.evidence?.model_family || 'global_volatility_tcn',
+        role: isBaseline ? 'baseline_forecast' : 'server_artifact_loaded',
+        execution_mode: isBaseline ? 'baseline' : 'server_artifact_loaded',
+        baseline_fallback: isBaseline,
+        ...(isBaseline ? {} : { certified_head: hasReturnDistribution ? 'return_distribution' : 'volatility' }),
+        location_source: hasReturnDistribution ? 'certified_return_location' : 'unchanged_close_reference',
         return_distribution_family: data.forecast?.return_distribution_family || 'zero_location_normal',
+        volatility_forecast: true,
       },
-      data_snapshot: { as_of: data.as_of, source: 'server_causal_market_snapshot' },
+      data_snapshot: { as_of: data.as_of, source: isBaseline ? 'causal_market_snapshot' : 'server_causal_market_snapshot' },
     },
     evidence: data.evidence,
   };
@@ -210,7 +226,7 @@ export async function fetchVolatilityForecast(
     throw new Error('Volatility forecast requires a supported ticker and horizon.');
   }
   const response = await fetchImpl(
-    `${baseUrl}/api/v2/forecast?ticker=${encodeURIComponent(requestTicker)}&horizon=${horizon}`,
+    `${baseUrl}/api/v1/volatility/forecast?ticker=${encodeURIComponent(requestTicker)}&horizon=${horizon}`,
     { signal, cache: 'no-cache' },
   );
   const body = await response.json().catch(() => ({}));
