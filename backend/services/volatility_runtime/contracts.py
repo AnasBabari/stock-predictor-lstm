@@ -254,6 +254,15 @@ class VolatilityRuntimeContract:
         news_feature_names = metadata.get("news_feature_names", [])
         model_version = metadata.get("model_version")
         protocol_version = metadata.get("protocol_version")
+        release_identity = " ".join(
+            str(value).lower()
+            for value in (model_id, model_version, protocol_version)
+            if value is not None
+        )
+        if any(marker in release_identity for marker in ("v11.2", "v11_2", "v11-2")):
+            raise ValueError(
+                "V11.2 certification generation is permanently retired after its reserve opened"
+            )
         metric_source = metadata.get("metric_source", "locked_purged_walk_forward")
         certification_scope = metadata.get("certification_scope", "prospective_walk_forward")
         news_status = metadata.get("news_status", "not_certified")

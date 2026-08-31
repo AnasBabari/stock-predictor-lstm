@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Open and score the frozen V11.2 holdout exactly once.
+"""Retired V11.2 certification entry point; every invocation fails closed.
 
-The command is deliberately a certification boundary, not another research
-runner.  It audits the development directory first, atomically consumes the
-external holdout through :func:`unseal_v112_test_once`, loads only the frozen
-route artifacts, and writes one immutable receipt.  No model is retrained and
-no route is selected after the test payload is opened.
+The original command consumed its one-shot reserve. Its historical
+implementation remains below for auditability, but the public function rejects
+the generation before reading or opening any candidate data.
 """
 
 from __future__ import annotations
@@ -39,6 +37,7 @@ from research.volatility_forecasting.v11_2_model import (  # noqa: E402
 )
 from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
     V112Protocol,
+    assert_v11_2_certification_active,
     canonical_json_digest,
     feature_schema_digest,
 )
@@ -331,6 +330,7 @@ def certify(
     repository_root: Path,
 ) -> dict[str, Any]:
     """Audit, consume, and score the one-shot sealed test."""
+    assert_v11_2_certification_active()
     if output_dir.exists():
         if not output_dir.is_dir() or any(output_dir.iterdir()):
             raise SystemExit("certification output directory must be absent or empty")

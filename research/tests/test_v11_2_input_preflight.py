@@ -116,9 +116,12 @@ def test_valid_panel_and_external_key_pass_preflight(tmp_path: Path) -> None:
         repository_root=tmp_path / "repository",
     )
     assert strict_report["ready"] is False
-    assert next(
-        item for item in strict_report["checks"] if item["name"] == "signed_input_attestations"
-    )["passed"] is False
+    assert (
+        next(
+            item for item in strict_report["checks"] if item["name"] == "signed_input_attestations"
+        )["passed"]
+        is False
+    )
     report = check_inputs(
         panel_path=panel_path,
         universe_path=universe_path,
@@ -126,7 +129,8 @@ def test_valid_panel_and_external_key_pass_preflight(tmp_path: Path) -> None:
         repository_root=tmp_path / "repository",
         require_signed_attestations=False,
     )
-    assert report["ready"] is True
+    assert report["ready"] is False
+    assert report["development_ready"] is True
     assert report["panel_summary"]["security_count"] == 64
 
 
@@ -160,3 +164,20 @@ def test_secondary_ndx_cache_is_rejected(tmp_path: Path) -> None:
         item for item in report["checks"] if item["name"] == "secondary_ndx100_cache_rejected"
     )
     assert check["passed"] is False
+
+
+def test_v11_2_certification_generation_is_permanently_invalidated(tmp_path: Path) -> None:
+    report = check_inputs(
+        panel_path=tmp_path / "missing.npz",
+        universe_path=tmp_path / "missing-universe.json",
+        key_path=tmp_path / "missing.key",
+        repository_root=tmp_path,
+    )
+    generation = next(
+        item for item in report["checks"] if item["name"] == "certification_generation_active"
+    )
+    assert generation == {
+        "name": "certification_generation_active",
+        "passed": False,
+        "detail": "V11.2 is permanently INVALIDATED_OPENED",
+    }

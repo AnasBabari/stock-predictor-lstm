@@ -1,9 +1,7 @@
-"""Create a V11.2 development directory and encrypted final holdout.
+"""Retired V11.2 preparation entry point; every invocation fails closed.
 
-Input is an offline, already-audited NPZ panel with arrays named ``dates``,
-``security_ids``, ``features``, ``returns``, and ``rv``.  The command is the
-only normal workflow that sees the complete panel; subsequent development
-commands load only the development directory.
+V11.2 is permanently INVALIDATED_OPENED. The historical sealing implementation
+is retained for auditability, but no new V11.2 dataset or reserve can be made.
 """
 
 from __future__ import annotations
@@ -28,6 +26,7 @@ from research.volatility_forecasting.v11_2_attestation import (  # noqa: E402
 )
 from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
     V112Protocol,
+    assert_v11_2_certification_active,
     canonical_json_digest,
     feature_schema_digest,
     protocol_manifest,
@@ -166,6 +165,7 @@ def main() -> int:
     parser.add_argument("--market-evidence", action="append", default=[])
     parser.add_argument("--pit64-evidence", action="append", default=[])
     args = parser.parse_args()
+    assert_v11_2_certification_active()
 
     if _under(args.panel, ROOT / "data" / "ndx100" / "cache"):
         raise SystemExit("the secondary data/ndx100/cache cannot be prepared for V11.2")

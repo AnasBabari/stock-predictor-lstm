@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "policy_id": "stocklstm-external-certification-v1",
+  "required_generation": "v12-or-later",
+  "current_state": "NOT_CERTIFIED",
+  "certification_valid_components": 0,
+  "production_admission": "DENIED_EXTERNAL_EVIDENCE_MISSING",
+  "required_checks": [
+    "ohlcv.permission_status",
+    "ohlcv.source_is_external",
+    "ohlcv.hash_verified",
+    "pit64.completeness_verified",
+    "pit64.external_reviewer_verified",
+    "signature.real_cosign_verification",
+    "signature.simulated",
+    "holdout.generated_externally",
+    "holdout.previously_revealed",
+    "reserve.previously_opened",
+    "code_hash_matches",
+    "dataset_hash_matches"
+  ],
+  "forbidden_markers": [
+    "permission_pending",
+    "simulated",
+    "demo",
+    "self_attested",
+    "copied_diagnostic",
+    "locally_generated",
+    "locally_generated_holdout",
+    "simulated_rekor",
+    "previously_opened",
+    "invalidated"
+  ],
+  "cosign": {
+    "verification_required": true,
+    "allowed_modes": ["key", "keyless_identity"],
+    "require_bundle": true
+  },
+  "failure_contract": {
+    "http_status": 503,
+    "status": "abstain_no_certified_model"
+  }
+}

@@ -1,8 +1,8 @@
-"""Create a signed production bundle from a passed V11.2 certification.
+"""Retired V11.2 release entry point; every invocation fails closed.
 
-This command never opens a holdout and never trains.  It only accepts the
-immutable V11.2 results directory plus the one-shot certification report, and
-it refuses unsupported route families or any evidence mismatch.
+The V11.2 reserve was opened and failed. The implementation remains importable
+for historical audit, but no report, flag, or local artifact can reactivate
+release assembly.
 """
 
 from __future__ import annotations

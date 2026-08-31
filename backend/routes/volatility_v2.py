@@ -1,15 +1,16 @@
 """Certified global-volatility forecast endpoint (v2, fail-closed).
 
-One frozen ensemble serves every supported ticker. Legacy releases may certify
-conditional volatility only, in which case price ranges are reconstructed as
-zero-location cones around the current close. A V11.2 release may additionally
-certify a Student-t return distribution and expose its terminal learned
-location. Without a signed, verified release the endpoint answers with an
+One frozen ensemble serves every supported ticker. Legacy development fixtures
+may describe conditional volatility or return distributions, but production
+serving remains disabled until a new externally evidenced certification
+generation is integrated. V11.2 is permanently retired after its one-shot
+reserve opened. Without production admission the endpoint answers with an
 explicit no-certified-model abstention instead of any baseline path.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -31,6 +32,34 @@ from services.volatility_release_bootstrap import (
 from services.volatility_runtime.contracts import VOLATILITY_HORIZONS
 
 logger = logging.getLogger(__name__)
+
+_CERTIFICATION_POLICY_PATH = (
+    Path(__file__).resolve().parents[2] / "configs" / "certification_gates.json"
+)
+
+
+def _production_certification_block() -> str | None:
+    """Block production serving until a future externally verified gate is integrated.
+
+    The research verifier can validate genuine external evidence, but this
+    process deliberately has no code path that turns candidate metadata into
+    production authority.  A later certification generation must add and test
+    that integration explicitly; changing a JSON boolean is never sufficient.
+    """
+
+    if not settings.volatility_serving_required:
+        return None
+    try:
+        policy = json.loads(_CERTIFICATION_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        return f"external certification policy is unavailable: {type(error).__name__}"
+    if not isinstance(policy, dict):
+        return "external certification policy is malformed"
+    state = policy.get("current_state")
+    if state != "NOT_CERTIFIED":
+        return "external certification admission has not been implemented for this policy state"
+    return "external certification is 0/4; no production model is authorized"
+
 
 router = APIRouter(tags=["volatility-v2"])
 
@@ -150,6 +179,15 @@ _response_cache = _ResponseCache()
 
 def volatility_release_readiness() -> dict[str, Any]:
     """Return signed-release readiness without exposing internal errors."""
+    certification_block = _production_certification_block()
+    if certification_block is not None:
+        return {
+            "configured": False,
+            "status": "unconfigured",
+            "certified_horizons": [],
+            "gate_reason": certification_block,
+            "certification_status": "0/4",
+        }
     if not release_source_configured(settings):
         return {
             "configured": False,
@@ -320,6 +358,9 @@ async def volatility_forecast_v2(
     horizon: int = Query(...),
 ) -> VolatilityForecastResponse:
     """Serve the certified volatility distribution for one supported horizon."""
+    certification_block = _production_certification_block()
+    if certification_block is not None:
+        raise _abstain(certification_block)
     symbol = validate_ticker(ticker)
     if horizon not in VOLATILITY_HORIZONS:
         raise HTTPException(

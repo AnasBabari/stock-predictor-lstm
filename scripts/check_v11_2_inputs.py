@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Fail-closed preflight for the real V11.2 PIT64 training inputs.
+"""Read-only historical V11.2 input audit; production readiness is always false.
 
 This command performs no feature construction, training, encryption, or
 holdout access.  It only proves that an operator supplied an audited PIT64
 panel, signed market/PIT64 provenance receipts, and an external 32-byte key
-before the preparation command is run.
+before the historical preparation boundary. V11.2 is permanently retired;
+structural development readiness never implies certification readiness.
 The repository's secondary ``data/ndx100/cache`` is explicitly rejected.
 """
 
@@ -30,6 +31,7 @@ from research.volatility_forecasting.v11_2_attestation import (  # noqa: E402
     verify_v11_2_inputs,
 )
 from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
+    V11_2_CERTIFICATION_STATUS,
     V11_2_HORIZONS,
     V11_2_PROTOCOL_ID,
     V112Protocol,
@@ -153,6 +155,16 @@ def check_inputs(
     def check(name: str, passed: bool, detail: str = "") -> None:
         checks.append({"name": name, "passed": bool(passed), "detail": detail})
 
+    check(
+        "certification_generation_active",
+        not require_signed_attestations,
+        (
+            "development-only structural inspection"
+            if not require_signed_attestations
+            else f"V11.2 is permanently {V11_2_CERTIFICATION_STATUS}"
+        ),
+    )
+
     panel = panel_path.resolve()
     universe_file = universe_path.resolve()
     key = key_path.resolve()
@@ -231,7 +243,9 @@ def check_inputs(
             panel_digest_valid = panel_digest == expected_panel_digest
             check(
                 "panel_sidecar_panel_digest",
-                panel_digest_valid if require_signed_attestations else (panel_digest is None or panel_digest_valid),
+                panel_digest_valid
+                if require_signed_attestations
+                else (panel_digest is None or panel_digest_valid),
                 "panel bytes do not match the sidecar digest"
                 if panel_digest is not None and not panel_digest_valid
                 else "panel_sha256 is required for signed certification inputs"
@@ -275,14 +289,23 @@ def check_inputs(
                 ).hexdigest()
                 sidecar_payload = _json_object(sidecar, "panel sidecar")
                 if sidecar_payload.get("snapshot_manifest_sha256") != snapshot_digest:
-                    raise AttestationError("panel sidecar is not bound to the attested snapshot manifest")
+                    raise AttestationError(
+                        "panel sidecar is not bound to the attested snapshot manifest"
+                    )
                 if sidecar_payload.get("attestation_summary") != attestation_summary:
-                    raise AttestationError("panel sidecar attestation summary does not match receipts")
+                    raise AttestationError(
+                        "panel sidecar attestation summary does not match receipts"
+                    )
                 check("signed_input_attestations", True)
             except (AttestationError, OSError, ValueError, TypeError) as exc:
                 attestation_summary = {}
                 check("signed_input_attestations", False, str(exc))
-    ready = all(item["passed"] for item in checks)
+    development_ready = all(
+        item["passed"] for item in checks if item["name"] != "certification_generation_active"
+    )
+    # ``ready`` is the production-certification verdict. V11.2 is retired even
+    # when its historical structure remains reproducible for diagnostics.
+    ready = False
     return {
         "protocol_id": V11_2_PROTOCOL_ID,
         "protocol_sha256": V112Protocol().digest(),
@@ -290,6 +313,7 @@ def check_inputs(
         "universe_manifest": str(universe_file),
         "key_path": str(key),
         "ready": ready,
+        "development_ready": development_ready,
         "checks": checks,
         "panel_summary": panel_summary,
         "attestation_summary": attestation_summary,

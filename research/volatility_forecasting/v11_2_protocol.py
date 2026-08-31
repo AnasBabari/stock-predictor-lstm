@@ -36,6 +36,25 @@ V11_2_MAX_COVERAGE_80 = 0.95
 V11_2_NEWS_MODE = "M2_DISABLED_BY_PROTOCOL"
 V11_2_MODEL_VERSION = "v11.2-numeric-residual-v1"
 V11_2_FEATURE_SCHEMA_VERSION = "deployable_v5"
+V11_2_CERTIFICATION_STATUS = "INVALIDATED_OPENED"
+
+
+class V112CertificationRetiredError(RuntimeError):
+    """Raised when code attempts to reuse the consumed V11.2 generation."""
+
+
+def assert_v11_2_certification_active() -> None:
+    """Permanently reject V11.2 certification, sealing, and release creation.
+
+    The sole V11.2 reserve was opened on 2026-08-30 and failed its frozen
+    promotion gate. A new attempt must use a new protocol and reserve namespace;
+    no flag or caller-supplied configuration may reactivate this generation.
+    """
+
+    raise V112CertificationRetiredError(
+        "V11.2 certification is permanently INVALIDATED_OPENED; "
+        "create a new externally evidenced generation and reserve"
+    )
 
 
 class HistoricalNewsFeatureProvider(Protocol):

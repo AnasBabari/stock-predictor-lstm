@@ -25,6 +25,7 @@ from research.volatility_forecasting.v11_2_attestation import (
 )
 from research.volatility_forecasting.v11_2_freezer import V112Route, freeze_routing_bundle
 from research.volatility_forecasting.v11_2_protocol import (
+    V112CertificationRetiredError,
     V112Protocol,
     canonical_json_digest,
     feature_schema_digest,
@@ -327,32 +328,25 @@ def _make_inputs(tmp_path: Path, *, certification_eligible: bool = True) -> tupl
 
 
 def test_certifier_scores_frozen_baseline_routes_once(tmp_path: Path) -> None:
-    dataset, results, key_path = _make_inputs(tmp_path)
-    report = certify(
-        dataset_dir=dataset,
-        results_dir=results,
-        key_path=key_path,
-        output_dir=tmp_path / "certification",
-        repository_root=tmp_path / "repository",
-    )
-    assert report["status"] == "passed"
-    assert report["m0_adequacy_passed"] is True
-    assert all(gate["passed"] for gates in report["m0_adequacy"].values() for gate in gates)
-    assert report["metric_source"] == "sealed_holdout_once"
-    assert report["sealed_test_status"] == "OPENED_ONCE"
-    assert len(report["routes"]) == 4
+    with pytest.raises(V112CertificationRetiredError, match="INVALIDATED_OPENED"):
+        certify(
+            dataset_dir=tmp_path / "dataset",
+            results_dir=tmp_path / "results",
+            key_path=tmp_path / "key",
+            output_dir=tmp_path / "certification",
+            repository_root=tmp_path / "repository",
+        )
 
 
 def test_certifier_rejects_development_only_universe_before_opening_holdout(
     tmp_path: Path,
 ) -> None:
-    dataset, results, key_path = _make_inputs(tmp_path, certification_eligible=False)
-    with pytest.raises(SystemExit, match="certification-eligible universe"):
+    with pytest.raises(V112CertificationRetiredError, match="INVALIDATED_OPENED"):
         certify(
-            dataset_dir=dataset,
-            results_dir=results,
-            key_path=key_path,
+            dataset_dir=tmp_path / "dataset",
+            results_dir=tmp_path / "results",
+            key_path=tmp_path / "key",
             output_dir=tmp_path / "certification",
             repository_root=tmp_path / "repository",
         )
-    assert not (dataset / "sealed" / "SEALED_TEST_OPENED.json").exists()
+    assert not (tmp_path / "dataset" / "sealed" / "SEALED_TEST_OPENED.json").exists()

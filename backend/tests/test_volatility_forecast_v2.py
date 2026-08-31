@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -85,6 +87,7 @@ def _clean_state(monkeypatch):
     monkeypatch.setattr(settings, "volatility_release_dir", None)
     monkeypatch.setattr(settings, "volatility_public_key_path", None)
     monkeypatch.setattr(settings, "volatility_forecast_cache_ttl", 900)
+    monkeypatch.setattr(settings, "volatility_serving_required", False)
     yield
     volatility_v2._reset_release_state()
 
@@ -106,6 +109,38 @@ def test_abstains_when_no_release_is_configured() -> None:
     detail = response.json()["detail"]
     assert detail["status"] == "abstain_no_certified_model"
     assert "configured" in detail["reason"]
+
+
+def test_production_serving_remains_blocked_at_zero_of_four(monkeypatch) -> None:
+    _install_release(monkeypatch, runtime=_FakeRuntime())
+    monkeypatch.setattr(settings, "volatility_serving_required", True)
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail == {
+        "status": "abstain_no_certified_model",
+        "reason": "external certification is 0/4; no production model is authorized",
+    }
+    assert volatility_v2.volatility_release_readiness() == {
+        "configured": False,
+        "status": "unconfigured",
+        "certified_horizons": [],
+        "gate_reason": "external certification is 0/4; no production model is authorized",
+        "certification_status": "0/4",
+    }
+
+
+def test_editing_policy_status_cannot_self_authorize_production(
+    tmp_path: Path, monkeypatch
+) -> None:
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"current_state": "CERTIFIED"}), encoding="utf-8")
+    monkeypatch.setattr(volatility_v2, "_CERTIFICATION_POLICY_PATH", policy)
+    monkeypatch.setattr(settings, "volatility_serving_required", True)
+    _install_release(monkeypatch, runtime=_FakeRuntime())
+    response = CLIENT.get("/api/v2/forecast", params={"ticker": "MSFT", "horizon": 7})
+    assert response.status_code == 503
+    assert "admission has not been implemented" in response.json()["detail"]["reason"]
 
 
 def test_abstains_when_release_verification_fails(monkeypatch) -> None:

@@ -1,4 +1,4 @@
-"""Assemble a signed production release from a passed V11.2 certification.
+"""Historical V11.2 release adapter, permanently blocked at its public boundary.
 
 V11.2 evaluates four horizons (1, 3, 5, and 7 sessions), while the deployed
 volatility API has a six-horizon tensor contract.  This adapter composes the
@@ -37,6 +37,7 @@ from .v11_2_protocol import (
     V11_2_PROTOCOL_ID,
     V11_2_PROTOCOL_VERSION,
     V112Protocol,
+    assert_v11_2_certification_active,
     canonical_json_digest,
     feature_schema_digest,
     protocol_manifest,
@@ -448,6 +449,7 @@ def assemble_v11_2_release(
     parity_rows: int = 7,
 ) -> dict[str, Any]:
     """Verify a passed V11.2 candidate and create one signed runtime bundle."""
+    assert_v11_2_certification_active()
     if opset_version < 17:
         raise ValueError("V11.2 production export requires ONNX opset 17 or newer")
     if output_dir.exists():
