@@ -59,3 +59,38 @@ def test_volatility_snapshot_identity_changes_with_latest_observation(monkeypatc
     updated = volatility_snapshot.build_volatility_inference_snapshot("NMM")
     assert updated.snapshot_id != original.snapshot_id
     assert updated.origin_close != original.origin_close
+
+
+def test_snapshot_har_baseline_uses_close_to_close_proxy(monkeypatch) -> None:
+    frame = _market_frame()
+    proxy_frame = pd.DataFrame(
+        {
+            "RV_C2C": np.full(len(frame), 0.01),
+            "RV_Total": np.full(len(frame), 0.09),
+        },
+        index=frame.index,
+    )
+    captured: dict[str, np.ndarray] = {}
+
+    def fake_har(rv_daily, horizons):
+        captured["rv"] = np.asarray(rv_daily, dtype=float)
+        return np.full((len(frame), len(horizons)), 0.02, dtype=float)
+
+    monkeypatch.setattr(volatility_snapshot, "_download_ohlcv", lambda _ticker: frame.copy())
+    monkeypatch.setattr(volatility_snapshot, "realized_variance_proxies", lambda _raw: proxy_frame)
+    monkeypatch.setattr(volatility_snapshot, "causal_log_har_forecasts", fake_har)
+    monkeypatch.setattr(
+        volatility_snapshot,
+        "future_trading_dates",
+        lambda *_args, **_kwargs: (
+            tuple(
+                (frame.index[-1] + pd.Timedelta(days=offset)).date().isoformat()
+                for offset in range(1, 31)
+            ),
+            "synthetic",
+        ),
+    )
+
+    volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+
+    np.testing.assert_allclose(captured["rv"], proxy_frame["RV_C2C"].to_numpy())

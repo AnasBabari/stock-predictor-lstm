@@ -41,11 +41,12 @@ class ModelPerformanceResponse(BaseModel):
 
 @router.get("/models")
 def list_models():
-    """Describe the single signed global-volatility serving contract.
+    """Describe the active baseline and legacy learned-model contracts.
 
-    The legacy per-ticker/browser entries remain as compatibility diagnostics
-    during rollout, but are explicitly disabled so clients cannot mistake them
-    for the production model.
+    The active volatility endpoint is train-free and does not require model
+    artifacts.  The signed global-release and per-ticker/browser entries remain
+    compatibility diagnostics so clients cannot mistake them for the active
+    product path.
     """
     from routes.volatility_v2 import volatility_release_readiness
 
@@ -89,16 +90,32 @@ def list_models():
             "news_status": release.get("news_status", "not_certified"),
             "training": "offline RTX workstation",
         },
+        "volatility_forecasting": {
+            "status": "available",
+            "reason": (
+                "Active forecasts use causal market features and transparent statistical baselines; "
+                "offline learned models are reported separately until they pass the same benchmark."
+            ),
+            "endpoint": "/api/v1/volatility/forecast",
+            "horizons": [1, 3, 5, 7, 14, 30],
+            "baselines": ["persistence", "rolling_mean", "ewma", "har_rv"],
+            "target": "future_realized_volatility_close_to_close",
+            "metric_source": "baseline_definition",
+            "news_status": "not_used",
+        },
         "browser_training": {
             "status": "disabled",
-            "reason": "Production training and inference run from the signed global volatility release.",
+            "reason": "Browser training is not required by the active causal-baseline product path.",
             "model_family": None,
             "storage": None,
         },
         "model_storage": {
-            "location": "signed_release" if release_configured else "none",
-            "required": True,
-            "detail": "The API loads only a checksum- and signature-verified global volatility bundle.",
+            "location": "signed_release" if release_configured else "none_for_active_baseline",
+            "required": False,
+            "detail": (
+                "The active volatility endpoint computes train-free baselines. "
+                "The legacy global endpoint loads a checksum- and signature-verified bundle when configured."
+            ),
         },
         "availability": {
             "price": {

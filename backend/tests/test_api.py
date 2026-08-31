@@ -766,7 +766,8 @@ def test_models_advertises_signed_global_volatility_and_disabled_browser_trainin
     assert body["global_volatility"]["certified_heads"]["direction"] is False
     assert body["global_volatility"]["metric_source"] is None
     assert body["browser_training"]["status"] == "disabled"
-    assert body["model_storage"]["location"] == "none"
+    assert body["model_storage"]["location"] == "none_for_active_baseline"
+    assert body["model_storage"]["required"] is False
     assert body["availability"]["price"]["status"] == "unconfigured_abstaining"
     assert body["availability"]["price"]["engine"] is None
     assert body["availability"]["price"]["tickers"] == []

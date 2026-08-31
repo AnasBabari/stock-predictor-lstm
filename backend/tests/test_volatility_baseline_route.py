@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import numpy as np
+from fastapi.testclient import TestClient
+
+from api import app
+from routes import volatility
+
+CLIENT = TestClient(app)
+
+
+def _snapshot(ticker: str = "MSFT") -> SimpleNamespace:
+    return SimpleNamespace(
+        ticker=ticker,
+        snapshot_id="a" * 64,
+        origin_date="2026-08-28",
+        origin_close=500.0,
+        feature_names=("Return_1D", "Vol_C2C_20"),
+        features=np.ones((60, 2), dtype=np.float32),
+        causal_har_variance=np.full(6, 0.04, dtype=np.float32),
+        baseline_candidates={
+            "rolling_c2c_5": np.full(6, 0.05, dtype=np.float64),
+            "rolling_c2c_20": np.full(6, 0.04, dtype=np.float64),
+            "rolling_c2c_60": np.full(6, 0.03, dtype=np.float64),
+            "riskmetrics_ewma_c2c": np.full(6, 0.03, dtype=np.float64),
+            "causal_log_har": np.full(6, 0.02, dtype=np.float64),
+        },
+        historical_dates=("2026-08-27", "2026-08-28"),
+        historical_prices=np.array([498.0, 500.0]),
+        future_dates=tuple(f"2026-09-{day:02d}" for day in range(1, 31)),
+    )
+
+
+def test_active_route_returns_explicit_causal_baseline(monkeypatch):
+    monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
+    response = CLIENT.get(
+        "/api/v1/volatility/forecast",
+        params={"ticker": "msft", "horizon": 7, "model": "har_rv"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ticker"] == "MSFT"
+    assert body["horizon"] == 7
+    assert len(body["forecast"]["future_dates"]) == 7
+    assert len(body["forecast"]["price_quantiles"]["p50"]) == 7
+    assert body["evidence"]["model_status"] == "baseline"
+    assert body["evidence"]["metric_source"] == "baseline_definition"
+    assert body["evidence"]["news_status"] == "not_used"
+
+
+def test_baseline_names_map_to_the_documented_windows():
+    snapshot = _snapshot()
+    persistence = volatility.build_live_volatility_forecast(
+        snapshot, horizon=5, model="persistence"
+    )
+    rolling = volatility.build_live_volatility_forecast(snapshot, horizon=5, model="rolling_mean")
+    assert persistence["forecast"]["model"] == "persistence"
+    assert persistence["forecast"]["expected_cumulative_variance"] == 0.04
+    assert rolling["forecast"]["expected_cumulative_variance"] == 0.03
+
+
+def test_active_route_rejects_unsupported_horizon_and_model(monkeypatch):
+    monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
+    assert CLIENT.get("/api/v1/volatility/forecast?horizon=2").status_code == 400
+    assert CLIENT.get("/api/v1/volatility/forecast?model=unknown").status_code == 400
+
+
+def test_active_route_rejects_invalid_ticker():
+    response = CLIENT.get("/api/v1/volatility/forecast?ticker=../model")
+    assert response.status_code == 400
+
+
+def test_models_advertises_train_free_active_contract():
+    body = CLIENT.get("/models").json()
+    active = body["volatility_forecasting"]
+    assert active["status"] == "available"
+    assert active["endpoint"] == "/api/v1/volatility/forecast"
+    assert active["metric_source"] == "baseline_definition"
+    assert body["model_storage"]["required"] is False

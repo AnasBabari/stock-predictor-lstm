@@ -7,7 +7,7 @@ The evaluator uses frozen snapshots, cumulative log-return targets, expanding ti
 > [!NOTE]
 > Family rename (2026-08): the candidate formerly registered as `small_tcn` was renamed to `random_features_ridge`. Review showed it is a fixed random nonlinear projection with a Ridge readout — it contains no convolution, no learned kernels, and no dilation. Historical ledger rows keep the original `small_tcn` string; the name mapping (`LEGACY_FAMILY_ALIASES`) applies only at deserialization/reporting boundaries. The backend's `SmallTCNForecaster` is a genuine causal dilated TCN and is unrelated to the renamed research family.
 
-Run from the repository root with `PYTHONPATH=research` after preparing a frozen CSV snapshot. Transient snapshots, model outputs, credentials, and browser weights must not be committed; the frozen audit snapshots `snapshot.csv` and `snapshot_{SPY,QQQ,MSFT}.csv` are intentionally tracked so every ledger claim is reproducible.
+Run from the repository root with `PYTHONPATH=research` after preparing a frozen CSV snapshot. The standalone simplified benchmark under `scripts/run_volatility_benchmark.py` bootstraps its repository import path itself. Transient snapshots, model outputs, credentials, and browser weights must not be committed; the frozen audit snapshots `snapshot.csv` and `snapshot_{SPY,QQQ,MSFT}.csv` are intentionally tracked so every ledger claim is reproducible.
 
 ## Audit trail
 

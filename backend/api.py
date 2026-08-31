@@ -1,8 +1,8 @@
 """StockLSTM API — FastAPI backend application and router orchestrator.
 
 This application acts as a high-reliability data and prediction coordination service:
-- Generates stationary, leakage-safe training snapshots for browser-side TF.js training.
-- Serves baseline forecasts (persistence, base rate) and optional signed server models.
+- Generates stationary, leakage-safe snapshots for diagnostics and offline research.
+- Serves a causal volatility baseline and optional signed compatibility models.
 - Enforces strict rate limiting via trusted proxy inspection and process-bounded concurrency.
 """
 
@@ -112,6 +112,7 @@ from routes.training_data import (
 from routes.training_data import (
     router as training_data_router,
 )
+from routes.volatility import router as volatility_router
 from routes.volatility_v2 import router as volatility_v2_router
 from server_models.api import router as server_forecasts_router
 from server_models.response_models import (
@@ -260,6 +261,7 @@ app.include_router(models_router)
 app.include_router(forecasts_router)
 app.include_router(server_forecasts_router)
 app.include_router(volatility_v2_router)
+app.include_router(volatility_router)
 
 
 # ── Compatibility Helpers for Legacy Callers & Tests ────────────────

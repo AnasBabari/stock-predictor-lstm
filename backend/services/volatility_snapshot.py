@@ -1,4 +1,4 @@
-"""Deployable, causal inputs for the certified global volatility model."""
+"""Deployable, causal inputs for the active volatility baseline service."""
 
 from __future__ import annotations
 
@@ -102,7 +102,10 @@ def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnaps
         raise ValueError("volatility ticker is required")
     raw = _download_ohlcv(symbol)
     features = build_features_v5(raw)
-    proxy = realized_variance_proxies(raw)["RV_Total"].clip(lower=1e-12)
+    # The active product target is close-to-close realised volatility. Keep the
+    # serving baseline on that same proxy as the offline benchmark; the OHLC
+    # range/overnight proxies remain research-only candidates.
+    proxy = realized_variance_proxies(raw)["RV_C2C"].clip(lower=1e-12)
     har = causal_log_har_forecasts(proxy, VOLATILITY_HORIZONS)
     feature_matrix = features[list(DEPLOYABLE_FEATURE_COLUMNS_V5)].to_numpy(dtype=np.float64)
     last = len(raw) - 1
