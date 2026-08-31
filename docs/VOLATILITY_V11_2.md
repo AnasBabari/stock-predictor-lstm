@@ -17,6 +17,13 @@ no holdout key.
 V11.1 remains an immutable historical checkpoint. No V11.1 model, digest,
 candidate, or sealed partition is reused by V11.2.
 
+**Current status (2026-08-31): no V11.2 production release exists.** The
+attempted `artifacts/licensed_*` inputs are quarantined because their provider
+and attestation fields are unsigned self-assertions; they do not satisfy the
+receipt gate below. The diagnostic reserve remains unopened, while the
+separate attempted reserve was opened once and failed certification. Do not
+rerun that reserve or describe either input set as licensed production data.
+
 ## Universe and evidence
 
 The accepted universe is exactly 64 securities. Every entry records a stable
@@ -112,22 +119,54 @@ python scripts/build_v11_2_panel.py `
 ```
 
 The command writes `<audited-panel>.npz.manifest.json` with the snapshot and
-universe digests. The snapshot must carry an explicit provider-license
-acknowledgement, the universe must contain exactly 64 accepted securities, and
-every security must resolve through its point-in-time ticker and membership
-intervals. The repository's secondary NDX100 cache is not a V11.2
+universe digests. For a certification-eligible universe, this command also
+requires two detached Ed25519 receipts: a vendor licence receipt bound to the
+snapshot pooled checksum and an independent PIT64 security-master receipt
+bound to the exact 64 identities. A prose `license.acknowledged` field,
+provider name, or `certification_eligible=true` flag is not evidence and will
+be rejected. The repository's secondary NDX100 cache is not a V11.2
 certification input.
+
+Each receipt must include the applicable model-training/derived-weight rights,
+the attester key fingerprint, an independent-review declaration, and exact
+SHA-256 digests for every supplied evidence file. The public keys are supplied
+out of band; the verifier never creates or accepts a private key. The panel
+builder accepts these arguments for an eligible input:
+
+The complete signed-receipt schema and the operator evidence requirements are
+defined in [V11.2 input-attestation schema](V11_2_ATTESTATION_SCHEMA.md).
+
+```powershell
+python scripts/build_v11_2_panel.py `
+  --snapshot-dir <immutable-snapshot-directory> `
+  --universe-manifest <audited-pit64-universe.json> `
+  --output <audited-panel>.npz `
+  --market-attestation <vendor-market-receipt.json> `
+  --market-public-key <vendor-market-public.pem> `
+  --pit64-attestation <independent-pit64-receipt.json> `
+  --pit64-public-key <independent-pit64-public.pem> `
+  --market-evidence snapshot_manifest=<snapshot-manifest.json> `
+  --pit64-evidence membership_master=<membership-master-file>
+```
 
 Run the read-only input preflight before preparing the sealed dataset. It
 fails closed unless the panel sidecar, audited universe, stable security/date
-identities, feature geometry, and an external 32-byte holdout key are all
-present. It never opens or decrypts the holdout and never prints key bytes:
+identities, signed input receipts, exact evidence files, and an external
+32-byte holdout key are all present. It never opens or decrypts the holdout and
+never prints key bytes:
 
 ```powershell
 python scripts/check_v11_2_inputs.py `
   --panel <audited-panel>.npz `
   --universe-manifest <audited-pit64-universe.json> `
-  --key-path "$env:USERPROFILE\.stocklstm\secrets\v11_2_holdout.key"
+  --key-path "$env:USERPROFILE\.stocklstm\secrets\v11_2_holdout.key" `
+  --snapshot-manifest <snapshot-manifest.json> `
+  --market-attestation <vendor-market-receipt.json> `
+  --market-public-key <vendor-market-public.pem> `
+  --pit64-attestation <independent-pit64-receipt.json> `
+  --pit64-public-key <independent-pit64-public.pem> `
+  --market-evidence snapshot_manifest=<snapshot-manifest.json> `
+  --pit64-evidence membership_master=<membership-master-file>
 ```
 
 Compute the frozen feature-contract digest and prepare the dataset. The key
@@ -140,7 +179,14 @@ python scripts/prepare_v11_2_dataset.py `
   --universe-manifest <audited-pit64-universe.json> `
   --output-dir artifacts/v11_2_numeric `
   --key-path "$env:USERPROFILE\.stocklstm\secrets\v11_2_holdout.key" `
-  --schema-sha256 $schema
+  --schema-sha256 $schema `
+  --snapshot-manifest <snapshot-manifest.json> `
+  --market-attestation <vendor-market-receipt.json> `
+  --market-public-key <vendor-market-public.pem> `
+  --pit64-attestation <independent-pit64-receipt.json> `
+  --pit64-public-key <independent-pit64-public.pem> `
+  --market-evidence snapshot_manifest=<snapshot-manifest.json> `
+  --pit64-evidence membership_master=<membership-master-file>
 ```
 
 Run development only on the unsealed train/validation files:
