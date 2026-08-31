@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions) [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/) [![FastAPI 0.115+](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/) [![React 18.3](https://img.shields.io/badge/React-18.3.1-61DAFB?logo=react&logoColor=black)](https://react.dev/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-StockLSTM is a React/FastAPI research application for market-volatility forecasting. Its production architecture accepts only a signed, CPU-served global TCN ensemble trained and certified offline on the RTX workstation. No candidate is currently certified: the v6 result was strictly rejected and v7 is prospective development work. Render supplies validated market history and calendars; it does not train models or accept model weights. Vercel renders a forecast only when the release contract verifies.
+StockLSTM is a React/FastAPI research application for market-volatility forecasting. The active product path is a lightweight, causal statistical service: Render validates market history, computes transparent baselines, and returns a dated volatility cone. It does not train models or write model artifacts. Offline research can benchmark Ridge, ElasticNet, boosting, and a compact PyTorch LSTM on the same leakage-safe target before any learned model is promoted.
 
 > [!WARNING]
 > Educational project only. Forecasts, indicators, and sentiment are not financial advice.
@@ -11,7 +11,7 @@ StockLSTM is a React/FastAPI research application for market-volatility forecast
 > GitHub Actions runs locked dependency checks, Ruff, Mypy, Bandit, pip-audit, API-documentation drift checks, backend and frontend tests/builds, and Docker Compose smoke tests. The local verification workflow may intentionally skip Bandit, but the CI gate remains active.
 
 > [!NOTE]
-> A forecast is only displayed as a learned production result when the signed release, checksum, schema, horizon certification, and metric provenance all verify. Otherwise the API abstains with `503`; it does not silently substitute a flat line and call it a model.
+> Normal forecasts are explicitly labelled `baseline` and carry `metric_source = baseline_definition`. They are uncertainty estimates, not learned price-direction claims. The legacy signed-release route remains fail-closed and is not required by the active route.
 
 ## Live Demo
 
@@ -27,31 +27,31 @@ StockLSTM is a React/FastAPI research application for market-volatility forecast
 | ![Price forecast dashboard with historical and predicted prices.](assets/dashboard.png) | ![Direction forecast dashboard with model analysis.](assets/prediction.png) |
 
 - Search for a validated ticker and select a supported 1-, 3-, 5-, 7-, 14-, or 30-session horizon.
-- The production path calls `GET /api/v2/forecast`; when a future externally certified release exists, the dashboard will render only the heads that release actually certifies. V11.2 is permanently retired and cannot be loaded or served.
-- The evidence card reports the true metric source (`locked_purged_walk_forward`), QLIKE, coverage, release identity, snapshot identity, and certified horizon. It does not label a volatility forecast as price-direction accuracy.
-- The API returns a sanitized abstention when a release is missing, stale, incompatible, tampered with, or not certified for the requested horizon.
+- The active path calls `GET /api/v1/volatility/forecast`; choose a supported horizon and one of the causal persistence, rolling-mean, EWMA, or log-HAR baselines.
+- The evidence card reports the true metric source (`baseline_definition`), target definition, annualised volatility, snapshot identity, and feature schema. It does not label a volatility forecast as price-direction accuracy.
+- The historical `/api/v2/forecast` route remains available for signed-release compatibility and returns a sanitized abstention when a release is missing, stale, incompatible, tampered with, or not certified for the requested horizon.
 - Save results to browser-local watchlists/history and export PNG, CSV, or complete ZIP analyses.
 
 ## Architecture and data contract
 
-The serving snapshot uses **Deployable Schema v5**: 26 causal stationary features covering return structure, realized-volatility proxies, liquidity, and market microstructure. Every row uses information available at or before its origin. A 60-session window, exchange calendar, deterministic snapshot fingerprint, and exact feature ordering are bound into the signed release contract.
+The active serving snapshot uses **Deployable Schema v5**: 26 causal stationary features covering return structure, realised-volatility proxies, liquidity, and market microstructure. Every row uses information available at or before its origin. A 60-session window, exchange calendar, deterministic snapshot fingerprint, and exact feature ordering are returned with the baseline response. The simplified offline benchmark additionally exposes a 22-session single-symbol feature sequence for transparent model comparisons.
 
-The research champion family is a residual temporal-convolutional ensemble with frozen econometric volatility baselines. V11.2 experimentally added a Student-t return-location/variance distribution, but its one-shot reserve was opened and the candidate failed; that generation is now permanently `INVALIDATED_OPENED`. With no externally certified release, the production API abstains.
+The historical research champion family is a residual temporal-convolutional ensemble with frozen econometric volatility baselines. It remains available for reproduction, but is not on the active request path. V11.2 experimentally added a Student-t return-location/variance distribution, but its one-shot reserve was opened and the candidate failed; that generation is permanently `INVALIDATED_OPENED`.
 
 The GPU-trained v7 development candidate remains unsigned while its genuinely future reserve matures. When 252 target-complete origins after 2026-08-27 are available, `scripts/certify_prospective_volatility_candidate.py` verifies the frozen three-seed artifact, immutable panel prefix, NMM/MSFT transfer coverage, and every locked gate before creating a release-role candidate. Interrupted post-pass materialization can be recovered without reopening the reserve through `scripts/materialize_prospective_certification.py`; failed or partial evidence remains non-releasable.
 
-`GET /api/v1/training-data?ticker=MSFT` remains a bounded diagnostic/research snapshot. It returns validated features, historical closes, strictly increasing backend-generated future trading dates, schema metadata, and a deterministic `snapshot_id`; it does not train a model or accept client-supplied features.
+`GET /api/v1/training-data?ticker=MSFT` remains a bounded browser/research snapshot. `GET /api/v1/volatility/forecast?ticker=MSFT&horizon=7&model=har_rv` is the active product interface; it returns a causal baseline cone, future trading dates, target/evidence metadata, and a deterministic `snapshot_id`. Neither endpoint trains a model or accepts client-supplied features. See [docs/VOLATILITY_FORECASTING.md](docs/VOLATILITY_FORECASTING.md).
 
-Production metrics are computed offline on identical market snapshots using calendar-aligned expanding purged walk-forward folds. Volatility is scored primarily with QLIKE, log-variance error, calibration, and interval coverage; price-location and direction heads are separate gates. A development candidate is not called certified until one untouched holdout and the signed-release verification pass. A failed locked result is final for that candidate and reserve: neither passing horizons nor old holdout rows are recycled.
+Offline comparison metrics use identical snapshots and a chronological 70/15/15 split with an H-session embargo. Volatility is scored primarily with QLIKE plus MAE, MSE, RMSE, R², calibration, and interval coverage. The validation partition selects a model; the untouched test partition is reported once and never drives selection. A learned candidate is not labelled production-ready until it beats the matched baseline on the same target and snapshot.
 
 > [!IMPORTANT]
-> **How to read the numbers.** Historical reports preserve their actual metric source, including V11.2's failed `sealed_holdout_once` evidence. There is no current certified release; development reports, browser experiments, failed locked evidence, and final refits are never presented as production metrics.
+> **How to read the numbers.** A baseline response is a live uncertainty estimate and reports `baseline_definition`, not an accuracy score. Offline benchmark reports state their snapshot, target, split, embargo, model, and metric source. Historical development and certification reports remain archival and are never presented as active product evidence.
 
-The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available for old clients. Their response metadata always identifies `server_disabled_fallback`; they are persistence/base-rate results and never learned forecasts. `/models` reports `server_models.status = disabled` and `browser_training.status = disabled` in the production contract.
+The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available for old clients. Their response metadata always identifies `server_disabled_fallback`; they are persistence/base-rate results and never learned forecasts. `/models` reports the active `volatility_forecasting.status = available` contract, while `server_models.status = disabled`, `browser_training.status = disabled`, and `model_storage.required = false` make the train-free serving boundary explicit.
 
-## Signed global-volatility serving
+## Legacy signed global-volatility serving
 
-`GET /api/v2/forecast?ticker=MSFT&horizon=7` is the fail-closed interface for one verified global ONNX ensemble across supported tickers. An eligible future release must be trained offline on the RTX workstation, pass the externally evidenced gate in [docs/FREE_CERTIFICATION_STACK.md](docs/FREE_CERTIFICATION_STACK.md), retain genuine Cosign verification of the exact frozen evidence manifest, and carry the existing Ed25519 runtime-bundle signature. It is never trained in a public request and no model weights are uploaded by the browser.
+`GET /api/v2/forecast?ticker=MSFT&horizon=7` is the historical fail-closed interface for one verified global ONNX ensemble across supported tickers. It is retained for compatibility and archival research; the active frontend uses `/api/v1/volatility/forecast` instead. An eligible future release must still pass the externally evidenced gate in [docs/FREE_CERTIFICATION_STACK.md](docs/FREE_CERTIFICATION_STACK.md), retain genuine Cosign verification of the exact frozen evidence manifest, and carry the existing Ed25519 runtime-bundle signature.
 
 The response contains dated p05–p95 paths, expected annualized volatility, snapshot id, model id, certified horizon evidence, and the signed `metric_source`. When `certified_heads.return_distribution` is true it also contains the Student-t expected cumulative return, return-distribution variance, and a learned p50 median path; otherwise p50 remains the disclosed zero-location assumption and the product does not display it as a model forecast. If the release or requested horizon is unavailable, the endpoint returns a structured 503 abstention. `/ready` can enforce this with `VOLATILITY_SERVING_REQUIRED=true`; `/models` reports the verified model id and certified horizons.
 
@@ -64,9 +64,9 @@ The legacy per-ticker server-bundle routes are disabled for production. Their op
 Live Yahoo Finance headlines remain context-only for the legacy v1 paths. Historical GDELT event data is available as an immutable, point-in-time research snapshot with topic exposures, decay/coverage metadata, checksums, and explicit provider archive gaps. Its matched ablation did not demonstrate incremental value, so news is excluded from v7. It may return only in a separately preregistered future cycle that demonstrates incremental QLIKE/coverage value on identical origins and then clears locked certification. For that future cycle, the certified-serving path (`/api/v2/forecast`) already supports a live news feature provider (`VOLATILITY_NEWS_PROVIDER_ENABLED=true`): a news-certified signed release is then served with a schema-exact, causally aggregated live news vector, and it still abstains (503) whenever the provider is disabled, the provider fails, or the certified schema demands features the live provider cannot honestly reproduce.
 
 
-## Global model pipeline
+## Historical global-model pipeline
 
-The offline global-model pipeline builds immutable snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs only an overall passing release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for the full contract and [docs/VOLATILITY_V7_PREREGISTRATION.md](docs/VOLATILITY_V7_PREREGISTRATION.md) for the fresh cycle created after v6 strict rejection. Legacy browser training has been retired; the frontend purely interfaces with the verified server global forecasting contract, and CI verifies that the production bundle is TFJS-free.
+The historical global-model pipeline builds immutable snapshots, evaluates econometric and neural challengers on CUDA, opens a locked holdout only after the methodology gate, exports CPU-parity ONNX members, and signs only an overall passing release. See [docs/GLOBAL_MODELS.md](docs/GLOBAL_MODELS.md) for that archived contract. The active simplified path is documented in [docs/VOLATILITY_FORECASTING.md](docs/VOLATILITY_FORECASTING.md) and does not require certification bureaucracy for a baseline response.
 
 ### V11.2 numeric PIT64 development
 

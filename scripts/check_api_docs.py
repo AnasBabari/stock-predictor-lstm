@@ -24,6 +24,7 @@ DOCUMENTED_PATHS = {
     "/api/v1/search",
     "/api/v1/info",
     "/api/v1/training-data",
+    "/api/v1/volatility/forecast",
     "/api/v1/predict",
     "/api/v1/predict/direction",
     "/api/v1/prediction-status/{request_id}",

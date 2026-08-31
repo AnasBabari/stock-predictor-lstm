@@ -2,16 +2,65 @@
 
 Local backend: http://127.0.0.1:8000. Interactive OpenAPI: /docs; schema: /openapi.json.
 
-Errors use {"detail":"..."} or a documented structured detail. 400 means an invalid ticker/horizon or insufficient history, 409 means the history cannot support the requested causal snapshot, 429 means rate limiting, 502 means an upstream market-data failure, and 503 means the signed model is unavailable, incompatible, uncertified, or failed closed.
+Errors use {"detail":"..."} or a documented structured detail. 400 means an invalid ticker/horizon/model, 409 means the history cannot support the requested causal snapshot, 422 means valid input data is insufficient, 429 means rate limiting, and 503 means an upstream market-data or optional signed-model service is temporarily unavailable.
 
 ## Probes and discovery
 
 - GET / — service metadata and documentation links.
 - GET /health — O(1) liveness; does not load model files.
 - GET /ready — market-data readiness and, when required/configured, verified global-release readiness.
-- GET /models — signed global-volatility status, model id, certified horizons, disabled legacy/browser paths, and metric source.
+- GET /models — active baseline status, plus signed global-volatility compatibility status and metric source.
 - GET /api/v1/search?query=AAPL — bounded Yahoo suggestions.
 - GET /api/v1/info?ticker=AAPL — fundamentals with a bounded cache.
+
+## GET /api/v1/volatility/forecast
+
+This is the active product endpoint. It computes a causal statistical
+volatility baseline from the latest validated OHLCV history; it does not load
+model files or require a signed release.
+
+Parameters:
+
+- `ticker`: validated `[A-Z0-9.\\-]{1,12}` symbol.
+- `horizon`: one of `1, 3, 5, 7, 14, 30` trading sessions.
+- `model`: `persistence`, `rolling_mean`, `ewma`, or `har_rv` (default).
+
+Rate limit: 30 requests/minute/client. The request computes features through
+the last observed session and returns p05–p95 price paths derived from the
+selected annualised volatility estimate. It never accepts a client feature
+matrix, model path, or weight payload.
+
+Example response (abbreviated):
+
+    {
+      "ticker": "MSFT",
+      "as_of": "2026-08-28",
+      "horizon": 7,
+      "current_price": 500.0,
+      "forecast": {
+        "future_dates": ["2026-08-31", "..."],
+        "price_quantiles": {"p05": ["..."], "p50": ["..."], "p95": ["..."]},
+        "expected_annualized_volatility": 0.21,
+        "volatility_unit": "annualized_sigma",
+        "model": "har_rv",
+        "baseline": true
+      },
+      "evidence": {
+        "model_status": "baseline",
+        "model_family": "statistical_baseline",
+        "metric_source": "baseline_definition",
+        "target": "future_realized_volatility_close_to_close",
+        "snapshot_id": "sha256...",
+        "schema_version": "deployable_v5",
+        "news_status": "not_used"
+      }
+    }
+
+The p50 path is anchored to the unchanged latest close because this endpoint
+forecasts uncertainty, not expected return. The response is intentionally not
+called a certified or LSTM forecast. Offline model comparisons and their
+70/15/15 test metrics are documented in
+[VOLATILITY_FORECASTING.md](VOLATILITY_FORECASTING.md).
 
 ## GET /api/v2/forecast
 
@@ -83,7 +132,8 @@ The response contains:
 - global_volatility.metric_source is the admitted signed release's declared
   source; failed V11.2 `sealed_holdout_once` evidence is never exposed as a
   ready model.
-- browser_training.status = disabled and server_models.status = disabled for the production contract.
+- volatility_forecasting.status = available and model_storage.required = false for the active train-free baseline contract.
+- browser_training.status = disabled and server_models.status = disabled for the active production contract; the signed global route is a separate compatibility path.
 
 ## GET /ready
 

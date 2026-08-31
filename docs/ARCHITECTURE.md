@@ -2,32 +2,26 @@
 
 ## Production request flow
 
-The browser requests a signed global volatility forecast from FastAPI. FastAPI validates the ticker and horizon, verifies the immutable release once per process, builds a causal market snapshot, runs every CPU ONNX ensemble member, and returns dated quantile paths plus the exact evidence identity. Render has no TensorFlow import, Keras artifact directory, boot-time training, or model-weight upload.
+The browser requests a causal volatility forecast from FastAPI. FastAPI validates the ticker, horizon, and baseline, builds a bounded market snapshot from the latest available OHLCV, computes an auditable statistical forecast, and returns dated quantile paths plus the snapshot identity. This active path does not train, deserialize, or persist model weights, so it remains suitable for the lightweight Render deployment.
 
 \`\`\`mermaid
 flowchart LR
     browser[React SPA / Vercel] --> api[FastAPI / Render]
-    api --> release[Signed ONNX release]
     api --> market[Yahoo history + exchange calendar]
     market --> snapshot[Causal Deployable Schema v5 snapshot]
-    release --> runtime[CPU ensemble runtime]
-    snapshot --> runtime
-    runtime --> distribution[Certified return distribution or volatility cone]
+    snapshot --> baseline[Causal volatility baseline]
+    baseline --> distribution[p05-p95 volatility cone]
     distribution --> browser
-    api -->|missing, invalid, stale, uncertified| abstain[503 explicit abstention]
+    api -->|invalid or unavailable data| error[Sanitized 4xx/503]
 \`\`\`
 
-The production route is \`GET /api/v2/forecast?ticker=MSFT&horizon=7\`. Supported horizons are \`{1, 3, 5, 7, 14, 30}\` trading sessions. A future request can be admitted only after authentic external OHLCV, PIT64, Cosign, and holdout evidence passes; the runtime must then also verify the signed manifest, per-file SHA-256 checksums, Ed25519 bundle signature, schema, feature order, ONNX I/O names, member set, model size, and requested horizon. The current external-evidence status is 0/4, so production admission is disabled.
+The active route is \`GET /api/v1/volatility/forecast?ticker=MSFT&horizon=7&model=har_rv\`. Supported horizons are \`{1, 3, 5, 7, 14, 30}\` trading sessions and supported models are the causal persistence, rolling-mean, EWMA, and log-HAR baselines. The response reports the baseline explicitly, includes the target definition and snapshot metadata, and uses the latest close as the median price path. No claim of a learned or certified model is made.
 
-The API returns p05–p95 price quantiles only from an admitted signed runtime.
-V11.2 experimented with a Student-t return distribution, but its reserve was
-opened and its candidate failed; runtime contracts now reject that generation.
-Until a new externally evidenced generation passes, production returns a 503
-abstention rather than a baseline masquerading as a model.
+The historical signed global-model route remains \`GET /api/v2/forecast\`. It is a separate compatibility and research interface, still fail-closed when no signed release is configured. It is not the active frontend path and must not be conflated with the transparent baseline route.
 
 ## Data contract
 
-\`backend/services/volatility_snapshot.py\` builds Deployable Schema v5 with 26 causal features. The 60-row input window, feature names, calendar dates, origin close, and snapshot fingerprint are bound to the runtime contract. Cross-sectional ranks, research-only regime labels, and future-filled values cannot enter the serving matrix.
+\`backend/services/volatility_snapshot.py\` builds Deployable Schema v5 with 26 causal features. The 60-row input window, feature names, calendar dates, origin close, and snapshot fingerprint are bound to the runtime contract. Cross-sectional ranks, research-only regime labels, and future-filled values cannot enter the serving matrix. The active endpoint consumes the same bounded snapshot and derives a realised-volatility target without using observations after the origin.
 
 \`GET /api/v1/training-data\` remains a bounded diagnostic/research snapshot. It rejects client matrices, non-finite values, invalid chronology, invalid tickers, and oversized responses. It is not used to train models in the Render request process.
 
@@ -62,6 +56,12 @@ reserve is permanently `INVALIDATED_OPENED`; preparation, certification,
 release assembly, and runtime loading reject it. The remaining modules support
 historical reproducibility only. See [VOLATILITY_V11_2.md](VOLATILITY_V11_2.md).
 
+The simplified active product deliberately does not require a signed learned
+release. Offline learned candidates can be compared with the baselines using
+the same immutable snapshots and temporal splits. Promotion to a future learned
+serving path is a separate decision that must preserve the metric-source and
+provenance labels; it cannot silently replace the active baseline response.
+
 The final refit is never used to claim evaluation metrics. Locked evaluation
 metrics describe only untouched out-of-fold or certification observations.
 The failed V11.2 report preserves `metric_source=sealed_holdout_once` as
@@ -77,14 +77,19 @@ Live Yahoo headlines remain context-only in compatibility responses. They are no
 
 \`backend/release/bundle.py\` creates an immutable manifest with runtime schema, model id, member seeds/files, feature order, certified horizons, certification metrics, and checksums. \`VolatilityOnnxRuntime.from_release_bundle\` verifies the manifest and opens CPU sessions. Diskless hosts may bootstrap a deterministic immutable ZIP only after checking its configured SHA-256, bounded safe extraction, Ed25519 signature, and every member checksum. \`/models\` reports the verified model id and horizons; \`/ready\` can require the release with \`VOLATILITY_SERVING_REQUIRED=true\`.
 
-The response cache is bounded and keyed by \`(signed_model_id, ticker, horizon)\`. A newly promoted release therefore cannot inherit an older model’s cached response. Cache entries are also rejected before use when the current release no longer certifies the horizon.
+The active route does not retain model or response artifacts on Render. The
+frontend may reuse a result during the current page session, but a reload
+fetches a new snapshot. If a server-side cache is added later, it must be keyed
+by \`(snapshot_id, ticker, horizon, model)\` so a new snapshot cannot inherit
+an older forecast. Legacy signed-release cache entries remain keyed by the
+signed model id and are never used by the active endpoint.
 
 ## Compatibility and security
 
 The legacy \`/api/v1/predict\` routes are persistence/base-rate compatibility endpoints with \`server_disabled_fallback\` metadata. They never train. Trusted proxy addresses are exact configured peers/CIDRs; forwarded headers are replaced at Nginx. CORS is explicit, errors are sanitized, and no user identifiers or model weights are sent to Render.
 
-Legacy browser training has been completely retired. The frontend purely interfaces with the verified server global volatility forecasting contract (`GET /api/v2/forecast`), and CI validates that the production bundle is TFJS-free. Production never advertises or performs browser-trained forecasts.
+The frontend uses the active causal baseline contract (\`GET /api/v1/volatility/forecast\`). The legacy \`GET /api/v2/forecast\` path remains available only for callers that explicitly request the signed global-model interface. Browser training is not required on the active path, and no forecast is labelled as an LSTM, global model, or certified artifact unless the corresponding evidence is actually present.
 
 ## Deployment gate
 
-Repository checks validate the release contract, resource budget, API docs, and browser integration. Provider smoke tests must verify \`/health\`, \`/ready\`, \`/models\`, and a seven-day \`/api/v2/forecast\` response against the same deployed commit. See [DEPLOYMENT_GATE.md](DEPLOYMENT_GATE.md).
+Repository checks validate the active baseline contract, resource budget, API docs, and browser integration. Provider smoke tests must verify \`/health\`, \`/ready\`, \`/models\`, and a seven-day \`/api/v1/volatility/forecast\` response against the same deployed commit; the legacy \`/api/v2/forecast\` probe is separate and may correctly return an explicit no-certified-model response. See [DEPLOYMENT_GATE.md](DEPLOYMENT_GATE.md).
