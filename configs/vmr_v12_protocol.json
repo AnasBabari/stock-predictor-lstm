@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "protocol": "VMR-V12",
+  "benchmark": "USE64-HIST-v1",
+  "universe_design": "HISTORICAL_FIXED_V1",
+  "terminal_policy": "TERMINAL_EVENT_POLICY_V1",
+  "previous_generation": {
+    "version": "V11.2",
+    "status": "INVALIDATED_OPENED",
+    "eligible_for_v12": false
+  },
+  "production": {
+    "default_status": "abstain_no_verified_release",
+    "success_status": "verified_release"
+  },
+  "gates": [
+    "G1_DATA_USAGE_COMPLIANT",
+    "G2_BENCHMARK_INTEGRITY_VERIFIED",
+    "G3_CANDIDATE_PRECOMMITTED",
+    "G4_OFFICIAL_EVALUATION_VALID",
+    "G5_SCIENTIFIC_ACCEPTANCE",
+    "G6_RELEASE_PROVENANCE_VERIFIED"
+  ],
+  "randomness": {
+    "primary": "drand",
+    "secondary": "NIST Beacon V2",
+    "primary_chain_or_root": "drand_public_chain_root",
+    "secondary_chain_or_root": "nist_beacon_v2_public_root",
+    "retrieval_endpoint_policy": "provider_endpoint_precommitted_in_candidate",
+    "signature_verification": "verify_signed_pulse_against_provider_root",
+    "canonical_pulse_encoding": "provider_payload_canonical_utf8_v1",
+    "domain_separation": "VMR-V12/USE64-HIST-v1/partition-selection",
+    "hash_to_selection": "sha256_digest_modulo_preconstructed_block_count_v1",
+    "selection": "preconstructed_temporal_asset_blocks_only",
+    "fallback_trigger_conditions": [
+      "expected_pulse_unavailable_after_committed_deadline",
+      "signature_invalid",
+      "chain_verification_failure",
+      "canonicalization_failure",
+      "precommitted_provider_unavailable"
+    ],
+    "timeout_wait_policy": "wait_until_committed_deadline_then_failover",
+    "no_fallback_after_observation": true,
+    "fallback_requires_precommitted_objective_failure": true,
+    "unfavourable_partition_is_never_a_fallback": true,
+    "individual_row_selection_forbidden": true
+  },
+  "terminal_event_policy_rules": [
+    "Permanent security identity survives ticker and name changes.",
+    "Splits and distributions follow the declared adjustment source.",
+    "Securities remain benchmark members after historical selection.",
+    "A security contributes observations only while valid data exist.",
+    "Origins requiring unavailable post-terminal labels are right-censored.",
+    "Missing post-delisting prices are never treated as unchanged or zero.",
+    "Terminal returns are used only when supplied by an approved authoritative source.",
+    "Missing vendor observations generate explicit quality flags.",
+    "No security is removed merely because it later failed, merged, or delisted.",
+    "Exclusions operate at affected observation/origin level, not retrospectively at security level.",
+    "Counts and reasons for all censored observations are reported by security and event type."
+  ],
+  "scope": {
+    "data_acquisition": "out_of_scope_protocol_only",
+    "training": "out_of_scope_protocol_only",
+    "evaluation": "out_of_scope_protocol_only",
+    "release": "out_of_scope_protocol_only",
+    "production_status": "abstain_no_verified_release"
+  },
+  "integrity_statement": "Automated integrity checks prove internal consistency and protocol compliance; they do not independently prove the truth of an untrusted historical source.",
+  "not_third_party_certification": true
+}

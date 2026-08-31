@@ -104,8 +104,21 @@ def check_harness_integrity(
         return current_fingerprints == baseline_fingerprints
 
     try:
+        # Do not let Git discover a parent repository for an untrusted
+        # directory.  Without an exact worktree root, an empty diff is not
+        # evidence that the harness is intact.
+        root = Path(repo_root).resolve()
+        discovered = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if not discovered or Path(discovered).resolve() != root:
+            return False
         cmd = ["git", "diff", "--name-only", "HEAD"]
-        proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, check=True)
+        proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=True)
         changed_files = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
         for changed in changed_files:
             for prohibited in PROHIBITED_FILES:
