@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "protocol_id": "stocklstm-volatility-v12-external-evidence-placeholder",
+  "status": "PLANNED_NOT_CERTIFIED",
+  "certification_valid_components": 0,
+  "production_admission": "DENIED_EXTERNAL_EVIDENCE_MISSING",
+  "predecessor": {
+    "protocol_id": "stocklstm-volatility-v11.2-numeric-pit64",
+    "status": "INVALIDATED_OPENED",
+    "reusable_for_certification": false
+  },
+  "required_external_evidence": [
+    "licensed_immutable_ohlcv_export_and_permission",
+    "independently_reviewed_complete_pit64_master",
+    "real_cosign_verification_of_exact_frozen_manifest",
+    "fresh_externally_controlled_unopened_holdout"
+  ],
+  "freeze_manifest_requirements": [
+    "code_commit",
+    "ohlcv_sha256",
+    "pit64_sha256",
+    "dataset_version",
+    "split_and_evaluation_specification_sha256",
+    "holdout_commitment_sha256"
+  ],
+  "note": "This file records planned architecture only. It is not evidence and cannot authorize serving. See docs/FREE_CERTIFICATION_STACK.md."
+}
