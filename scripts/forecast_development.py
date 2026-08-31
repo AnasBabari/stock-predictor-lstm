@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from dataclasses import asdict, dataclass
@@ -29,6 +30,7 @@ class DevelopmentForecastOutput:
     median_prices: list[float]
     cumulative_returns_median: list[float]
     intervals_80pct: list[tuple[float, float]]
+    engine_role: str
     gate_decision: str
     provenance_hash: str
 
@@ -44,10 +46,9 @@ class DevelopmentForecastRunner:
         model: CausalTCNModel | None = None,
         gate: PlausibilityAbstentionGate | None = None,
     ) -> None:
-        self.model = model or CausalTCNModel(
-            in_features=len(STATIONARY_FEATURE_COLUMNS_V1),
-            forecast_days=7,
-            mode="return",
+        self.model = model
+        self.engine_role = (
+            "caller_supplied_development_model" if model is not None else "zero_return_reference"
         )
         self.gate = gate or PlausibilityAbstentionGate()
 
@@ -65,11 +66,23 @@ class DevelopmentForecastRunner:
             raise ValueError(
                 f"Feature window must have shape (60, {len(STATIONARY_FEATURE_COLUMNS_V1)})"
             )
+        if not np.isfinite(recent_feature_window).all():
+            raise ValueError("Feature window must contain only finite values")
+        if not math.isfinite(daily_volatility) or daily_volatility <= 0:
+            raise ValueError("Daily volatility must be positive and finite")
 
-        self.model.eval()
-        x_t = torch.tensor(recent_feature_window[np.newaxis, ...], dtype=torch.float32)
-        with torch.no_grad():
-            pred_returns = self.model(x_t).squeeze(0).numpy().tolist()
+        if self.model is None:
+            # A missing checkpoint is not a learned forecast. Use an explicit,
+            # deterministic reference path instead of random initialized weights.
+            pred_returns = [0.0] * 7
+        else:
+            self.model.eval()
+            x_t = torch.tensor(recent_feature_window[np.newaxis, ...], dtype=torch.float32)
+            with torch.no_grad():
+                prediction = self.model(x_t).squeeze(0).detach().cpu().numpy()
+            if prediction.shape != (7,) or not np.isfinite(prediction).all():
+                raise ValueError("Development model must return seven finite cumulative returns")
+            pred_returns = prediction.tolist()
 
         # Reconstruct median prices anchored at base_price (P0)
         reconstructed_prices = PriceReturnDistributionContract.reconstruct_anchored_prices(
@@ -95,11 +108,22 @@ class DevelopmentForecastRunner:
             predicted_day1_log_return=pred_returns[0],
             predicted_day1_volatility=daily_volatility,
             candidate_day1_returns=[pred_returns[0]],
-            relative_loss_vs_baseline=0.90,
-            coverage_80pct=0.80,
+            relative_loss_vs_baseline=None,
+            coverage_80pct=None,
         )
 
-        provenance = f"DEV_RUN_{ticker}_{base_date}_{base_price:.2f}"
+        provenance_payload = json.dumps(
+            {
+                "ticker": ticker,
+                "base_date": base_date,
+                "base_price": base_price,
+                "engine_role": self.engine_role,
+                "cumulative_returns": pred_returns,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        provenance = hashlib.sha256(provenance_payload).hexdigest()
 
         return DevelopmentForecastOutput(
             ticker=ticker,
@@ -110,6 +134,7 @@ class DevelopmentForecastRunner:
             median_prices=[round(p, 2) for p in reconstructed_prices],
             cumulative_returns_median=[round(r, 6) for r in pred_returns],
             intervals_80pct=intervals_80,
+            engine_role=self.engine_role,
             gate_decision=gate_res.decision,
             provenance_hash=provenance,
         )

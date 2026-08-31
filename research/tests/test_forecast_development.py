@@ -31,11 +31,13 @@ def test_development_forecast_anchors_exactly_at_p0():
     assert out.status == "development_diagnostic_only"
     assert len(out.median_prices) == 7
     assert len(out.intervals_80pct) == 7
+    assert out.engine_role == "zero_return_reference"
+    assert out.gate_decision == "abstain_missing_evidence"
 
     # Verify that day 1 price is within reasonable bounds of P0
     p1 = out.median_prices[0]
     ret_1 = math.log(p1 / p0)
-    assert abs(ret_1) < 0.05, f"Anchored return deviated excessively: {ret_1}"
+    assert ret_1 == pytest.approx(0.0)
 
 
 def test_development_forecast_rejects_invalid_inputs():
@@ -47,3 +49,11 @@ def test_development_forecast_rejects_invalid_inputs():
     good_feats = np.zeros((60, len(STATIONARY_FEATURE_COLUMNS_V1)))
     with pytest.raises(ValueError, match="Base price P0 must be strictly positive"):
         runner.run_development_forecast("BP", "2026-08-28", -10.0, good_feats)
+
+    nonfinite = good_feats.copy()
+    nonfinite[0, 0] = np.nan
+    with pytest.raises(ValueError, match="only finite"):
+        runner.run_development_forecast("BP", "2026-08-28", 42.15, nonfinite)
+
+    with pytest.raises(ValueError, match="Daily volatility"):
+        runner.run_development_forecast("BP", "2026-08-28", 42.15, good_feats, daily_volatility=0.0)

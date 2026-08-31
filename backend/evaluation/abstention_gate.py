@@ -5,9 +5,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+import numpy as np
+
 DecisionState = Literal[
     "promoted_model",
     "promoted_blend",
+    "abstain_missing_evidence",
     "abstain_extreme_unconfirmed",
     "abstain_model_disagreement",
     "abstain_failed_baseline_gate",
@@ -21,8 +24,8 @@ class GateEvaluationResult:
     is_promoted: bool
     jump_score: float
     model_disagreement_pct: float
-    relative_loss_vs_baseline: float
-    coverage_error_pct: float
+    relative_loss_vs_baseline: float | None
+    coverage_error_pct: float | None
     rationale: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,10 +50,17 @@ class PlausibilityAbstentionGate:
         predicted_day1_log_return: float,
         predicted_day1_volatility: float,
         candidate_day1_returns: list[float] | None = None,
-        relative_loss_vs_baseline: float = 0.90,
-        coverage_80pct: float = 0.80,
+        relative_loss_vs_baseline: float | None = None,
+        coverage_80pct: float | None = None,
         has_confirmed_catalyst: bool = False,
     ) -> GateEvaluationResult:
+        if not np.isfinite(predicted_day1_log_return):
+            raise ValueError("predicted Day-1 log return must be finite")
+        if not np.isfinite(predicted_day1_volatility) or predicted_day1_volatility <= 0:
+            raise ValueError("predicted Day-1 volatility must be positive and finite")
+        if candidate_day1_returns and not all(np.isfinite(candidate_day1_returns)):
+            raise ValueError("candidate Day-1 returns must be finite")
+
         # 1. Jump Score
         sigma = max(predicted_day1_volatility, self.sigma_floor)
         jump_score = abs(predicted_day1_log_return) / sigma
@@ -59,6 +69,25 @@ class PlausibilityAbstentionGate:
         disagreement_pct = 0.0
         if candidate_day1_returns and len(candidate_day1_returns) > 1:
             disagreement_pct = (max(candidate_day1_returns) - min(candidate_day1_returns)) * 100.0
+
+        if (
+            relative_loss_vs_baseline is None
+            or coverage_80pct is None
+            or not np.isfinite(relative_loss_vs_baseline)
+            or not np.isfinite(coverage_80pct)
+        ):
+            return GateEvaluationResult(
+                decision="abstain_missing_evidence",
+                is_promoted=False,
+                jump_score=round(jump_score, 2),
+                model_disagreement_pct=round(disagreement_pct, 2),
+                relative_loss_vs_baseline=None,
+                coverage_error_pct=None,
+                rationale=(
+                    "Candidate lacks matched baseline-loss or interval-calibration evidence; "
+                    "promotion is not permitted."
+                ),
+            )
 
         # 3. Calibration Error
         coverage_error = abs(coverage_80pct - 0.80) * 100.0

@@ -54,6 +54,19 @@ def test_gate_rejects_failed_baseline():
         predicted_day1_log_return=0.002,
         predicted_day1_volatility=0.012,
         relative_loss_vs_baseline=1.05,
+        coverage_80pct=0.80,
     )
     assert res.is_promoted is False
     assert res.decision == "abstain_failed_baseline_gate"
+
+
+def test_gate_rejects_missing_evaluation_evidence():
+    gate = PlausibilityAbstentionGate()
+    res = gate.evaluate(
+        predicted_day1_log_return=0.002,
+        predicted_day1_volatility=0.012,
+    )
+    assert res.is_promoted is False
+    assert res.decision == "abstain_missing_evidence"
+    assert res.relative_loss_vs_baseline is None
+    assert res.coverage_error_pct is None
