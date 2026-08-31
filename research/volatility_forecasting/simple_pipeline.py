@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize
 from scipy.stats import norm
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import ElasticNet, Ridge
@@ -260,6 +261,7 @@ class VolatilityExamples:
     ewma_volatility: np.ndarray
     origin_close: np.ndarray | None = None
     future_close: np.ndarray | None = None
+    daily_returns: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         rows = len(self.sequences)
@@ -277,6 +279,8 @@ class VolatilityExamples:
             arrays.append(self.origin_close)
         if self.future_close is not None:
             arrays.append(self.future_close)
+        if self.daily_returns is not None:
+            arrays.append(self.daily_returns)
         if any(len(values) != rows for values in arrays):
             raise ValueError("example arrays must have matching row counts")
         if not np.isfinite(self.sequences).all() or not np.isfinite(self.target).all():
@@ -311,6 +315,7 @@ def build_examples(
     ewma: list[float] = []
     origin_closes: list[float] = []
     future_closes: list[float] = []
+    daily_returns: list[float] = []
     first = max(settings.lookback - 1, 60)
     for origin in range(first, len(data) - settings.horizon):
         window = values[origin - settings.lookback + 1 : origin + 1]
@@ -330,6 +335,7 @@ def build_examples(
         ewma.append(float(features["ewma_vol"].iloc[origin]))
         origin_closes.append(float(data["Close"].iloc[origin]))
         future_closes.append(float(data["Close"].iloc[origin + settings.horizon]))
+        daily_returns.append(float(features["return_1d"].iloc[origin]))
     if not rows:
         raise ValueError("history did not produce any complete volatility examples")
     return VolatilityExamples(
@@ -343,6 +349,7 @@ def build_examples(
         ewma_volatility=np.asarray(ewma, dtype=np.float64),
         origin_close=np.asarray(origin_closes, dtype=np.float64),
         future_close=np.asarray(future_closes, dtype=np.float64),
+        daily_returns=np.asarray(daily_returns, dtype=np.float64),
     )
 
 
@@ -352,8 +359,7 @@ class LSTMConfig:
 
     PyTorch is imported only when :func:`lstm_predictions` is requested, so
     this optional research model can never become a production API
-    dependency.  The target is log volatility and the scaler is fitted only
-    on the supplied training rows.
+    dependency.  The scaler is fitted only on the supplied training rows.
     """
 
     hidden_size: int = 32
@@ -365,6 +371,7 @@ class LSTMConfig:
     weight_decay: float = 1e-4
     seed: int = 42
     device: str | None = None
+    target_space: str = "log_volatility"
 
     def __post_init__(self) -> None:
         if self.hidden_size < 4 or self.maximum_epochs < 1 or self.patience < 1:
@@ -373,6 +380,8 @@ class LSTMConfig:
             raise ValueError("LSTM dropout must be in [0, 1)")
         if self.batch_size < 1 or self.learning_rate <= 0 or self.weight_decay < 0:
             raise ValueError("LSTM optimizer and batch settings are invalid")
+        if self.target_space not in ("log_volatility", "log_variance", "direct_volatility"):
+            raise ValueError(f"Unknown target_space: {self.target_space}")
 
 
 def lstm_predictions(
@@ -382,7 +391,7 @@ def lstm_predictions(
     *,
     config: LSTMConfig | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Fit a compact LSTM on log volatility and predict every example.
+    """Fit a compact LSTM on target_space and predict every example.
 
     ``validation_indices`` is kept outside the optimizer's training rows and
     is used only for early stopping.  The function is intentionally offline;
@@ -418,7 +427,12 @@ def lstm_predictions(
         .reshape(examples.sequences.shape)
         .astype(np.float32)
     )
-    log_target = np.log(_positive(examples.target)).astype(np.float32)
+    if settings.target_space == "direct_volatility":
+        target_array = _positive(examples.target).astype(np.float32)
+    elif settings.target_space == "log_variance":
+        target_array = np.log(_positive(examples.target**2)).astype(np.float32)
+    else:  # "log_volatility"
+        target_array = np.log(_positive(examples.target)).astype(np.float32)
 
     class VolatilityLSTM(nn.Module):
         def __init__(self) -> None:
@@ -441,9 +455,9 @@ def lstm_predictions(
     )
     loss_fn = nn.SmoothL1Loss()
     train_x = torch.as_tensor(scaled[train], dtype=torch.float32, device=device)
-    train_y = torch.as_tensor(log_target[train], dtype=torch.float32, device=device)
+    train_y = torch.as_tensor(target_array[train], dtype=torch.float32, device=device)
     val_x = torch.as_tensor(scaled[validation], dtype=torch.float32, device=device)
-    val_y = torch.as_tensor(log_target[validation], dtype=torch.float32, device=device)
+    val_y = torch.as_tensor(target_array[validation], dtype=torch.float32, device=device)
     started = time.perf_counter()
     best_state: dict[str, Any] | None = None
     best_loss = math.inf
@@ -484,7 +498,14 @@ def lstm_predictions(
             for start in range(0, len(all_x), settings.batch_size):
                 stop = min(start + settings.batch_size, len(all_x))
                 predictions.append(model(all_x[start:stop]).detach().cpu().numpy())
-        prediction = np.exp(np.clip(np.concatenate(predictions), -20.0, 5.0))
+        raw_pred = np.concatenate(predictions)
+        if settings.target_space == "direct_volatility":
+            prediction = np.maximum(raw_pred, _EPS)
+        elif settings.target_space == "log_variance":
+            prediction = np.sqrt(np.exp(np.clip(raw_pred, -40.0, 10.0)))
+        else:
+            prediction = np.exp(np.clip(raw_pred, -20.0, 5.0))
+
         if not np.isfinite(prediction).all() or (prediction <= 0).any():
             raise ValueError("LSTM produced non-finite or non-positive volatility")
         metadata = {
@@ -496,6 +517,7 @@ def lstm_predictions(
             "device": str(device),
             "training_seconds": time.perf_counter() - started,
             "scaler": "train_only_standard",
+            "target_space": settings.target_space,
         }
         return np.asarray(prediction, dtype=np.float64), metadata
     finally:
@@ -525,17 +547,104 @@ def fit_har_baseline(examples: VolatilityExamples, train_indices: np.ndarray) ->
     return np.exp(np.clip(x_all @ coefficients, math.log(_EPS), math.log(10.0)))
 
 
+def fit_garch11_baseline(
+    examples: VolatilityExamples,
+    train_indices: np.ndarray,
+    horizon: int = 1,
+    annualization: float = DEFAULT_ANNUALIZATION,
+) -> np.ndarray:
+    """Fit causal GARCH(1,1) via MLE on training returns and propagate conditional variance."""
+
+    train = np.asarray(train_indices, dtype=np.int64)
+    if train.ndim != 1 or len(train) < 20:
+        raise ValueError("GARCH(1,1) requires at least twenty training rows")
+
+    if examples.daily_returns is not None:
+        r_all = np.asarray(examples.daily_returns, dtype=np.float64)
+    else:
+        r_idx = (
+            examples.feature_names.index("return_1d")
+            if "return_1d" in examples.feature_names
+            else 0
+        )
+        r_all = examples.sequences[:, -1, r_idx].astype(np.float64)
+
+    r_train = r_all[train]
+    sample_var = float(np.var(r_train))
+    if sample_var < _EPS:
+        sample_var = 1e-4
+
+    def _nll(params: np.ndarray) -> float:
+        omega, alpha, beta = params
+        if alpha + beta >= 1.0 or omega <= 0 or alpha < 0 or beta < 0:
+            return 1e10
+        n = len(r_train)
+        h = np.empty(n, dtype=np.float64)
+        h[0] = sample_var
+        for i in range(1, n):
+            h[i] = omega + alpha * (r_train[i - 1] ** 2) + beta * h[i - 1]
+            if h[i] <= 0 or not np.isfinite(h[i]):
+                return 1e10
+        ll = -0.5 * np.sum(np.log(h) + (r_train**2) / h)
+        return float(-ll)
+
+    init_params = np.array([0.05 * sample_var, 0.08, 0.87], dtype=np.float64)
+    bounds = [(1e-10, 1.0), (1e-4, 0.40), (0.50, 0.999)]
+
+    res = minimize(
+        _nll,
+        init_params,
+        method="L-BFGS-B",
+        bounds=bounds,
+        options={"maxiter": 150, "ftol": 1e-7},
+    )
+
+    if res.success and (res.x[1] + res.x[2] < 1.0):
+        omega, alpha, beta = float(res.x[0]), float(res.x[1]), float(res.x[2])
+    else:
+        alpha, beta = 0.08, 0.88
+        omega = (1.0 - alpha - beta) * sample_var
+
+    persistence = alpha + beta
+    unconditional_var = omega / max(1.0 - persistence, 1e-5)
+
+    n_all = len(r_all)
+    h_filtered = np.empty(n_all, dtype=np.float64)
+    h_filtered[0] = sample_var
+    for i in range(1, n_all):
+        h_filtered[i] = omega + alpha * (r_all[i - 1] ** 2) + beta * h_filtered[i - 1]
+
+    h_next = omega + alpha * (r_all**2) + beta * h_filtered
+
+    if persistence >= 0.9999 or abs(1.0 - persistence) < 1e-6:
+        cum_var = horizon * h_next
+    else:
+        geom_sum = (1.0 - (persistence**horizon)) / (1.0 - persistence)
+        cum_var = horizon * unconditional_var + (h_next - unconditional_var) * geom_sum
+
+    ann_vol = np.sqrt(np.maximum(cum_var * annualization / horizon, _EPS))
+    return np.asarray(ann_vol, dtype=np.float64)
+
+
 def baseline_predictions(
     examples: VolatilityExamples,
     train_indices: np.ndarray,
+    *,
+    horizon: int = 1,
+    annualization: float = DEFAULT_ANNUALIZATION,
 ) -> dict[str, np.ndarray]:
-    """Return persistence, rolling mean, EWMA, and train-fitted HAR forecasts."""
+    """Return persistence, rolling mean, EWMA, HAR-RV, and GARCH(1,1) forecasts."""
 
     return {
         "persistence": _positive(examples.current_volatility),
         "rolling_mean": _positive(examples.rolling_mean_volatility),
         "ewma": _positive(examples.ewma_volatility),
         "har_rv": _positive(fit_har_baseline(examples, train_indices)),
+        "garch_11": _positive(
+            fit_garch11_baseline(
+                examples, train_indices, horizon=horizon, annualization=annualization
+            )
+        ),
     }
 
 
@@ -543,11 +652,19 @@ def _fit_scaled_regressor(
     examples: VolatilityExamples,
     train_indices: np.ndarray,
     estimator: Any,
+    *,
+    target_space: str = "log_volatility",
 ) -> tuple[Any, StandardScaler]:
     train = np.asarray(train_indices, dtype=np.int64)
     x_train = examples.sequences[train].reshape(len(train), -1).astype(np.float64)
     scaler = StandardScaler().fit(x_train)
-    estimator.fit(scaler.transform(x_train), np.log(_positive(examples.target[train])))
+    if target_space == "direct_volatility":
+        y_train = _positive(examples.target[train])
+    elif target_space == "log_variance":
+        y_train = np.log(_positive(examples.target[train] ** 2))
+    else:  # "log_volatility"
+        y_train = np.log(_positive(examples.target[train]))
+    estimator.fit(scaler.transform(x_train), y_train)
     return estimator, scaler
 
 
@@ -556,23 +673,40 @@ def learned_predictions(
     train_indices: np.ndarray,
     *,
     include_boosting: bool = True,
+    target_space: str = "log_volatility",
 ) -> dict[str, np.ndarray]:
     """Fit simple learned models using only the supplied training indices."""
 
     all_x = examples.sequences.reshape(len(examples.sequences), -1).astype(np.float64)
     predictions: dict[str, np.ndarray] = {}
-    ridge, scaler = _fit_scaled_regressor(examples, train_indices, Ridge(alpha=1.0))
-    predictions["ridge"] = _positive(
-        np.exp(np.clip(ridge.predict(scaler.transform(all_x)), -20.0, 5.0))
+
+    ridge, scaler = _fit_scaled_regressor(
+        examples, train_indices, Ridge(alpha=1.0), target_space=target_space
     )
+    pred_raw_ridge = ridge.predict(scaler.transform(all_x))
+    if target_space == "direct_volatility":
+        predictions["ridge"] = _positive(pred_raw_ridge)
+    elif target_space == "log_variance":
+        predictions["ridge"] = _positive(np.sqrt(np.exp(np.clip(pred_raw_ridge, -40.0, 10.0))))
+    else:
+        predictions["ridge"] = _positive(np.exp(np.clip(pred_raw_ridge, -20.0, 5.0)))
+
     elastic_net, elastic_scaler = _fit_scaled_regressor(
         examples,
         train_indices,
         ElasticNet(alpha=0.01, l1_ratio=0.5, max_iter=5000, tol=1e-4),
+        target_space=target_space,
     )
-    predictions["elastic_net"] = _positive(
-        np.exp(np.clip(elastic_net.predict(elastic_scaler.transform(all_x)), -20.0, 5.0))
-    )
+    pred_raw_elastic = elastic_net.predict(elastic_scaler.transform(all_x))
+    if target_space == "direct_volatility":
+        predictions["elastic_net"] = _positive(pred_raw_elastic)
+    elif target_space == "log_variance":
+        predictions["elastic_net"] = _positive(
+            np.sqrt(np.exp(np.clip(pred_raw_elastic, -40.0, 10.0)))
+        )
+    else:
+        predictions["elastic_net"] = _positive(np.exp(np.clip(pred_raw_elastic, -20.0, 5.0)))
+
     if include_boosting:
         boosting, boosting_scaler = _fit_scaled_regressor(
             examples,
@@ -584,32 +718,60 @@ def learned_predictions(
                 max_features="sqrt",
                 random_state=42,
             ),
+            target_space=target_space,
         )
-        predictions["gradient_boosting"] = _positive(
-            np.exp(np.clip(boosting.predict(boosting_scaler.transform(all_x)), -20.0, 5.0))
-        )
+        pred_raw_boosting = boosting.predict(boosting_scaler.transform(all_x))
+        if target_space == "direct_volatility":
+            predictions["gradient_boosting"] = _positive(pred_raw_boosting)
+        elif target_space == "log_variance":
+            predictions["gradient_boosting"] = _positive(
+                np.sqrt(np.exp(np.clip(pred_raw_boosting, -40.0, 10.0)))
+            )
+        else:
+            predictions["gradient_boosting"] = _positive(
+                np.exp(np.clip(pred_raw_boosting, -20.0, 5.0))
+            )
+
     return predictions
 
 
-def volatility_metrics(actual: np.ndarray, forecast: np.ndarray) -> dict[str, float]:
-    """Calculate point errors plus QLIKE on variance, with lower being better."""
+def volatility_metrics(
+    actual: np.ndarray,
+    forecast: np.ndarray,
+    *,
+    epsilon: float = _EPS,
+) -> dict[str, float]:
+    r"""Calculate point errors plus canonical Patton (2011) QLIKE on variance.
 
-    observed = _positive(actual)
-    predicted = _positive(forecast)
+    QLIKE(h, \hat{h}) = h / \hat{h} - log(h / \hat{h}) - 1
+    where h = actual_sigma^2 and \hat{h} = forecast_sigma^2.
+    """
+
+    observed = np.maximum(np.asarray(actual, dtype=np.float64), epsilon)
+    predicted = np.asarray(forecast, dtype=np.float64)
     if observed.shape != predicted.shape or observed.ndim != 1 or not len(observed):
         raise ValueError("metric arrays must be matched non-empty vectors")
+
+    raw_min = float(np.min(predicted))
+    near_zero_count = int(np.sum(predicted <= 1e-4))
+    stabilized_pred = np.maximum(predicted, epsilon)
+
     error = predicted - observed
     actual_variance = observed**2
-    forecast_variance = predicted**2
-    ratio = actual_variance / _positive(forecast_variance)
+    forecast_variance = stabilized_pred**2
+    ratio = actual_variance / forecast_variance
+    qlike_vector = ratio - np.log(ratio) - 1.0
+
     return {
         "mae": float(np.mean(np.abs(error))),
         "mse": float(np.mean(error**2)),
         "rmse": float(np.sqrt(np.mean(error**2))),
-        "qlike": float(np.mean(ratio - np.log(ratio) - 1.0)),
+        "qlike": float(np.mean(qlike_vector)),
         "r2": float(1.0 - np.sum(error**2) / np.sum((observed - np.mean(observed)) ** 2))
-        if np.sum((observed - np.mean(observed)) ** 2) > _EPS
+        if np.sum((observed - np.mean(observed)) ** 2) > epsilon
         else 0.0,
+        "raw_min_pred": raw_min,
+        "near_zero_count": near_zero_count,
     }
 
 
@@ -722,17 +884,46 @@ def evaluate_benchmark(
     include_lstm: bool = False,
     lstm_config: LSTMConfig | None = None,
     nominal_coverage: float = 0.90,
-) -> dict[str, dict[str, dict[str, Any]]]:
+    target_space: str = "log_volatility",
+    return_forecasts: bool = False,
+) -> dict[str, dict[str, dict[str, Any]]] | tuple[dict[str, dict[str, dict[str, Any]]], dict[str, np.ndarray]]:
     """Evaluate all baselines and simple ML models on validation and test."""
 
-    forecasts = baseline_predictions(examples, split.train)
-    forecasts.update(learned_predictions(examples, split.train, include_boosting=include_boosting))
+    forecasts = baseline_predictions(
+        examples, split.train, horizon=split.embargo_sessions, annualization=DEFAULT_ANNUALIZATION
+    )
+    forecasts.update(
+        learned_predictions(
+            examples,
+            split.train,
+            include_boosting=include_boosting,
+            target_space=target_space,
+        )
+    )
     if include_lstm:
+        effective_lstm_config = (
+            lstm_config
+            if lstm_config is not None
+            else LSTMConfig(target_space=target_space)
+        )
+        if effective_lstm_config.target_space != target_space:
+            effective_lstm_config = LSTMConfig(
+                hidden_size=effective_lstm_config.hidden_size,
+                dropout=effective_lstm_config.dropout,
+                maximum_epochs=effective_lstm_config.maximum_epochs,
+                patience=effective_lstm_config.patience,
+                batch_size=effective_lstm_config.batch_size,
+                learning_rate=effective_lstm_config.learning_rate,
+                weight_decay=effective_lstm_config.weight_decay,
+                seed=effective_lstm_config.seed,
+                device=effective_lstm_config.device,
+                target_space=target_space,
+            )
         lstm_forecast, _ = lstm_predictions(
             examples,
             split.train,
             split.validation,
-            config=lstm_config,
+            config=effective_lstm_config,
         )
         forecasts["lstm"] = lstm_forecast
     output: dict[str, dict[str, dict[str, Any]]] = {}
@@ -768,6 +959,8 @@ def evaluate_benchmark(
             except Exception:
                 pass
 
+    if return_forecasts:
+        return output, forecasts
     return output
 
 
@@ -829,6 +1022,8 @@ __all__ = [
     "evaluate_conformal_volatility_intervals",
     "evaluate_price_diffusion_cone",
     "experiment_metadata",
+    "fit_garch11_baseline",
+    "fit_har_baseline",
     "learned_predictions",
     "lstm_predictions",
     "realised_volatility",

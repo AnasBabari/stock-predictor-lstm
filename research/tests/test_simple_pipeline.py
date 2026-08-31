@@ -148,3 +148,76 @@ def test_conformal_volatility_intervals_and_price_cone_calibration() -> None:
     assert 0.0 <= cone["empirical_coverage"] <= 1.0
     assert cone["average_width_pct"] > 0
     assert "high_vol" in cone["regime_coverage"]
+
+
+def test_qlike_mathematical_properties_and_hand_calculated_cases() -> None:
+    # 1. Exact match produces zero loss
+    actual = np.array([0.20, 0.30])  # sigma = 0.20, 0.30
+    forecast = np.array([0.20, 0.30])
+    metrics = volatility_metrics(actual, forecast)
+    assert metrics["qlike"] == pytest.approx(0.0, abs=1e-10)
+
+    # 2. Hand-calculated Case A: under-prediction by 2x variance
+    # actual sigma = 0.20 (variance = 0.04), forecast sigma = sqrt(0.02) (variance = 0.02)
+    # ratio = 0.04 / 0.02 = 2.0
+    # QLIKE = 2.0 - ln(2.0) - 1.0 = 1.0 - ln(2.0) ~ 0.3068528194400547
+    act_under = np.array([0.20])
+    pred_under = np.array([np.sqrt(0.02)])
+    m_under = volatility_metrics(act_under, pred_under)
+    expected_under = 1.0 - np.log(2.0)
+    assert m_under["qlike"] == pytest.approx(expected_under, rel=1e-6)
+
+    # 3. Hand-calculated Case B: over-prediction by 2x variance
+    # actual sigma = 0.20 (variance = 0.04), forecast sigma = sqrt(0.08) (variance = 0.08)
+    # ratio = 0.04 / 0.08 = 0.5
+    # QLIKE = 0.5 - ln(0.5) - 1.0 = ln(2.0) - 0.5 ~ 0.1931471805599453
+    act_over = np.array([0.20])
+    pred_over = np.array([np.sqrt(0.08)])
+    m_over = volatility_metrics(act_over, pred_over)
+    expected_over = np.log(2.0) - 0.5
+    assert m_over["qlike"] == pytest.approx(expected_over, rel=1e-6)
+
+    # 4. Asymmetry check: under-prediction is penalized more heavily than over-prediction
+    assert m_under["qlike"] > m_over["qlike"]
+
+    # 5. Annualization scale invariance: multiplying both actual and forecast sigma by sqrt(252)
+    # leaves QLIKE exactly unchanged because scaling factor cancels in the variance ratio
+    ann_factor = np.sqrt(252.0)
+    m_ann = volatility_metrics(act_under * ann_factor, pred_under * ann_factor)
+    assert m_ann["qlike"] == pytest.approx(m_under["qlike"], rel=1e-6)
+
+
+def test_garch11_baseline_causal_mle_and_multihorizon() -> None:
+    from volatility_forecasting.simple_pipeline import fit_garch11_baseline
+
+    examples = build_examples(_frame(350))
+    split = chronological_split(len(examples.target), horizon=5)
+
+    garch_1d = fit_garch11_baseline(examples, split.train, horizon=1)
+    garch_5d = fit_garch11_baseline(examples, split.train, horizon=5)
+    garch_20d = fit_garch11_baseline(examples, split.train, horizon=20)
+
+    assert len(garch_1d) == len(examples.target)
+    assert len(garch_5d) == len(examples.target)
+    assert len(garch_20d) == len(examples.target)
+    assert np.all(garch_1d > 0) and np.all(np.isfinite(garch_1d))
+    assert np.all(garch_5d > 0) and np.all(np.isfinite(garch_5d))
+    assert np.all(garch_20d > 0) and np.all(np.isfinite(garch_20d))
+
+
+def test_target_space_options_direct_and_log_variance() -> None:
+    from volatility_forecasting.simple_pipeline import learned_predictions
+
+    examples = build_examples(_frame(260))
+    split = chronological_split(len(examples.target), horizon=5)
+
+    preds_direct = learned_predictions(examples, split.train, target_space="direct_volatility")
+    preds_logvar = learned_predictions(examples, split.train, target_space="log_variance")
+    preds_logvol = learned_predictions(examples, split.train, target_space="log_volatility")
+
+    for preds in (preds_direct, preds_logvar, preds_logvol):
+        assert {"ridge", "elastic_net", "gradient_boosting"} <= set(preds)
+        for model_name, arr in preds.items():
+            assert len(arr) == len(examples.target)
+            assert np.all(arr > 0) and np.all(np.isfinite(arr))
+
