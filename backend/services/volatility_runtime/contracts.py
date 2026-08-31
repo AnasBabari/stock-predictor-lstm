@@ -278,6 +278,8 @@ class VolatilityRuntimeContract:
         if not isinstance(return_distribution_raw, dict):
             raise ValueError("release return-distribution metadata is malformed")
         return_distribution_family = return_distribution_raw.get("family")
+        if not isinstance(return_distribution_family, str) or not return_distribution_family:
+            raise ValueError("release return-distribution family is malformed")
         return_distribution_degrees_of_freedom = return_distribution_raw.get("degrees_of_freedom")
         return_distribution_horizons_raw = metadata.get("return_distribution_horizons")
         if return_distribution_horizons_raw is None:

@@ -145,6 +145,12 @@ def test_release_metadata_round_trips_certified_return_distribution() -> None:
             {"members/seed-42.onnx"},
         )
 
+    with pytest.raises(ValueError, match="family is malformed"):
+        VolatilityRuntimeContract.from_release_metadata(
+            {**metadata, "return_distribution": {"family": None, "degrees_of_freedom": 5.0}},
+            {"members/seed-42.onnx"},
+        )
+
 
 def test_release_metadata_preserves_signed_v8_evidence_identity() -> None:
     metadata = {
