@@ -170,6 +170,11 @@ python scripts/check_v11_2_inputs.py `
 ```
 
 Compute the frozen feature-contract digest and prepare the dataset. The key
+must already exist outside the repository and contain exactly 32 random bytes;
+the sealing code never creates or replaces it. Each new reserve uses a new key
+path and key value. Sealed format v3 records a SHA-256 key fingerprint in the
+authenticated metadata, so supplying the wrong key fails before the one-shot
+open marker is written. The key bytes themselves never enter an artifact.
 path must remain outside the repository:
 
 ```powershell

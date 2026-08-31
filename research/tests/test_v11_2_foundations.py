@@ -269,6 +269,8 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
     rv = np.ones((len(dates), 4), dtype=np.float32)
     output_dir = tmp_path / "v112"
     key_path = tmp_path / "private" / "holdout.key"
+    key_path.parent.mkdir(parents=True)
+    key_path.write_bytes(b"h" * 32)
     metadata = seal_v112_dataset(
         dates=dates,
         security_ids=security_ids,
@@ -288,6 +290,17 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
     assert metadata.test_stock_origin_observations == split.test_rows
     assert not (output_dir / "sealed" / "SEALED_TEST_OPENED.json").exists()
     assert not hasattr(development, "test_features")
+
+    wrong_key = tmp_path / "private" / "wrong.key"
+    wrong_key.write_bytes(b"w" * 32)
+    with pytest.raises(V112SealedAccessError, match="does not match"):
+        unseal_v112_test_once(
+            output_dir=output_dir,
+            key_path=wrong_key,
+            candidate_digest="b" * 64,
+            repository_root=tmp_path / "repository",
+        )
+    assert not (output_dir / "sealed" / "SEALED_TEST_OPENED.json").exists()
 
     train_path = output_dir / "development" / "train.npz"
     original_train = train_path.read_bytes()
@@ -320,6 +333,34 @@ def test_encrypted_holdout_is_not_available_to_development_loader(tmp_path) -> N
             candidate_digest="d" * 64,
             repository_root=tmp_path / "repository",
         )
+
+
+def test_sealing_requires_a_preexisting_external_key(tmp_path) -> None:
+    dates = _dates(500)
+    security_ids = [f"SEC-{i % 2}" for i in range(len(dates))]
+    split = create_v112_split(dates, security_ids)
+    features = np.zeros((len(dates), 60, 26), dtype=np.float32)
+    returns = np.zeros((len(dates), 4), dtype=np.float32)
+    rv = np.ones((len(dates), 4), dtype=np.float32)
+    output_dir = tmp_path / "v112"
+    missing_key = tmp_path / "private" / "missing.key"
+
+    with pytest.raises(V112SealedAccessError, match="not found"):
+        seal_v112_dataset(
+            dates=dates,
+            security_ids=security_ids,
+            features=features,
+            returns=returns,
+            rv=rv,
+            split=split,
+            output_dir=output_dir,
+            panel_sha256="a" * 64,
+            schema_sha256=feature_schema_digest(),
+            key_path=missing_key,
+            repository_root=tmp_path / "repository",
+        )
+    assert not missing_key.exists()
+    assert not (output_dir / "sealed" / "test_payload.aesgcm").exists()
 
 
 def test_epoch_zero_is_evaluated_before_updates_and_can_be_selected() -> None:

@@ -36,7 +36,7 @@ from .v11_2_split import V112Split
 # The security-identity fields were added after the first V11.2 prototype.
 # Keep the payload format explicit so an older directory fails closed with a
 # useful contract error instead of being interpreted as current evidence.
-V11_2_SEALED_FORMAT_VERSION = "v11.2-sealed-v2-security-identities"
+V11_2_SEALED_FORMAT_VERSION = "v11.2-sealed-v3-external-key-binding"
 
 
 class V112SealedAccessError(RuntimeError):
@@ -67,6 +67,7 @@ class V112SealedMetadata:
     panel_sha256: str
     split_sha256: str
     schema_sha256: str
+    holdout_key_fingerprint_sha256: str
     ciphertext_sha256: str
     nonce_hex: str
     test_stock_origin_observations: int
@@ -82,6 +83,7 @@ class V112SealedMetadata:
             "panel_sha256": self.panel_sha256,
             "split_sha256": self.split_sha256,
             "schema_sha256": self.schema_sha256,
+            "holdout_key_fingerprint_sha256": self.holdout_key_fingerprint_sha256,
             "ciphertext_sha256": self.ciphertext_sha256,
             "nonce_hex": self.nonce_hex,
             "test_stock_origin_observations": self.test_stock_origin_observations,
@@ -162,22 +164,17 @@ def _read_json_object(path: Path, label: str) -> dict[str, Any]:
     return payload
 
 
-def _key_bytes(key_path: Path, *, create: bool) -> bytes:
-    if key_path.exists():
-        key = key_path.read_bytes()
-    elif create:
-        key = secrets.token_bytes(32)
-        key_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            _atomic_create(key_path, key)
-        except V112SealedAccessError:
-            # Another sealing process won the creation race; use its fully
-            # fsynced key rather than replacing it with a different key.
-            key = key_path.read_bytes()
-        with contextlib.suppress(OSError):
-            key_path.chmod(0o600)
-    else:
+def _key_bytes(key_path: Path) -> bytes:
+    """Read a pre-existing external key without ever creating one."""
+
+    if not key_path.is_file():
         raise V112SealedAccessError(f"external V11.2 holdout key not found: {key_path}")
+    try:
+        key = key_path.read_bytes()
+    except OSError as exc:
+        raise V112SealedAccessError(
+            f"external V11.2 holdout key is unreadable: {key_path}"
+        ) from exc
     if len(key) != 32:
         raise V112SealedAccessError("V11.2 holdout key must be exactly 32 bytes")
     return key
@@ -282,6 +279,8 @@ def seal_v112_dataset(
 ) -> V112SealedMetadata:
     """Write development files and encrypted test bytes, never test plaintext."""
     _assert_external_key(key_path, repository_root)
+    key = _key_bytes(key_path)
+    key_fingerprint = hashlib.sha256(key).hexdigest()
     _require_digest(panel_sha256, "panel digest")
     _require_digest(split.split_sha256, "split digest")
     _require_digest(schema_sha256, "schema digest")
@@ -344,6 +343,7 @@ def seal_v112_dataset(
             "panel_sha256": panel_sha256,
             "schema_sha256": schema_sha256,
             "split_sha256": split.split_sha256,
+            "holdout_key_fingerprint_sha256": key_fingerprint,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -355,7 +355,7 @@ def seal_v112_dataset(
         [dates_list[i] for i in test],
         [security_list[i] for i in test],
     )
-    ciphertext = AESGCM(_key_bytes(key_path, create=True)).encrypt(nonce, plaintext, associated)
+    ciphertext = AESGCM(key).encrypt(nonce, plaintext, associated)
     ciphertext_sha = hashlib.sha256(ciphertext).hexdigest()
     _atomic_write(sealed_dir / "test_payload.aesgcm", ciphertext)
     _atomic_write((sealed_dir / "test_payload.sha256"), ciphertext_sha.encode("ascii"))
@@ -365,6 +365,7 @@ def seal_v112_dataset(
         panel_sha256=panel_sha256,
         split_sha256=split.split_sha256,
         schema_sha256=schema_sha256,
+        holdout_key_fingerprint_sha256=key_fingerprint,
         ciphertext_sha256=ciphertext_sha,
         nonce_hex=nonce.hex(),
         test_stock_origin_observations=len(test),
@@ -408,7 +409,7 @@ def seal_v112_dataset(
             sort_keys=True,
         ).encode("utf-8"),
     )
-    del plaintext, ciphertext
+    del plaintext, ciphertext, key
     gc.collect()
     return metadata
 
@@ -550,6 +551,9 @@ def unseal_v112_test_once(
     panel_sha = _require_digest(metadata.get("panel_sha256"), "sealed panel digest")
     schema_sha = _require_digest(metadata.get("schema_sha256"), "sealed schema digest")
     split_sha = _require_digest(metadata.get("split_sha256"), "sealed split digest")
+    key_fingerprint = _require_digest(
+        metadata.get("holdout_key_fingerprint_sha256"), "sealed holdout key fingerprint"
+    )
     if schema_sha != feature_schema_digest():
         raise V112SealedAccessError("sealed metadata schema digest mismatch")
     nonce_hex = str(metadata.get("nonce_hex", ""))
@@ -566,11 +570,15 @@ def unseal_v112_test_once(
     expected = _require_digest(metadata.get("ciphertext_sha256"), "sealed ciphertext digest")
     if hashlib.sha256(ciphertext).hexdigest() != expected:
         raise V112SealedAccessError("sealed ciphertext digest mismatch")
+    key = _key_bytes(key_path)
+    if hashlib.sha256(key).hexdigest() != key_fingerprint:
+        raise V112SealedAccessError("external V11.2 holdout key does not match the sealed reserve")
     token = hashlib.sha256(f"{candidate_digest}:{split_sha}".encode()).hexdigest()
     lock = {
         "protocol_id": V11_2_PROTOCOL_ID,
         "candidate_digest": candidate_digest,
         "split_sha256": split_sha,
+        "holdout_key_fingerprint_sha256": key_fingerprint,
         "ciphertext_sha256": expected,
         "opened_at": dt.datetime.now(dt.UTC).isoformat(),
         "unseal_token": token,
@@ -582,14 +590,13 @@ def unseal_v112_test_once(
             "panel_sha256": panel_sha,
             "schema_sha256": schema_sha,
             "split_sha256": split_sha,
+            "holdout_key_fingerprint_sha256": key_fingerprint,
         },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     try:
-        plaintext = AESGCM(_key_bytes(key_path, create=False)).decrypt(
-            nonce, ciphertext, associated
-        )
+        plaintext = AESGCM(key).decrypt(nonce, ciphertext, associated)
     except (InvalidTag, OSError, ValueError, TypeError) as exc:
         raise V112SealedAccessError("sealed test decryption failed") from exc
     try:
@@ -618,7 +625,7 @@ def unseal_v112_test_once(
         raise V112SealedAccessError("sealed test security identity digest mismatch")
     if metadata.get("test_unique_securities") != len(set(security_ids)):
         raise V112SealedAccessError("sealed test security count does not match metadata")
-    del plaintext, ciphertext
+    del plaintext, ciphertext, key
     gc.collect()
     return V112SealedTestPayload(
         features=features,

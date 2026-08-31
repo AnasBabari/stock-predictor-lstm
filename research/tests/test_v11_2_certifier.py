@@ -84,9 +84,7 @@ def _write_attestation_receipt(
         },
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    payload["signature"] = base64.b64encode(private.sign(canonical.encode("utf-8"))).decode(
-        "ascii"
-    )
+    payload["signature"] = base64.b64encode(private.sign(canonical.encode("utf-8"))).decode("ascii")
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
@@ -115,7 +113,9 @@ def _write_dataset_attestations(
         encoding="utf-8",
     )
     pit_evidence = evidence_root / "pit64-master.json"
-    pit_evidence.write_text(json.dumps(universe_payload["securities"], sort_keys=True), encoding="utf-8")
+    pit_evidence.write_text(
+        json.dumps(universe_payload["securities"], sort_keys=True), encoding="utf-8"
+    )
     market_receipt = root / "market_receipt.json"
     pit_receipt = root / "pit64_receipt.json"
     _write_attestation_receipt(
@@ -190,9 +190,7 @@ def _write_dataset_attestations(
     )
 
 
-def _make_inputs(
-    tmp_path: Path, *, certification_eligible: bool = True
-) -> tuple[Path, Path, Path]:
+def _make_inputs(tmp_path: Path, *, certification_eligible: bool = True) -> tuple[Path, Path, Path]:
     protocol = V112Protocol()
     dates = [
         (dt.date(2020, 1, 1) + dt.timedelta(days=index)).isoformat()
@@ -224,6 +222,8 @@ def _make_inputs(
     split = create_v112_split(dates, security_ids)
     dataset = tmp_path / "dataset"
     key_path = tmp_path / "private" / "v11_2.key"
+    key_path.parent.mkdir(parents=True)
+    key_path.write_bytes(b"k" * 32)
     metadata = seal_v112_dataset(
         dates=dates,
         security_ids=security_ids,
