@@ -116,7 +116,7 @@ Holdout metrics (`artifacts/v11_2_numeric/certification/v11_2_holdout_certificat
 - h3/5/7 baselines passed as frozen baselines.
 - `status failed` because `all_learned_passed && m0_adequacy_passed` false (`scripts/certify_v11_2_candidate.py:508`).
 
-Consequence: reserve is **consumed**. Re-running requires new `v11.2-pit64-licensed-attested-v2` dataset/protocol version (`docs/VOLATILITY_V11_2.md:191`).
+Consequence: reserve is **consumed** and the entire V11.2 certification generation is permanently `INVALIDATED_OPENED`. A new attempt must use a post-V11.2 protocol and a completely new externally controlled reserve.
 
 ## 8. Release assembly - correctly refused
 
@@ -147,8 +147,9 @@ No `artifacts/releases/volatility-v11-2` created. API verification:
 
 ## 10. What remains
 
-Production remains abstaining, which is honest. To obtain a signed release:
+Production remains abstaining, which is honest. To obtain a future signed
+release, follow [the planned external certification architecture](FREE_CERTIFICATION_STACK.md):
 
-1. Create new licensed dataset version `v11.2-pit64-licensed-attested-v2` (new 70/15/15 split, new 32-byte key outside repo) — cannot reuse consumed reserve.
-2. Consider routing all horizons to HAR baseline if M1 fails to generalize, or tune M1 under new preregistration (requires new protocol version).
-3. On a future `status passed` report, run `scripts/assemble_v11_2_release.py`, verify `backend/release_keys/volatility-v1.public.pem`, `scripts/package_volatility_release.py`, and set `VOLATILITY_RELEASE_ARCHIVE_URL` + `VOLATILITY_RELEASE_ARCHIVE_SHA256` with `VOLATILITY_SERVING_REQUIRED=true` (`docs/DEPLOYMENT_GATE.md:90-152`).
+1. Obtain a genuinely licensed immutable OHLCV export and independently reviewed complete PIT64 master.
+2. Freeze a new post-V11.2 protocol and candidate, then have an external custodian create a fresh holdout commitment and reserve.
+3. Verify the exact evidence manifest with real Cosign/Sigstore and run the new generation's one-shot certification. V11.2 assembly cannot be re-enabled.

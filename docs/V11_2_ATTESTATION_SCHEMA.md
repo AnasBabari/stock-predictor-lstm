@@ -1,8 +1,13 @@
 # V11.2 input-attestation schema
 
-V11.2 certification accepts only input data accompanied by signed, replayable
-provenance receipts. A provider label, a manually edited JSON field, or an
-unsigned statement that data is licensed is not an attestation.
+> **Archived:** V11.2 is permanently `INVALIDATED_OPENED`. This schema is
+> retained to audit the historical attempt; it cannot make any new input or
+> receipt certification-eligible. Use a new post-V11.2 protocol and the
+> external evidence architecture in `FREE_CERTIFICATION_STACK.md`.
+
+The historical V11.2 gate accepted only input data accompanied by signed,
+replayable provenance receipts. A provider label, a manually edited JSON
+field, or an unsigned statement that data is licensed was not an attestation.
 
 Two receipts are required and they must be signed by different Ed25519 keys:
 

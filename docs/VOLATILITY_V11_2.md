@@ -24,6 +24,14 @@ receipt gate below. The diagnostic reserve remains unopened, while the
 separate attempted reserve was opened once and failed certification. Do not
 rerun that reserve or describe either input set as licensed production data.
 
+V11.2 is now permanently `INVALIDATED_OPENED`. The preparation, one-shot
+certification, release-assembly, and production-runtime entry points reject the
+generation unconditionally. The remaining implementation and commands in this
+document are retained only to explain and reproduce the historical research
+method. They are not an active certification procedure. Any new attempt must
+use a new protocol namespace, externally evidenced inputs, and a fresh reserve
+controlled by an external custodian.
+
 ## Universe and evidence
 
 The accepted universe is exactly 64 securities. Every entry records a stable
@@ -92,7 +100,7 @@ holdout rows still belong to the audited PIT64 universe rather than trusting
 row counts alone. Machine-readable reports call these records
 `stock_origin_observations` and separately report `unique_sessions`; a row is
 not a market session. The key is generated outside the repository and never passed
-to the development command. A future certification command writes its one-shot
+to the development command. The historical certification command wrote its one-shot
 open marker before decrypting, evaluates only the frozen bundle, writes an
 immutable receipt, and removes temporary plaintext.
 
@@ -236,11 +244,11 @@ python scripts/pre_unseal_audit_v11_2.py `
   --output artifacts/v11_2_numeric/pre_unseal_audit.json
 ```
 
-Certification is a one-shot operation. It writes
+The V11.2 certification was a one-shot operation. It wrote
 `sealed/SEALED_TEST_OPENED.json` before decrypting, never retrains or selects
 on test rows, and creates an immutable metrics report and receipt. A failed
-certification intentionally consumes the reserve and requires a new V11.2
-dataset/protocol version rather than a rerun:
+certification consumed the reserve. The command below is retained as historical
+documentation and now raises `V112CertificationRetiredError`:
 
 ```powershell
 python scripts/certify_v11_2_candidate.py `
@@ -256,13 +264,11 @@ holdout CRPS/uncertainty/QLIKE/coverage gate (explicit baseline routes are
 reported as baselines). The report's metric source is
 `sealed_holdout_once`; it must not be relabelled as a walk-forward result.
 
-## Production release conversion
+## Production release conversion — permanently disabled
 
-V11.2 evaluates four horizons, whereas the existing CPU serving contract has
-six output slots (`1, 3, 5, 7, 14, 30`). A V11.2 release may be assembled only
-after the one-shot certification report has status `passed`. The conversion
-command verifies the routing digest, certification report, route checksums,
-train-only scaler, and every selected gate before it exports or signs anything:
+V11.2 cannot produce a release, regardless of any local report or metadata
+change. The historical conversion command now raises
+`V112CertificationRetiredError` before reading candidate artifacts:
 
 ```powershell
 python scripts/assemble_v11_2_release.py `
@@ -273,26 +279,7 @@ python scripts/assemble_v11_2_release.py `
   --public-key-path backend/release_keys/volatility-v1.public.pem
 ```
 
-The adapter composes the canonical seed-42 residual-LSTM route for each
-selected V11.2 horizon. Explicit HAR/constant/persistence routes remain
-labelled baselines. Ridge and HistGB routes are valid research diagnostics but
-are rejected by the release adapter because silently changing their
-implementation would invalidate the frozen evidence. Horizons 14 and 30 are
-baseline passthroughs in the six-slot ONNX graph and are deliberately omitted
-from `certified_horizons`; the API abstains for them until a protocol that
-evaluates those horizons is certified.
-
-Automated release tests exercise both an all-HAR bundle and a bundle containing
-an actual residual-LSTM route. The learned fixture is signed, loaded through
-the production CPU runtime, and evaluated at a non-unit batch during ONNX
-parity. Unsupported research routes and a changed post-freeze selection record
-must fail before a release directory is created.
-
-ONNX Runtime CPU parity is mandatory before signing. The resulting metadata
-uses `metric_source=sealed_holdout_once` and
-`certification_scope=sealed_holdout_once`, preserving the distinction from
-walk-forward evidence. V11.2 certifies both the conditional-volatility head
-and the terminal Student-t return-distribution head (location plus variance);
-the serving API exposes that terminal p50 as a learned median path and labels
-intermediate daily interpolation explicitly. Direction remains uncertified.
-No private key, release binary, or opened holdout is committed to Git.
+The research graph remains testable for historical reproducibility. Runtime
+metadata containing `v11.2`, `v11_2`, or `v11-2` in its release identity is
+rejected before an ONNX session can load. No private key, release binary, or
+opened holdout belongs in Git.

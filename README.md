@@ -27,7 +27,7 @@ StockLSTM is a React/FastAPI research application for market-volatility forecast
 | ![Price forecast dashboard with historical and predicted prices.](assets/dashboard.png) | ![Direction forecast dashboard with model analysis.](assets/prediction.png) |
 
 - Search for a validated ticker and select a supported 1-, 3-, 5-, 7-, 14-, or 30-session horizon.
-- The production path calls `GET /api/v2/forecast`; when a verified release exists, the dashboard renders the heads that release actually certifies. A legacy volatility-only release renders a cone without a learned center line; a V11.2 return-distribution release renders its certified Student-t median and uncertainty band.
+- The production path calls `GET /api/v2/forecast`; when a future externally certified release exists, the dashboard will render only the heads that release actually certifies. V11.2 is permanently retired and cannot be loaded or served.
 - The evidence card reports the true metric source (`locked_purged_walk_forward`), QLIKE, coverage, release identity, snapshot identity, and certified horizon. It does not label a volatility forecast as price-direction accuracy.
 - The API returns a sanitized abstention when a release is missing, stale, incompatible, tampered with, or not certified for the requested horizon.
 - Save results to browser-local watchlists/history and export PNG, CSV, or complete ZIP analyses.
@@ -36,7 +36,7 @@ StockLSTM is a React/FastAPI research application for market-volatility forecast
 
 The serving snapshot uses **Deployable Schema v5**: 26 causal stationary features covering return structure, realized-volatility proxies, liquidity, and market microstructure. Every row uses information available at or before its origin. A 60-session window, exchange calendar, deterministic snapshot fingerprint, and exact feature ordering are bound into the signed release contract.
 
-The research champion family is a residual temporal-convolutional ensemble with frozen econometric volatility baselines. It predicts conditional variance and, in V11.2, a Student-t return-location/variance distribution; the API can derive a transparent daily cone from a verified signed release. The v6 locked certification failed overall, so strict rejection prevents materializing or serving that candidate or any individually passing horizon. With no verified signed release, the production API abstains. A legacy volatility-only release keeps p50 as an explicitly unchanged-close location baseline; a V11.2 release may render a learned median only when its signed return-distribution head clears its own gates.
+The research champion family is a residual temporal-convolutional ensemble with frozen econometric volatility baselines. V11.2 experimentally added a Student-t return-location/variance distribution, but its one-shot reserve was opened and the candidate failed; that generation is now permanently `INVALIDATED_OPENED`. With no externally certified release, the production API abstains.
 
 The GPU-trained v7 development candidate remains unsigned while its genuinely future reserve matures. When 252 target-complete origins after 2026-08-27 are available, `scripts/certify_prospective_volatility_candidate.py` verifies the frozen three-seed artifact, immutable panel prefix, NMM/MSFT transfer coverage, and every locked gate before creating a release-role candidate. Interrupted post-pass materialization can be recovered without reopening the reserve through `scripts/materialize_prospective_certification.py`; failed or partial evidence remains non-releasable.
 
@@ -45,13 +45,13 @@ The GPU-trained v7 development candidate remains unsigned while its genuinely fu
 Production metrics are computed offline on identical market snapshots using calendar-aligned expanding purged walk-forward folds. Volatility is scored primarily with QLIKE, log-variance error, calibration, and interval coverage; price-location and direction heads are separate gates. A development candidate is not called certified until one untouched holdout and the signed-release verification pass. A failed locked result is final for that candidate and reserve: neither passing horizons nor old holdout rows are recycled.
 
 > [!IMPORTANT]
-> **How to read the numbers.** The API preserves the signed release's metric source (V11.2 uses `sealed_holdout_once`; older releases may use `locked_purged_walk_forward`). In a volatility-only release, p50 is an unchanged-close baseline and the cone is learned. In a V11.2 release, the terminal Student-t location and variance are learned/certified, while intermediate chart points are interpolations. There is no current certified release; development reports, browser experiments, failed locked evidence, and final refits are never presented as production metrics.
+> **How to read the numbers.** Historical reports preserve their actual metric source, including V11.2's failed `sealed_holdout_once` evidence. There is no current certified release; development reports, browser experiments, failed locked evidence, and final refits are never presented as production metrics.
 
 The compatibility `/api/v1/predict` and `/api/v1/predict/direction` endpoints remain available for old clients. Their response metadata always identifies `server_disabled_fallback`; they are persistence/base-rate results and never learned forecasts. `/models` reports `server_models.status = disabled` and `browser_training.status = disabled` in the production contract.
 
 ## Signed global-volatility serving
 
-`GET /api/v2/forecast?ticker=MSFT&horizon=7` is the fail-closed interface for one verified global ONNX ensemble across supported tickers. An eligible future release must be trained and certified offline on the RTX workstation, signed with Ed25519, and mounted as an immutable directory. It is never trained in a public request and no model weights are uploaded by the browser.
+`GET /api/v2/forecast?ticker=MSFT&horizon=7` is the fail-closed interface for one verified global ONNX ensemble across supported tickers. An eligible future release must be trained offline on the RTX workstation, pass the externally evidenced gate in [docs/FREE_CERTIFICATION_STACK.md](docs/FREE_CERTIFICATION_STACK.md), retain genuine Cosign verification of the exact frozen evidence manifest, and carry the existing Ed25519 runtime-bundle signature. It is never trained in a public request and no model weights are uploaded by the browser.
 
 The response contains dated p05–p95 paths, expected annualized volatility, snapshot id, model id, certified horizon evidence, and the signed `metric_source`. When `certified_heads.return_distribution` is true it also contains the Student-t expected cumulative return, return-distribution variance, and a learned p50 median path; otherwise p50 remains the disclosed zero-location assumption and the product does not display it as a model forecast. If the release or requested horizon is unavailable, the endpoint returns a structured 503 abstention. `/ready` can enforce this with `VOLATILITY_SERVING_REQUIRED=true`; `/models` reports the verified model id and certified horizons.
 
@@ -70,9 +70,12 @@ The offline global-model pipeline builds immutable snapshots, evaluates economet
 
 ### V11.2 numeric PIT64 development
 
+> [!CAUTION]
+> V11.2 is an archived research generation, not an active certification path. Its reserve was opened once and the frozen candidate failed. Dataset preparation, certification, release assembly, and runtime loading now reject V11.2 unconditionally. A future attempt must use a new protocol, new externally evidenced inputs, and a new externally controlled reserve.
+
 The additive V11.2 protocol is a numeric-only, pre-holdout development cycle. It expands the panel to exactly 64 audited point-in-time securities, uses a session-grouped chronological 70/15/15 split, and selects a separately gated route for each 1-, 3-, 5-, and 7-session horizon. Epoch zero of the neural residual model is evaluated before any optimizer update and remains a valid HAR-equivalent fallback. Loss uncertainty is estimated by contiguous 20-session block bootstrap with Holm correction; stock-origin observations and unique sessions are reported separately. A learned route must also be non-worse on QLIKE and keep central 80% Student-t coverage within the preregistered 0.65–0.95 calibration band. Historical news is deliberately disabled in V11.2 and reserved for an independent V12 protocol.
 
-The V11.2 preparation command writes train/validation files separately from an AES-256-GCM encrypted final holdout. The development runner never receives the holdout key and must finish with `sealed_test_status = LOCKED_UNOPENED`. See [docs/VOLATILITY_V11_2.md](docs/VOLATILITY_V11_2.md) for the protocol, RTX commands, sealing boundary, and pre-unseal audit.
+The archived V11.2 workflow wrote train/validation files separately from an AES-256-GCM encrypted final holdout. See [docs/VOLATILITY_V11_2.md](docs/VOLATILITY_V11_2.md) for the historical protocol and the permanent retirement boundary.
 
 ## Volatility v9 (preregistered)
 

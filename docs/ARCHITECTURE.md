@@ -17,16 +17,13 @@ flowchart LR
     api -->|missing, invalid, stale, uncertified| abstain[503 explicit abstention]
 \`\`\`
 
-The production route is \`GET /api/v2/forecast?ticker=MSFT&horizon=7\`. Supported horizons are \`{1, 3, 5, 7, 14, 30}\` trading sessions. A request is accepted only when the signed manifest, per-file SHA-256 checksums, Ed25519 signature, schema, feature order, ONNX I/O names, member set, model size, and requested horizon all verify.
+The production route is \`GET /api/v2/forecast?ticker=MSFT&horizon=7\`. Supported horizons are \`{1, 3, 5, 7, 14, 30}\` trading sessions. A future request can be admitted only after authentic external OHLCV, PIT64, Cosign, and holdout evidence passes; the runtime must then also verify the signed manifest, per-file SHA-256 checksums, Ed25519 bundle signature, schema, feature order, ONNX I/O names, member set, model size, and requested horizon. The current external-evidence status is 0/4, so production admission is disabled.
 
-The API returns p05–p95 price quantiles derived from the signed runtime. A
-legacy volatility-only release exposes a zero-location lognormal cone whose p50
-is the unchanged-close baseline. A V11.2 release can additionally certify a
-Student-t return distribution: its terminal location and variance become the
-learned median path and uncertainty band, while intermediate daily points are
-labelled interpolations rather than independently certified horizons. Direction
-remains uncertified unless its own head passes a separate gate. A failed
-horizon is an abstention, not a baseline masquerading as a model.
+The API returns p05–p95 price quantiles only from an admitted signed runtime.
+V11.2 experimented with a Student-t return distribution, but its reserve was
+opened and its candidate failed; runtime contracts now reject that generation.
+Until a new externally evidenced generation passes, production returns a 503
+abstention rather than a baseline masquerading as a model.
 
 ## Data contract
 
@@ -60,13 +57,15 @@ The RTX workstation runs the research harness in \`research/volatility_forecasti
 6. Consume one untouched holdout only after the methodology gate and winner decision pass.
 7. Export ONNX members, verify CPU parity, sign the manifest, and mount the immutable release.
 
-V11.2 is an additive numeric-only development protocol. It uses an exactly 64-security point-in-time universe, a session-grouped 70/15/15 split, independent per-horizon routing, and a fresh AES-GCM encrypted holdout. The development process receives only train/validation files; the decryption key and sealed payload are reserved for a separate one-shot certification command. Epoch zero is evaluated before neural updates so the residual learner can restore the HAR prior. See [VOLATILITY_V11_2.md](VOLATILITY_V11_2.md).
+V11.2 is retained as an archived numeric-only research protocol. Its one-shot
+reserve is permanently `INVALIDATED_OPENED`; preparation, certification,
+release assembly, and runtime loading reject it. The remaining modules support
+historical reproducibility only. See [VOLATILITY_V11_2.md](VOLATILITY_V11_2.md).
 
 The final refit is never used to claim evaluation metrics. Locked evaluation
 metrics describe only untouched out-of-fold or certification observations.
-For V11.2, the signed serving payload preserves `metric_source=sealed_holdout_once`
-and exposes the certified return-distribution head separately from the
-volatility head.
+The failed V11.2 report preserves `metric_source=sealed_holdout_once` as
+historical evidence, but it cannot produce a signed serving payload.
 
 ## News boundary
 

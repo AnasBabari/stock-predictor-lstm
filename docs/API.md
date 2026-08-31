@@ -80,20 +80,20 @@ The response contains:
 
 - global_volatility.status: ready, unconfigured, unavailable, or integrity_failure.
 - global_volatility.model_id and certified_horizons when ready.
-- global_volatility.metric_source is the signed release's declared source (for
-  example `sealed_holdout_once` for V11.2; it is never rewritten as a
-  walk-forward source).
+- global_volatility.metric_source is the admitted signed release's declared
+  source; failed V11.2 `sealed_holdout_once` evidence is never exposed as a
+  ready model.
 - browser_training.status = disabled and server_models.status = disabled for the production contract.
 
 ## GET /ready
 
-The data service can be ready without a model for local development. Set `VOLATILITY_SERVING_REQUIRED=true` in a production serving environment to make readiness fail closed until the signed release verifies. A release may come from `VOLATILITY_RELEASE_DIR`, or an ephemeral host may use the paired immutable settings `VOLATILITY_RELEASE_ARCHIVE_URL` and `VOLATILITY_RELEASE_ARCHIVE_SHA256`. Both sources require `VOLATILITY_PUBLIC_KEY_PATH`; archive SHA-256, safe extraction, Ed25519 signature, member checksums, and runtime compatibility all fail closed. The liveness route remains 200 during release failures so the platform can report the actual cause.
+The data service can be ready without a model for local development. With `VOLATILITY_SERVING_REQUIRED=true`, the current 0/4 external-certification policy keeps readiness degraded even if a development release path is configured. A future production admission change must integrate authentic external evidence; editing a JSON status is insufficient. The liveness route remains 200 so the platform can report the actual cause.
 
 ## GET /api/v1/training-data
 
 This bounded route is for diagnostics and offline research. It returns the validated Stationary Schema v4 matrix, historical closes, future calendar dates, and deterministic snapshot id. It accepts no client feature matrix and writes no files. It is not a public training service and is not used by the production global-volatility path.
 
-The RTX-only V11.2 development workflow consumes an offline panel rather than this HTTP route. Its `prepare_v11_2_dataset.py` command creates train/validation files and an encrypted final holdout; `run_v11_2_numeric_development.py` has no holdout-key input and reports `sealed_test_status = LOCKED_UNOPENED`. V11.2 uses an exact 64-security PIT universe and independently routes horizons 1, 3, 5, and 7. Historical news is disabled by that protocol and is reserved for an independent V12 experiment.
+V11.2 is an archived RTX research workflow. Its reserve was opened once and the candidate failed, so dataset preparation, certification, release assembly, and runtime loading now reject the generation. Its reports retain `sealed_holdout_once` only as historical methodology evidence; they cannot authorize an API response.
 
 ## Compatibility forecasts
 
