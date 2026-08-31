@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -21,6 +22,10 @@ for candidate in (ROOT, ROOT / "research"):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from research.volatility_forecasting.v11_2_attestation import (  # noqa: E402
+    AttestationError,
+    verify_v11_2_inputs,
+)
 from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
     V112Protocol,
     canonical_json_digest,
@@ -42,6 +47,109 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _under(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _evidence_args(values: list[str]) -> dict[str, Path]:
+    parsed: dict[str, Path] = {}
+    for value in values:
+        name, separator, path = value.partition("=")
+        if not separator or not name.strip() or not path.strip():
+            raise SystemExit("evidence must use NAME=PATH")
+        normalized = name.strip()
+        if normalized in parsed:
+            raise SystemExit(f"duplicate evidence name: {normalized}")
+        parsed[normalized] = Path(path).resolve()
+    return parsed
+
+
+def _copy_attestation_inputs(
+    *,
+    output_dir: Path,
+    market_receipt: Path,
+    market_public_key: Path,
+    market_evidence: dict[str, Path],
+    pit64_receipt: Path,
+    pit64_public_key: Path,
+    pit64_evidence: dict[str, Path],
+    summary: dict[str, object],
+) -> None:
+    """Copy the verified evidence into the immutable dataset namespace."""
+
+    record_path = output_dir / "manifests" / "attestations.json"
+    if record_path.exists():
+        raise SystemExit("dataset attestation record already exists and is immutable")
+    root = output_dir / "manifests" / "attestations"
+    evidence_root = root / "evidence"
+    evidence_root.mkdir(parents=True, exist_ok=True)
+
+    def copy_one(source: Path, target: Path) -> str:
+        if not source.is_file():
+            raise SystemExit(f"attestation input is missing: {source}")
+        shutil.copyfile(source, target)
+        return target.relative_to(output_dir).as_posix()
+
+    market_evidence_paths: dict[str, str] = {}
+    for name, source in sorted(market_evidence.items()):
+        market_evidence_paths[name] = copy_one(source, evidence_root / f"market-{name}")
+    pit64_evidence_paths: dict[str, str] = {}
+    for name, source in sorted(pit64_evidence.items()):
+        pit64_evidence_paths[name] = copy_one(source, evidence_root / f"pit64-{name}")
+    body = {
+        "schema_version": 1,
+        "market": {
+            "receipt": copy_one(market_receipt, root / "market_receipt.json"),
+            "public_key": copy_one(market_public_key, root / "market_public_key.pem"),
+            "evidence": market_evidence_paths,
+        },
+        "pit64": {
+            "receipt": copy_one(pit64_receipt, root / "pit64_receipt.json"),
+            "public_key": copy_one(pit64_public_key, root / "pit64_public_key.pem"),
+            "evidence": pit64_evidence_paths,
+        },
+        "verification": summary,
+    }
+    body["record_sha256"] = canonical_json_digest(body)
+    (output_dir / "manifests" / "attestations.json").write_text(
+        json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _verify_panel_binding(
+    *,
+    panel_path: Path,
+    universe_payload: dict[str, object],
+    snapshot_manifest_path: Path,
+    attestation_summary: dict[str, object],
+) -> None:
+    """Require the panel sidecar to bind bytes to the verified input pair."""
+
+    sidecar_path = panel_path.with_suffix(panel_path.suffix + ".manifest.json")
+    try:
+        payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit("certification-eligible panels require a valid panel sidecar") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit("panel sidecar must contain a JSON object")
+    expected_panel_sha = _sha256_file(panel_path)
+    if payload.get("panel_sha256") != expected_panel_sha:
+        raise SystemExit("panel sidecar is not bound to the panel bytes")
+    expected_snapshot_sha = _sha256_file(snapshot_manifest_path)
+    if payload.get("snapshot_manifest_sha256") != expected_snapshot_sha:
+        raise SystemExit("panel sidecar is not bound to the attested snapshot manifest")
+    if payload.get("universe_manifest_sha256") != universe_payload.get("manifest_sha256"):
+        raise SystemExit("panel sidecar is not bound to the audited universe manifest")
+    if payload.get("certification_eligible") is not True:
+        raise SystemExit("panel sidecar is not certification-eligible")
+    if payload.get("attestation_summary") != attestation_summary:
+        raise SystemExit("panel sidecar attestation summary does not match the receipts")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--panel", type=Path, required=True)
@@ -50,7 +158,17 @@ def main() -> int:
     parser.add_argument("--key-path", type=Path, required=True)
     parser.add_argument("--schema-sha256", required=True)
     parser.add_argument("--repository-root", type=Path, default=Path.cwd())
+    parser.add_argument("--snapshot-manifest", type=Path)
+    parser.add_argument("--market-attestation", type=Path)
+    parser.add_argument("--market-public-key", type=Path)
+    parser.add_argument("--pit64-attestation", type=Path)
+    parser.add_argument("--pit64-public-key", type=Path)
+    parser.add_argument("--market-evidence", action="append", default=[])
+    parser.add_argument("--pit64-evidence", action="append", default=[])
     args = parser.parse_args()
+
+    if _under(args.panel, ROOT / "data" / "ndx100" / "cache"):
+        raise SystemExit("the secondary data/ndx100/cache cannot be prepared for V11.2")
 
     protocol = V112Protocol()
     schema_sha = str(args.schema_sha256)
@@ -87,6 +205,34 @@ def main() -> int:
         raise SystemExit("universe manifest must list 64 non-empty permanent security IDs")
     if len(set(manifest_ids)) != len(manifest_ids):
         raise SystemExit("universe manifest contains duplicate permanent security IDs")
+
+    attestation_summary: dict[str, object] = {}
+    if universe_payload.get("certification_eligible") is True:
+        required = (
+            args.snapshot_manifest,
+            args.market_attestation,
+            args.market_public_key,
+            args.pit64_attestation,
+            args.pit64_public_key,
+        )
+        if any(path is None for path in required):
+            raise SystemExit(
+                "certification-eligible datasets require a snapshot manifest, two signed "
+                "attestations, and two pinned public keys"
+            )
+        try:
+            attestation_summary = verify_v11_2_inputs(
+                snapshot_manifest_path=args.snapshot_manifest,  # type: ignore[arg-type]
+                universe_manifest_path=args.universe_manifest.resolve(),
+                market_receipt_path=args.market_attestation,  # type: ignore[arg-type]
+                market_public_key_path=args.market_public_key,  # type: ignore[arg-type]
+                pit64_receipt_path=args.pit64_attestation,  # type: ignore[arg-type]
+                pit64_public_key_path=args.pit64_public_key,  # type: ignore[arg-type]
+                market_evidence_files=_evidence_args(args.market_evidence),
+                pit64_evidence_files=_evidence_args(args.pit64_evidence),
+            )
+        except (AttestationError, OSError, ValueError, TypeError) as exc:
+            raise SystemExit(f"signed V11.2 input attestation failed: {exc}") from exc
 
     with np.load(args.panel, allow_pickle=False) as panel:
         required = {
@@ -131,6 +277,13 @@ def main() -> int:
         raise SystemExit("panel must contain all 64 accepted securities")
     if set(security_ids) != set(manifest_ids):
         raise SystemExit("panel security IDs do not exactly match the audited universe manifest")
+    if attestation_summary:
+        _verify_panel_binding(
+            panel_path=args.panel.resolve(),
+            universe_payload=universe_payload,
+            snapshot_manifest_path=args.snapshot_manifest,  # type: ignore[arg-type]
+            attestation_summary=attestation_summary,
+        )
     split = create_v112_split(dates, security_ids)
     panel_sha = _sha256_file(args.panel)
     metadata = seal_v112_dataset(
@@ -146,6 +299,17 @@ def main() -> int:
         key_path=args.key_path,
         repository_root=args.repository_root,
     )
+    if attestation_summary:
+        _copy_attestation_inputs(
+            output_dir=args.output_dir,
+            market_receipt=args.market_attestation,  # type: ignore[arg-type]
+            market_public_key=args.market_public_key,  # type: ignore[arg-type]
+            market_evidence=_evidence_args(args.market_evidence),
+            pit64_receipt=args.pit64_attestation,  # type: ignore[arg-type]
+            pit64_public_key=args.pit64_public_key,  # type: ignore[arg-type]
+            pit64_evidence=_evidence_args(args.pit64_evidence),
+            summary=attestation_summary,
+        )
     (args.output_dir / "manifests" / "protocol.json").write_text(
         json.dumps(protocol_manifest(protocol), indent=2, sort_keys=True), encoding="utf-8"
     )

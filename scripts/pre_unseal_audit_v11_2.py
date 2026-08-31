@@ -14,6 +14,10 @@ for candidate in (ROOT, ROOT / "research"):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from research.volatility_forecasting.v11_2_attestation import (  # noqa: E402
+    AttestationError,
+    verify_dataset_attestation_record,
+)
 from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
     V112Protocol,
     canonical_json_digest,
@@ -170,6 +174,10 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
         raise SystemExit(
             "V11.2 certification requires an explicitly certification-eligible universe"
         )
+    try:
+        attestation_summary = verify_dataset_attestation_record(dataset, universe_path)
+    except AttestationError as exc:
+        raise SystemExit(f"signed V11.2 input attestation failed: {exc}") from exc
     if (
         universe.get("protocol_id") != protocol.protocol_id
         or universe.get("universe_size") != protocol.universe_size
@@ -334,6 +342,7 @@ def audit_pre_unseal(dataset: Path, results: Path) -> dict[str, object]:
         "sealed_test_status": "LOCKED_UNOPENED",
         "audited_at": datetime.now(UTC).isoformat(),
         "decryption_performed": False,
+        "input_attestation": attestation_summary,
     }
     return audit
 

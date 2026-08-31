@@ -3,7 +3,8 @@
 
 This command performs no feature construction, training, encryption, or
 holdout access.  It only proves that an operator supplied an audited PIT64
-panel and an external 32-byte key before the preparation command is run.
+panel, signed market/PIT64 provenance receipts, and an external 32-byte key
+before the preparation command is run.
 The repository's secondary ``data/ndx100/cache`` is explicitly rejected.
 """
 
@@ -24,6 +25,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backend.panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5  # noqa: E402
+from research.volatility_forecasting.v11_2_attestation import (  # noqa: E402
+    AttestationError,
+    verify_v11_2_inputs,
+)
 from research.volatility_forecasting.v11_2_protocol import (  # noqa: E402
     V11_2_HORIZONS,
     V11_2_PROTOCOL_ID,
@@ -122,9 +127,27 @@ def _validate_panel(panel_path: Path, universe: V112UniverseManifest) -> dict[st
 
 
 def check_inputs(
-    *, panel_path: Path, universe_path: Path, key_path: Path, repository_root: Path
+    *,
+    panel_path: Path,
+    universe_path: Path,
+    key_path: Path,
+    repository_root: Path,
+    snapshot_manifest_path: Path | None = None,
+    market_attestation_path: Path | None = None,
+    market_public_key_path: Path | None = None,
+    pit64_attestation_path: Path | None = None,
+    pit64_public_key_path: Path | None = None,
+    market_evidence_files: dict[str, Path] | None = None,
+    pit64_evidence_files: dict[str, Path] | None = None,
+    require_signed_attestations: bool = True,
 ) -> dict[str, Any]:
-    """Return a machine-readable readiness report without touching holdout data."""
+    """Return a readiness report without touching or decrypting holdout data.
+
+    Signed input provenance is required by default.  Callers may explicitly
+    pass ``require_signed_attestations=False`` only for a development-only
+    structural diagnostic; that report must never be used to prepare or
+    certify a production dataset.
+    """
     checks: list[dict[str, Any]] = []
 
     def check(name: str, passed: bool, detail: str = "") -> None:
@@ -203,11 +226,62 @@ def check_inputs(
                 and len(snapshot_digest) == 64
                 and all(value in "0123456789abcdef" for value in snapshot_digest),
             )
+            panel_digest = payload.get("panel_sha256")
+            expected_panel_digest = _sha256(panel)
+            panel_digest_valid = panel_digest == expected_panel_digest
+            check(
+                "panel_sidecar_panel_digest",
+                panel_digest_valid if require_signed_attestations else (panel_digest is None or panel_digest_valid),
+                "panel bytes do not match the sidecar digest"
+                if panel_digest is not None and not panel_digest_valid
+                else "panel_sha256 is required for signed certification inputs"
+                if require_signed_attestations and panel_digest is None
+                else "",
+            )
         except (OSError, ValueError, TypeError) as exc:
             check("panel_sidecar", False, str(exc))
     else:
         check("panel_sidecar", False, f"missing sidecar: {sidecar}")
 
+    attestation_summary: dict[str, Any] = {}
+    if require_signed_attestations:
+        attestation_paths = (
+            snapshot_manifest_path,
+            market_attestation_path,
+            market_public_key_path,
+            pit64_attestation_path,
+            pit64_public_key_path,
+        )
+        if any(path is None for path in attestation_paths):
+            check(
+                "signed_input_attestations",
+                False,
+                "snapshot manifest, two signed receipts, and two pinned public keys are required",
+            )
+        else:
+            try:
+                attestation_summary = verify_v11_2_inputs(
+                    snapshot_manifest_path=snapshot_manifest_path,  # type: ignore[arg-type]
+                    universe_manifest_path=universe_file,
+                    market_receipt_path=market_attestation_path,  # type: ignore[arg-type]
+                    market_public_key_path=market_public_key_path,  # type: ignore[arg-type]
+                    pit64_receipt_path=pit64_attestation_path,  # type: ignore[arg-type]
+                    pit64_public_key_path=pit64_public_key_path,  # type: ignore[arg-type]
+                    market_evidence_files=market_evidence_files or {},
+                    pit64_evidence_files=pit64_evidence_files or {},
+                )
+                snapshot_digest = hashlib.sha256(
+                    snapshot_manifest_path.read_bytes()  # type: ignore[union-attr]
+                ).hexdigest()
+                sidecar_payload = _json_object(sidecar, "panel sidecar")
+                if sidecar_payload.get("snapshot_manifest_sha256") != snapshot_digest:
+                    raise AttestationError("panel sidecar is not bound to the attested snapshot manifest")
+                if sidecar_payload.get("attestation_summary") != attestation_summary:
+                    raise AttestationError("panel sidecar attestation summary does not match receipts")
+                check("signed_input_attestations", True)
+            except (AttestationError, OSError, ValueError, TypeError) as exc:
+                attestation_summary = {}
+                check("signed_input_attestations", False, str(exc))
     ready = all(item["passed"] for item in checks)
     return {
         "protocol_id": V11_2_PROTOCOL_ID,
@@ -218,7 +292,20 @@ def check_inputs(
         "ready": ready,
         "checks": checks,
         "panel_summary": panel_summary,
+        "attestation_summary": attestation_summary,
     }
+
+
+def _evidence_args(values: list[str]) -> dict[str, Path]:
+    parsed: dict[str, Path] = {}
+    for value in values:
+        name, separator, path = value.partition("=")
+        if not separator or not name.strip() or not path.strip():
+            raise SystemExit("evidence must use NAME=PATH")
+        if name.strip() in parsed:
+            raise SystemExit(f"duplicate evidence name: {name.strip()}")
+        parsed[name.strip()] = Path(path).resolve()
+    return parsed
 
 
 def main() -> int:
@@ -227,12 +314,27 @@ def main() -> int:
     parser.add_argument("--universe-manifest", type=Path, required=True)
     parser.add_argument("--key-path", type=Path, required=True)
     parser.add_argument("--repository-root", type=Path, default=ROOT)
+    parser.add_argument("--snapshot-manifest", type=Path)
+    parser.add_argument("--market-attestation", type=Path)
+    parser.add_argument("--market-public-key", type=Path)
+    parser.add_argument("--pit64-attestation", type=Path)
+    parser.add_argument("--pit64-public-key", type=Path)
+    parser.add_argument("--market-evidence", action="append", default=[])
+    parser.add_argument("--pit64-evidence", action="append", default=[])
     args = parser.parse_args()
     report = check_inputs(
         panel_path=args.panel,
         universe_path=args.universe_manifest,
         key_path=args.key_path,
         repository_root=args.repository_root,
+        snapshot_manifest_path=args.snapshot_manifest,
+        market_attestation_path=args.market_attestation,
+        market_public_key_path=args.market_public_key,
+        pit64_attestation_path=args.pit64_attestation,
+        pit64_public_key_path=args.pit64_public_key,
+        market_evidence_files=_evidence_args(args.market_evidence),
+        pit64_evidence_files=_evidence_args(args.pit64_evidence),
+        require_signed_attestations=True,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["ready"] else 1

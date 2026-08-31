@@ -109,11 +109,22 @@ def test_valid_panel_and_external_key_pass_preflight(tmp_path: Path) -> None:
     key_path = tmp_path / "private" / "holdout.key"
     key_path.parent.mkdir()
     key_path.write_bytes(b"k" * 32)
+    strict_report = check_inputs(
+        panel_path=panel_path,
+        universe_path=universe_path,
+        key_path=key_path,
+        repository_root=tmp_path / "repository",
+    )
+    assert strict_report["ready"] is False
+    assert next(
+        item for item in strict_report["checks"] if item["name"] == "signed_input_attestations"
+    )["passed"] is False
     report = check_inputs(
         panel_path=panel_path,
         universe_path=universe_path,
         key_path=key_path,
         repository_root=tmp_path / "repository",
+        require_signed_attestations=False,
     )
     assert report["ready"] is True
     assert report["panel_summary"]["security_count"] == 64
