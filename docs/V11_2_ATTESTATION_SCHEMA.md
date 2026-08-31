@@ -72,6 +72,28 @@ the holdout is sealed; a sidecar from an older or unrelated panel is rejected.
 
 ## Verification commands
 
+Before asking either external issuer to sign, generate an unsigned request
+pack containing the exact subjects, rights, and evidence-file hashes. This
+command never creates a key, accepts a private key, signs a receipt, or opens a
+holdout:
+
+```powershell
+python scripts/create_v11_2_attestation_requests.py `
+  --snapshot-manifest <snapshot-manifest.json> `
+  --universe-manifest <audited-pit64-universe.json> `
+  --market-evidence snapshot_manifest=<snapshot-manifest.json> `
+  --market-evidence license_document=<license-document> `
+  --pit64-evidence membership_master=<membership-archive> `
+  --output-dir <new-empty-attestation-request-directory>
+```
+
+The generated JSON documents have status
+`unsigned_external_signatures_required`. They are request material only and
+will not pass the verifier. The market-data licensor and PIT64 reviewer must
+independently inspect the evidence, construct the receipt schema above, sign
+it with their own Ed25519 key, and provide the corresponding public key via a
+separate authenticated channel.
+
 The following commands perform verification without opening the holdout:
 
 ```powershell
