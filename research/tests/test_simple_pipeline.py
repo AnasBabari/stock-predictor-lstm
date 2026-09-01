@@ -221,3 +221,84 @@ def test_target_space_options_direct_and_log_variance() -> None:
             assert len(arr) == len(examples.target)
             assert np.all(arr > 0) and np.all(np.isfinite(arr))
 
+
+def test_ohlc_volatility_estimators_and_integrity() -> None:
+    from volatility_forecasting.simple_pipeline import build_feature_frame
+
+    frame = _frame(150)
+    features = build_feature_frame(frame, feature_mode="price_plus_ohlc")
+
+    expected_cols = [
+        "hl_range", "co_range", "overnight_return",
+        "parkinson_vol_5", "parkinson_vol_22", "parkinson_vol_60",
+        "garman_klass_vol_5", "garman_klass_vol_22", "garman_klass_vol_60",
+        "rogers_satchell_vol_5", "rogers_satchell_vol_22", "rogers_satchell_vol_60",
+    ]
+    for col in expected_cols:
+        assert col in features.columns
+        valid_vals = features[col].dropna()
+        assert len(valid_vals) > 0
+        if "vol_" in col:
+            assert (valid_vals >= 0).all()
+
+    # Verify input integrity failure on malformed bars
+    bad_frame = frame.copy()
+    bad_frame.loc[bad_frame.index[10], "High"] = bad_frame.loc[bad_frame.index[10], "Close"] - 1.0
+    with pytest.raises(ValueError, match="High"):
+        build_feature_frame(bad_frame, feature_mode="price_plus_ohlc")
+
+
+def test_softplus_volatility_lstm() -> None:
+    pytest.importorskip("torch")
+    from volatility_forecasting.simple_pipeline import LSTMConfig, build_examples, lstm_predictions
+
+    examples = build_examples(_frame(260))
+    split = chronological_split(len(examples.target), horizon=5)
+
+    preds, meta = lstm_predictions(
+        examples,
+        split.train,
+        split.validation,
+        config=LSTMConfig(maximum_epochs=2, patience=1, batch_size=32, target_space="softplus_volatility"),
+    )
+    assert len(preds) == len(examples.target)
+    assert np.all(preds > 0) and np.all(np.isfinite(preds))
+    assert meta["target_space"] == "softplus_volatility"
+
+
+def test_nested_feature_modes_and_market_frame() -> None:
+    from volatility_forecasting.simple_pipeline import VolatilityConfig, build_examples
+
+    frame = _frame(200)
+
+    # Market context frame
+    mkt = pd.DataFrame(
+        {"spy_return_1d": np.random.normal(0, 0.01, size=len(frame)), "spy_vol_22": np.full(len(frame), 0.15)},
+        index=frame.index,
+    )
+
+    ex_price = build_examples(frame, VolatilityConfig(feature_mode="price_only"))
+    ex_ohlc = build_examples(frame, VolatilityConfig(feature_mode="price_plus_ohlc"))
+    ex_mkt = build_examples(frame, VolatilityConfig(feature_mode="price_plus_ohlc_plus_market"), market_frame=mkt)
+
+    assert ex_price.sequences.shape[-1] < ex_ohlc.sequences.shape[-1] < ex_mkt.sequences.shape[-1]
+    assert "parkinson_vol_22" not in ex_price.feature_names
+    assert "parkinson_vol_22" in ex_ohlc.feature_names
+    assert "mkt_spy_return_1d" in ex_mkt.feature_names
+
+
+def test_volatility_metrics_distribution_diagnostics() -> None:
+    act = np.array([0.20, 0.25, 0.30, 0.22, 0.80])
+    pred = np.array([0.20, 0.24, 0.31, 0.21, 0.20])
+
+    m = volatility_metrics(act, pred)
+    assert "median_qlike" in m
+    assert "p90_qlike" in m
+    assert "p95_qlike" in m
+    assert "p99_qlike" in m
+    assert "max_qlike" in m
+    assert "worst_1pct_share" in m
+    assert 0.0 <= m["worst_1pct_share"] <= 100.0
+    assert m["max_qlike"] >= m["p95_qlike"] >= m["median_qlike"]
+
+

@@ -22,6 +22,7 @@ import hashlib
 import json
 import math
 import time
+import warnings
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -50,6 +51,7 @@ class VolatilityConfig:
     validation_fraction: float = 0.15
     embargo_sessions: int | None = None
     seed: int = 42
+    feature_mode: str = "price_plus_ohlc"
 
     def __post_init__(self) -> None:
         if self.horizon < 1 or self.lookback < 2:
@@ -64,6 +66,8 @@ class VolatilityConfig:
             raise ValueError("train and validation fractions must leave a test set")
         if self.embargo_sessions is not None and self.embargo_sessions < self.horizon:
             raise ValueError("embargo_sessions must be at least the forecast horizon")
+        if self.feature_mode not in ("price_only", "price_plus_ohlc", "price_plus_ohlc_plus_market"):
+            raise ValueError(f"Unknown feature_mode: {self.feature_mode}")
 
     @property
     def embargo(self) -> int:
@@ -185,10 +189,12 @@ def validate_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
     if "Volume" in out and (out["Volume"] < 0).any():
         raise ValueError("Volume values cannot be negative")
     if {"Open", "High", "Low"}.issubset(out.columns):
-        if (out["High"] < out[["Open", "Close"]].max(axis=1)).any():
+        if (out["High"] < out[["Open", "Close"]].max(axis=1) - 1e-6).any():
             raise ValueError("High must be at least Open and Close")
-        if (out["Low"] > out[["Open", "Close"]].min(axis=1)).any():
+        if (out["Low"] > out[["Open", "Close"]].min(axis=1) + 1e-6).any():
             raise ValueError("Low must be at most Open and Close")
+        out["High"] = np.maximum(out["High"], out[["Open", "Close"]].max(axis=1))
+        out["Low"] = np.minimum(out["Low"], out[["Open", "Close"]].min(axis=1))
     return out
 
 
@@ -212,7 +218,13 @@ def realised_volatility(
     return target
 
 
-def build_feature_frame(frame: pd.DataFrame, *, annualization: float = 252.0) -> pd.DataFrame:
+def build_feature_frame(
+    frame: pd.DataFrame,
+    *,
+    annualization: float = DEFAULT_ANNUALIZATION,
+    feature_mode: str = "price_plus_ohlc",
+    market_frame: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Build causal market features; no value reads beyond the current row."""
 
     data = validate_ohlcv(frame)
@@ -232,18 +244,65 @@ def build_feature_frame(frame: pd.DataFrame, *, annualization: float = 252.0) ->
     out["return_mean_5"] = returns.rolling(5, min_periods=5).mean()
     out["return_mean_22"] = returns.rolling(22, min_periods=22).mean()
     out["return_std_22"] = returns.rolling(22, min_periods=22).std()
-    if {"High", "Low"}.issubset(data.columns):
-        out["log_range"] = np.log(data["High"] / data["Low"])
-    else:
-        out["log_range"] = returns.abs()
-    if "Open" in data.columns:
-        out["overnight_return"] = np.log(data["Open"] / close.shift(1))
-    else:
-        out["overnight_return"] = 0.0
+
     if "Volume" in data.columns:
         out["log_volume_change"] = np.log1p(data["Volume"]).diff()
     else:
         out["log_volume_change"] = 0.0
+
+    if feature_mode in ("price_plus_ohlc", "price_plus_ohlc_plus_market"):
+        if not {"Open", "High", "Low"}.issubset(data.columns):
+            raise ValueError("feature_mode='price_plus_ohlc' requires Open, High, Low columns")
+        high = data["High"]
+        low = data["Low"]
+        open_p = data["Open"]
+
+        # Strict input integrity assertion
+        if (high < np.maximum(open_p, close) - 1e-6).any():
+            raise ValueError("High must be >= max(Open, Close)")
+        if (low > np.minimum(open_p, close) + 1e-6).any():
+            raise ValueError("Low must be <= min(Open, Close)")
+        if (open_p <= 0).any() or (high <= 0).any() or (low <= 0).any():
+            raise ValueError("Open, High, Low prices must be positive")
+
+        hl_ratio = high / low
+        co_ratio = close / open_p
+        hc_ratio = high / close
+        ho_ratio = high / open_p
+        lc_ratio = low / close
+        lo_ratio = low / open_p
+
+        out["hl_range"] = np.log(hl_ratio)
+        out["co_range"] = np.log(co_ratio)
+        out["overnight_return"] = np.log(open_p / close.shift(1))
+
+        # Parkinson (1980) daily variance proxy: (ln(H/L))^2 / (4 * ln 2)
+        var_parkinson = np.log(hl_ratio) ** 2 / (4.0 * math.log(2.0))
+
+        # Garman-Klass (1980) daily variance proxy: 0.5 * (ln(H/L))^2 - (2*ln 2 - 1) * (ln(C/O))^2
+        var_gk = 0.5 * (np.log(hl_ratio) ** 2) - (2.0 * math.log(2.0) - 1.0) * (np.log(co_ratio) ** 2)
+        var_gk = np.maximum(var_gk, 0.0)
+
+        # Rogers-Satchell (1991) daily variance proxy: ln(H/C)*ln(H/O) + ln(L/C)*ln(L/O)
+        var_rs = np.log(hc_ratio) * np.log(ho_ratio) + np.log(lc_ratio) * np.log(lo_ratio)
+        var_rs = np.maximum(var_rs, 0.0)
+
+        for window in (5, 22, 60):
+            out[f"parkinson_vol_{window}"] = var_parkinson.rolling(
+                window, min_periods=window
+            ).mean().pow(0.5) * math.sqrt(annualization)
+            out[f"garman_klass_vol_{window}"] = var_gk.rolling(
+                window, min_periods=window
+            ).mean().pow(0.5) * math.sqrt(annualization)
+            out[f"rogers_satchell_vol_{window}"] = var_rs.rolling(
+                window, min_periods=window
+            ).mean().pow(0.5) * math.sqrt(annualization)
+
+    if feature_mode == "price_plus_ohlc_plus_market" and market_frame is not None:
+        mkt_aligned = market_frame.reindex(data.index).ffill()
+        for col in mkt_aligned.columns:
+            out[f"mkt_{col}"] = mkt_aligned[col]
+
     return out.replace([np.inf, -np.inf], np.nan)
 
 
@@ -292,12 +351,18 @@ class VolatilityExamples:
 def build_examples(
     frame: pd.DataFrame,
     config: VolatilityConfig | None = None,
+    market_frame: pd.DataFrame | None = None,
 ) -> VolatilityExamples:
     """Construct causal lookback sequences and strictly future targets."""
 
     settings = config or VolatilityConfig()
     data = validate_ohlcv(frame)
-    features = build_feature_frame(data, annualization=settings.annualization)
+    features = build_feature_frame(
+        data,
+        annualization=settings.annualization,
+        feature_mode=settings.feature_mode,
+        market_frame=market_frame,
+    )
     target = realised_volatility(
         data["Close"], settings.horizon, annualization=settings.annualization
     )
@@ -371,7 +436,7 @@ class LSTMConfig:
     weight_decay: float = 1e-4
     seed: int = 42
     device: str | None = None
-    target_space: str = "log_volatility"
+    target_space: str = "log_variance"
 
     def __post_init__(self) -> None:
         if self.hidden_size < 4 or self.maximum_epochs < 1 or self.patience < 1:
@@ -380,7 +445,7 @@ class LSTMConfig:
             raise ValueError("LSTM dropout must be in [0, 1)")
         if self.batch_size < 1 or self.learning_rate <= 0 or self.weight_decay < 0:
             raise ValueError("LSTM optimizer and batch settings are invalid")
-        if self.target_space not in ("log_volatility", "log_variance", "direct_volatility"):
+        if self.target_space not in ("log_volatility", "log_variance", "direct_volatility", "softplus_volatility"):
             raise ValueError(f"Unknown target_space: {self.target_space}")
 
 
@@ -427,7 +492,7 @@ def lstm_predictions(
         .reshape(examples.sequences.shape)
         .astype(np.float32)
     )
-    if settings.target_space == "direct_volatility":
+    if settings.target_space in ("direct_volatility", "softplus_volatility"):
         target_array = _positive(examples.target).astype(np.float32)
     elif settings.target_space == "log_variance":
         target_array = np.log(_positive(examples.target**2)).astype(np.float32)
@@ -447,7 +512,10 @@ def lstm_predictions(
 
         def forward(self, values: Any) -> Any:
             encoded, _ = self.encoder(values)
-            return self.head(self.dropout(encoded[:, -1, :])).squeeze(-1)
+            raw = self.head(self.dropout(encoded[:, -1, :])).squeeze(-1)
+            if settings.target_space == "softplus_volatility":
+                return torch.nn.functional.softplus(raw) + 1e-6
+            return raw
 
     model = VolatilityLSTM().to(device)
     optimizer = torch.optim.AdamW(
@@ -499,7 +567,7 @@ def lstm_predictions(
                 stop = min(start + settings.batch_size, len(all_x))
                 predictions.append(model(all_x[start:stop]).detach().cpu().numpy())
         raw_pred = np.concatenate(predictions)
-        if settings.target_space == "direct_volatility":
+        if settings.target_space in ("direct_volatility", "softplus_volatility"):
             prediction = np.maximum(raw_pred, _EPS)
         elif settings.target_space == "log_variance":
             prediction = np.sqrt(np.exp(np.clip(raw_pred, -40.0, 10.0)))
@@ -664,7 +732,9 @@ def _fit_scaled_regressor(
         y_train = np.log(_positive(examples.target[train] ** 2))
     else:  # "log_volatility"
         y_train = np.log(_positive(examples.target[train]))
-    estimator.fit(scaler.transform(x_train), y_train)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        estimator.fit(scaler.transform(x_train), y_train)
     return estimator, scaler
 
 
@@ -694,7 +764,7 @@ def learned_predictions(
     elastic_net, elastic_scaler = _fit_scaled_regressor(
         examples,
         train_indices,
-        ElasticNet(alpha=0.01, l1_ratio=0.5, max_iter=5000, tol=1e-4),
+        ElasticNet(alpha=0.01, l1_ratio=0.5, max_iter=10000, tol=1e-3),
         target_space=target_space,
     )
     pred_raw_elastic = elastic_net.predict(elastic_scaler.transform(all_x))
@@ -762,11 +832,24 @@ def volatility_metrics(
     ratio = actual_variance / forecast_variance
     qlike_vector = ratio - np.log(ratio) - 1.0
 
+    total_qlike = float(np.sum(qlike_vector))
+    n = len(qlike_vector)
+    worst_1pct_count = max(1, int(np.ceil(0.01 * n)))
+    sorted_qlike = np.sort(qlike_vector)
+    worst_1pct_sum = float(np.sum(sorted_qlike[-worst_1pct_count:]))
+    worst_1pct_share = (worst_1pct_sum / total_qlike * 100.0) if total_qlike > 0 else 0.0
+
     return {
         "mae": float(np.mean(np.abs(error))),
         "mse": float(np.mean(error**2)),
         "rmse": float(np.sqrt(np.mean(error**2))),
         "qlike": float(np.mean(qlike_vector)),
+        "median_qlike": float(np.median(qlike_vector)),
+        "p90_qlike": float(np.quantile(qlike_vector, 0.90)),
+        "p95_qlike": float(np.quantile(qlike_vector, 0.95)),
+        "p99_qlike": float(np.quantile(qlike_vector, 0.99)),
+        "max_qlike": float(np.max(qlike_vector)),
+        "worst_1pct_share": worst_1pct_share,
         "r2": float(1.0 - np.sum(error**2) / np.sum((observed - np.mean(observed)) ** 2))
         if np.sum((observed - np.mean(observed)) ** 2) > epsilon
         else 0.0,
@@ -884,7 +967,7 @@ def evaluate_benchmark(
     include_lstm: bool = False,
     lstm_config: LSTMConfig | None = None,
     nominal_coverage: float = 0.90,
-    target_space: str = "log_volatility",
+    target_space: str = "log_variance",
     return_forecasts: bool = False,
 ) -> dict[str, dict[str, dict[str, Any]]] | tuple[dict[str, dict[str, dict[str, Any]]], dict[str, np.ndarray]]:
     """Evaluate all baselines and simple ML models on validation and test."""
@@ -897,7 +980,7 @@ def evaluate_benchmark(
             examples,
             split.train,
             include_boosting=include_boosting,
-            target_space=target_space,
+            target_space=target_space if target_space in ("log_variance", "direct_volatility", "log_volatility") else "log_variance",
         )
     )
     if include_lstm:
