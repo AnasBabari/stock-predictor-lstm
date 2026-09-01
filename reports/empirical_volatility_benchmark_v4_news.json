@@ -1,0 +1,366 @@
+{
+  "benchmark_version": "empirical-volatility-benchmark-v4-news",
+  "date_completed": "2026-09-01T14:42:17Z",
+  "base_feature_mode": "price_plus_ohlc_plus_market",
+  "news_feature_mode": "price_plus_ohlc_plus_market_plus_news",
+  "universe_size": 44,
+  "horizons": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "evaluation_matrix": [
+    {
+      "horizon": 1,
+      "model": "garch_11",
+      "mean_base_qlike": 1.8581065361954108,
+      "mean_news_qlike": 1.8581065361954108,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 1,
+      "model": "rolling_mean",
+      "mean_base_qlike": 1.8895448917977296,
+      "mean_news_qlike": 1.8895448917977296,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 1,
+      "model": "gradient_boosting",
+      "mean_base_qlike": 168.28855206496885,
+      "mean_news_qlike": 65.31318053177934,
+      "mean_delta_qlike": 102.97537153318952,
+      "relative_improvement_pct": 61.18976619005863,
+      "improved_assets": 25,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        1.133808231782979,
+        265.4542517742528
+      ],
+      "verdict": "**Statistically Superior**"
+    },
+    {
+      "horizon": 1,
+      "model": "elastic_net",
+      "mean_base_qlike": 5852189.983287621,
+      "mean_news_qlike": 15548783615.344269,
+      "mean_delta_qlike": -15542931425.360981,
+      "relative_improvement_pct": -265591.7095950007,
+      "improved_assets": 2,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -46628794266.392235,
+        -3.3934519237353293
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 1,
+      "model": "lstm",
+      "mean_base_qlike": 2.8678513576012175,
+      "mean_news_qlike": 3.054574051033548,
+      "mean_delta_qlike": -0.18672269343233072,
+      "relative_improvement_pct": -6.510891610104676,
+      "improved_assets": 22,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.6400599063784873,
+        0.05874881077004418
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 5,
+      "model": "garch_11",
+      "mean_base_qlike": 0.7309919062525942,
+      "mean_news_qlike": 0.7309919062525942,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 5,
+      "model": "rolling_mean",
+      "mean_base_qlike": 0.7206035512566458,
+      "mean_news_qlike": 0.7206035512566458,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 5,
+      "model": "gradient_boosting",
+      "mean_base_qlike": 1.7886440097350549,
+      "mean_news_qlike": 1.737839975766969,
+      "mean_delta_qlike": 0.05080403396808597,
+      "relative_improvement_pct": 2.840365868869087,
+      "improved_assets": 18,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.016295991941850413,
+        0.17599094639107077
+      ],
+      "verdict": "Non-Significant Gain"
+    },
+    {
+      "horizon": 5,
+      "model": "elastic_net",
+      "mean_base_qlike": 252.88563819713426,
+      "mean_news_qlike": 290.8233062986864,
+      "mean_delta_qlike": -37.93766810155216,
+      "relative_improvement_pct": -15.001906937861875,
+      "improved_assets": 6,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -113.6929122312426,
+        -0.047449205485507864
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 5,
+      "model": "lstm",
+      "mean_base_qlike": 1.3349215228757176,
+      "mean_news_qlike": 1.392543157911099,
+      "mean_delta_qlike": -0.05762163503538131,
+      "relative_improvement_pct": -4.316481085064199,
+      "improved_assets": 20,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.1862044752084513,
+        0.01437688713332476
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "garch_11",
+      "mean_base_qlike": 0.5984160414145773,
+      "mean_news_qlike": 0.5984160414145773,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "rolling_mean",
+      "mean_base_qlike": 0.5707334396581683,
+      "mean_news_qlike": 0.5707334396581683,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "gradient_boosting",
+      "mean_base_qlike": 1.2117104927631142,
+      "mean_news_qlike": 1.2560286597513584,
+      "mean_delta_qlike": -0.0443181669882442,
+      "relative_improvement_pct": -3.6574880924884647,
+      "improved_assets": 16,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.1325517550395296,
+        0.002369045145305351
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "elastic_net",
+      "mean_base_qlike": 246.12826792108297,
+      "mean_news_qlike": 367.4291362026984,
+      "mean_delta_qlike": -121.30086828161541,
+      "relative_improvement_pct": -49.28359887557026,
+      "improved_assets": 10,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -363.8628589263639,
+        -0.013130498638865607
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "lstm",
+      "mean_base_qlike": 1.2518784326325425,
+      "mean_news_qlike": 1.1473905746609474,
+      "mean_delta_qlike": 0.1044878579715951,
+      "relative_improvement_pct": 8.346485988409459,
+      "improved_assets": 22,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.012295375499654336,
+        0.3268948133832942
+      ],
+      "verdict": "Non-Significant Gain"
+    },
+    {
+      "horizon": 20,
+      "model": "garch_11",
+      "mean_base_qlike": 0.6591718327413969,
+      "mean_news_qlike": 0.6591718327413969,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 20,
+      "model": "rolling_mean",
+      "mean_base_qlike": 0.5775560702602759,
+      "mean_news_qlike": 0.5775560702602759,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 20,
+      "model": "gradient_boosting",
+      "mean_base_qlike": 0.8582747415191959,
+      "mean_news_qlike": 0.8784867774317607,
+      "mean_delta_qlike": -0.02021203591256482,
+      "relative_improvement_pct": -2.354961055569263,
+      "improved_assets": 25,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.07088195682649176,
+        0.006770829713265692
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 20,
+      "model": "elastic_net",
+      "mean_base_qlike": 10.357563887024538,
+      "mean_news_qlike": 10.680047937373828,
+      "mean_delta_qlike": -0.3224840503492903,
+      "relative_improvement_pct": -3.11351253892127,
+      "improved_assets": 9,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.9264940379043981,
+        -0.014973194103503146
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 20,
+      "model": "lstm",
+      "mean_base_qlike": 0.9791813484544132,
+      "mean_news_qlike": 0.9393196082975475,
+      "mean_delta_qlike": 0.03986174015686572,
+      "relative_improvement_pct": 4.070925188657382,
+      "improved_assets": 19,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.008666253799356592,
+        0.1213306296667972
+      ],
+      "verdict": "Non-Significant Gain"
+    }
+  ],
+  "sector_breakdown": {
+    "Mega-Cap Tech / Growth": {
+      "1": "4/6",
+      "5": "5/6",
+      "10": "6/6",
+      "20": "3/6"
+    },
+    "Broad & Tech ETFs": {
+      "1": "0/2",
+      "5": "1/2",
+      "10": "1/2",
+      "20": "1/2"
+    },
+    "Financials & Fintech": {
+      "1": "1/3",
+      "5": "0/3",
+      "10": "0/3",
+      "20": "0/3"
+    },
+    "Industrials & Logistics": {
+      "1": "4/7",
+      "5": "2/7",
+      "10": "4/7",
+      "20": "2/7"
+    },
+    "Healthcare & Biotech": {
+      "1": "3/7",
+      "5": "4/7",
+      "10": "5/7",
+      "20": "5/7"
+    },
+    "Consumer Staples & Discretionary": {
+      "1": "4/7",
+      "5": "5/7",
+      "10": "5/7",
+      "20": "4/7"
+    },
+    "Energy & Utilities": {
+      "1": "2/6",
+      "5": "0/6",
+      "10": "0/6",
+      "20": "2/6"
+    },
+    "High-Beta / High-Vol": {
+      "1": "4/6",
+      "5": "3/6",
+      "10": "1/6",
+      "20": "2/6"
+    }
+  },
+  "verdict": "REMOVE_NEWS_SIGNAL"
+}

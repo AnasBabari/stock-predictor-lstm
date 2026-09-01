@@ -370,3 +370,82 @@ def test_volatility_metrics_distribution_diagnostics() -> None:
     assert "worst_1pct_share" in m
     assert 0.0 <= m["worst_1pct_share"] <= 100.0
     assert m["max_qlike"] >= m["p95_qlike"] >= m["median_qlike"]
+
+
+def test_causal_news_features_cutoff_and_integrity() -> None:
+    from volatility_forecasting.simple_pipeline import (
+        NEWS_FEATURE_NAMES,
+        build_causal_news_features,
+    )
+
+    sessions = pd.date_range("2025-01-02", "2025-01-10", freq="B")
+
+    # Construct two articles for day 2025-01-03:
+    # Article 1: 2025-01-03 14:00:00 UTC (10:00 AM ET - before close) -> participates in 2025-01-03
+    # Article 2: 2025-01-03 21:30:00 UTC (17:30 PM ET - after close) -> must NOT participate in 2025-01-03
+    events = [
+        {
+            "ticker": "AAPL",
+            "published_at": pd.Timestamp("2025-01-03T14:00:00Z"),
+            "sentiment_pos": 0.8,
+            "sentiment_neg": 0.1,
+            "sentiment_compound": 0.7,
+        },
+        {
+            "ticker": "AAPL",
+            "published_at": pd.Timestamp("2025-01-03T21:30:00Z"),
+            "sentiment_pos": 0.1,
+            "sentiment_neg": 0.9,
+            "sentiment_compound": -0.8,
+        },
+    ]
+
+    news_df = build_causal_news_features(sessions, ticker="AAPL", news_events=events)
+
+    for name in NEWS_FEATURE_NAMES:
+        assert name in news_df.columns
+
+    # On 2025-01-03 at 16:00 ET cutoff: only Article 1 is visible
+    day_3 = news_df.loc[pd.Timestamp("2025-01-03")]
+    assert day_3["news_headline_count_1d"] == 1.0
+    assert day_3["news_negative_sentiment_mean"] == pytest.approx(0.1)
+    assert day_3["news_positive_sentiment_mean"] == pytest.approx(0.8)
+
+    # On 2025-01-06 (Monday 20:00 UTC):
+    # 72h window is [2025-01-03 20:00 UTC, 2025-01-06 20:00 UTC] -> Article 2 (Fri 21:30 UTC) is in 3d window
+    # 168h window (7d) includes Article 1 (Fri 14:00 UTC) and Article 2 (Fri 21:30 UTC)
+    day_6 = news_df.loc[pd.Timestamp("2025-01-06")]
+    assert day_6["news_headline_count_1d"] == 0.0
+    assert day_6["news_headline_count_3d"] == 1.0
+    assert day_6["news_headline_count_7d"] == 2.0
+    assert day_6["news_negative_sentiment_mean"] == pytest.approx(0.9)  # Article 2
+    assert day_6["news_positive_sentiment_mean"] == pytest.approx(0.1)  # Article 2
+
+    # Monotonicity check
+    assert np.all(news_df["news_headline_count_1d"] <= news_df["news_headline_count_3d"])
+    assert np.all(news_df["news_headline_count_3d"] <= news_df["news_headline_count_7d"])
+
+
+def test_news_feature_mode_nesting_and_examples() -> None:
+    from volatility_forecasting.simple_pipeline import VolatilityConfig, build_examples
+
+    frame = _frame(150)
+    mkt = pd.DataFrame(
+        {"spy_return_1d": np.zeros(len(frame)), "spy_vol_22": np.full(len(frame), 0.15)},
+        index=frame.index,
+    )
+
+    ex_mkt = build_examples(
+        frame, VolatilityConfig(feature_mode="price_plus_ohlc_plus_market"), market_frame=mkt
+    )
+    ex_news = build_examples(
+        frame,
+        VolatilityConfig(feature_mode="price_plus_ohlc_plus_market_plus_news"),
+        market_frame=mkt,
+        ticker="TEST",
+    )
+
+    assert ex_news.sequences.shape[-1] == ex_mkt.sequences.shape[-1] + 10
+    assert "news_headline_count_1d" in ex_news.feature_names
+    assert "news_negative_news_intensity" in ex_news.feature_names
+

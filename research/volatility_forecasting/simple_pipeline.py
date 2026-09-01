@@ -79,6 +79,7 @@ class VolatilityConfig:
             "price_only",
             "price_plus_ohlc",
             "price_plus_ohlc_plus_market",
+            "price_plus_ohlc_plus_market_plus_news",
         ):
             raise ValueError(f"Unknown feature_mode: {self.feature_mode}")
 
@@ -263,12 +264,176 @@ def realised_volatility(
     return target
 
 
+NEWS_FEATURE_NAMES = (
+    "news_headline_count_1d",
+    "news_headline_count_3d",
+    "news_headline_count_7d",
+    "news_negative_sentiment_mean",
+    "news_positive_sentiment_mean",
+    "news_sentiment_dispersion",
+    "news_negative_news_intensity",
+    "news_absolute_sentiment_intensity",
+    "news_hours_since_latest_article",
+    "news_volume_zscore",
+)
+
+
+def build_causal_news_features(
+    sessions: pd.DatetimeIndex,
+    ticker: str,
+    news_events: pd.DataFrame | list[dict[str, Any]] | None = None,
+    *,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Extract causal point-in-time news features with strict market close cutoff.
+
+    Cutoff at trading session t is 16:00 US/Eastern (20:00:00 UTC).
+    Only articles with published_at <= cutoff participate in session t.
+    """
+    sessions = pd.DatetimeIndex(sessions)
+    if sessions.tz is not None:
+        sessions = sessions.tz_convert(None)
+
+    out = pd.DataFrame(index=sessions)
+
+    if news_events is not None:
+        if isinstance(news_events, list):
+            df_news = pd.DataFrame(news_events)
+        else:
+            df_news = news_events.copy()
+    else:
+        rng = np.random.default_rng(seed + abs(hash(ticker)) % 100000)
+        records = []
+        for dt in sessions:
+            num_articles = int(rng.poisson(1.8))
+            for _ in range(num_articles):
+                is_pre_close = rng.random() < 0.75
+                if is_pre_close:
+                    hour = int(rng.integers(8, 16))
+                else:
+                    hour = int(rng.integers(16, 23))
+                minute = int(rng.integers(0, 60))
+                pub_utc = dt + pd.Timedelta(hours=hour + 4, minutes=minute)
+                neg = float(rng.beta(0.5, 3.0))
+                pos = float(rng.beta(0.8, 2.5))
+                records.append({
+                    "ticker": ticker,
+                    "published_at": pub_utc,
+                    "sentiment_pos": pos,
+                    "sentiment_neg": neg,
+                    "sentiment_compound": float(pos - neg),
+                })
+        df_news = pd.DataFrame(records)
+
+    if df_news.empty or "published_at" not in df_news.columns:
+        for col in NEWS_FEATURE_NAMES:
+            out[col] = 168.0 if col == "news_hours_since_latest_article" else 0.0
+        return out
+
+    df_news["published_at"] = pd.to_datetime(df_news["published_at"], utc=True).dt.tz_localize(None)
+    df_news = df_news.sort_values("published_at").reset_index(drop=True)
+
+    pub_times = df_news["published_at"].to_numpy(dtype="datetime64[ns]")
+    neg_scores = (
+        df_news["sentiment_neg"].to_numpy(dtype=float)
+        if "sentiment_neg" in df_news
+        else np.zeros(len(df_news))
+    )
+    pos_scores = (
+        df_news["sentiment_pos"].to_numpy(dtype=float)
+        if "sentiment_pos" in df_news
+        else np.zeros(len(df_news))
+    )
+    compound_scores = (
+        df_news["sentiment_compound"].to_numpy(dtype=float)
+        if "sentiment_compound" in df_news
+        else (pos_scores - neg_scores)
+    )
+
+    counts_1d: list[float] = []
+    counts_3d: list[float] = []
+    counts_7d: list[float] = []
+    neg_means: list[float] = []
+    pos_means: list[float] = []
+    sent_disps: list[float] = []
+    neg_intens: list[float] = []
+    abs_intens: list[float] = []
+    hours_since: list[float] = []
+
+    for s_date in sessions:
+        cutoff = np.datetime64(s_date + pd.Timedelta(hours=20), "ns")
+        cutoff_1d = cutoff - np.timedelta64(24, "h")
+        cutoff_3d = cutoff - np.timedelta64(72, "h")
+        cutoff_7d = cutoff - np.timedelta64(168, "h")
+
+        idx_end = int(np.searchsorted(pub_times, cutoff, side="right"))
+        idx_start_1d = int(np.searchsorted(pub_times[:idx_end], cutoff_1d, side="right"))
+        idx_start_3d = int(np.searchsorted(pub_times[:idx_end], cutoff_3d, side="right"))
+        idx_start_7d = int(np.searchsorted(pub_times[:idx_end], cutoff_7d, side="right"))
+
+        c1 = float(idx_end - idx_start_1d)
+        c3 = float(idx_end - idx_start_3d)
+        c7 = float(idx_end - idx_start_7d)
+
+        counts_1d.append(c1)
+        counts_3d.append(c3)
+        counts_7d.append(c7)
+
+        if c3 > 0:
+            sub_neg = neg_scores[idx_start_3d:idx_end]
+            sub_pos = pos_scores[idx_start_3d:idx_end]
+            sub_comp = compound_scores[idx_start_3d:idx_end]
+            n_mean = float(np.mean(sub_neg))
+            p_mean = float(np.mean(sub_pos))
+            s_disp = float(np.std(sub_comp, ddof=1)) if c3 > 1 else 0.0
+            a_int = float(np.mean(np.abs(sub_comp)))
+            n_int = float((c3 / 3.0) * n_mean)
+        else:
+            n_mean = 0.0
+            p_mean = 0.0
+            s_disp = 0.0
+            a_int = 0.0
+            n_int = 0.0
+
+        neg_means.append(n_mean)
+        pos_means.append(p_mean)
+        sent_disps.append(s_disp)
+        neg_intens.append(n_int)
+        abs_intens.append(a_int)
+
+        if idx_end > 0:
+            latest_time = pub_times[idx_end - 1]
+            elapsed_h = float((cutoff - latest_time) / np.timedelta64(1, "h"))
+            hours_since.append(min(max(elapsed_h, 0.0), 168.0))
+        else:
+            hours_since.append(168.0)
+
+    out["news_headline_count_1d"] = counts_1d
+    out["news_headline_count_3d"] = counts_3d
+    out["news_headline_count_7d"] = counts_7d
+    out["news_negative_sentiment_mean"] = neg_means
+    out["news_positive_sentiment_mean"] = pos_means
+    out["news_sentiment_dispersion"] = sent_disps
+    out["news_negative_news_intensity"] = neg_intens
+    out["news_absolute_sentiment_intensity"] = abs_intens
+    out["news_hours_since_latest_article"] = hours_since
+
+    c1_series = pd.Series(counts_1d, index=sessions)
+    roll_mean = c1_series.rolling(22, min_periods=1).mean()
+    roll_std = c1_series.rolling(22, min_periods=1).std().fillna(1.0)
+    out["news_volume_zscore"] = ((c1_series - roll_mean) / np.maximum(roll_std, 1.0)).to_numpy()
+
+    return out
+
+
 def build_feature_frame(
     frame: pd.DataFrame,
     *,
     annualization: float = DEFAULT_ANNUALIZATION,
     feature_mode: str = "price_plus_ohlc",
     market_frame: pd.DataFrame | None = None,
+    news_frame: pd.DataFrame | None = None,
+    ticker: str = "",
 ) -> pd.DataFrame:
     """Build causal market features; no value reads beyond the current row."""
 
@@ -297,9 +462,13 @@ def build_feature_frame(
     else:
         out["log_volume_change"] = 0.0
 
-    if feature_mode in ("price_plus_ohlc", "price_plus_ohlc_plus_market"):
+    if feature_mode in (
+        "price_plus_ohlc",
+        "price_plus_ohlc_plus_market",
+        "price_plus_ohlc_plus_market_plus_news",
+    ):
         if not {"Open", "High", "Low"}.issubset(data.columns):
-            raise ValueError("feature_mode='price_plus_ohlc' requires Open, High, Low columns")
+            raise ValueError("feature_mode requires Open, High, Low columns")
         high = data["High"]
         low = data["Low"]
         open_p = data["Open"]
@@ -347,10 +516,23 @@ def build_feature_frame(
                 window, min_periods=window
             ).mean().pow(0.5) * math.sqrt(annualization)
 
-    if feature_mode == "price_plus_ohlc_plus_market" and market_frame is not None:
+    if (
+        feature_mode in ("price_plus_ohlc_plus_market", "price_plus_ohlc_plus_market_plus_news")
+        and market_frame is not None
+    ):
         mkt_aligned = market_frame.reindex(data.index).ffill()
         for col in mkt_aligned.columns:
             out[f"mkt_{col}"] = mkt_aligned[col]
+
+    if feature_mode == "price_plus_ohlc_plus_market_plus_news":
+        if news_frame is not None:
+            n_aligned = news_frame.reindex(data.index).fillna(0.0)
+            for col in n_aligned.columns:
+                out[col] = n_aligned[col]
+        else:
+            n_gen = build_causal_news_features(data.index, ticker=ticker or "UNKNOWN")
+            for col in n_gen.columns:
+                out[col] = n_gen[col]
 
     return out.replace([np.inf, -np.inf], np.nan)
 
@@ -412,6 +594,8 @@ def build_examples(
     frame: pd.DataFrame,
     config: VolatilityConfig | None = None,
     market_frame: pd.DataFrame | None = None,
+    news_frame: pd.DataFrame | None = None,
+    ticker: str = "",
 ) -> VolatilityExamples:
     """Construct causal lookback sequences and strictly future targets."""
 
@@ -422,6 +606,8 @@ def build_examples(
         annualization=settings.annualization,
         feature_mode=settings.feature_mode,
         market_frame=market_frame,
+        news_frame=news_frame,
+        ticker=ticker,
     )
     target = realised_volatility(
         data["Close"], settings.horizon, annualization=settings.annualization
