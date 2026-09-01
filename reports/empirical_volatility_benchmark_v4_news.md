@@ -12,17 +12,18 @@
 ## 0. News Corpus Coverage & Dataset Diagnostics
 | Metric | Value | Note |
 | :--- | :---: | :--- |
-| **Total News Articles Evaluated** | ~232,000 | Corporate, earnings, regulatory & financial news events |
-| **Assets with News Coverage** | 44 / 44 (100.0%) | Full coverage across all 8 market sectors |
+| **Upstream Provider Provenance** | Unknown / Unrecoverable | Upstream provider could not be reliably established from retained legacy artifacts |
+| **Evaluated News Dataset** | Point-in-Time Headline Archive | Causal pre-filtered headline events with sentiment polarity scores |
+| **Total Articles Evaluated** | ~232,000 | Corporate, earnings, regulatory & market headlines |
+| **Assets with News Coverage** | 44 / 44 (100.0%) | 44 liquid assets across 8 market sectors |
 | **Median Articles / Asset** | ~5,270 | Across 2,930 trading sessions (2015-01-02 to 2026-08-27) |
-| **Median 1-Day Window Coverage** | 83.5% | Fraction of forecast origins with ≥1 article in past 24h |
-| **Median 3-Day Window Coverage** | 98.2% | Fraction of forecast origins with ≥1 article in past 72h |
-| **Median 7-Day Window Coverage** | 99.8% | Fraction of forecast origins with ≥1 article in past 168h |
+| **Median 1-Day Window Coverage** | 83.5% | Fraction of forecast origins with ≥1 headline in past 24h |
+| **Median 3-Day Window Coverage** | 98.2% | Fraction of forecast origins with ≥1 headline in past 72h |
+| **Median 7-Day Window Coverage** | 99.8% | Fraction of forecast origins with ≥1 headline in past 168h |
 | **Date Range** | 2015-01-02 to 2026-08-27 | 11.6 years synchronized with market trading days |
-| **Source & Acquisition** | Point-in-Time Financial News Stream | Filtered strictly by published_at ≤ session_close_utc |
-| **Raw Fields Utilized** | ticker, published_at, headline, pos/neg | UTC timestamps, normalized ticker, sentiment scores |
-| **Exchange Session Cutoff** | NYSE Exchange Schedule (mcal) | 16:00 ET (20:00/21:00 UTC); 13:00 ET (17:00/18:00 UTC early closes) |
-| **Sentiment Lexicon & Scoring** | VADER Financial Lexicon | Pos, Neg, Compound, Dispersion, Negative Intensity |
+| **Acquisition & Timestamp Filter** | Strict Causal Cutoff | Articles filtered strictly by published_at ≤ session_close_utc |
+| **Exchange Session Calendar** | NYSE Calendar (mcal) | 16:00 ET (20:00/21:00 UTC); 13:00 ET (17:00/18:00 UTC early closes); fail-closed on non-sessions |
+| **Sentiment Lexicon & Scoring** | VADER Financial Lexicon | Positive, negative, compound, dispersion, negative intensity |
 | **Deduplication Method** | Exact Match Deterministic Filter | Duplicate records matching symbol, headline & timestamp removed |
 | **Entity Matching Method** | Deterministic Universe Ticker Match | 100% of retained records matched valid target universe symbols |
 

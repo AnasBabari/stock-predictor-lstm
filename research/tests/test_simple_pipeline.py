@@ -512,3 +512,36 @@ def test_news_feature_mode_nesting_and_examples() -> None:
     assert ex_news.sequences.shape[-1] == ex_mkt.sequences.shape[-1] + 10
     assert "news_headline_count_1d" in ex_news.feature_names
     assert "news_negative_news_intensity" in ex_news.feature_names
+
+
+def test_exchange_calendar_fail_closed_on_non_trading_sessions() -> None:
+    from volatility_forecasting.simple_pipeline import (
+        NonTradingSessionError,
+        get_session_close_utc,
+    )
+
+    # 1. Weekends fail closed
+    with pytest.raises(NonTradingSessionError, match="not an open trading session"):
+        get_session_close_utc("2024-11-30")  # Saturday
+    with pytest.raises(NonTradingSessionError, match="not an open trading session"):
+        get_session_close_utc("2024-12-01")  # Sunday
+
+    # 2. Market holidays fail closed
+    with pytest.raises(NonTradingSessionError, match="not an open trading session"):
+        get_session_close_utc("2024-11-28")  # Thanksgiving
+    with pytest.raises(NonTradingSessionError, match="not an open trading session"):
+        get_session_close_utc("2024-12-25")  # Christmas Day
+
+    # 3. Early close sessions resolve exact close times
+    bf_close = get_session_close_utc("2024-11-29")  # Black Friday (13:00 EST)
+    assert bf_close == pd.Timestamp("2024-11-29 18:00:00")
+
+    july3_close = get_session_close_utc("2024-07-03")  # July 3rd (13:00 EDT)
+    assert july3_close == pd.Timestamp("2024-07-03 17:00:00")
+
+    # 4. Standard sessions resolve accurately
+    summer_close = get_session_close_utc("2024-07-15")  # Summer EDT (16:00 EDT)
+    assert summer_close == pd.Timestamp("2024-07-15 20:00:00")
+
+    winter_close = get_session_close_utc("2025-01-15")  # Winter EST (16:00 EST)
+    assert winter_close == pd.Timestamp("2025-01-15 21:00:00")

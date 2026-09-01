@@ -278,6 +278,10 @@ NEWS_FEATURE_NAMES = (
 )
 
 
+class NonTradingSessionError(ValueError):
+    """Raised when an exchange market close is requested for a non-trading session (weekend or holiday)."""
+
+
 _NYSE_CALENDAR = None
 
 
@@ -288,7 +292,7 @@ def get_session_close_utc(s_date: pd.Timestamp | str) -> pd.Timestamp:
     - Normal trading closes (16:00 ET -> 20:00 UTC during EDT, 21:00 UTC during EST)
     - Early market closes (13:00 ET -> 17:00 UTC during EDT, 18:00 UTC during EST,
       e.g. Black Friday, Christmas Eve, July 3rd)
-    - Dynamic fallback to America/New_York session close
+    - Fails closed by raising NonTradingSessionError on weekends and full market holidays.
     """
     global _NYSE_CALENDAR
     ts = pd.Timestamp(s_date)
@@ -296,22 +300,19 @@ def get_session_close_utc(s_date: pd.Timestamp | str) -> pd.Timestamp:
         ts = ts.tz_localize(None)
     date_str = ts.strftime("%Y-%m-%d")
 
-    try:
-        if _NYSE_CALENDAR is None:
-            import pandas_market_calendars as mcal
+    if _NYSE_CALENDAR is None:
+        import pandas_market_calendars as mcal
 
-            _NYSE_CALENDAR = mcal.get_calendar("NYSE")
-        sched = _NYSE_CALENDAR.schedule(start_date=date_str, end_date=date_str)
-        if not sched.empty and "market_close" in sched.columns:
-            close_val = sched.loc[date_str, "market_close"]
-            return pd.Timestamp(close_val).tz_convert("UTC").tz_localize(None)
-    except Exception:
-        pass
+        _NYSE_CALENDAR = mcal.get_calendar("NYSE")
 
-    close_et = ts.tz_localize("America/New_York").replace(
-        hour=16, minute=0, second=0, microsecond=0
-    )
-    return close_et.tz_convert("UTC").tz_localize(None)
+    sched = _NYSE_CALENDAR.schedule(start_date=date_str, end_date=date_str)
+    if sched.empty or "market_close" not in sched.columns:
+        raise NonTradingSessionError(
+            f"Date '{date_str}' is not an open trading session on NYSE (weekend or market holiday)."
+        )
+
+    close_val = sched.loc[date_str, "market_close"]
+    return pd.Timestamp(close_val).tz_convert("UTC").tz_localize(None)
 
 
 def build_causal_news_features(
@@ -342,7 +343,11 @@ def build_causal_news_features(
             ts = pd.Timestamp(dt)
             if ts.tz is not None:
                 ts = ts.tz_localize(None)
-            close_utc_ts = get_session_close_utc(ts)
+            try:
+                close_utc_ts = get_session_close_utc(ts)
+            except NonTradingSessionError:
+                ts_et = ts.tz_localize("America/New_York").replace(hour=16, minute=0, second=0)
+                close_utc_ts = ts_et.tz_convert("UTC").tz_localize(None)
             num_articles = int(rng.poisson(1.8))
             for _ in range(num_articles):
                 is_pre_close = rng.random() < 0.75
@@ -401,7 +406,15 @@ def build_causal_news_features(
     hours_since: list[float] = []
 
     for s_date in sessions:
-        cutoff_ts = get_session_close_utc(s_date)
+        try:
+            cutoff_ts = get_session_close_utc(s_date)
+        except NonTradingSessionError:
+            ts_et = (
+                pd.Timestamp(s_date)
+                .tz_localize("America/New_York")
+                .replace(hour=16, minute=0, second=0)
+            )
+            cutoff_ts = ts_et.tz_convert("UTC").tz_localize(None)
         cutoff = np.datetime64(cutoff_ts, "ns")
         cutoff_1d = cutoff - np.timedelta64(24, "h")
         cutoff_3d = cutoff - np.timedelta64(72, "h")
@@ -932,6 +945,72 @@ def fit_har_baseline(examples: VolatilityExamples, train_indices: np.ndarray) ->
     return _positive(examples.canonical_har_volatility)
 
 
+def fit_garch11_mle_from_returns(
+    returns: np.ndarray,
+    horizon: int = 1,
+    annualization: float = DEFAULT_ANNUALIZATION,
+) -> float:
+    """Fit causal GARCH(1,1) via numerical Maximum Likelihood Estimation (MLE) on return series."""
+    r_train = np.asarray(returns, dtype=np.float64).reshape(-1)
+    if len(r_train) < 20:
+        raise ValueError("GARCH(1,1) requires at least twenty training rows")
+
+    sample_var = float(np.var(r_train, ddof=1)) if len(r_train) > 1 else float(np.var(r_train))
+    if sample_var < _EPS:
+        sample_var = 1e-4
+
+    def _nll(params: np.ndarray) -> float:
+        omega, alpha, beta = params
+        if alpha + beta >= 1.0 or omega <= 0 or alpha < 0 or beta < 0:
+            return 1e10
+        n = len(r_train)
+        h = np.empty(n, dtype=np.float64)
+        h[0] = sample_var
+        for i in range(1, n):
+            h[i] = omega + alpha * (r_train[i - 1] ** 2) + beta * h[i - 1]
+            if h[i] <= 0 or not np.isfinite(h[i]):
+                return 1e10
+        ll = -0.5 * np.sum(np.log(h) + (r_train**2) / h)
+        return float(-ll)
+
+    init_params = np.array([0.05 * sample_var, 0.08, 0.87], dtype=np.float64)
+    bounds = [(1e-10, 1.0), (1e-4, 0.40), (0.50, 0.999)]
+
+    res = minimize(
+        _nll,
+        init_params,
+        method="L-BFGS-B",
+        bounds=bounds,
+        options={"maxiter": 150, "ftol": 1e-7},
+    )
+
+    if res.success and (res.x[1] + res.x[2] < 1.0):
+        omega, alpha, beta = float(res.x[0]), float(res.x[1]), float(res.x[2])
+    else:
+        alpha, beta = 0.08, 0.88
+        omega = (1.0 - alpha - beta) * sample_var
+
+    persistence = alpha + beta
+    unconditional_var = omega / max(1.0 - persistence, 1e-5)
+
+    n = len(r_train)
+    h_filtered = np.empty(n, dtype=np.float64)
+    h_filtered[0] = sample_var
+    for i in range(1, n):
+        h_filtered[i] = omega + alpha * (r_train[i - 1] ** 2) + beta * h_filtered[i - 1]
+
+    h_next = omega + alpha * (r_train[-1] ** 2) + beta * h_filtered[-1]
+
+    if persistence >= 0.9999 or abs(1.0 - persistence) < 1e-6:
+        cum_var = horizon * h_next
+    else:
+        geom_sum = (1.0 - (persistence**horizon)) / (1.0 - persistence)
+        cum_var = horizon * unconditional_var + (h_next - unconditional_var) * geom_sum
+
+    ann_vol = math.sqrt(max(cum_var * annualization / horizon, _EPS))
+    return float(ann_vol)
+
+
 def fit_garch11_baseline(
     examples: VolatilityExamples,
     train_indices: np.ndarray,
@@ -955,7 +1034,7 @@ def fit_garch11_baseline(
         r_all = examples.sequences[:, -1, r_idx].astype(np.float64)
 
     r_train = r_all[train]
-    sample_var = float(np.var(r_train))
+    sample_var = float(np.var(r_train, ddof=1)) if len(r_train) > 1 else float(np.var(r_train))
     if sample_var < _EPS:
         sample_var = 1e-4
 
@@ -1475,9 +1554,12 @@ __all__ = [
     "evaluate_price_diffusion_cone",
     "experiment_metadata",
     "fit_garch11_baseline",
+    "fit_garch11_mle_from_returns",
     "fit_har_baseline",
+    "get_session_close_utc",
     "learned_predictions",
     "lstm_predictions",
+    "NonTradingSessionError",
     "realised_volatility",
     "select_validation_model",
     "validate_ohlcv",

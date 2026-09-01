@@ -68,3 +68,7 @@ research/results/ndx100-v9/
 
 # Vitest/Node caches that may appear at repo root
 node_modules/
+
+# Local databases
+*.db
+data/forecast_ledger.db

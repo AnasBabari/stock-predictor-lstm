@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from data_pipeline import MarketDataUnavailable, MarketTransportError, UnknownTickerError
 from features.market import MarketContextUnavailable
 from routes.common import limiter, validate_ticker
-from services.forecast_ledger import get_forecast_ledger
+from services.forecast_ledger import get_current_code_commit, get_forecast_ledger
 from services.live_volatility import SUPPORTED_BASELINES, build_live_volatility_forecast
 from services.volatility_snapshot import VOLATILITY_HORIZONS, build_volatility_inference_snapshot
 
@@ -87,7 +87,7 @@ def volatility_forecast(
                 record_source="live",
                 model_version="deployable_v5",
                 feature_set_version="deployable_feature_columns_v5",
-                code_commit="head",
+                code_commit=get_current_code_commit(),
                 data_as_of=snapshot.origin_date,
             )
         except Exception as ledger_err:
