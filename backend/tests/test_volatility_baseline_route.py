@@ -99,3 +99,28 @@ def test_models_advertises_train_free_active_contract():
     assert active["endpoint"] == "/api/v1/volatility/forecast"
     assert active["metric_source"] == "baseline_definition"
     assert body["model_storage"]["required"] is False
+
+
+def test_volatility_ledger_routes(monkeypatch, tmp_path):
+    from services.forecast_ledger import ForecastLedger
+
+    test_db = tmp_path / "route_ledger.db"
+    test_ledger = ForecastLedger(test_db)
+    monkeypatch.setattr(volatility, "get_forecast_ledger", lambda: test_ledger)
+    monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
+
+    # 1. Forecast logs entry to ledger
+    resp = CLIENT.get(
+        "/api/v1/volatility/forecast", params={"ticker": "MSFT", "horizon": 7, "model": "auto"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["forecast"]["model"] == "rolling_mean"
+
+    # 2. Query ledger
+    ledger_resp = CLIENT.get("/api/v1/volatility/ledger", params={"ticker": "MSFT", "horizon": 7})
+    assert ledger_resp.status_code == 200
+    l_body = ledger_resp.json()
+    assert l_body["ticker"] == "MSFT"
+    assert len(l_body["entries"]) >= 1
+    assert l_body["entries"][0]["ticker"] == "MSFT"
+    assert l_body["entries"][0]["status"] == "pending"

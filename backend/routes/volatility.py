@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from data_pipeline import MarketDataUnavailable, MarketTransportError, UnknownTickerError
 from features.market import MarketContextUnavailable
 from routes.common import limiter, validate_ticker
+from services.forecast_ledger import get_forecast_ledger
 from services.live_volatility import SUPPORTED_BASELINES, build_live_volatility_forecast
 from services.volatility_snapshot import VOLATILITY_HORIZONS, build_volatility_inference_snapshot
 
@@ -30,7 +31,7 @@ def volatility_forecast(
     request: Request,
     ticker: str = Query(default="AAPL", min_length=1, max_length=12),
     horizon: int = Query(default=7, ge=1, le=30),
-    model: str = Query(default="har_rv"),
+    model: str = Query(default="auto"),
 ) -> dict[str, Any]:
     """Return a causal volatility cone for one supported trading horizon.
 
@@ -54,11 +55,40 @@ def volatility_forecast(
 
     try:
         snapshot = build_volatility_inference_snapshot(symbol)
-        return build_live_volatility_forecast(
+        forecast_result = build_live_volatility_forecast(
             snapshot,
             horizon=horizon,
             model=requested_model,
         )
+
+        # Record forecast in persistent ledger for subsequent track record scoring
+        try:
+            ledger = get_forecast_ledger()
+            future_dates = forecast_result.get("forecast", {}).get("future_dates", [])
+            target_date = future_dates[-1] if future_dates else ""
+            quantiles = forecast_result.get("forecast", {}).get("price_quantiles", {})
+            p05 = quantiles.get("p05", [snapshot.origin_close])[-1]
+            p95 = quantiles.get("p95", [snapshot.origin_close])[-1]
+            pred_vol = float(forecast_result.get("forecast", {}).get("predicted_volatility", 0.0))
+            recent_vol = float(snapshot.baseline_candidates.get("rolling_c2c_20", [pred_vol])[0])
+            active_model = str(forecast_result.get("forecast", {}).get("model", requested_model))
+
+            ledger.record_forecast(
+                forecast_date=snapshot.origin_date,
+                ticker=symbol,
+                horizon=horizon,
+                target_date=target_date,
+                model_name=active_model,
+                predicted_volatility=pred_vol,
+                recent_realized_volatility=recent_vol,
+                origin_price=float(snapshot.origin_close),
+                lower_scenario_price=float(p05),
+                upper_scenario_price=float(p95),
+            )
+        except Exception as ledger_err:
+            logger.warning("Could not record forecast to ledger for %s: %s", symbol, ledger_err)
+
+        return forecast_result
     except UnknownTickerError as err:
         raise HTTPException(
             status_code=404, detail="No market data is available for this ticker."
@@ -74,14 +104,12 @@ def volatility_forecast(
             detail="Not enough valid market history is available for this ticker.",
         ) from err
     except ValueError as err:
-        # Validation failures are safe to expose only as a generic contract
-        # error; provider internals and filesystem details stay private.
         logger.info("Volatility request rejected for %s: %s", symbol, err)
         raise HTTPException(
             status_code=422,
             detail="The volatility snapshot could not be formed from valid market data.",
         ) from err
-    except Exception as err:  # pragma: no cover - defensive production boundary
+    except Exception as err:
         logger.exception("Volatility forecast failed for %s", symbol)
         raise HTTPException(
             status_code=503,
@@ -89,4 +117,73 @@ def volatility_forecast(
         ) from err
 
 
-__all__ = ["router", "volatility_forecast"]
+@router.get("/api/v1/volatility/ledger")
+@limiter.limit("30/minute")
+def get_volatility_ledger_route(
+    request: Request,
+    ticker: str = Query(default="AAPL", min_length=1, max_length=12),
+    horizon: int | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Retrieve historical forecast ledger and empirical accuracy track record."""
+    symbol = validate_ticker(ticker)
+    ledger = get_forecast_ledger()
+
+    entries = ledger.get_ledger_entries(ticker=symbol, horizon=horizon, limit=limit)
+    if not entries:
+        try:
+            from data_pipeline import fetch_historical_frame
+
+            df = fetch_historical_frame(symbol)
+            if df is not None and not df.empty:
+                ledger.seed_historical_test_ledger(symbol, df, horizon=horizon or 5)
+                entries = ledger.get_ledger_entries(ticker=symbol, horizon=horizon, limit=limit)
+        except Exception as seed_err:
+            logger.debug("Could not auto-seed test ledger for %s: %s", symbol, seed_err)
+
+    metrics = ledger.get_track_record_metrics(ticker=symbol, horizon=horizon)
+    return {
+        "ticker": symbol,
+        "horizon": horizon,
+        "track_record": metrics,
+        "entries": entries,
+    }
+
+
+@router.post("/api/v1/volatility/score-ledger")
+@limiter.limit("10/minute")
+def score_volatility_ledger_route(
+    request: Request,
+    ticker: str = Query(default="AAPL", min_length=1, max_length=12),
+) -> dict[str, Any]:
+    """Score pending ledger forecasts against subsequent realized volatility."""
+    symbol = validate_ticker(ticker)
+    ledger = get_forecast_ledger()
+    try:
+        from data_pipeline import fetch_historical_frame
+
+        df = fetch_historical_frame(symbol)
+        if df is None or df.empty:
+            raise HTTPException(
+                status_code=422, detail="No historical market data available for scoring."
+            )
+        scored_count = ledger.score_pending_forecasts(symbol, df)
+        metrics = ledger.get_track_record_metrics(ticker=symbol)
+        return {
+            "ticker": symbol,
+            "scored_count": scored_count,
+            "track_record": metrics,
+        }
+    except HTTPException:
+        raise
+    except Exception as err:
+        logger.exception("Failed to score volatility ledger for %s", symbol)
+        raise HTTPException(status_code=500, detail=str(err)) from err
+
+
+__all__ = [
+    "router",
+    "volatility_forecast",
+    "get_volatility_ledger_route",
+    "score_volatility_ledger_route",
+]

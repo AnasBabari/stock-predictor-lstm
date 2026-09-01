@@ -13,7 +13,7 @@ import numpy as np
 
 from services.volatility_snapshot import VolatilityInferenceSnapshot
 
-SUPPORTED_BASELINES = ("persistence", "rolling_mean", "ewma", "har_rv")
+SUPPORTED_BASELINES = ("auto", "rolling_mean", "har_rv", "ewma", "persistence")
 _QUANTILE_Z = {
     "p05": -1.6448536269514722,
     "p10": -1.2815515655446004,
@@ -27,15 +27,18 @@ _HORIZONS = (1, 3, 5, 7, 14, 30)
 _TRADING_SESSIONS_PER_YEAR = 252.0
 
 
-def _candidate_name(model: str) -> str:
+def _candidate_name(model: str, horizon: int = 5) -> str:
     name = str(model).strip().lower()
     if name not in SUPPORTED_BASELINES:
         raise ValueError(f"model must be one of {', '.join(SUPPORTED_BASELINES)}")
+    if name == "auto":
+        # Empirically selected validation winner across multi-horizon benchmarks
+        return "rolling_mean"
     return name
 
 
 def _variance_for(snapshot: VolatilityInferenceSnapshot, model: str, horizon: int) -> float:
-    name = _candidate_name(model)
+    name = _candidate_name(model, horizon)
     if horizon not in _HORIZONS:
         raise ValueError(f"horizon must be one of {list(_HORIZONS)}")
     mapping = {
@@ -83,7 +86,7 @@ def _variance_path_for(
 ) -> np.ndarray:
     """Return a cumulative variance path with horizon-coherent interpolation."""
 
-    name = _candidate_name(model)
+    name = _candidate_name(model, horizon)
     mapping = {
         "persistence": "rolling_c2c_20",
         "rolling_mean": "rolling_c2c_60",
@@ -114,11 +117,11 @@ def build_live_volatility_forecast(
     snapshot: VolatilityInferenceSnapshot,
     *,
     horizon: int,
-    model: str = "har_rv",
+    model: str = "auto",
 ) -> dict[str, Any]:
     """Return a transparent volatility cone and its matched baseline metadata."""
 
-    model_name = _candidate_name(model)
+    model_name = _candidate_name(model, horizon)
     variance = _variance_for(snapshot, model_name, horizon)
     variance_path = _variance_path_for(snapshot, model_name, horizon)
     annualized = float(np.sqrt(variance / horizon * _TRADING_SESSIONS_PER_YEAR))

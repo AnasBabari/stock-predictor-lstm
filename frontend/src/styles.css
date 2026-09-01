@@ -1819,3 +1819,121 @@ canvas {
         align-items: flex-start;
     }
 }
+
+/* ==========================================================================
+   Forecast Ledger & Track Record
+   ========================================================================== */
+.forecast-ledger-card {
+    margin-top: 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+}
+
+.ledger-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin: 14px 0 16px;
+}
+
+.ledger-kpi-box {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.kpi-label {
+    font-size: 0.72rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.kpi-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.kpi-subtext {
+    font-size: 0.70rem;
+    color: var(--text-muted);
+}
+
+.ledger-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+}
+
+.ledger-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    text-align: left;
+}
+
+.ledger-table th {
+    padding: 8px 12px;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.ledger-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.ledger-table tbody tr:hover {
+    background: var(--bg-card-hover);
+}
+
+.model-chip {
+    display: inline-block;
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    font-size: 0.70rem;
+    text-transform: capitalize;
+}
+
+.status-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 500;
+}
+
+.status-scored {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--bullish);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.status-pending {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.ledger-loading-state,
+.ledger-error-state {
+    padding: 24px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+

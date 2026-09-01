@@ -411,8 +411,8 @@ def test_causal_news_features_cutoff_and_integrity() -> None:
     assert day_3["news_negative_sentiment_mean"] == pytest.approx(0.1)
     assert day_3["news_positive_sentiment_mean"] == pytest.approx(0.8)
 
-    # On 2025-01-06 (Monday 20:00 UTC):
-    # 72h window is [2025-01-03 20:00 UTC, 2025-01-06 20:00 UTC] -> Article 2 (Fri 21:30 UTC) is in 3d window
+    # On 2025-01-06 (Monday 21:00 UTC):
+    # 72h window is [2025-01-03 21:00 UTC, 2025-01-06 21:00 UTC] -> Article 2 (Fri 21:30 UTC) is in 3d window
     # 168h window (7d) includes Article 1 (Fri 14:00 UTC) and Article 2 (Fri 21:30 UTC)
     day_6 = news_df.loc[pd.Timestamp("2025-01-06")]
     assert day_6["news_headline_count_1d"] == 0.0
@@ -424,6 +424,24 @@ def test_causal_news_features_cutoff_and_integrity() -> None:
     # Monotonicity check
     assert np.all(news_df["news_headline_count_1d"] <= news_df["news_headline_count_3d"])
     assert np.all(news_df["news_headline_count_3d"] <= news_df["news_headline_count_7d"])
+
+    # Test explicit DST transition (Winter EST 21:00 UTC vs Summer EDT 20:00 UTC)
+    # Article at 20:30 UTC:
+    # On 2025-01-15 (Winter EST): 20:30 UTC < 21:00 UTC cutoff -> visible on 2025-01-15 (1d count = 1)
+    # On 2025-07-15 (Summer EDT): 20:30 UTC > 20:00 UTC cutoff -> NOT visible on 2025-07-15 (1d count = 0)
+    w_df = build_causal_news_features(
+        pd.to_datetime(["2025-01-15"]),
+        ticker="AAPL",
+        news_events=[{"ticker": "AAPL", "published_at": pd.Timestamp("2025-01-15T20:30:00Z"), "sentiment_pos": 0.5, "sentiment_neg": 0.0}],
+    )
+    assert w_df.loc[pd.Timestamp("2025-01-15"), "news_headline_count_1d"] == 1.0
+
+    s_df = build_causal_news_features(
+        pd.to_datetime(["2025-07-15"]),
+        ticker="AAPL",
+        news_events=[{"ticker": "AAPL", "published_at": pd.Timestamp("2025-07-15T20:30:00Z"), "sentiment_pos": 0.5, "sentiment_neg": 0.0}],
+    )
+    assert s_df.loc[pd.Timestamp("2025-07-15"), "news_headline_count_1d"] == 0.0
 
 
 def test_news_feature_mode_nesting_and_examples() -> None:

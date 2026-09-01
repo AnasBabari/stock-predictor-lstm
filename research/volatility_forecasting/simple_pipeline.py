@@ -305,6 +305,9 @@ def build_causal_news_features(
         rng = np.random.default_rng(seed + abs(hash(ticker)) % 100000)
         records = []
         for dt in sessions:
+            ts = pd.Timestamp(dt)
+            if ts.tz is not None:
+                ts = ts.tz_localize(None)
             num_articles = int(rng.poisson(1.8))
             for _ in range(num_articles):
                 is_pre_close = rng.random() < 0.75
@@ -313,7 +316,10 @@ def build_causal_news_features(
                 else:
                     hour = int(rng.integers(16, 23))
                 minute = int(rng.integers(0, 60))
-                pub_utc = dt + pd.Timedelta(hours=hour + 4, minutes=minute)
+                pub_et = ts.tz_localize("America/New_York").replace(
+                    hour=hour, minute=minute, second=0, microsecond=0
+                )
+                pub_utc = pub_et.tz_convert("UTC").tz_localize(None)
                 neg = float(rng.beta(0.5, 3.0))
                 pos = float(rng.beta(0.8, 2.5))
                 records.append({
@@ -361,7 +367,15 @@ def build_causal_news_features(
     hours_since: list[float] = []
 
     for s_date in sessions:
-        cutoff = np.datetime64(s_date + pd.Timedelta(hours=20), "ns")
+        ts = pd.Timestamp(s_date)
+        if ts.tz is not None:
+            ts = ts.tz_localize(None)
+        # Market close cutoff at 16:00 America/New_York dynamically converted to UTC (20:00 EDT / 21:00 EST)
+        close_et = ts.tz_localize("America/New_York").replace(
+            hour=16, minute=0, second=0, microsecond=0
+        )
+        cutoff_ts = close_et.tz_convert("UTC").tz_localize(None)
+        cutoff = np.datetime64(cutoff_ts, "ns")
         cutoff_1d = cutoff - np.timedelta64(24, "h")
         cutoff_3d = cutoff - np.timedelta64(72, "h")
         cutoff_7d = cutoff - np.timedelta64(168, "h")

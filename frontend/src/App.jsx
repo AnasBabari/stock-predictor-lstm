@@ -15,6 +15,7 @@ import ForecastChartActions from './components/ForecastChartActions';
 import ResearchSignalsPanel from './components/ResearchSignalsPanel';
 import Watchlist from './components/Watchlist';
 import PredictionHistory from './components/PredictionHistory';
+import ForecastLedgerTrackRecord from './components/ForecastLedgerTrackRecord';
 import ToastContainer from './components/ToastContainer';
 import { useTheme } from './hooks/useTheme';
 import { useToasts } from './hooks/useToasts';
@@ -234,6 +235,12 @@ export default function App() {
               onSwitchHorizon={handleSwitchHorizon}
             />
             <HoldoutComparisonChart data={predictionData} />
+            {VOLATILITY_SERVING_ENABLED && (
+              <ForecastLedgerTrackRecord
+                ticker={predictionData?.ticker || ticker}
+                horizon={forecastDays}
+              />
+            )}
             {!VOLATILITY_SERVING_ENABLED && <ResearchSignalsPanel />}
             <GlobalModelStatus data={predictionData} />
             <ModelCard data={predictionData} />
