@@ -10,7 +10,7 @@ flowchart LR
     api --> market[Yahoo history + exchange calendar]
     market --> snapshot[Causal Deployable Schema v5 snapshot]
     snapshot --> baseline[Causal volatility baseline]
-    baseline --> distribution[p05-p95 volatility cone]
+    baseline --> distribution[raw Gaussian p05-p95 reference scenario]
     distribution --> browser
     api -->|invalid or unavailable data| error[Sanitized 4xx/503]
 \`\`\`

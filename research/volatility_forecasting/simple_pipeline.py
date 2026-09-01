@@ -23,6 +23,7 @@ import json
 import math
 import time
 import warnings
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -34,7 +35,15 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.preprocessing import StandardScaler
 
-PIPELINE_VERSION = "simple-volatility-v1"
+# Keep the research baseline definitions tied to the deployable implementation.
+# The fallback import is useful when this module is executed with ``backend``
+# itself on ``sys.path`` (the repository's pytest configuration does that).
+try:  # pragma: no cover - import path depends on the execution entry point
+    from backend.panel.volatility import causal_log_har_forecasts
+except ImportError:  # pragma: no cover - exercised by backend-local tooling
+    from panel.volatility import causal_log_har_forecasts
+
+PIPELINE_VERSION = "simple-volatility-v1.1"
 TARGET_VERSION = "future-realized-volatility-annualized-v1"
 DEFAULT_ANNUALIZATION = 252.0
 _EPS = 1e-12
@@ -66,7 +75,11 @@ class VolatilityConfig:
             raise ValueError("train and validation fractions must leave a test set")
         if self.embargo_sessions is not None and self.embargo_sessions < self.horizon:
             raise ValueError("embargo_sessions must be at least the forecast horizon")
-        if self.feature_mode not in ("price_only", "price_plus_ohlc", "price_plus_ohlc_plus_market"):
+        if self.feature_mode not in (
+            "price_only",
+            "price_plus_ohlc",
+            "price_plus_ohlc_plus_market",
+        ):
             raise ValueError(f"Unknown feature_mode: {self.feature_mode}")
 
     @property
@@ -140,6 +153,38 @@ def chronological_split(
         validation_end=raw_validation_end,
         embargo_sessions=embargo,
     )
+
+
+def assert_label_purged(examples: VolatilityExamples, split: ChronologicalSplit) -> None:
+    """Prove the split is purged using dates, not only row offsets.
+
+    A row-count gap is insufficient when a source has missing sessions.  This
+    check is intentionally callable by benchmark runners before any test
+    scores are produced.
+    """
+
+    if examples.target_end_dates is None:
+        raise ValueError("examples must carry target_end_dates for date-based purge checks")
+    origins = np.asarray(examples.dates, dtype="datetime64[D]")
+    ends = np.asarray(examples.target_end_dates, dtype="datetime64[D]")
+    if len(origins) != len(ends) or not len(origins):
+        raise ValueError("examples must contain matched origin and target-end dates")
+    if not np.all(np.diff(origins) > np.timedelta64(0, "D")):
+        raise ValueError("example origins must be strictly chronological")
+    if not np.all(np.diff(ends) > np.timedelta64(0, "D")):
+        raise ValueError("example target-end dates must be strictly chronological")
+    for group in (split.train, split.validation, split.test):
+        indices = np.asarray(group, dtype=np.int64)
+        if (
+            not len(indices)
+            or np.any(indices < 0)
+            or np.any(indices >= len(origins))
+            or np.any(np.diff(indices) <= 0)
+        ):
+            raise ValueError("split indices must be sorted and within the examples")
+    for prior, later in ((split.train, split.validation), (split.validation, split.test)):
+        if ends[prior].max() >= origins[later].min():
+            raise ValueError("label window overlaps the next split origin")
 
 
 def validate_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
@@ -234,10 +279,12 @@ def build_feature_frame(
     out = pd.DataFrame(index=data.index)
     out["return_1d"] = returns
     out["abs_return_1d"] = returns.abs()
-    for window in (5, 22, 60):
-        out[f"realized_vol_{window}"] = returns.pow(2).rolling(
+    for window in (5, 20, 22, 60):
+        # Match the deployable ``Vol_C2C_*`` features: sample standard
+        # deviation (ddof=1), annualised only at the presentation boundary.
+        out[f"realized_vol_{window}"] = returns.rolling(
             window, min_periods=window
-        ).mean().pow(0.5) * math.sqrt(annualization)
+        ).std() * math.sqrt(annualization)
     out["ewma_vol"] = returns.pow(2).ewm(alpha=1 - 0.94, adjust=False, min_periods=5).mean().pow(
         0.5
     ) * math.sqrt(annualization)
@@ -280,7 +327,9 @@ def build_feature_frame(
         var_parkinson = np.log(hl_ratio) ** 2 / (4.0 * math.log(2.0))
 
         # Garman-Klass (1980) daily variance proxy: 0.5 * (ln(H/L))^2 - (2*ln 2 - 1) * (ln(C/O))^2
-        var_gk = 0.5 * (np.log(hl_ratio) ** 2) - (2.0 * math.log(2.0) - 1.0) * (np.log(co_ratio) ** 2)
+        var_gk = 0.5 * (np.log(hl_ratio) ** 2) - (2.0 * math.log(2.0) - 1.0) * (
+            np.log(co_ratio) ** 2
+        )
         var_gk = np.maximum(var_gk, 0.0)
 
         # Rogers-Satchell (1991) daily variance proxy: ln(H/C)*ln(H/O) + ln(L/C)*ln(L/O)
@@ -318,9 +367,12 @@ class VolatilityExamples:
     current_volatility: np.ndarray
     rolling_mean_volatility: np.ndarray
     ewma_volatility: np.ndarray
+    target_horizon: int = 5
+    canonical_har_volatility: np.ndarray | None = None
     origin_close: np.ndarray | None = None
     future_close: np.ndarray | None = None
     daily_returns: np.ndarray | None = None
+    target_end_dates: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         rows = len(self.sequences)
@@ -340,12 +392,20 @@ class VolatilityExamples:
             arrays.append(self.future_close)
         if self.daily_returns is not None:
             arrays.append(self.daily_returns)
+        if self.canonical_har_volatility is not None:
+            arrays.append(self.canonical_har_volatility)
+        if self.target_end_dates is not None:
+            arrays.append(self.target_end_dates)
         if any(len(values) != rows for values in arrays):
             raise ValueError("example arrays must have matching row counts")
         if not np.isfinite(self.sequences).all() or not np.isfinite(self.target).all():
             raise ValueError("examples contain non-finite values")
         if (self.target <= 0).any():
             raise ValueError("volatility targets must be positive")
+        if self.target_horizon < 1:
+            raise ValueError("target_horizon must be positive")
+        if self.target_end_dates is not None and not np.all(self.target_end_dates > self.dates):
+            raise ValueError("target end dates must be after their origins")
 
 
 def build_examples(
@@ -381,6 +441,14 @@ def build_examples(
     origin_closes: list[float] = []
     future_closes: list[float] = []
     daily_returns: list[float] = []
+    target_end_dates: list[np.datetime64] = []
+    canonical_har: list[float] = []
+    daily_rv = pd.Series(
+        np.log(data["Close"]).diff().pow(2).to_numpy(dtype=np.float64), index=data.index
+    )
+    canonical_har_cumulative = causal_log_har_forecasts(
+        daily_rv, (settings.horizon,), minimum_history=60
+    )[:, 0]
     first = max(settings.lookback - 1, 60)
     for origin in range(first, len(data) - settings.horizon):
         window = values[origin - settings.lookback + 1 : origin + 1]
@@ -389,18 +457,31 @@ def build_examples(
             np.isfinite(window).all()
             and np.isfinite(target_value)
             and np.isfinite(har[origin]).all()
+            and np.isfinite(canonical_har_cumulative[origin])
+            and canonical_har_cumulative[origin] > 0
         ):
             continue
         rows.append(window)
         targets.append(float(target_value))
         dates.append(np.datetime64(data.index[origin].date()))
+        target_end_dates.append(np.datetime64(data.index[origin + settings.horizon].date()))
         har_rows.append(har[origin])
-        current.append(float(features["realized_vol_22"].iloc[origin]))
+        # The public persistence baseline is Vol_C2C_20.  Keep the research
+        # baseline on the same trailing window rather than the legacy 22-day
+        # proxy that is retained only as an input feature.
+        current.append(float(features["realized_vol_20"].iloc[origin]))
         rolling.append(float(features["realized_vol_60"].iloc[origin]))
         ewma.append(float(features["ewma_vol"].iloc[origin]))
         origin_closes.append(float(data["Close"].iloc[origin]))
         future_closes.append(float(data["Close"].iloc[origin + settings.horizon]))
         daily_returns.append(float(features["return_1d"].iloc[origin]))
+        canonical_har.append(
+            float(
+                np.sqrt(
+                    canonical_har_cumulative[origin] * settings.annualization / settings.horizon
+                )
+            )
+        )
     if not rows:
         raise ValueError("history did not produce any complete volatility examples")
     return VolatilityExamples(
@@ -412,6 +493,9 @@ def build_examples(
         current_volatility=np.asarray(current, dtype=np.float64),
         rolling_mean_volatility=np.asarray(rolling, dtype=np.float64),
         ewma_volatility=np.asarray(ewma, dtype=np.float64),
+        target_horizon=settings.horizon,
+        canonical_har_volatility=np.asarray(canonical_har, dtype=np.float64),
+        target_end_dates=np.asarray(target_end_dates, dtype="datetime64[D]"),
         origin_close=np.asarray(origin_closes, dtype=np.float64),
         future_close=np.asarray(future_closes, dtype=np.float64),
         daily_returns=np.asarray(daily_returns, dtype=np.float64),
@@ -445,7 +529,12 @@ class LSTMConfig:
             raise ValueError("LSTM dropout must be in [0, 1)")
         if self.batch_size < 1 or self.learning_rate <= 0 or self.weight_decay < 0:
             raise ValueError("LSTM optimizer and batch settings are invalid")
-        if self.target_space not in ("log_volatility", "log_variance", "direct_volatility", "softplus_volatility"):
+        if self.target_space not in (
+            "log_volatility",
+            "log_variance",
+            "direct_volatility",
+            "softplus_volatility",
+        ):
             raise ValueError(f"Unknown target_space: {self.target_space}")
 
 
@@ -599,20 +688,21 @@ def _positive(values: np.ndarray) -> np.ndarray:
 
 
 def fit_har_baseline(examples: VolatilityExamples, train_indices: np.ndarray) -> np.ndarray:
-    """Fit log-HAR on training rows and predict all rows without target reads."""
+    """Return the canonical causal HAR forecast for every example.
 
-    train = np.asarray(train_indices, dtype=np.int64)
-    if train.ndim != 1 or len(train) < 10:
-        raise ValueError("HAR baseline requires at least ten training rows")
-    x_train = np.column_stack(
-        (np.ones(len(train)), np.log(_positive(examples.har_features[train])))
-    )
-    y_train = np.log(_positive(examples.target[train]))
-    coefficients, *_ = np.linalg.lstsq(x_train, y_train, rcond=None)
-    x_all = np.column_stack(
-        (np.ones(len(examples.target)), np.log(_positive(examples.har_features)))
-    )
-    return np.exp(np.clip(x_all @ coefficients, math.log(_EPS), math.log(10.0)))
+    ``build_examples`` evaluates the same recursive log-HAR implementation
+    used by the serving path at each origin.  Refitting a second direct-H
+    regression here would make offline scores incomparable with the API.
+    ``train_indices`` remains for compatibility; the canonical filter is
+    causal at every origin and does not consume held-out target values.
+    """
+
+    del train_indices
+    if examples.canonical_har_volatility is None:
+        raise ValueError(
+            "examples do not contain canonical HAR forecasts; rebuild them with build_examples"
+        )
+    return _positive(examples.canonical_har_volatility)
 
 
 def fit_garch11_baseline(
@@ -698,11 +788,16 @@ def baseline_predictions(
     examples: VolatilityExamples,
     train_indices: np.ndarray,
     *,
-    horizon: int = 1,
+    horizon: int | None = None,
     annualization: float = DEFAULT_ANNUALIZATION,
 ) -> dict[str, np.ndarray]:
     """Return persistence, rolling mean, EWMA, HAR-RV, and GARCH(1,1) forecasts."""
 
+    effective_horizon = int(horizon or examples.target_horizon)
+    if effective_horizon != examples.target_horizon:
+        raise ValueError(
+            "baseline horizon must match the examples target horizon; rebuild examples for a new horizon"
+        )
     return {
         "persistence": _positive(examples.current_volatility),
         "rolling_mean": _positive(examples.rolling_mean_volatility),
@@ -710,7 +805,10 @@ def baseline_predictions(
         "har_rv": _positive(fit_har_baseline(examples, train_indices)),
         "garch_11": _positive(
             fit_garch11_baseline(
-                examples, train_indices, horizon=horizon, annualization=annualization
+                examples,
+                train_indices,
+                horizon=effective_horizon,
+                annualization=annualization,
             )
         ),
     }
@@ -868,6 +966,9 @@ def evaluate_conformal_volatility_intervals(
 ) -> dict[str, Any]:
     """Calibrate split-conformal intervals on validation residuals and evaluate on test."""
 
+    if not 0 < nominal_coverage < 1:
+        raise ValueError("nominal_coverage must be between zero and one")
+
     val_act = _positive(actual_validation)
     val_pred = _positive(forecast_validation)
     test_act = _positive(actual_test)
@@ -886,7 +987,11 @@ def evaluate_conformal_volatility_intervals(
     empirical_coverage = float(np.mean(inside))
     average_width = float(np.mean(upper - lower))
 
-    tertiles = np.quantile(test_act, [1.0 / 3.0, 2.0 / 3.0])
+    # Regime thresholds are fitted on the calibration information set only.
+    # Using test actual volatility here would leak the outcome into the
+    # subgroup definition and make regime coverage look more stable than it
+    # is at deployment.
+    tertiles = np.quantile(val_act, [1.0 / 3.0, 2.0 / 3.0])
     regime_low = test_act <= tertiles[0]
     regime_normal = (test_act > tertiles[0]) & (test_act <= tertiles[1])
     regime_high = test_act > tertiles[1]
@@ -896,9 +1001,17 @@ def evaluate_conformal_volatility_intervals(
         return float(np.mean(inside[mask])) if count > 0 else None
 
     return {
+        "interval_method": "rolling_origin_split_conformal_log_volatility",
+        "metric_source": "untouched_chronological_test",
         "nominal_coverage": float(nominal_coverage),
         "empirical_coverage": empirical_coverage,
         "conformal_log_radius": radius,
+        "calibration_count": int(len(log_residuals)),
+        "regime_thresholds": {
+            "low_high_boundary": float(tertiles[0]),
+            "normal_high_boundary": float(tertiles[1]),
+            "source": "validation_actual_only",
+        },
         "average_width": average_width,
         "regime_coverage": {
             "low_vol": _regime_cov(regime_low),
@@ -917,13 +1030,29 @@ def evaluate_price_diffusion_cone(
     nominal_coverage: float = 0.90,
     annualization: float = DEFAULT_ANNUALIZATION,
 ) -> dict[str, Any]:
-    """Evaluate empirical coverage of the theoretical diffusion cone (e.g. p05-p95)."""
+    """Evaluate a *raw* Gaussian price-return reference scenario.
+
+    This function deliberately does not calibrate residuals or tune the
+    multiplier on the test partition.  ``p05``--``p95`` is a central 90%
+    nominal interval under a zero-location Gaussian assumption; the returned
+    empirical coverage is descriptive out-of-sample evidence, not a guarantee.
+    """
+
+    if not 0 < nominal_coverage < 1:
+        raise ValueError("nominal_coverage must be between zero and one")
 
     p_orig = np.asarray(origin_close, dtype=np.float64)
     p_future = np.asarray(future_close, dtype=np.float64)
     vol = _positive(forecast_annualized_vol)
     if len(p_orig) != len(p_future) or len(p_orig) != len(vol) or len(p_orig) < 4:
         raise ValueError("matched arrays of at least 4 observations required")
+    if (
+        not np.isfinite(p_orig).all()
+        or not np.isfinite(p_future).all()
+        or (p_orig <= 0).any()
+        or (p_future <= 0).any()
+    ):
+        raise ValueError("price arrays must be finite and positive")
 
     # Quantile z-scores for standard nominal coverages
     z = float(norm.ppf(0.5 + float(nominal_coverage) / 2.0))
@@ -947,6 +1076,11 @@ def evaluate_price_diffusion_cone(
         return float(np.mean(inside[mask])) if count > 0 else None
 
     return {
+        "interval_method": "gaussian_reference_scenario",
+        "metric_source": "untouched_chronological_test_descriptive",
+        "interval_scope": "pointwise_marginal_reference",
+        "location_assumption": "zero_log_return",
+        "variance_assumption": "forecast_annualized_volatility_scaled_by_horizon",
         "nominal_coverage": float(nominal_coverage),
         "empirical_coverage": empirical_coverage,
         "average_width_pct": avg_width_pct,
@@ -969,25 +1103,34 @@ def evaluate_benchmark(
     nominal_coverage: float = 0.90,
     target_space: str = "log_variance",
     return_forecasts: bool = False,
-) -> dict[str, dict[str, dict[str, Any]]] | tuple[dict[str, dict[str, dict[str, Any]]], dict[str, np.ndarray]]:
+) -> (
+    dict[str, dict[str, dict[str, Any]]]
+    | tuple[dict[str, dict[str, dict[str, Any]]], dict[str, np.ndarray]]
+):
     """Evaluate all baselines and simple ML models on validation and test."""
 
+    assert_label_purged(examples, split)
+
+    # ``embargo_sessions`` is a split boundary, not the forecast horizon.  A
+    # caller may deliberately use a wider embargo; scoring and the cone must
+    # still describe the target horizon used to build ``examples``.
+    forecast_horizon = examples.target_horizon
     forecasts = baseline_predictions(
-        examples, split.train, horizon=split.embargo_sessions, annualization=DEFAULT_ANNUALIZATION
+        examples, split.train, horizon=forecast_horizon, annualization=DEFAULT_ANNUALIZATION
     )
     forecasts.update(
         learned_predictions(
             examples,
             split.train,
             include_boosting=include_boosting,
-            target_space=target_space if target_space in ("log_variance", "direct_volatility", "log_volatility") else "log_variance",
+            target_space=target_space
+            if target_space in ("log_variance", "direct_volatility", "log_volatility")
+            else "log_variance",
         )
     )
     if include_lstm:
         effective_lstm_config = (
-            lstm_config
-            if lstm_config is not None
-            else LSTMConfig(target_space=target_space)
+            lstm_config if lstm_config is not None else LSTMConfig(target_space=target_space)
         )
         if effective_lstm_config.target_space != target_space:
             effective_lstm_config = LSTMConfig(
@@ -1031,16 +1174,14 @@ def evaluate_benchmark(
 
         # Price diffusion cone calibration
         if examples.origin_close is not None and examples.future_close is not None:
-            try:
+            with suppress(Exception):
                 output[name]["test"]["price_cone"] = evaluate_price_diffusion_cone(
                     examples.origin_close[split.test],
                     examples.future_close[split.test],
                     prediction[split.test],
-                    horizon=split.embargo_sessions,
+                    horizon=forecast_horizon,
                     nominal_coverage=nominal_coverage,
                 )
-            except Exception:
-                pass
 
     if return_forecasts:
         return output, forecasts
@@ -1097,6 +1238,7 @@ __all__ = [
     "LSTMConfig",
     "VolatilityConfig",
     "VolatilityExamples",
+    "assert_label_purged",
     "baseline_predictions",
     "build_examples",
     "build_feature_frame",

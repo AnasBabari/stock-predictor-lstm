@@ -41,6 +41,7 @@ Example response (abbreviated):
         "future_dates": ["2026-08-31", "..."],
         "price_quantiles": {"p05": ["..."], "p50": ["..."], "p95": ["..."]},
         "expected_annualized_volatility": 0.21,
+        "expected_cumulative_variance_path": ["..."],
         "volatility_unit": "annualized_sigma",
         "model": "har_rv",
         "baseline": true
@@ -49,6 +50,9 @@ Example response (abbreviated):
         "model_status": "baseline",
         "model_family": "statistical_baseline",
         "metric_source": "baseline_definition",
+        "interval_method": "gaussian_reference_scenario",
+        "interval_nominal_coverage": 0.90,
+        "interval_scope": "pointwise_marginal_reference_not_empirically_calibrated",
         "target": "future_realized_volatility_close_to_close",
         "snapshot_id": "sha256...",
         "schema_version": "deployable_v5",
@@ -57,8 +61,10 @@ Example response (abbreviated):
     }
 
 The p50 path is anchored to the unchanged latest close because this endpoint
-forecasts uncertainty, not expected return. The response is intentionally not
-called a certified or LSTM forecast. Offline model comparisons and their
+forecasts uncertainty, not expected return. The p05--p95 path is a raw Gaussian
+reference scenario (central 90% nominal coverage), not a calibrated prediction
+interval; observed coverage is descriptive only. The response is intentionally
+not called a certified or LSTM forecast. Offline model comparisons and their
 70/15/15 test metrics are documented in
 [VOLATILITY_FORECASTING.md](VOLATILITY_FORECASTING.md).
 
@@ -141,7 +147,7 @@ The data service can be ready without a model for local development. With `VOLAT
 
 ## GET /api/v1/training-data
 
-This bounded route is for diagnostics and offline research. It returns the validated Stationary Schema v4 matrix, historical closes, future calendar dates, and deterministic snapshot id. It accepts no client feature matrix and writes no files. It is not a public training service and is not used by the production global-volatility path.
+This bounded route is for diagnostics and offline research. It returns the validated Deployable Schema v5 matrix, historical closes, future calendar dates, and deterministic snapshot id. It accepts no client feature matrix and writes no files. It is not a public training service and is not used by the production global-volatility path.
 
 V11.2 is an archived RTX research workflow. Its reserve was opened once and the candidate failed, so dataset preparation, certification, release assembly, and runtime loading now reject the generation. Its reports retain `sealed_holdout_once` only as historical methodology evidence; they cannot authorize an API response.
 

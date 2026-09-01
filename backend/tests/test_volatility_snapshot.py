@@ -38,6 +38,9 @@ def test_volatility_snapshot_matches_frozen_deployable_contract(monkeypatch) -> 
     assert snapshot.features.shape == (60, len(DEPLOYABLE_FEATURE_COLUMNS_V5))
     assert snapshot.causal_har_variance.shape == (6,)
     assert np.all(snapshot.causal_har_variance > 0)
+    assert snapshot.baseline_variance_paths is not None
+    assert snapshot.baseline_variance_paths["causal_log_har"].shape == (30,)
+    assert np.all(np.diff(snapshot.baseline_variance_paths["causal_log_har"]) >= 0)
     assert {
         "causal_log_har",
         "riskmetrics_ewma_c2c",

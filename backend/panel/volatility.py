@@ -147,7 +147,11 @@ def causal_log_har_forecasts(
     for origin in range(22, len(rv)):
         training_origin = origin - 1
         if np.isfinite(rv[training_origin - 21 : training_origin + 2]).all():
-            design = _log_har_row(rv[: training_origin + 1])
+            # ``_log_har_row`` only consumes the trailing 22 observations.
+            # Passing the full history here made every origin copy an
+            # increasingly large array and turned a multi-asset benchmark
+            # into an effectively quadratic-memory job.
+            design = _log_har_row(rv[training_origin - 21 : training_origin + 1])
             response = float(np.log(max(rv[origin], _EPSILON_VARIANCE)))
             xtx += np.outer(design, design)
             xty += design * response
@@ -160,13 +164,17 @@ def causal_log_har_forecasts(
             coefficients = np.linalg.solve(xtx + penalty, xty)
             last_refit = origin
 
-        history = list(np.maximum(rv[: origin + 1], _EPSILON_VARIANCE))
+        # Recursive forecasts need only the trailing monthly window.  Keep a
+        # bounded tail instead of copying all observations through the origin
+        # for every forecast step.
+        history_tail = list(np.maximum(rv[origin - 21 : origin + 1], _EPSILON_VARIANCE))
         cumulative = 0.0
         for step in range(1, maximum_horizon + 1):
-            row = _log_har_row(np.asarray(history, dtype=np.float64))
+            row = _log_har_row(np.asarray(history_tail, dtype=np.float64))
             next_variance = float(np.exp(np.clip(row @ coefficients, -30.0, 5.0)))
             next_variance = max(next_variance, _EPSILON_VARIANCE)
-            history.append(next_variance)
+            history_tail.append(next_variance)
+            del history_tail[0]
             cumulative += next_variance
             if step in horizon_to_column:
                 output[origin, horizon_to_column[step]] = cumulative

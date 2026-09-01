@@ -49,6 +49,10 @@ def test_active_route_returns_explicit_causal_baseline(monkeypatch):
     assert body["evidence"]["model_status"] == "baseline"
     assert body["evidence"]["metric_source"] == "baseline_definition"
     assert body["evidence"]["news_status"] == "not_used"
+    assert body["evidence"]["interval_method"] == "gaussian_reference_scenario"
+    assert body["evidence"]["interval_nominal_coverage"] == 0.90
+    assert "not_empirically_calibrated" in body["evidence"]["interval_scope"]
+    assert len(body["forecast"]["expected_cumulative_variance_path"]) == 7
 
 
 def test_baseline_names_map_to_the_documented_windows():
@@ -60,6 +64,21 @@ def test_baseline_names_map_to_the_documented_windows():
     assert persistence["forecast"]["model"] == "persistence"
     assert persistence["forecast"]["expected_cumulative_variance"] == 0.04
     assert rolling["forecast"]["expected_cumulative_variance"] == 0.03
+
+
+def test_price_quantiles_use_supplied_cumulative_variance_path():
+    snapshot = _snapshot()
+    snapshot.baseline_variance_paths = {
+        "causal_log_har": np.array([0.01, 0.015, 0.03, 0.07, 0.12, 0.20]),
+    }
+    forecast = volatility.build_live_volatility_forecast(snapshot, horizon=5, model="har_rv")
+    path = forecast["forecast"]["expected_cumulative_variance_path"]
+    assert path == [0.01, 0.015, 0.03, 0.07, 0.12]
+    assert forecast["forecast"]["price_quantiles"]["p50"] == [500.0] * 5
+    assert (
+        forecast["forecast"]["price_quantiles"]["p95"][1]
+        < forecast["forecast"]["price_quantiles"]["p95"][2]
+    )
 
 
 def test_active_route_rejects_unsupported_horizon_and_model(monkeypatch):

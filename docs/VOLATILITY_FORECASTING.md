@@ -40,7 +40,7 @@ baseline models are:
 | `persistence` | Current 20-session close-to-close volatility carried forward |
 | `rolling_mean` | Current 60-session rolling volatility |
 | `ewma` | RiskMetrics-style exponentially weighted volatility |
-| `har_rv` | Train-only log-HAR regression over 5/22/60-session volatility |
+| `har_rv` | Causal recursive log-HAR filter over 5/22/60-session volatility, refit only from observations available at each origin |
 
 The response includes dated p05–p95 price paths derived from the selected
 volatility, the annualised sigma, snapshot identity, feature schema, and:
@@ -89,6 +89,33 @@ plus one deterministic gradient-boosting candidate. The optional
 uses a train-only standard scaler, predicts log volatility, uses
 validation-only early stopping, and never writes weights. PyTorch is an offline
 research dependency; it is not part of the Render API process.
+
+## Phase 3.5 reporting rules
+
+The Phase 3.5 audit keeps the evidence claims aligned with the data that was
+actually observed:
+
+- One-day winners are reported separately for MAE, RMSE, and QLIKE. A model
+  that wins one metric is not described as the universal winner; validation
+  selection counts are reported separately from untouched-test scores.
+- The p05--p95 price display is a **raw Gaussian reference scenario** with
+  zero expected log return and a 90% nominal central range. It is not a
+  calibrated prediction interval. Test coverage is descriptive only and is
+  never used to tune a model or select a winner.
+- Feature ablations are paired by ticker and horizon. The report includes
+  asset-level bootstrap confidence intervals and improved-asset counts for
+  every model that is available in both compared configurations. Feature
+  counts are read from the generated feature schema rather than hard-coded in
+  the report.
+- After ablation, the runner records a complete-coverage feature/model winner
+  per horizon using validation QLIKE only. This is a **frozen configuration for
+  the next experiment**, not a production promotion: the untouched test
+  partition cannot change the choice, and a learned model remains subject to
+  the normal release and monitoring gates.
+
+The runner records this audit in the JSON fields `phase_3_5_audit` and
+`ablation_breadth`. A fresh report must be regenerated whenever the pipeline
+version changes; cached results from an older pipeline version are rejected.
 
 ## Data and news boundary
 

@@ -64,6 +64,25 @@ def test_split_is_chronological_and_label_purged() -> None:
     assert set(split.validation).isdisjoint(split.test)
 
 
+def test_examples_expose_target_end_dates_and_date_purge_is_checked() -> None:
+    from volatility_forecasting.simple_pipeline import assert_label_purged
+
+    examples = build_examples(_frame(320))
+    split = chronological_split(len(examples.target), horizon=examples.target_horizon)
+    assert examples.target_end_dates is not None
+    assert np.all(examples.target_end_dates > examples.dates)
+    assert_label_purged(examples, split)
+
+
+def test_har_baseline_is_canonical_and_horizon_bound() -> None:
+    examples = build_examples(_frame(320))
+    split = chronological_split(len(examples.target), horizon=5)
+    forecasts = baseline_predictions(examples, split.train, horizon=5)
+    np.testing.assert_allclose(forecasts["har_rv"], examples.canonical_har_volatility)
+    with pytest.raises(ValueError, match="target horizon"):
+        baseline_predictions(examples, split.train, horizon=1)
+
+
 def test_examples_and_baselines_are_finite_and_causal() -> None:
     examples = build_examples(_frame())
     assert examples.sequences.ndim == 3
@@ -73,6 +92,26 @@ def test_examples_and_baselines_are_finite_and_causal() -> None:
     forecasts = baseline_predictions(examples, split.train)
     assert {"persistence", "rolling_mean", "ewma", "har_rv"} <= set(forecasts)
     assert all(np.isfinite(values).all() and (values > 0).all() for values in forecasts.values())
+
+
+def test_research_rolling_volatility_matches_deployable_c2c_definition() -> None:
+    from panel.features import build_features_v5
+    from volatility_forecasting.simple_pipeline import build_feature_frame
+
+    frame = _frame(180)
+    research_features = build_feature_frame(frame)
+    deployable_features = build_features_v5(frame.copy())
+
+    np.testing.assert_allclose(
+        research_features["realized_vol_20"] / np.sqrt(252.0),
+        deployable_features["Vol_C2C_20"],
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        research_features["realized_vol_60"] / np.sqrt(252.0),
+        deployable_features["Vol_C2C_60"],
+        equal_nan=True,
+    )
 
 
 def test_benchmark_selects_by_validation_only_and_reports_qlike() -> None:
@@ -94,6 +133,16 @@ def test_benchmark_selects_by_validation_only_and_reports_qlike() -> None:
     assert metrics[selected]["validation"]["qlike"] == min(
         values["validation"]["qlike"] for values in metrics.values()
     )
+
+
+def test_benchmark_uses_target_horizon_when_split_embargo_is_wider() -> None:
+    examples = build_examples(_frame(340))
+    split = chronological_split(
+        len(examples.target), horizon=examples.target_horizon, embargo_sessions=12
+    )
+
+    metrics = evaluate_benchmark(examples, split)
+    assert metrics["har_rv"]["test"]["price_cone"]["nominal_coverage"] == 0.90
 
 
 def test_metrics_reject_shape_mismatch() -> None:
@@ -130,11 +179,15 @@ def test_conformal_volatility_intervals_and_price_cone_calibration() -> None:
     pred_test = forecasts["har_rv"][split.test]
     act_test = examples.target[split.test]
 
-    conf = evaluate_conformal_volatility_intervals(act_val, pred_val, act_test, pred_test, nominal_coverage=0.90)
+    conf = evaluate_conformal_volatility_intervals(
+        act_val, pred_val, act_test, pred_test, nominal_coverage=0.90
+    )
     assert conf["nominal_coverage"] == 0.90
     assert 0.0 <= conf["empirical_coverage"] <= 1.0
     assert conf["average_width"] > 0
     assert "low_vol" in conf["regime_coverage"]
+    assert conf["interval_method"] == "rolling_origin_split_conformal_log_volatility"
+    assert conf["regime_thresholds"]["source"] == "validation_actual_only"
 
     assert examples.origin_close is not None and examples.future_close is not None
     cone = evaluate_price_diffusion_cone(
@@ -148,6 +201,8 @@ def test_conformal_volatility_intervals_and_price_cone_calibration() -> None:
     assert 0.0 <= cone["empirical_coverage"] <= 1.0
     assert cone["average_width_pct"] > 0
     assert "high_vol" in cone["regime_coverage"]
+    assert cone["interval_method"] == "gaussian_reference_scenario"
+    assert cone["metric_source"] == "untouched_chronological_test_descriptive"
 
 
 def test_qlike_mathematical_properties_and_hand_calculated_cases() -> None:
@@ -217,7 +272,7 @@ def test_target_space_options_direct_and_log_variance() -> None:
 
     for preds in (preds_direct, preds_logvar, preds_logvol):
         assert {"ridge", "elastic_net", "gradient_boosting"} <= set(preds)
-        for model_name, arr in preds.items():
+        for _model_name, arr in preds.items():
             assert len(arr) == len(examples.target)
             assert np.all(arr > 0) and np.all(np.isfinite(arr))
 
@@ -229,10 +284,18 @@ def test_ohlc_volatility_estimators_and_integrity() -> None:
     features = build_feature_frame(frame, feature_mode="price_plus_ohlc")
 
     expected_cols = [
-        "hl_range", "co_range", "overnight_return",
-        "parkinson_vol_5", "parkinson_vol_22", "parkinson_vol_60",
-        "garman_klass_vol_5", "garman_klass_vol_22", "garman_klass_vol_60",
-        "rogers_satchell_vol_5", "rogers_satchell_vol_22", "rogers_satchell_vol_60",
+        "hl_range",
+        "co_range",
+        "overnight_return",
+        "parkinson_vol_5",
+        "parkinson_vol_22",
+        "parkinson_vol_60",
+        "garman_klass_vol_5",
+        "garman_klass_vol_22",
+        "garman_klass_vol_60",
+        "rogers_satchell_vol_5",
+        "rogers_satchell_vol_22",
+        "rogers_satchell_vol_60",
     ]
     for col in expected_cols:
         assert col in features.columns
@@ -259,7 +322,9 @@ def test_softplus_volatility_lstm() -> None:
         examples,
         split.train,
         split.validation,
-        config=LSTMConfig(maximum_epochs=2, patience=1, batch_size=32, target_space="softplus_volatility"),
+        config=LSTMConfig(
+            maximum_epochs=2, patience=1, batch_size=32, target_space="softplus_volatility"
+        ),
     )
     assert len(preds) == len(examples.target)
     assert np.all(preds > 0) and np.all(np.isfinite(preds))
@@ -273,13 +338,18 @@ def test_nested_feature_modes_and_market_frame() -> None:
 
     # Market context frame
     mkt = pd.DataFrame(
-        {"spy_return_1d": np.random.normal(0, 0.01, size=len(frame)), "spy_vol_22": np.full(len(frame), 0.15)},
+        {
+            "spy_return_1d": np.random.normal(0, 0.01, size=len(frame)),
+            "spy_vol_22": np.full(len(frame), 0.15),
+        },
         index=frame.index,
     )
 
     ex_price = build_examples(frame, VolatilityConfig(feature_mode="price_only"))
     ex_ohlc = build_examples(frame, VolatilityConfig(feature_mode="price_plus_ohlc"))
-    ex_mkt = build_examples(frame, VolatilityConfig(feature_mode="price_plus_ohlc_plus_market"), market_frame=mkt)
+    ex_mkt = build_examples(
+        frame, VolatilityConfig(feature_mode="price_plus_ohlc_plus_market"), market_frame=mkt
+    )
 
     assert ex_price.sequences.shape[-1] < ex_ohlc.sequences.shape[-1] < ex_mkt.sequences.shape[-1]
     assert "parkinson_vol_22" not in ex_price.feature_names
@@ -300,5 +370,3 @@ def test_volatility_metrics_distribution_diagnostics() -> None:
     assert "worst_1pct_share" in m
     assert 0.0 <= m["worst_1pct_share"] <= 100.0
     assert m["max_qlike"] >= m["p95_qlike"] >= m["median_qlike"]
-
-
