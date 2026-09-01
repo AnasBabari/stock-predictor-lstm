@@ -11,7 +11,6 @@ from fastapi.responses import JSONResponse
 
 from config import APP_VERSION, settings
 from data_pipeline import market_circuit_breaker
-from services.volatility_release_bootstrap import release_source_configured
 
 router = APIRouter(tags=["health"])
 
@@ -54,7 +53,7 @@ def deployment_identity() -> dict[str, Any]:
 @router.get("/")
 def root():
     return {
-        "name": "StockLSTM API",
+        "name": "Stock Volatility Forecasting API",
         "status": "online",
         "version": APP_VERSION,
         "docs": "/docs",
@@ -73,52 +72,13 @@ def health():
 
 @router.get("/ready")
 def ready():
-    """Readiness checks market data and any configured learned-serving contract."""
+    """Readiness checks market data ingestion connectivity."""
     market_ready, upstream = market_circuit_breaker.is_ready()
     is_ready = market_ready
     dependencies = {
         "market_data": upstream,
-        "model_storage": {
-            "required": False,
-            "writable": None,
-            "detail": "Production models are immutable signed releases; no request writes model files.",
-        },
-        "global_volatility": {
-            "configured": release_source_configured(settings),
-            "required": settings.volatility_serving_required,
-            "status": "not_required",
-        },
     }
 
-    if settings.volatility_serving_required or release_source_configured(settings):
-        from routes.volatility_v2 import volatility_release_readiness
-
-        volatility_ready = volatility_release_readiness()
-        dependencies["global_volatility"] = {
-            **volatility_ready,
-            "required": settings.volatility_serving_required,
-        }
-        if settings.volatility_serving_required:
-            is_ready = is_ready and volatility_ready["status"] == "ready"
-
-    if settings.server_forecast_serving_enabled:
-        from server_models.api import server_forecast_readiness
-
-        readiness = server_forecast_readiness()
-        server_ready = readiness.configured
-        dependencies["server_forecasts"] = {
-            "configured": readiness.configured,
-            "status": "ready" if readiness.configured else readiness.reason,
-            "required": settings.training_mode == "server_pretrained",
-            "bundle_retention_days": settings.server_bundle_retention_days,
-        }
-        if settings.training_mode == "server_pretrained":
-            dependencies["model_storage"] = {
-                "required": True,
-                "writable": readiness.configured,
-                "detail": "Server artifacts are stored in the registry and object store.",
-            }
-            is_ready = is_ready and server_ready
     content = {
         "status": "ready" if is_ready else "degraded",
         "version": APP_VERSION,
@@ -126,3 +86,29 @@ def ready():
         "dependencies": dependencies,
     }
     return JSONResponse(status_code=200 if is_ready else 503, content=content)
+
+
+@router.get("/models")
+def models_discovery():
+    """Discover active volatility forecasting models and capabilities."""
+    return {
+        "status": "online",
+        "volatility_forecasting": {
+            "status": "available",
+            "endpoint": "/api/v1/volatility/forecast",
+            "metric_source": "baseline_definition",
+            "supported_horizons": [1, 3, 5, 7, 14, 30],
+            "supported_models": [
+                "auto",
+                "rolling_mean",
+                "har_rv",
+                "ewma",
+                "persistence",
+                "garch_11",
+            ],
+        },
+        "model_storage": {
+            "required": False,
+            "status": "not_required",
+        },
+    }

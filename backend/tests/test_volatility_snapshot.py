@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from panel.features import DEPLOYABLE_FEATURE_COLUMNS_V5
 from services import volatility_snapshot
+from services.volatility_snapshot import DEPLOYABLE_FEATURE_COLUMNS_V5
 
 
 def _market_frame(rows: int = 520) -> pd.DataFrame:

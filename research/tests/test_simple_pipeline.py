@@ -95,7 +95,7 @@ def test_examples_and_baselines_are_finite_and_causal() -> None:
 
 
 def test_research_rolling_volatility_matches_deployable_c2c_definition() -> None:
-    from panel.features import build_features_v5
+    from services.volatility_snapshot import build_features_v5
     from volatility_forecasting.simple_pipeline import build_feature_frame
 
     frame = _frame(180)

@@ -1,3 +1,0 @@
-tensorflow>=2.16.0,<3.0.0
-onnx>=1.15,<2.0
-onnxruntime>=1.19,<2.0

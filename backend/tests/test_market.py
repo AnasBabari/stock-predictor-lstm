@@ -1,11 +1,10 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from features.market import MARKET_TICKERS, MarketContextUnavailable, add_market_context
-from model import _unscale_close
 
 
 def _batched_download_frame(dates, symbols=None):
@@ -75,14 +74,3 @@ def test_add_market_context_malformed_download():
         pytest.raises(MarketContextUnavailable),
     ):
         add_market_context(df)
-
-
-def test_unscale_close_constant_price_guard():
-    scaler = MagicMock()
-    scaler.scale_ = np.array([0.0, 1.0, 0.5])
-    scaler.data_min_ = np.array([150.0, 10.0, 5.0])
-
-    with patch("model.FEATURES", ["Close", "High", "Low"]):
-        scaled = np.array([0.5, 0.5, 0.5])
-        unscaled = _unscale_close(scaled, scaler)
-        assert (unscaled == 150.0).all()

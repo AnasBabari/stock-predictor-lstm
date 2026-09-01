@@ -35,13 +35,77 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.preprocessing import StandardScaler
 
-# Keep the research baseline definitions tied to the deployable implementation.
-# The fallback import is useful when this module is executed with ``backend``
-# itself on ``sys.path`` (the repository's pytest configuration does that).
-try:  # pragma: no cover - import path depends on the execution entry point
-    from backend.panel.volatility import causal_log_har_forecasts
-except ImportError:  # pragma: no cover - exercised by backend-local tooling
-    from panel.volatility import causal_log_har_forecasts
+
+def _log_har_row(history: np.ndarray) -> np.ndarray:
+    """Log-HAR predictors ending at the final value in ``history``."""
+    if len(history) < 22:
+        raise ValueError("HAR row requires at least 22 realized observations")
+    safe = np.maximum(np.asarray(history, dtype=np.float64), 1e-12)
+    return np.array(
+        [
+            1.0,
+            np.log(safe[-1]),
+            np.log(np.mean(safe[-5:])),
+            np.log(np.mean(safe[-22:])),
+        ],
+        dtype=np.float64,
+    )
+
+
+def causal_log_har_forecasts(
+    rv_daily: pd.Series | np.ndarray,
+    horizons: tuple[int, ...] | list[int] = (1, 3, 5, 7, 14, 30),
+    *,
+    minimum_history: int = 60,
+    refit_every: int = 5,
+    ridge: float = 1e-4,
+) -> np.ndarray:
+    """Return causal cumulative variance forecasts for every origin."""
+    if not horizons or min(horizons) < 1:
+        raise ValueError("horizons must contain positive integers")
+    if refit_every < 1:
+        raise ValueError("refit_every must be positive")
+    rv = np.asarray(rv_daily, dtype=np.float64)
+    output = np.full((len(rv), len(horizons)), np.nan, dtype=np.float64)
+    coefficients: np.ndarray | None = None
+    last_refit = -refit_every
+    maximum_horizon = max(horizons)
+    horizon_to_column = {horizon: column for column, horizon in enumerate(horizons)}
+    xtx = np.zeros((4, 4), dtype=np.float64)
+    xty = np.zeros(4, dtype=np.float64)
+    fitted_rows = 0
+    penalty = np.eye(4, dtype=np.float64) * float(ridge)
+    penalty[0, 0] = 0.0
+
+    for origin in range(22, len(rv)):
+        training_origin = origin - 1
+        if np.isfinite(rv[training_origin - 21 : training_origin + 2]).all():
+            design = _log_har_row(rv[training_origin - 21 : training_origin + 1])
+            response = float(np.log(max(rv[origin], 1e-12)))
+            xtx += np.outer(design, design)
+            xty += design * response
+            fitted_rows += 1
+        if origin < max(minimum_history, 22) or fitted_rows < 20:
+            continue
+        if not np.isfinite(rv[origin - 21 : origin + 1]).all():
+            continue
+        if coefficients is None or origin - last_refit >= refit_every:
+            coefficients = np.linalg.solve(xtx + penalty, xty)
+            last_refit = origin
+
+        history_tail = list(np.maximum(rv[origin - 21 : origin + 1], 1e-12))
+        cumulative = 0.0
+        for step in range(1, maximum_horizon + 1):
+            row = _log_har_row(np.asarray(history_tail, dtype=np.float64))
+            next_variance = float(np.exp(np.clip(row @ coefficients, -30.0, 5.0)))
+            next_variance = max(next_variance, 1e-12)
+            history_tail.append(next_variance)
+            del history_tail[0]
+            cumulative += next_variance
+            if step in horizon_to_column:
+                output[origin, horizon_to_column[step]] = cumulative
+    return output
+
 
 PIPELINE_VERSION = "simple-volatility-v1.1"
 TARGET_VERSION = "future-realized-volatility-annualized-v1"
@@ -1260,6 +1324,11 @@ def volatility_metrics(
         "raw_min_pred": raw_min,
         "near_zero_count": near_zero_count,
     }
+
+
+def qlike_loss(actual: np.ndarray, forecast: np.ndarray, epsilon: float = _EPS) -> float:
+    """Compute Patton (2011) mean QLIKE loss on volatility."""
+    return volatility_metrics(actual, forecast, epsilon=epsilon)["qlike"]
 
 
 def evaluate_conformal_volatility_intervals(

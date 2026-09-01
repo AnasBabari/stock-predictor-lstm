@@ -1,66 +1,72 @@
-"""Leakage-safe global volatility forecasting research package.
+"""Leakage-safe volatility forecasting research package.
 
-This package is deliberately offline-only. Production imports must use the
-small exported inference contract, never the training implementation.
+Provides canonical empirical benchmarking pipelines, causal feature extractors,
+GARCH(1,1) MLE parameter estimation, PyTorch softplus volatility models,
+and paired asset-level bootstrap hypothesis testing.
 """
 
-from .cache import ExampleCacheError, load_example_cache, save_example_cache
-from .contracts import (
-    DEFAULT_HORIZONS,
-    VOLATILITY_PROTOCOL_VERSION,
-    VolatilityForecastProtocol,
-    VolatilityLossWeights,
+from .simple_pipeline import (
+    NEWS_FEATURE_NAMES,
+    PIPELINE_VERSION,
+    TARGET_VERSION,
+    ChronologicalSplit,
+    LSTMConfig,
+    NonTradingSessionError,
+    VolatilityConfig,
+    VolatilityExamples,
+    assert_label_purged,
+    baseline_predictions,
+    build_causal_news_features,
+    build_examples,
+    build_feature_frame,
+    causal_log_har_forecasts,
+    chronological_split,
+    evaluate_benchmark,
+    evaluate_conformal_volatility_intervals,
+    evaluate_price_diffusion_cone,
+    experiment_metadata,
+    fit_garch11_baseline,
+    fit_garch11_mle_from_returns,
+    fit_har_baseline,
+    get_session_close_utc,
+    learned_predictions,
+    lstm_predictions,
+    qlike_loss,
+    realised_volatility,
+    select_validation_model,
+    validate_ohlcv,
+    volatility_metrics,
 )
-from .data import (
-    VolatilityPanelExamples,
-    build_volatility_panel_examples,
-    subset_volatility_panel_examples,
-)
-from .gdelt import GdeltEventRow, gdelt_row_to_news_event, parse_gdelt_v2_export_line
-from .news import NEWS_FEATURE_NAMES_V2, NewsEvent, NewsOrigin, aggregate_news_features
-
-_MODEL_SYMBOLS = {
-    "BaselineResidualLSTM",
-    "BaselineResidualLSTMConfig",
-    "BaselineResidualTCN",
-    "BaselineResidualTCNConfig",
-    "RobustSequenceScaler",
-    "TorchTrainingConfig",
-    "train_baseline_residual_tcn",
-}
-
-
-def __getattr__(name: str):
-    if name in _MODEL_SYMBOLS:
-        from . import model
-
-        return getattr(model, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 __all__ = [
-    "DEFAULT_HORIZONS",
-    "VOLATILITY_PROTOCOL_VERSION",
-    "VolatilityForecastProtocol",
-    "VolatilityLossWeights",
-    "ExampleCacheError",
-    "load_example_cache",
-    "save_example_cache",
-    "VolatilityPanelExamples",
-    "build_volatility_panel_examples",
-    "subset_volatility_panel_examples",
-    "BaselineResidualLSTM",
-    "BaselineResidualLSTMConfig",
-    "BaselineResidualTCN",
-    "BaselineResidualTCNConfig",
-    "RobustSequenceScaler",
-    "TorchTrainingConfig",
-    "train_baseline_residual_tcn",
-    "GdeltEventRow",
-    "gdelt_row_to_news_event",
-    "parse_gdelt_v2_export_line",
-    "NEWS_FEATURE_NAMES_V2",
-    "NewsEvent",
-    "NewsOrigin",
-    "aggregate_news_features",
+    "NEWS_FEATURE_NAMES",
+    "PIPELINE_VERSION",
+    "TARGET_VERSION",
+    "ChronologicalSplit",
+    "LSTMConfig",
+    "NonTradingSessionError",
+    "VolatilityConfig",
+    "VolatilityExamples",
+    "assert_label_purged",
+    "baseline_predictions",
+    "build_causal_news_features",
+    "build_examples",
+    "build_feature_frame",
+    "causal_log_har_forecasts",
+    "chronological_split",
+    "evaluate_benchmark",
+    "evaluate_conformal_volatility_intervals",
+    "evaluate_price_diffusion_cone",
+    "experiment_metadata",
+    "fit_garch11_baseline",
+    "fit_garch11_mle_from_returns",
+    "fit_har_baseline",
+    "get_session_close_utc",
+    "learned_predictions",
+    "lstm_predictions",
+    "qlike_loss",
+    "realised_volatility",
+    "select_validation_model",
+    "validate_ohlcv",
+    "volatility_metrics",
 ]
