@@ -218,7 +218,8 @@ def run_study(
 
         mkt_frame = (
             _get_market_frame_for_ticker(ticker, spy_mkt, qqq_mkt)
-            if feature_mode in ("price_plus_ohlc_plus_market", "price_plus_ohlc_plus_market_plus_news")
+            if feature_mode
+            in ("price_plus_ohlc_plus_market", "price_plus_ohlc_plus_market_plus_news")
             else None
         )
 
@@ -1255,7 +1256,6 @@ def build_phase_4_news_report(
     horizons = base_data.get("horizons", [1, 5, 10, 20])
     models = ["garch_11", "rolling_mean", "gradient_boosting", "elastic_net", "lstm"]
     eval_matrix: list[dict[str, Any]] = []
-    sector_summary: dict[str, dict[int, dict[str, int]]] = {}
 
     lines = [
         "# Empirical Volatility Forecasting Benchmark: Incremental News Signal Ablation (Phase 4)",
@@ -1270,26 +1270,31 @@ def build_phase_4_news_report(
         "\n## 0. News Corpus Coverage & Dataset Diagnostics",
         "| Metric | Value | Note |",
         "| :--- | :---: | :--- |",
-        "| **Total News Articles Evaluated** | ~232,000 | Causal corporate, earnings, regulatory & market events |",
-        "| **Assets with News Coverage** | 44 / 44 (100.0%) | Complete coverage across all 8 market sectors |",
+        "| **Total News Articles Evaluated** | ~232,000 | Corporate, earnings, regulatory & financial news events |",
+        "| **Assets with News Coverage** | 44 / 44 (100.0%) | Full coverage across all 8 market sectors |",
         "| **Median Articles / Asset** | ~5,270 | Across 2,930 trading sessions (2015-01-02 to 2026-08-27) |",
         "| **Median 1-Day Window Coverage** | 83.5% | Fraction of forecast origins with ≥1 article in past 24h |",
         "| **Median 3-Day Window Coverage** | 98.2% | Fraction of forecast origins with ≥1 article in past 72h |",
         "| **Median 7-Day Window Coverage** | 99.8% | Fraction of forecast origins with ≥1 article in past 168h |",
-        "| **Date Range** | 2015-01-02 to 2026-08-27 | 11.6 years strictly synchronized with market trading days |",
-        "| **Provider / Source Architecture** | Point-in-Time Causal Event Stream | Explicit pre-market, intraday, and after-hours timestamps |",
-        "| **Timezone-Aware Session Cutoff** | 16:00 America/New_York | 20:00 UTC (EDT) / 21:00 UTC (EST) |",
-        "| **Sentiment Lexicon & Scoring** | VADER Financial Lexicon | Pos, Neg, Compound, Dispersion, and Negative Intensity |",
-        "| **Deduplication Rate** | 100% Deterministic | Exact duplicate articles removed by headline & timestamp |",
-        "| **Ticker / Entity Match Rate** | 100.0% | Exact symbol matching with alias normalization |",
+        "| **Date Range** | 2015-01-02 to 2026-08-27 | 11.6 years synchronized with market trading days |",
+        "| **Source & Acquisition** | Point-in-Time Financial News Stream | Filtered strictly by published_at ≤ session_close_utc |",
+        "| **Raw Fields Utilized** | ticker, published_at, headline, pos/neg | UTC timestamps, normalized ticker, sentiment scores |",
+        "| **Exchange Session Cutoff** | NYSE Exchange Schedule (mcal) | 16:00 ET (20:00/21:00 UTC); 13:00 ET (17:00/18:00 UTC early closes) |",
+        "| **Sentiment Lexicon & Scoring** | VADER Financial Lexicon | Pos, Neg, Compound, Dispersion, Negative Intensity |",
+        "| **Deduplication Method** | Exact Match Deterministic Filter | Duplicate records matching symbol, headline & timestamp removed |",
+        "| **Entity Matching Method** | Deterministic Universe Ticker Match | 100% of retained records matched valid target universe symbols |",
         "\n## 1. Paired News Ablation Matrix (Base QLIKE vs +News QLIKE)",
         "| Horizon | Model | Base QLIKE | +News QLIKE | Δ QLIKE | Rel Δ | Assets Improved | 95% Bootstrap CI | Verdict |",
         "| :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
     ]
 
     for h in horizons:
-        base_h_results = {r["ticker"]: r for r in base_data.get("raw_results_by_horizon", {}).get(f"h{h}", [])}
-        news_h_results = {r["ticker"]: r for r in news_data.get("raw_results_by_horizon", {}).get(f"h{h}", [])}
+        base_h_results = {
+            r["ticker"]: r for r in base_data.get("raw_results_by_horizon", {}).get(f"h{h}", [])
+        }
+        news_h_results = {
+            r["ticker"]: r for r in news_data.get("raw_results_by_horizon", {}).get(f"h{h}", [])
+        }
         common_tickers = [t for t in base_h_results if t in news_h_results]
 
         for m in models:
@@ -1298,7 +1303,12 @@ def build_phase_4_news_report(
             for t in common_tickers:
                 b_val = base_h_results[t]["metrics"].get(m, {}).get("test", {}).get("qlike")
                 n_val = news_h_results[t]["metrics"].get(m, {}).get("test", {}).get("qlike")
-                if isinstance(b_val, (int, float)) and isinstance(n_val, (int, float)) and np.isfinite(b_val) and np.isfinite(n_val):
+                if (
+                    isinstance(b_val, (int, float))
+                    and isinstance(n_val, (int, float))
+                    and np.isfinite(b_val)
+                    and np.isfinite(n_val)
+                ):
                     base_losses.append(float(b_val))
                     news_losses.append(float(n_val))
 
@@ -1312,7 +1322,9 @@ def build_phase_4_news_report(
             rel_pct = (delta / mean_base * 100.0) if mean_base > 0 else 0.0
             imprv_count = boot["improved_assets"] if boot else 0
             total_count = len(base_losses)
-            ci_low, ci_high = (boot["bootstrap_ci_95"][0], boot["bootstrap_ci_95"][1]) if boot else (0.0, 0.0)
+            ci_low, ci_high = (
+                (boot["bootstrap_ci_95"][0], boot["bootstrap_ci_95"][1]) if boot else (0.0, 0.0)
+            )
 
             if ci_low > 0.0 and imprv_count > total_count / 2:
                 verdict = "**Statistically Superior**"
@@ -1323,33 +1335,41 @@ def build_phase_4_news_report(
 
             m_disp = _display_model(m)
             lines.append(
-                f"| {h}-Day | {m_disp} | {mean_base:.4f} | {mean_news:.4f} | {delta:+.4f} | {rel_pct:+.2f}% | {imprv_count}/{total_count} ({imprv_count/total_count*100:.1f}%) | [{ci_low:+.4f}, {ci_high:+.4f}] | {verdict} |"
+                f"| {h}-Day | {m_disp} | {mean_base:.4f} | {mean_news:.4f} | {delta:+.4f} | {rel_pct:+.2f}% | {imprv_count}/{total_count} ({imprv_count / total_count * 100:.1f}%) | [{ci_low:+.4f}, {ci_high:+.4f}] | {verdict} |"
             )
 
-            eval_matrix.append({
-                "horizon": h,
-                "model": m,
-                "mean_base_qlike": mean_base,
-                "mean_news_qlike": mean_news,
-                "mean_delta_qlike": delta,
-                "relative_improvement_pct": rel_pct,
-                "improved_assets": imprv_count,
-                "total_assets": total_count,
-                "bootstrap_ci_95": [ci_low, ci_high],
-                "verdict": verdict,
-            })
+            eval_matrix.append(
+                {
+                    "horizon": h,
+                    "model": m,
+                    "mean_base_qlike": mean_base,
+                    "mean_news_qlike": mean_news,
+                    "mean_delta_qlike": delta,
+                    "relative_improvement_pct": rel_pct,
+                    "improved_assets": imprv_count,
+                    "total_assets": total_count,
+                    "bootstrap_ci_95": [ci_low, ci_high],
+                    "verdict": verdict,
+                }
+            )
 
     # Sector Breakdown
     lines.append("\n## 2. Sector Breadth Breakdown (Count of Assets Improved by Horizon)")
-    lines.append("| Sector | Universe Assets | 1-Day Imprv | 5-Day Imprv | 10-Day Imprv | 20-Day Imprv |")
+    lines.append(
+        "| Sector | Universe Assets | 1-Day Imprv | 5-Day Imprv | 10-Day Imprv | 20-Day Imprv |"
+    )
     lines.append("| :--- | :---: | :---: | :---: | :---: | :---: |")
 
     sector_results: dict[str, Any] = {}
     for sector, sec_tickers in TARGET_UNIVERSE.items():
         sec_imprv: dict[int, str] = {}
         for h in horizons:
-            base_h_results = {r["ticker"]: r for r in base_data.get("raw_results_by_horizon", {}).get(f"h{h}", [])}
-            news_h_results = {r["ticker"]: r for r in news_data.get("raw_results_by_horizon", {}).get(f"h{h}", [])}
+            base_h_results = {
+                r["ticker"]: r for r in base_data.get("raw_results_by_horizon", {}).get(f"h{h}", [])
+            }
+            news_h_results = {
+                r["ticker"]: r for r in news_data.get("raw_results_by_horizon", {}).get(f"h{h}", [])
+            }
             common_sec = [t for t in sec_tickers if t in base_h_results and t in news_h_results]
             imprv_sec = 0
             for t in common_sec:
@@ -1357,7 +1377,11 @@ def build_phase_4_news_report(
                 m = "lstm" if "lstm" in base_h_results[t]["metrics"] else "gradient_boosting"
                 b_val = base_h_results[t]["metrics"].get(m, {}).get("test", {}).get("qlike")
                 n_val = news_h_results[t]["metrics"].get(m, {}).get("test", {}).get("qlike")
-                if isinstance(b_val, (int, float)) and isinstance(n_val, (int, float)) and b_val > n_val:
+                if (
+                    isinstance(b_val, (int, float))
+                    and isinstance(n_val, (int, float))
+                    and b_val > n_val
+                ):
                     imprv_sec += 1
             sec_imprv[h] = f"{imprv_sec}/{len(common_sec)}"
 

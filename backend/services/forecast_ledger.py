@@ -1,4 +1,4 @@
-"""Persistent forecast ledger service.
+"""Persistent forecast ledger service with strict immutability and provenance tracking.
 
 Records volatility forecasts and scores them against subsequently realized
 market volatility once future trading sessions resolve.
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "forecast_ledger.db"
 _EPS = 1e-6
 
+SUPPORTED_REPLAY_MODELS = ("rolling_mean", "har_rv", "ewma", "persistence", "garch_11")
+
 
 @dataclass(frozen=True)
 class ForecastRecord:
@@ -41,6 +43,11 @@ class ForecastRecord:
     abs_error: float | None
     qlike_loss: float | None
     status: str  # 'pending' | 'scored'
+    record_source: str  # 'live' | 'historical_replay'
+    model_version: str
+    feature_set_version: str
+    code_commit: str
+    data_as_of: str
     created_at: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,7 +55,7 @@ class ForecastRecord:
 
 
 class ForecastLedger:
-    """SQLite-backed forecast ledger and evaluation ledger."""
+    """SQLite-backed immutable forecast ledger with strict provenance tracking."""
 
     def __init__(self, db_path: Path | str | None = None) -> None:
         self.db_path = Path(db_path or _DEFAULT_DB_PATH)
@@ -81,15 +88,46 @@ class ForecastLedger:
                     abs_error REAL,
                     qlike_loss REAL,
                     status TEXT NOT NULL,
+                    record_source TEXT NOT NULL DEFAULT 'live',
+                    model_version TEXT NOT NULL DEFAULT 'deployable_v5',
+                    feature_set_version TEXT NOT NULL DEFAULT 'deployable_feature_columns_v5',
+                    code_commit TEXT NOT NULL DEFAULT 'head',
+                    data_as_of TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
-                    UNIQUE(forecast_date, ticker, horizon, model_name)
+                    UNIQUE(forecast_date, ticker, horizon, model_name, record_source)
                 )
                 """
             )
+            existing_cols = {
+                row["name"] for row in conn.execute("PRAGMA table_info(forecast_ledger)").fetchall()
+            }
+            if "record_source" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE forecast_ledger ADD COLUMN record_source TEXT NOT NULL DEFAULT 'live'"
+                )
+            if "model_version" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE forecast_ledger ADD COLUMN model_version TEXT NOT NULL DEFAULT 'deployable_v5'"
+                )
+            if "feature_set_version" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE forecast_ledger ADD COLUMN feature_set_version TEXT NOT NULL DEFAULT 'deployable_feature_columns_v5'"
+                )
+            if "code_commit" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE forecast_ledger ADD COLUMN code_commit TEXT NOT NULL DEFAULT 'head'"
+                )
+            if "data_as_of" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE forecast_ledger ADD COLUMN data_as_of TEXT NOT NULL DEFAULT ''"
+                )
+
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_ledger_ticker ON forecast_ledger(ticker, horizon)"
+                "CREATE INDEX IF NOT EXISTS idx_ledger_ticker_source ON forecast_ledger(ticker, horizon, record_source)"
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_status ON forecast_ledger(status)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ledger_status_source ON forecast_ledger(status, record_source)"
+            )
             conn.commit()
 
     def record_forecast(
@@ -105,36 +143,93 @@ class ForecastLedger:
         origin_price: float,
         lower_scenario_price: float,
         upper_scenario_price: float,
+        record_source: str = "live",
+        model_version: str = "deployable_v5",
+        feature_set_version: str = "deployable_feature_columns_v5",
+        code_commit: str = "head",
+        data_as_of: str = "",
     ) -> ForecastRecord:
-        """Insert or update a forecast entry in the ledger."""
+        """Insert a forecast entry into the ledger with strict immutability semantics.
+
+        - If no record exists: inserts a new pending forecast record.
+        - If an identical forecast record already exists: returns the existing record idempotently.
+        - If a conflicting forecast record exists (different prediction or parameters): raises ValueError.
+        - If an existing record has already settled (status='scored'): strictly forbids mutation.
+        """
         now_iso = datetime.now(UTC).isoformat()
+        f_date_str = str(forecast_date)
+        ticker_str = str(ticker).upper()
+        h_int = int(horizon)
+        m_name_str = str(model_name)
+        source_str = str(record_source)
+
         with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT * FROM forecast_ledger
+                WHERE forecast_date=? AND ticker=? AND horizon=? AND model_name=? AND record_source=?
+                """,
+                (f_date_str, ticker_str, h_int, m_name_str, source_str),
+            )
+            existing = cursor.fetchone()
+
+            if existing is not None:
+                existing_pred = float(existing["predicted_volatility"])
+                existing_p_origin = float(existing["origin_price"])
+                existing_p_lower = float(existing["lower_scenario_price"])
+                existing_p_upper = float(existing["upper_scenario_price"])
+
+                is_identical = (
+                    abs(existing_pred - float(predicted_volatility)) < 1e-5
+                    and abs(existing_p_origin - float(origin_price)) < 1e-4
+                    and abs(existing_p_lower - float(lower_scenario_price)) < 1e-4
+                    and abs(existing_p_upper - float(upper_scenario_price)) < 1e-4
+                )
+
+                if existing["status"] == "scored":
+                    if not is_identical:
+                        raise ValueError(
+                            f"Cannot modify or overwrite a settled/scored forecast for {ticker_str} "
+                            f"on {f_date_str} (horizon={h_int}d, model={m_name_str}, source={source_str}). "
+                            f"Existing pred={existing_pred:.4f}, incoming pred={float(predicted_volatility):.4f}."
+                        )
+                    return self._row_to_record(existing)
+
+                if not is_identical:
+                    raise ValueError(
+                        f"Conflicting forecast already exists for {ticker_str} on {f_date_str} "
+                        f"(horizon={h_int}d, model={m_name_str}, source={source_str}). "
+                        f"Existing pred={existing_pred:.4f}, incoming pred={float(predicted_volatility):.4f}. "
+                        f"Forecast records are immutable."
+                    )
+                return self._row_to_record(existing)
+
             conn.execute(
                 """
                 INSERT INTO forecast_ledger (
                     forecast_date, ticker, horizon, target_date, model_name,
                     predicted_volatility, recent_realized_volatility, origin_price,
-                    lower_scenario_price, upper_scenario_price, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-                ON CONFLICT(forecast_date, ticker, horizon, model_name) DO UPDATE SET
-                    predicted_volatility=excluded.predicted_volatility,
-                    recent_realized_volatility=excluded.recent_realized_volatility,
-                    origin_price=excluded.origin_price,
-                    lower_scenario_price=excluded.lower_scenario_price,
-                    upper_scenario_price=excluded.upper_scenario_price,
-                    created_at=excluded.created_at
+                    lower_scenario_price, upper_scenario_price, status,
+                    record_source, model_version, feature_set_version,
+                    code_commit, data_as_of, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(forecast_date),
-                    str(ticker).upper(),
-                    int(horizon),
+                    f_date_str,
+                    ticker_str,
+                    h_int,
                     str(target_date),
-                    str(model_name),
+                    m_name_str,
                     float(predicted_volatility),
                     float(recent_realized_volatility),
                     float(origin_price),
                     float(lower_scenario_price),
                     float(upper_scenario_price),
+                    source_str,
+                    str(model_version),
+                    str(feature_set_version),
+                    str(code_commit),
+                    str(data_as_of) or f_date_str,
                     now_iso,
                 ),
             )
@@ -143,9 +238,9 @@ class ForecastLedger:
             cursor = conn.execute(
                 """
                 SELECT * FROM forecast_ledger
-                WHERE forecast_date=? AND ticker=? AND horizon=? AND model_name=?
+                WHERE forecast_date=? AND ticker=? AND horizon=? AND model_name=? AND record_source=?
                 """,
-                (str(forecast_date), str(ticker).upper(), int(horizon), str(model_name)),
+                (f_date_str, ticker_str, h_int, m_name_str, source_str),
             )
             row = cursor.fetchone()
             return self._row_to_record(row)
@@ -155,6 +250,7 @@ class ForecastLedger:
         ticker: str,
         ohlcv_df: pd.DataFrame,
         *,
+        record_source: str | None = None,
         annualization: float = 252.0,
     ) -> int:
         """Score pending forecasts where future realized market returns are now available."""
@@ -173,13 +269,13 @@ class ForecastLedger:
 
         scored_count = 0
         with self._get_connection() as conn:
-            cursor = conn.execute(
-                """
-                SELECT * FROM forecast_ledger
-                WHERE ticker=? AND status='pending'
-                """,
-                (str(ticker).upper(),),
-            )
+            query = "SELECT * FROM forecast_ledger WHERE ticker=? AND status='pending'"
+            params: list[Any] = [str(ticker).upper()]
+            if record_source is not None:
+                query += " AND record_source=?"
+                params.append(str(record_source))
+
+            cursor = conn.execute(query, params)
             rows = cursor.fetchall()
 
             for row in rows:
@@ -234,6 +330,7 @@ class ForecastLedger:
         ticker: str | None = None,
         horizon: int | None = None,
         status: str | None = None,
+        record_source: str | None = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """Retrieve recent forecast ledger entries."""
@@ -249,6 +346,9 @@ class ForecastLedger:
         if status:
             query += " AND status=?"
             params.append(str(status))
+        if record_source:
+            query += " AND record_source=?"
+            params.append(str(record_source))
 
         query += " ORDER BY forecast_date DESC, id DESC LIMIT ?"
         params.append(int(limit))
@@ -262,10 +362,11 @@ class ForecastLedger:
         *,
         ticker: str | None = None,
         horizon: int | None = None,
+        record_source: str = "live",
     ) -> dict[str, Any]:
-        """Compute aggregate empirical track record accuracy metrics from scored forecasts."""
-        query = "SELECT * FROM forecast_ledger WHERE status='scored'"
-        params: list[Any] = []
+        """Compute aggregate empirical track record accuracy metrics for a specific record source."""
+        query = "SELECT * FROM forecast_ledger WHERE status='scored' AND record_source=?"
+        params: list[Any] = [str(record_source)]
 
         if ticker:
             query += " AND ticker=?"
@@ -280,6 +381,7 @@ class ForecastLedger:
 
         if not rows:
             return {
+                "record_source": record_source,
                 "total_forecasts": 0,
                 "scored_forecasts": 0,
                 "mean_mae": None,
@@ -306,6 +408,7 @@ class ForecastLedger:
                 total_direction += 1
 
         return {
+            "record_source": record_source,
             "total_forecasts": len(rows),
             "scored_forecasts": len(rows),
             "mean_mae": float(np.mean(abs_errors)) if abs_errors else None,
@@ -317,7 +420,7 @@ class ForecastLedger:
             ),
         }
 
-    def seed_historical_test_ledger(
+    def generate_historical_replay_ledger(
         self,
         ticker: str,
         ohlcv_df: pd.DataFrame,
@@ -326,7 +429,17 @@ class ForecastLedger:
         model_name: str = "rolling_mean",
         lookback_sessions: int = 40,
     ) -> int:
-        """Seed ledger with recent chronological out-of-sample sessions for live track record display."""
+        """Generate historical replay forecast entries from past data using the named model.
+
+        Tagged explicitly with record_source='historical_replay' to ensure historical
+        replays are never mixed with genuine live-emitted forecasts.
+        Raises ValueError if an unsupported model_name is requested.
+        """
+        if model_name not in SUPPORTED_REPLAY_MODELS:
+            raise ValueError(
+                f"Unsupported replay model '{model_name}'. Must be one of {SUPPORTED_REPLAY_MODELS}"
+            )
+
         if len(ohlcv_df) < 120:
             return 0
 
@@ -348,32 +461,86 @@ class ForecastLedger:
             if model_name == "rolling_mean":
                 ret_60 = np.log(close[i - 59 : i + 1] / close[i - 60 : i])
                 pred_vol = float(np.std(ret_60, ddof=1) * math.sqrt(252))
-            else:
+            elif model_name == "har_rv":
+                ret_1 = abs(float(np.log(close[i] / close[i - 1]))) * math.sqrt(252)
+                ret_5 = float(
+                    np.std(np.log(close[i - 4 : i + 1] / close[i - 5 : i]), ddof=1) * math.sqrt(252)
+                )
+                pred_vol = float(max(0.38 * ret_1 + 0.35 * ret_5 + 0.27 * recent_rv, _EPS))
+            elif model_name == "ewma":
+                lam = 0.94
+                weights = (1 - lam) * (lam ** np.arange(len(ret_22) - 1, -1, -1))
+                weights /= np.sum(weights)
+                var_ewma = float(np.sum(weights * (ret_22**2)))
+                pred_vol = float(math.sqrt(max(var_ewma * 252.0, _EPS)))
+            elif model_name == "persistence":
                 pred_vol = recent_rv
+            elif model_name == "garch_11":
+                pred_vol = self._fit_garch11_replay(ret_22, horizon=horizon)
+            else:
+                raise ValueError(f"Unhandled replay model: {model_name}")
 
             sigma_h = pred_vol * math.sqrt(horizon / 252.0)
             p_lower = float(p_origin * math.exp(-1.64485 * sigma_h))
             p_upper = float(p_origin * math.exp(1.64485 * sigma_h))
 
-            self.record_forecast(
-                forecast_date=f_date,
-                ticker=ticker,
-                horizon=horizon,
-                target_date=t_date,
-                model_name=model_name,
-                predicted_volatility=pred_vol,
-                recent_realized_volatility=recent_rv,
-                origin_price=p_origin,
-                lower_scenario_price=p_lower,
-                upper_scenario_price=p_upper,
-            )
-            seeded += 1
+            try:
+                self.record_forecast(
+                    forecast_date=f_date,
+                    ticker=ticker,
+                    horizon=horizon,
+                    target_date=t_date,
+                    model_name=model_name,
+                    predicted_volatility=pred_vol,
+                    recent_realized_volatility=recent_rv,
+                    origin_price=p_origin,
+                    lower_scenario_price=p_lower,
+                    upper_scenario_price=p_upper,
+                    record_source="historical_replay",
+                )
+                seeded += 1
+            except ValueError:
+                pass
 
-        self.score_pending_forecasts(ticker, ohlcv_df)
+        self.score_pending_forecasts(ticker, ohlcv_df, record_source="historical_replay")
         return seeded
 
     @staticmethod
+    def _fit_garch11_replay(returns: np.ndarray, horizon: int) -> float:
+        """Causal GARCH(1,1) multi-step annualized volatility estimator."""
+        ret = np.asarray(returns, dtype=float).reshape(-1)
+        ret = ret - np.mean(ret)
+        var = float(np.var(ret, ddof=1)) if len(ret) > 1 else 0.04**2 / 252.0
+        if len(ret) < 20 or var <= 1e-8:
+            return float(np.std(ret, ddof=1) * math.sqrt(252)) if len(ret) > 1 else 0.20
+
+        omega = 0.05 * var
+        alpha = 0.08
+        beta = 0.87
+
+        sigma2 = np.zeros_like(ret)
+        sigma2[0] = var
+        for t in range(1, len(ret)):
+            sigma2[t] = omega + alpha * (ret[t - 1] ** 2) + beta * sigma2[t - 1]
+
+        last_sigma2 = float(sigma2[-1])
+        last_ret2 = float(ret[-1] ** 2)
+        h_1 = omega + alpha * last_ret2 + beta * last_sigma2
+        persist = alpha + beta
+        uncond = omega / max(1.0 - persist, 1e-4)
+
+        if horizon == 1:
+            cum_var = h_1
+        else:
+            steps = [uncond + (persist ** (k - 1)) * (h_1 - uncond) for k in range(1, horizon + 1)]
+            cum_var = sum(steps)
+
+        ann_vol = math.sqrt(max(cum_var * 252.0 / horizon, _EPS))
+        return float(ann_vol)
+
+    @staticmethod
     def _row_to_record(row: sqlite3.Row) -> ForecastRecord:
+        keys = row.keys()
         return ForecastRecord(
             id=row["id"],
             forecast_date=row["forecast_date"],
@@ -397,6 +564,15 @@ class ForecastLedger:
             abs_error=float(row["abs_error"]) if row["abs_error"] is not None else None,
             qlike_loss=float(row["qlike_loss"]) if row["qlike_loss"] is not None else None,
             status=row["status"],
+            record_source=row["record_source"] if "record_source" in keys else "live",
+            model_version=row["model_version"] if "model_version" in keys else "deployable_v5",
+            feature_set_version=(
+                row["feature_set_version"]
+                if "feature_set_version" in keys
+                else "deployable_feature_columns_v5"
+            ),
+            code_commit=row["code_commit"] if "code_commit" in keys else "head",
+            data_as_of=row["data_as_of"] if "data_as_of" in keys else "",
             created_at=row["created_at"],
         )
 

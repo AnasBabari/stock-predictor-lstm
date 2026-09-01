@@ -278,6 +278,42 @@ NEWS_FEATURE_NAMES = (
 )
 
 
+_NYSE_CALENDAR = None
+
+
+def get_session_close_utc(s_date: pd.Timestamp | str) -> pd.Timestamp:
+    """Return the exact UTC market close timestamp for a given trading session.
+
+    Uses the canonical NYSE exchange calendar to accurately account for:
+    - Normal trading closes (16:00 ET -> 20:00 UTC during EDT, 21:00 UTC during EST)
+    - Early market closes (13:00 ET -> 17:00 UTC during EDT, 18:00 UTC during EST,
+      e.g. Black Friday, Christmas Eve, July 3rd)
+    - Dynamic fallback to America/New_York session close
+    """
+    global _NYSE_CALENDAR
+    ts = pd.Timestamp(s_date)
+    if ts.tz is not None:
+        ts = ts.tz_localize(None)
+    date_str = ts.strftime("%Y-%m-%d")
+
+    try:
+        if _NYSE_CALENDAR is None:
+            import pandas_market_calendars as mcal
+
+            _NYSE_CALENDAR = mcal.get_calendar("NYSE")
+        sched = _NYSE_CALENDAR.schedule(start_date=date_str, end_date=date_str)
+        if not sched.empty and "market_close" in sched.columns:
+            close_val = sched.loc[date_str, "market_close"]
+            return pd.Timestamp(close_val).tz_convert("UTC").tz_localize(None)
+    except Exception:
+        pass
+
+    close_et = ts.tz_localize("America/New_York").replace(
+        hour=16, minute=0, second=0, microsecond=0
+    )
+    return close_et.tz_convert("UTC").tz_localize(None)
+
+
 def build_causal_news_features(
     sessions: pd.DatetimeIndex,
     ticker: str,
@@ -285,9 +321,10 @@ def build_causal_news_features(
     *,
     seed: int = 42,
 ) -> pd.DataFrame:
-    """Extract causal point-in-time news features with strict market close cutoff.
+    """Extract causal point-in-time news features with strict exchange market close cutoff.
 
-    Cutoff at trading session t is 16:00 US/Eastern (20:00:00 UTC).
+    Cutoff at trading session t is resolved from the NYSE exchange calendar
+    (accounting for DST and early-closing sessions at 13:00 ET).
     Only articles with published_at <= cutoff participate in session t.
     """
     sessions = pd.DatetimeIndex(sessions)
@@ -297,10 +334,7 @@ def build_causal_news_features(
     out = pd.DataFrame(index=sessions)
 
     if news_events is not None:
-        if isinstance(news_events, list):
-            df_news = pd.DataFrame(news_events)
-        else:
-            df_news = news_events.copy()
+        df_news = pd.DataFrame(news_events) if isinstance(news_events, list) else news_events.copy()
     else:
         rng = np.random.default_rng(seed + abs(hash(ticker)) % 100000)
         records = []
@@ -308,27 +342,27 @@ def build_causal_news_features(
             ts = pd.Timestamp(dt)
             if ts.tz is not None:
                 ts = ts.tz_localize(None)
+            close_utc_ts = get_session_close_utc(ts)
             num_articles = int(rng.poisson(1.8))
             for _ in range(num_articles):
                 is_pre_close = rng.random() < 0.75
                 if is_pre_close:
-                    hour = int(rng.integers(8, 16))
+                    offset_hours = float(rng.uniform(0.5, 7.5))
+                    pub_utc = close_utc_ts - pd.Timedelta(hours=offset_hours)
                 else:
-                    hour = int(rng.integers(16, 23))
-                minute = int(rng.integers(0, 60))
-                pub_et = ts.tz_localize("America/New_York").replace(
-                    hour=hour, minute=minute, second=0, microsecond=0
-                )
-                pub_utc = pub_et.tz_convert("UTC").tz_localize(None)
+                    offset_hours = float(rng.uniform(0.5, 6.0))
+                    pub_utc = close_utc_ts + pd.Timedelta(hours=offset_hours)
                 neg = float(rng.beta(0.5, 3.0))
                 pos = float(rng.beta(0.8, 2.5))
-                records.append({
-                    "ticker": ticker,
-                    "published_at": pub_utc,
-                    "sentiment_pos": pos,
-                    "sentiment_neg": neg,
-                    "sentiment_compound": float(pos - neg),
-                })
+                records.append(
+                    {
+                        "ticker": ticker,
+                        "published_at": pub_utc,
+                        "sentiment_pos": pos,
+                        "sentiment_neg": neg,
+                        "sentiment_compound": float(pos - neg),
+                    }
+                )
         df_news = pd.DataFrame(records)
 
     if df_news.empty or "published_at" not in df_news.columns:
@@ -367,14 +401,7 @@ def build_causal_news_features(
     hours_since: list[float] = []
 
     for s_date in sessions:
-        ts = pd.Timestamp(s_date)
-        if ts.tz is not None:
-            ts = ts.tz_localize(None)
-        # Market close cutoff at 16:00 America/New_York dynamically converted to UTC (20:00 EDT / 21:00 EST)
-        close_et = ts.tz_localize("America/New_York").replace(
-            hour=16, minute=0, second=0, microsecond=0
-        )
-        cutoff_ts = close_et.tz_convert("UTC").tz_localize(None)
+        cutoff_ts = get_session_close_utc(s_date)
         cutoff = np.datetime64(cutoff_ts, "ns")
         cutoff_1d = cutoff - np.timedelta64(24, "h")
         cutoff_3d = cutoff - np.timedelta64(72, "h")

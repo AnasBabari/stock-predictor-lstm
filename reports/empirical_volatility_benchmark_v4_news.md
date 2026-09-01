@@ -12,18 +12,19 @@
 ## 0. News Corpus Coverage & Dataset Diagnostics
 | Metric | Value | Note |
 | :--- | :---: | :--- |
-| **Total News Articles Evaluated** | ~232,000 | Causal corporate, earnings, regulatory & market events |
-| **Assets with News Coverage** | 44 / 44 (100.0%) | Complete coverage across all 8 market sectors |
+| **Total News Articles Evaluated** | ~232,000 | Corporate, earnings, regulatory & financial news events |
+| **Assets with News Coverage** | 44 / 44 (100.0%) | Full coverage across all 8 market sectors |
 | **Median Articles / Asset** | ~5,270 | Across 2,930 trading sessions (2015-01-02 to 2026-08-27) |
 | **Median 1-Day Window Coverage** | 83.5% | Fraction of forecast origins with ≥1 article in past 24h |
 | **Median 3-Day Window Coverage** | 98.2% | Fraction of forecast origins with ≥1 article in past 72h |
 | **Median 7-Day Window Coverage** | 99.8% | Fraction of forecast origins with ≥1 article in past 168h |
-| **Date Range** | 2015-01-02 to 2026-08-27 | 11.6 years strictly synchronized with market trading days |
-| **Provider / Source Architecture** | Point-in-Time Causal Event Stream | Explicit pre-market, intraday, and after-hours timestamps |
-| **Timezone-Aware Session Cutoff** | 16:00 America/New_York | 20:00 UTC (EDT) / 21:00 UTC (EST) |
-| **Sentiment Lexicon & Scoring** | VADER Financial Lexicon | Pos, Neg, Compound, Dispersion, and Negative Intensity |
-| **Deduplication Rate** | 100% Deterministic | Exact duplicate articles removed by headline & timestamp |
-| **Ticker / Entity Match Rate** | 100.0% | Exact symbol matching with alias normalization |
+| **Date Range** | 2015-01-02 to 2026-08-27 | 11.6 years synchronized with market trading days |
+| **Source & Acquisition** | Point-in-Time Financial News Stream | Filtered strictly by published_at ≤ session_close_utc |
+| **Raw Fields Utilized** | ticker, published_at, headline, pos/neg | UTC timestamps, normalized ticker, sentiment scores |
+| **Exchange Session Cutoff** | NYSE Exchange Schedule (mcal) | 16:00 ET (20:00/21:00 UTC); 13:00 ET (17:00/18:00 UTC early closes) |
+| **Sentiment Lexicon & Scoring** | VADER Financial Lexicon | Pos, Neg, Compound, Dispersion, Negative Intensity |
+| **Deduplication Method** | Exact Match Deterministic Filter | Duplicate records matching symbol, headline & timestamp removed |
+| **Entity Matching Method** | Deterministic Universe Ticker Match | 100% of retained records matched valid target universe symbols |
 
 ## 1. Paired News Ablation Matrix (Base QLIKE vs +News QLIKE)
 | Horizon | Model | Base QLIKE | +News QLIKE | Δ QLIKE | Rel Δ | Assets Improved | 95% Bootstrap CI | Verdict |

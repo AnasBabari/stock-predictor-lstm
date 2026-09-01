@@ -44,7 +44,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--csv", action="append", required=True, help="OHLCV CSV (repeat per symbol)"
     )
-    parser.add_argument("--horizon", type=int, default=5, help="Forecast horizon in sessions (e.g. 1, 5, 10, 20)")
+    parser.add_argument(
+        "--horizon", type=int, default=5, help="Forecast horizon in sessions (e.g. 1, 5, 10, 20)"
+    )
     parser.add_argument("--lookback", type=int, default=22)
     parser.add_argument("--include-lstm", action="store_true")
     parser.add_argument("--without-boosting", action="store_true")
@@ -99,7 +101,9 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
                     if values:
                         numeric[key] = float(np.mean(values))
             if partition == "test":
-                if "volatility_interval" in rows[0] and isinstance(rows[0]["volatility_interval"], dict):
+                if "volatility_interval" in rows[0] and isinstance(
+                    rows[0]["volatility_interval"], dict
+                ):
                     covs = [
                         float(row["volatility_interval"]["empirical_coverage"])
                         for row in rows

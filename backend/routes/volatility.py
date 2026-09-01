@@ -84,6 +84,11 @@ def volatility_forecast(
                 origin_price=float(snapshot.origin_close),
                 lower_scenario_price=float(p05),
                 upper_scenario_price=float(p95),
+                record_source="live",
+                model_version="deployable_v5",
+                feature_set_version="deployable_feature_columns_v5",
+                code_commit="head",
+                data_as_of=snapshot.origin_date,
             )
         except Exception as ledger_err:
             logger.warning("Could not record forecast to ledger for %s: %s", symbol, ledger_err)
@@ -123,29 +128,45 @@ def get_volatility_ledger_route(
     request: Request,
     ticker: str = Query(default="AAPL", min_length=1, max_length=12),
     horizon: int | None = Query(default=None),
+    record_source: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict[str, Any]:
     """Retrieve historical forecast ledger and empirical accuracy track record."""
     symbol = validate_ticker(ticker)
     ledger = get_forecast_ledger()
 
-    entries = ledger.get_ledger_entries(ticker=symbol, horizon=horizon, limit=limit)
+    entries = ledger.get_ledger_entries(
+        ticker=symbol, horizon=horizon, record_source=record_source, limit=limit
+    )
     if not entries:
         try:
             from data_pipeline import fetch_historical_frame
 
             df = fetch_historical_frame(symbol)
             if df is not None and not df.empty:
-                ledger.seed_historical_test_ledger(symbol, df, horizon=horizon or 5)
-                entries = ledger.get_ledger_entries(ticker=symbol, horizon=horizon, limit=limit)
+                replay_model = "garch_11" if horizon == 1 else "rolling_mean"
+                ledger.generate_historical_replay_ledger(
+                    symbol, df, horizon=horizon or 5, model_name=replay_model
+                )
+                entries = ledger.get_ledger_entries(
+                    ticker=symbol, horizon=horizon, record_source=record_source, limit=limit
+                )
         except Exception as seed_err:
-            logger.debug("Could not auto-seed test ledger for %s: %s", symbol, seed_err)
+            logger.debug("Could not auto-generate historical replay for %s: %s", symbol, seed_err)
 
-    metrics = ledger.get_track_record_metrics(ticker=symbol, horizon=horizon)
+    live_metrics = ledger.get_track_record_metrics(
+        ticker=symbol, horizon=horizon, record_source="live"
+    )
+    replay_metrics = ledger.get_track_record_metrics(
+        ticker=symbol, horizon=horizon, record_source="historical_replay"
+    )
+
     return {
         "ticker": symbol,
         "horizon": horizon,
-        "track_record": metrics,
+        "live_track_record": live_metrics,
+        "replay_track_record": replay_metrics,
+        "track_record": live_metrics,
         "entries": entries,
     }
 
@@ -168,11 +189,16 @@ def score_volatility_ledger_route(
                 status_code=422, detail="No historical market data available for scoring."
             )
         scored_count = ledger.score_pending_forecasts(symbol, df)
-        metrics = ledger.get_track_record_metrics(ticker=symbol)
+        live_metrics = ledger.get_track_record_metrics(ticker=symbol, record_source="live")
+        replay_metrics = ledger.get_track_record_metrics(
+            ticker=symbol, record_source="historical_replay"
+        )
         return {
             "ticker": symbol,
             "scored_count": scored_count,
-            "track_record": metrics,
+            "live_track_record": live_metrics,
+            "replay_track_record": replay_metrics,
+            "track_record": live_metrics,
         }
     except HTTPException:
         raise

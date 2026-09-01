@@ -1929,6 +1929,54 @@ canvas {
     border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
+.ledger-tab-group {
+    display: flex;
+    gap: 6px;
+}
+
+.ledger-tab-btn {
+    padding: 4px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.ledger-tab-btn:hover {
+    color: var(--text);
+    background: var(--bg-secondary);
+}
+
+.ledger-tab-btn.active {
+    background: var(--teal);
+    color: #fff;
+    border-color: var(--teal);
+    font-weight: 500;
+}
+
+.source-chip {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 0.68rem;
+    font-weight: 500;
+}
+
+.source-chip--live {
+    background: rgba(13, 148, 136, 0.15);
+    color: var(--teal);
+    border: 1px solid rgba(13, 148, 136, 0.3);
+}
+
+.source-chip--replay {
+    background: rgba(148, 163, 184, 0.15);
+    color: var(--text-muted);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
 .ledger-loading-state,
 .ledger-error-state {
     padding: 24px;
@@ -1936,4 +1984,3 @@ canvas {
     font-size: 0.85rem;
     color: var(--text-muted);
 }
-

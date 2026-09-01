@@ -89,9 +89,9 @@ def public_key_fingerprint(path: Path) -> str:
 
 def _canonical_unsigned_bytes(payload: Mapping[str, Any]) -> bytes:
     unsigned = {key: value for key, value in payload.items() if key != "signature"}
-    return json.dumps(
-        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    return json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
 
 
 def receipt_digest(payload: Mapping[str, Any]) -> str:
@@ -156,8 +156,7 @@ def _verify_evidence_files(
     if not isinstance(declared, dict) or not declared:
         raise AttestationError("attestation evidence_files must be a non-empty object")
     if any(
-        not isinstance(name, str)
-        or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", name)
+        not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", name)
         for name in declared
     ):
         raise AttestationError("attestation evidence file names must be non-empty strings")
@@ -371,7 +370,9 @@ def verify_dataset_attestation_record(
         raise AttestationError("dataset attestation record must contain market and pit64 entries")
     market_evidence_payload = market.get("evidence")
     pit64_evidence_payload = pit64.get("evidence")
-    if not isinstance(market_evidence_payload, dict) or not isinstance(pit64_evidence_payload, dict):
+    if not isinstance(market_evidence_payload, dict) or not isinstance(
+        pit64_evidence_payload, dict
+    ):
         raise AttestationError("dataset attestation evidence mappings are missing")
     market_evidence = {
         str(name): _dataset_relative_file(dataset_dir, value, f"market evidence {name}")
@@ -387,11 +388,15 @@ def verify_dataset_attestation_record(
     summary = verify_v11_2_inputs(
         snapshot_manifest_path=snapshot_manifest,
         universe_manifest_path=universe_manifest_path,
-        market_receipt_path=_dataset_relative_file(dataset_dir, market.get("receipt"), "market receipt"),
+        market_receipt_path=_dataset_relative_file(
+            dataset_dir, market.get("receipt"), "market receipt"
+        ),
         market_public_key_path=_dataset_relative_file(
             dataset_dir, market.get("public_key"), "market public key"
         ),
-        pit64_receipt_path=_dataset_relative_file(dataset_dir, pit64.get("receipt"), "pit64 receipt"),
+        pit64_receipt_path=_dataset_relative_file(
+            dataset_dir, pit64.get("receipt"), "pit64 receipt"
+        ),
         pit64_public_key_path=_dataset_relative_file(
             dataset_dir, pit64.get("public_key"), "pit64 public key"
         ),

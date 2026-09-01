@@ -121,6 +121,9 @@ def test_volatility_ledger_routes(monkeypatch, tmp_path):
     assert ledger_resp.status_code == 200
     l_body = ledger_resp.json()
     assert l_body["ticker"] == "MSFT"
+    assert "live_track_record" in l_body
+    assert "replay_track_record" in l_body
     assert len(l_body["entries"]) >= 1
     assert l_body["entries"][0]["ticker"] == "MSFT"
     assert l_body["entries"][0]["status"] == "pending"
+    assert l_body["entries"][0]["record_source"] == "live"

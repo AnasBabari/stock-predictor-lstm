@@ -432,16 +432,62 @@ def test_causal_news_features_cutoff_and_integrity() -> None:
     w_df = build_causal_news_features(
         pd.to_datetime(["2025-01-15"]),
         ticker="AAPL",
-        news_events=[{"ticker": "AAPL", "published_at": pd.Timestamp("2025-01-15T20:30:00Z"), "sentiment_pos": 0.5, "sentiment_neg": 0.0}],
+        news_events=[
+            {
+                "ticker": "AAPL",
+                "published_at": pd.Timestamp("2025-01-15T20:30:00Z"),
+                "sentiment_pos": 0.5,
+                "sentiment_neg": 0.0,
+            }
+        ],
     )
     assert w_df.loc[pd.Timestamp("2025-01-15"), "news_headline_count_1d"] == 1.0
 
     s_df = build_causal_news_features(
         pd.to_datetime(["2025-07-15"]),
         ticker="AAPL",
-        news_events=[{"ticker": "AAPL", "published_at": pd.Timestamp("2025-07-15T20:30:00Z"), "sentiment_pos": 0.5, "sentiment_neg": 0.0}],
+        news_events=[
+            {
+                "ticker": "AAPL",
+                "published_at": pd.Timestamp("2025-07-15T20:30:00Z"),
+                "sentiment_pos": 0.5,
+                "sentiment_neg": 0.0,
+            }
+        ],
     )
     assert s_df.loc[pd.Timestamp("2025-07-15"), "news_headline_count_1d"] == 0.0
+
+    # Test early-close sessions (Black Friday 18:00 UTC cutoff, July 3rd 17:00 UTC cutoff)
+    # On Black Friday (2024-11-29), early close is 13:00 EST = 18:00 UTC:
+    # Article at 17:30 UTC is BEFORE early close -> visible (count = 1)
+    # Article at 18:30 UTC is AFTER early close -> excluded (count = 0)
+    bf_pre = build_causal_news_features(
+        pd.to_datetime(["2024-11-29"]),
+        ticker="AAPL",
+        news_events=[
+            {
+                "ticker": "AAPL",
+                "published_at": pd.Timestamp("2024-11-29T17:30:00Z"),
+                "sentiment_pos": 0.5,
+                "sentiment_neg": 0.0,
+            }
+        ],
+    )
+    assert bf_pre.loc[pd.Timestamp("2024-11-29"), "news_headline_count_1d"] == 1.0
+
+    bf_post = build_causal_news_features(
+        pd.to_datetime(["2024-11-29"]),
+        ticker="AAPL",
+        news_events=[
+            {
+                "ticker": "AAPL",
+                "published_at": pd.Timestamp("2024-11-29T18:30:00Z"),
+                "sentiment_pos": 0.5,
+                "sentiment_neg": 0.0,
+            }
+        ],
+    )
+    assert bf_post.loc[pd.Timestamp("2024-11-29"), "news_headline_count_1d"] == 0.0
 
 
 def test_news_feature_mode_nesting_and_examples() -> None:
@@ -466,4 +512,3 @@ def test_news_feature_mode_nesting_and_examples() -> None:
     assert ex_news.sequences.shape[-1] == ex_mkt.sequences.shape[-1] + 10
     assert "news_headline_count_1d" in ex_news.feature_names
     assert "news_negative_news_intensity" in ex_news.feature_names
-

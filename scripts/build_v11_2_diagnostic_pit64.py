@@ -54,28 +54,84 @@ USER_AGENT = "StockLSTM-development-research/11.2"
 
 SECTOR_STRATA: dict[str, tuple[str, ...]] = {
     "semiconductors_hardware": (
-        "NVDA", "AMD", "AVGO", "AMAT", "ADI", "LRCX", "KLAC", "QCOM",
+        "NVDA",
+        "AMD",
+        "AVGO",
+        "AMAT",
+        "ADI",
+        "LRCX",
+        "KLAC",
+        "QCOM",
     ),
     "software_cloud": (
-        "MSFT", "ADBE", "ADSK", "CDNS", "SNPS", "INTU", "PANW", "FTNT",
+        "MSFT",
+        "ADBE",
+        "ADSK",
+        "CDNS",
+        "SNPS",
+        "INTU",
+        "PANW",
+        "FTNT",
     ),
     "communications_media": (
-        "GOOG", "META", "NFLX", "CMCSA", "WBD", "BIDU", "NTES", "MELI",
+        "GOOG",
+        "META",
+        "NFLX",
+        "CMCSA",
+        "WBD",
+        "BIDU",
+        "NTES",
+        "MELI",
     ),
     "consumer_discretionary": (
-        "AMZN", "TSLA", "BKNG", "SBUX", "ROST", "MAR", "ORLY", "DASH",
+        "AMZN",
+        "TSLA",
+        "BKNG",
+        "SBUX",
+        "ROST",
+        "MAR",
+        "ORLY",
+        "DASH",
     ),
     "consumer_staples_defensive": (
-        "COST", "PEP", "MDLZ", "KDP", "KHC", "MNST", "DLTR", "CCEP",
+        "COST",
+        "PEP",
+        "MDLZ",
+        "KDP",
+        "KHC",
+        "MNST",
+        "DLTR",
+        "CCEP",
     ),
     "healthcare_biotech": (
-        "AMGN", "GILD", "REGN", "VRTX", "ISRG", "IDXX", "BIIB", "MRNA",
+        "AMGN",
+        "GILD",
+        "REGN",
+        "VRTX",
+        "ISRG",
+        "IDXX",
+        "BIIB",
+        "MRNA",
     ),
     "industrials_transportation": (
-        "HON", "CSX", "ODFL", "CPRT", "CTAS", "PCAR", "FAST", "ROP",
+        "HON",
+        "CSX",
+        "ODFL",
+        "CPRT",
+        "CTAS",
+        "PCAR",
+        "FAST",
+        "ROP",
     ),
     "energy_utilities_telecom": (
-        "AEP", "EXC", "XEL", "CEG", "TMUS", "BKR", "FANG", "VRSK",
+        "AEP",
+        "EXC",
+        "XEL",
+        "CEG",
+        "TMUS",
+        "BKR",
+        "FANG",
+        "VRSK",
     ),
 }
 
@@ -93,7 +149,9 @@ def _http_json(
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         headers["Content-Type"] = "application/json"
     for attempt in range(attempts):
-        request = urllib.request.Request(url, data=body, headers=headers, method="POST" if body else "GET")
+        request = urllib.request.Request(
+            url, data=body, headers=headers, method="POST" if body else "GET"
+        )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
                 return json.loads(response.read().decode("utf-8"))
@@ -121,7 +179,9 @@ def _load_frames(cache_dir: Path) -> tuple[dict[str, pd.DataFrame], dt.date]:
         if not path.is_file():
             raise FileNotFoundError(f"missing cached history for {ticker}: {path}")
         frame = pd.read_parquet(path)
-        frame = frame.rename(columns={str(column).lower(): str(column).title() for column in frame.columns})
+        frame = frame.rename(
+            columns={str(column).lower(): str(column).title() for column in frame.columns}
+        )
         required = ["Open", "High", "Low", "Close", "Volume"]
         if any(column not in frame for column in required):
             raise ValueError(f"{ticker}: cached frame lacks canonical OHLCV columns")
@@ -191,14 +251,18 @@ def _nasdaq_profile(ticker: str) -> tuple[str, str]:
     url = f"https://api.nasdaq.com/api/company/{ticker}/company-profile"
     payload = _http_json(url, user_agent="Mozilla/5.0 StockLSTM-development-research")
     data = payload.get("data") if isinstance(payload, dict) else None
-    industry = str((data.get("Industry") or {}).get("value") or "").strip() if isinstance(data, dict) else ""
-    sector = str((data.get("Sector") or {}).get("value") or "").strip() if isinstance(data, dict) else ""
+    industry = (
+        str((data.get("Industry") or {}).get("value") or "").strip()
+        if isinstance(data, dict)
+        else ""
+    )
+    sector = (
+        str((data.get("Sector") or {}).get("value") or "").strip() if isinstance(data, dict) else ""
+    )
     if not industry or not sector:
         summary_url = f"https://api.nasdaq.com/api/quote/{ticker}/summary?assetclass=stocks"
-        summary = _http_json(
-            summary_url, user_agent="Mozilla/5.0 StockLSTM-development-research"
-        )
-        summary_data = ((summary.get("data") or {}).get("summaryData") or {})
+        summary = _http_json(summary_url, user_agent="Mozilla/5.0 StockLSTM-development-research")
+        summary_data = (summary.get("data") or {}).get("summaryData") or {}
         industry = str((summary_data.get("Industry") or {}).get("value") or "").strip()
         sector = str((summary_data.get("Sector") or {}).get("value") or "").strip()
     if not industry or not sector:
@@ -338,7 +402,8 @@ def _securities(
         for ticker in tickers
     }
     volatility_labels = _strata(
-        annualized_volatility, labels=("lower_realized_vol", "middle_realized_vol", "higher_realized_vol")
+        annualized_volatility,
+        labels=("lower_realized_vol", "middle_realized_vol", "higher_realized_vol"),
     )
     cap_labels = _strata(
         {ticker: float(metadata["market_caps"][ticker]) for ticker in tickers},
@@ -365,7 +430,9 @@ def _securities(
                 market_cap_stratum=cap_labels[ticker],
                 ticker_intervals=_ticker_intervals(ticker, membership),
                 membership_intervals=membership,
-                provider_aliases=tuple(item.ticker for item in _ticker_intervals(ticker, membership)),
+                provider_aliases=tuple(
+                    item.ticker for item in _ticker_intervals(ticker, membership)
+                ),
                 corporate_actions=(
                     ({"date": "2022-06-09", "type": "ticker_change", "from": "FB", "to": "META"},)
                     if ticker == "META"

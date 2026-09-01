@@ -198,7 +198,9 @@ def test_dataset_attestation_record_binds_both_inputs(tmp_path: Path) -> None:
         "market": {
             "receipt": "manifests/attestations/market_receipt.json",
             "public_key": "manifests/attestations/market_public_key.pem",
-            "evidence": {"snapshot_manifest": "manifests/attestations/evidence/market-snapshot.json"},
+            "evidence": {
+                "snapshot_manifest": "manifests/attestations/evidence/market-snapshot.json"
+            },
         },
         "pit64": {
             "receipt": "manifests/attestations/pit64_receipt.json",
