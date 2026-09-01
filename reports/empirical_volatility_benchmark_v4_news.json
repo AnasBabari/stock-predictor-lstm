@@ -1,0 +1,378 @@
+{
+  "benchmark_version": "empirical-volatility-benchmark-v4-news",
+  "date_completed": "2026-09-01T17:36:52Z",
+  "base_feature_mode": "price_plus_ohlc_plus_market",
+  "news_feature_mode": "price_plus_ohlc_plus_market_plus_news",
+  "universe_size": 44,
+  "horizons": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "news_corpus_coverage": {
+    "total_articles": 232000,
+    "assets_with_coverage": 44,
+    "median_articles_per_asset": 5270,
+    "median_1d_coverage_pct": 83.5,
+    "median_3d_coverage_pct": 98.2,
+    "median_7d_coverage_pct": 99.8,
+    "date_range": "2015-01-02 to 2026-08-27",
+    "timezone_close": "16:00 America/New_York",
+    "duplicate_rate_removed": 1.0,
+    "ticker_match_confidence": 1.0
+  },
+  "evaluation_matrix": [
+    {
+      "horizon": 1,
+      "model": "garch_11",
+      "mean_base_qlike": 1.8581065361954108,
+      "mean_news_qlike": 1.8581065361954108,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 1,
+      "model": "rolling_mean",
+      "mean_base_qlike": 1.8895448917977296,
+      "mean_news_qlike": 1.8895448917977296,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 1,
+      "model": "gradient_boosting",
+      "mean_base_qlike": 168.28855206496885,
+      "mean_news_qlike": 382.2711604850181,
+      "mean_delta_qlike": -213.98260842004922,
+      "relative_improvement_pct": -127.15220720268594,
+      "improved_assets": 24,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -961.400588173333,
+        288.8340817902689
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 1,
+      "model": "elastic_net",
+      "mean_base_qlike": 5852189.983287621,
+      "mean_news_qlike": 87623444.2971843,
+      "mean_delta_qlike": -81771254.31389669,
+      "relative_improvement_pct": -1397.2761401700006,
+      "improved_assets": 1,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -245313754.860942,
+        -2.9632719968632744
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 1,
+      "model": "lstm",
+      "mean_base_qlike": 2.8678513576012175,
+      "mean_news_qlike": 2.820487040844433,
+      "mean_delta_qlike": 0.04736431675678432,
+      "relative_improvement_pct": 1.651561076596441,
+      "improved_assets": 19,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.02726822172263658,
+        0.1654611130557025
+      ],
+      "verdict": "Non-Significant Gain"
+    },
+    {
+      "horizon": 5,
+      "model": "garch_11",
+      "mean_base_qlike": 0.7309919062525942,
+      "mean_news_qlike": 0.7309919062525942,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 5,
+      "model": "rolling_mean",
+      "mean_base_qlike": 0.7206035512566458,
+      "mean_news_qlike": 0.7206035512566458,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 5,
+      "model": "gradient_boosting",
+      "mean_base_qlike": 1.7886440097350549,
+      "mean_news_qlike": 1.7488521112876645,
+      "mean_delta_qlike": 0.039791898447390395,
+      "relative_improvement_pct": 2.2246963750648523,
+      "improved_assets": 26,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.012358035276968701,
+        0.12728560736441663
+      ],
+      "verdict": "Non-Significant Gain"
+    },
+    {
+      "horizon": 5,
+      "model": "elastic_net",
+      "mean_base_qlike": 252.88563819713426,
+      "mean_news_qlike": 576.9172756385733,
+      "mean_delta_qlike": -324.03163744143905,
+      "relative_improvement_pct": -128.13366537993892,
+      "improved_assets": 8,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -971.995886729931,
+        -0.03608738112697193
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 5,
+      "model": "lstm",
+      "mean_base_qlike": 1.3349215228757176,
+      "mean_news_qlike": 1.333475768420932,
+      "mean_delta_qlike": 0.0014457544547856749,
+      "relative_improvement_pct": 0.10830258033979394,
+      "improved_assets": 22,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.019578969924091694,
+        0.021916637710011528
+      ],
+      "verdict": "Non-Significant Gain"
+    },
+    {
+      "horizon": 10,
+      "model": "garch_11",
+      "mean_base_qlike": 0.5984160414145773,
+      "mean_news_qlike": 0.5984160414145773,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "rolling_mean",
+      "mean_base_qlike": 0.5707334396581683,
+      "mean_news_qlike": 0.5707334396581683,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "gradient_boosting",
+      "mean_base_qlike": 1.2117104927631142,
+      "mean_news_qlike": 1.242612539035704,
+      "mean_delta_qlike": -0.030902046272589745,
+      "relative_improvement_pct": -2.5502829642188303,
+      "improved_assets": 23,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.09987410798172819,
+        0.0071045237537965674
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "elastic_net",
+      "mean_base_qlike": 246.12826792108297,
+      "mean_news_qlike": 1240.2081039357683,
+      "mean_delta_qlike": -994.0798360146854,
+      "relative_improvement_pct": -403.88690190328765,
+      "improved_assets": 9,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -2982.1949151171875,
+        -0.015365341588995288
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 10,
+      "model": "lstm",
+      "mean_base_qlike": 1.2518784326325425,
+      "mean_news_qlike": 1.1397340947541115,
+      "mean_delta_qlike": 0.11214433787843103,
+      "relative_improvement_pct": 8.958085302468676,
+      "improved_assets": 20,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.013871182549074598,
+        0.3532672460147403
+      ],
+      "verdict": "Non-Significant Gain"
+    },
+    {
+      "horizon": 20,
+      "model": "garch_11",
+      "mean_base_qlike": 0.6591718327413969,
+      "mean_news_qlike": 0.6591718327413969,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 20,
+      "model": "rolling_mean",
+      "mean_base_qlike": 0.5775560702602759,
+      "mean_news_qlike": 0.5775560702602759,
+      "mean_delta_qlike": 0.0,
+      "relative_improvement_pct": 0.0,
+      "improved_assets": 0,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        0.0,
+        0.0
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 20,
+      "model": "gradient_boosting",
+      "mean_base_qlike": 0.8582747415191959,
+      "mean_news_qlike": 0.8909337720840114,
+      "mean_delta_qlike": -0.03265903056481545,
+      "relative_improvement_pct": -3.805195351200372,
+      "improved_assets": 21,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.10538537424569058,
+        0.0054457951894510605
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 20,
+      "model": "elastic_net",
+      "mean_base_qlike": 10.357563887024538,
+      "mean_news_qlike": 12.994788237135793,
+      "mean_delta_qlike": -2.6372243501112553,
+      "relative_improvement_pct": -25.461820741603574,
+      "improved_assets": 13,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -7.888119478482487,
+        -0.006749618004307336
+      ],
+      "verdict": "Degradation / Noise"
+    },
+    {
+      "horizon": 20,
+      "model": "lstm",
+      "mean_base_qlike": 0.9791813484544132,
+      "mean_news_qlike": 0.8951740150331645,
+      "mean_delta_qlike": 0.08400733342124866,
+      "relative_improvement_pct": 8.579343709298575,
+      "improved_assets": 20,
+      "total_assets": 44,
+      "bootstrap_ci_95": [
+        -0.007519682471362349,
+        0.25414982238172373
+      ],
+      "verdict": "Non-Significant Gain"
+    }
+  ],
+  "sector_breakdown": {
+    "Mega-Cap Tech / Growth": {
+      "1": "2/6",
+      "5": "2/6",
+      "10": "2/6",
+      "20": "3/6"
+    },
+    "Broad & Tech ETFs": {
+      "1": "1/2",
+      "5": "1/2",
+      "10": "1/2",
+      "20": "1/2"
+    },
+    "Financials & Fintech": {
+      "1": "0/3",
+      "5": "0/3",
+      "10": "0/3",
+      "20": "1/3"
+    },
+    "Industrials & Logistics": {
+      "1": "4/7",
+      "5": "3/7",
+      "10": "3/7",
+      "20": "3/7"
+    },
+    "Healthcare & Biotech": {
+      "1": "5/7",
+      "5": "6/7",
+      "10": "5/7",
+      "20": "4/7"
+    },
+    "Consumer Staples & Discretionary": {
+      "1": "5/7",
+      "5": "6/7",
+      "10": "6/7",
+      "20": "6/7"
+    },
+    "Energy & Utilities": {
+      "1": "1/6",
+      "5": "0/6",
+      "10": "0/6",
+      "20": "0/6"
+    },
+    "High-Beta / High-Vol": {
+      "1": "1/6",
+      "5": "4/6",
+      "10": "3/6",
+      "20": "2/6"
+    }
+  },
+  "verdict": "REMOVE_NEWS_SIGNAL"
+}

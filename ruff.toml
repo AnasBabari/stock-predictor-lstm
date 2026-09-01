@@ -1,0 +1,19 @@
+# Ruff policy for research/ and scripts/ (backend/ keeps its own [tool.ruff] config).
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",    # line length handled by the formatter
+    "BLE001",  # harness code deliberately catches broad exceptions per seed/subprocess
+    "S110",    # try-except-pass is intentional for optional JSON payload parsing
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["S101"]
+# Locked harness files (must not be modified): suppress their pre-existing
+# lint findings so `ruff check research scripts` stays clean.
+"research/stock_autoresearch/config.py" = ["I001"]
+"research/stock_autoresearch/data.py" = ["UP035"]
+"research/stock_autoresearch/ledger.py" = ["UP035", "SIM105"]

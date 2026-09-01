@@ -1,0 +1,58 @@
+services:
+  - type: web
+    name: stock-predictor-backend
+    env: python
+    plan: free
+    region: oregon
+    branch: main
+    autoDeploy: checksPass
+    healthCheckPath: /health
+    buildCommand: "pip install --no-cache-dir uv==0.11.16 && uv sync --project backend --active --frozen --no-dev --no-install-project"
+    # Install from the same frozen uv.lock used by CI and the Docker image into
+    # Render's active virtual environment. Nested project .venv directories are
+    # not retained in the native runtime image.
+    startCommand: "python -m uvicorn api:app --host 0.0.0.0 --port $PORT --app-dir backend --forwarded-allow-ips='127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'"
+    buildFilter:
+      paths:
+        - backend/**
+        - requirements.txt
+        - render.yaml
+        - scripts/check_deployment.py
+      ignoredPaths:
+        - assets/**
+        - docs/**
+        - frontend/**
+    previews:
+      generation: automatic
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ENVIRONMENT
+        value: production
+      - key: DEPLOYMENT_PROVIDER
+        value: render
+      - key: DEPLOYMENT_ENVIRONMENT
+        value: production
+      - key: CORS_ORIGIN
+        sync: false
+      - key: PREVIEW_CORS_ORIGIN_REGEX
+        sync: false
+      - key: PREDICTION_WORKERS
+        value: "2"
+      - key: PREDICTION_QUEUE_SIZE
+        value: "4"
+      - key: PREDICTION_TIMEOUT_SECONDS
+        value: "600"
+      # This Ed25519 key is public and pinned in the image. The archive URL and
+      # digest remain dashboard-managed until locked certification succeeds.
+      - key: VOLATILITY_PUBLIC_KEY_PATH
+        value: backend/release_keys/volatility-v1.public.pem
+      - key: VOLATILITY_RELEASE_ARCHIVE_URL
+        sync: false
+      - key: VOLATILITY_RELEASE_ARCHIVE_SHA256
+        sync: false
+      # Serving stays optional until a candidate completes locked
+      # certification. With no archive URL/digest, /api/v2/forecast abstains
+      # instead of serving a baseline.
+      - key: VOLATILITY_SERVING_REQUIRED
+        value: "false"

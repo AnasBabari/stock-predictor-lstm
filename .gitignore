@@ -1,0 +1,53 @@
+# Python & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+.env
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Frontend & Node
+node_modules/
+dist/
+build/
+.npm/
+frontend/.npm-cache/
+
+# Local databases & logs
+*.db
+*.sqlite3
+*.log
+data/forecast_ledger.db
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Large files & local caches
+*.parquet
+*.jsonl
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.keras
+*.joblib
+*.pkl
+.uv-cache/
+.workbuddy-ai/
+diff.txt
