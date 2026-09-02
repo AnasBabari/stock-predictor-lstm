@@ -97,6 +97,14 @@ def test_alpaca_empty_bars_are_authoritative_unknown() -> None:
         provider.fetch_daily_bars("NOTREAL", years=8)
 
 
+def test_alpaca_symbol_error_in_422_is_authoritative_unknown() -> None:
+    provider = _alpaca(
+        lambda _request: httpx.Response(422, json={"code": 40010001, "message": "symbol not found"})
+    )
+    with pytest.raises(MarketDataSymbolNotFound):
+        provider.fetch_daily_bars("NOTREAL", years=8)
+
+
 def test_cache_hit_survives_provider_failure(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         "market_data.service.latest_completed_trading_session",

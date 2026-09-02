@@ -48,6 +48,25 @@ class AlpacaProvider:
     def configured(self) -> bool:
         return bool(self.key_id and self.secret_key)
 
+    @staticmethod
+    def _response_reports_unknown_symbol(response: httpx.Response) -> bool:
+        """Recognize Alpaca's symbol-level 400/422 errors without leaking text."""
+        if response.status_code == 404:
+            return True
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        text = " ".join(
+            str(payload.get(key, ""))
+            for key in ("code", "message", "error")
+            if isinstance(payload, dict)
+        ).lower()
+        return any(
+            phrase in text
+            for phrase in ("symbol not found", "unknown symbol", "invalid symbol", "no data")
+        )
+
     def fetch_daily_bars(self, symbol: str, *, years: int) -> MarketDataResult:
         if not self.configured:
             raise MarketDataConfigurationError("Alpaca market-data credentials are not configured")
@@ -89,7 +108,11 @@ class AlpacaProvider:
                     raise MarketDataServiceError("Alpaca market-data transport failed") from err
                 if response.status_code == 429:
                     raise MarketDataRateLimitError("Alpaca market-data rate limit exceeded")
-                if response.status_code == 404:
+                if response.status_code in {
+                    400,
+                    404,
+                    422,
+                } and self._response_reports_unknown_symbol(response):
                     raise MarketDataSymbolNotFound(f"Alpaca has no data for {symbol}")
                 if response.status_code in {401, 403}:
                     raise MarketDataConfigurationError(
