@@ -96,10 +96,14 @@ describe('volatility client contract', () => {
     expect(result.metrics.metric_source).toBe('baseline_definition');
   });
 
-  it('requests the active v1 volatility endpoint', async () => {
+  it('requests the public read-only volatility endpoint without ledger controls', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => body() }));
     await fetchVolatilityForecast('MSFT', 5, undefined, { baseUrl: 'https://api.test', fetchImpl });
-    expect(fetchImpl.mock.calls[0][0]).toContain('/api/v1/volatility/forecast');
+    const requestUrl = fetchImpl.mock.calls[0][0];
+    expect(requestUrl).toContain('/api/v1/volatility/forecast');
+    expect(requestUrl).not.toContain('record_ledger');
+    expect(fetchImpl.mock.calls[0][1]).not.toHaveProperty('method', 'POST');
+    expect(fetchImpl.mock.calls[0][1]).not.toHaveProperty('headers.Authorization');
   });
 
   it('maps a certified Student-t return distribution to a learned median path', () => {

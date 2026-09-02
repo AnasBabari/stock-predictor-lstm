@@ -18,7 +18,7 @@ A production-grade, empirical equity volatility forecasting platform. The system
   - **Multi-Day Horizons (5d, 10d, 20d):** `Rolling Mean (60d)` sample standard deviation.
   - **Research & ML Baselines:** PyTorch `SOFTPLUS_VOLATILITY` LSTM, `HAR-RV`, `EWMA (0.94)`, and regularized regressors (`ElasticNet`, `Ridge`).
 - **Resilient Market Data Boundary:** Render uses authenticated Alpaca daily bars with explicit adjusted-price semantics, bounded requests, session-aware ephemeral caching, and safe `503` handling. Yahoo is opt-in for local development only.
-- **Immutable Forecast Ledger & Track Record:** Every live forecast is recorded with a deterministic SHA-256 fingerprint that includes the market-data provider alongside code, data date, model, origin price, predictions, and scenarios. Settled records cannot be mutated or overwritten. Local/test runs use SQLite; production requires a managed PostgreSQL `DATABASE_URL` and fails closed when it is unavailable, so a free Render filesystem can never silently become the public record store.
+- **Immutable Forecast Ledger & Track Record:** Public forecasts are read-only previews. A separately authenticated, paced collector is the only API client permitted to create genuine live records. Every live forecast has a deterministic SHA-256 fingerprint covering provider, code, data date, model, origin price, prediction, and scenarios. Settled records cannot be mutated or overwritten. Local/test runs use SQLite; production requires PostgreSQL and fails closed when it is unavailable.
 - **Exchange Calendar Synchronization:** Forecast origins and news cutoffs follow the official NYSE trading calendar via `pandas_market_calendars`, failing closed on weekends and holidays.
 - **Modern Interactive UI:** React 18 dashboard with volatility scenario-range visualization, live scorecard (MAE, RMSE, QLIKE), and transparent model evaluation rationale.
 
@@ -104,7 +104,9 @@ API will be live at `http://127.0.0.1:8000` (interactive OpenAPI docs at `http:/
 Local development defaults to Yahoo. Production must set `MARKET_DATA_PROVIDER=alpaca`,
 `ALPACA_API_KEY_ID`, and `ALPACA_API_SECRET_KEY`; credentials are never sent to the browser.
 Before collecting genuine live forecasts, also set `FORECAST_LEDGER_DATABASE_URL`
-to a managed PostgreSQL database and `FORECAST_LEDGER_DATABASE_REQUIRED=true`.
+to a managed PostgreSQL database, `FORECAST_LEDGER_DATABASE_REQUIRED=true`, and
+`FORECAST_COLLECTOR_TOKEN` to a high-entropy server-side secret. The token must
+never be exposed through a `VITE_*` variable or browser code.
 See [Production Market Data](docs/market-data.md) for cache, readiness, ledger migration,
 and error semantics.
 
@@ -141,6 +143,7 @@ python scripts/verify_forecast_ledger_e2e.py
 - [System Architecture & Immutability](docs/architecture.md)
 - [REST API Reference](docs/api.md)
 - [Production Market Data](docs/market-data.md)
+- [Secure Live Forecast Operations](docs/live-forecast-operations.md)
 - [Benchmark Reports](reports/)
 
 ---

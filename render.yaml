@@ -57,6 +57,10 @@ services:
         sync: false
       - key: FORECAST_LEDGER_DATABASE_REQUIRED
         value: "true"
+      # Shared only with the server-side operational collector. Never expose
+      # this value to Vite or a browser environment.
+      - key: FORECAST_COLLECTOR_TOKEN
+        sync: false
       - key: CORS_ORIGIN
         sync: false
       - key: PREVIEW_CORS_ORIGIN_REGEX

@@ -29,9 +29,9 @@ development and deterministic tests. Production must set
 `FORECAST_LEDGER_DATABASE_URL` (or the platform-standard `DATABASE_URL`) to a
 managed PostgreSQL database and set `FORECAST_LEDGER_DATABASE_REQUIRED=true`.
 When that flag is enabled, a missing/unreachable PostgreSQL store keeps `/ready`
-at `503` and a `record_ledger=true` forecast is rejected with a sanitized `503`;
-the API never silently falls back to ephemeral SQLite. This prevents a Render
-instance replacement from erasing genuine forward observations.
+at `503` and authenticated collector writes fail with a sanitized `503`; the API
+never silently falls back to ephemeral SQLite. This prevents a Render instance
+replacement from erasing genuine forward observations.
 
 Migrate an existing local database explicitly, after taking a backup:
 
@@ -100,17 +100,19 @@ zero-drift log-return reference process to show conditional price dispersion;
 the midpoint is not a price forecast and the nominal 90% level is not a
 calibrated confidence interval.
 
-Deployment verification may call:
+Deployment verification and the browser may call:
 
 ```text
-GET /api/v1/volatility/forecast?ticker=AAPL&horizon=5&record_ledger=false
+GET /api/v1/volatility/forecast?ticker=AAPL&horizon=5
 ```
 
 This exercises acquisition, normalization, features, calendar generation, and
-forecasting without creating a forward-ledger observation. Genuine user-facing
-forecast collection keeps the default `record_ledger=true` after selecting one
-of the four supported horizons; legacy 7-session ledger rows are retained for
-audit but cannot be created by the active route.
+forecasting without creating a forward-ledger observation. The GET route has no
+ledger-writing mode; supplying the removed `record_ledger` query key cannot turn
+it into a mutation. Genuine observations are created only through the protected
+`POST /api/v1/volatility/collect` route by the operational collector. Legacy
+7-session ledger rows are retained for audit but cannot be created by the active
+route.
 
 `/health` is intentionally an O(1) liveness check. `/ready` includes a
 `forecast_ledger` dependency object with `backend`, `durable`, and `required`
@@ -118,3 +120,20 @@ fields. Configure the PostgreSQL URL and verify that this object reports
 `status=available` before starting a public collection run. On a Render free
 service the application process can still be healthy while readiness remains
 degraded until the external database is supplied.
+
+## Secure live collection boundary
+
+Set `FORECAST_COLLECTOR_TOKEN` only in Render and the trusted scheduler. Never
+put it in Vercel, a `VITE_*` variable, frontend source, logs, or API responses.
+The protected mutation routes are:
+
+```text
+POST /api/v1/volatility/collect?ticker=MSFT&horizon=5
+POST /api/v1/volatility/score-ledger?ticker=MSFT
+GET  /api/v1/volatility/export-ledger
+Authorization: Bearer <collector token>
+```
+
+The public `GET /api/v1/volatility/ledger` remains readable and never generates
+historical replay data as a side effect. Historical replay is an explicit
+offline operation and remains distinct from the genuine live track.

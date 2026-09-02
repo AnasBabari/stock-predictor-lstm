@@ -130,6 +130,9 @@ def models_discovery():
         "volatility_forecasting": {
             "status": "available",
             "endpoint": "/api/v1/volatility/forecast",
+            "public_forecast_mode": "read_only_preview",
+            "live_collection_endpoint": "/api/v1/volatility/collect",
+            "live_collection_authentication": "bearer_token_required",
             "metric_source": "baseline_definition",
             "supported_horizons": list(VOLATILITY_HORIZONS),
             "supported_models": list(SUPPORTED_BASELINES),
@@ -155,6 +158,6 @@ def models_discovery():
                 or os.getenv("FORECAST_LEDGER_DATABASE_URL")
                 or settings.forecast_ledger_database_required
             ),
-            "note": "SQLite is for local/test use; configure DATABASE_URL before collecting public live records.",
+            "note": "SQLite is for local/test use; genuine live records are written only by the authenticated collector.",
         },
     }

@@ -13,12 +13,12 @@ from services.volatility_snapshot import VOLATILITY_HORIZONS
 CLIENT = TestClient(app)
 
 
-def _snapshot(ticker: str = "MSFT") -> SimpleNamespace:
+def _snapshot(ticker: str = "MSFT", origin_date: str = "2026-09-02") -> SimpleNamespace:
     return SimpleNamespace(
         ticker=ticker,
         snapshot_id="a" * 64,
-        origin_date="2026-08-28",
-        data_as_of="2026-08-28",
+        origin_date=origin_date,
+        data_as_of=origin_date,
         origin_close=500.0,
         data_provider="alpaca",
         market_data_cache="miss",
@@ -56,7 +56,7 @@ def test_active_route_returns_explicit_causal_baseline(monkeypatch):
     assert body["evidence"]["metric_source"] == "baseline_definition"
     assert body["evidence"]["news_status"] == "not_used"
     assert body["evidence"]["data_provider"] == "alpaca"
-    assert body["evidence"]["data_as_of"] == "2026-08-28"
+    assert body["evidence"]["data_as_of"] == "2026-09-02"
     assert body["evidence"]["model_version"] == "deployable_v5"
     assert body["evidence"]["model_policy_version"] == "empirical_volatility_benchmark_v3"
     assert body["evidence"]["code_commit"]
@@ -126,11 +126,14 @@ def test_models_advertises_train_free_active_contract():
     active = body["volatility_forecasting"]
     assert active["status"] == "available"
     assert active["endpoint"] == "/api/v1/volatility/forecast"
+    assert active["public_forecast_mode"] == "read_only_preview"
+    assert active["live_collection_endpoint"] == "/api/v1/volatility/collect"
+    assert active["live_collection_authentication"] == "bearer_token_required"
     assert active["metric_source"] == "baseline_definition"
     assert body["model_storage"]["required"] is False
 
 
-def test_volatility_ledger_routes(monkeypatch, tmp_path):
+def test_public_forecast_and_ledger_reads_never_write(monkeypatch, tmp_path):
     from services.forecast_ledger import ForecastLedger
 
     test_db = tmp_path / "route_ledger.db"
@@ -138,12 +141,20 @@ def test_volatility_ledger_routes(monkeypatch, tmp_path):
     monkeypatch.setattr(volatility, "get_forecast_ledger", lambda: test_ledger)
     monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
 
-    # 1. Forecast logs entry to ledger
+    # Public forecasts are previews even when a caller supplies the removed
+    # legacy query parameter.
     resp = CLIENT.get(
-        "/api/v1/volatility/forecast", params={"ticker": "MSFT", "horizon": 5, "model": "auto"}
+        "/api/v1/volatility/forecast",
+        params={
+            "ticker": "MSFT",
+            "horizon": 5,
+            "model": "auto",
+            "record_ledger": "true",
+        },
     )
     assert resp.status_code == 200
     assert resp.json()["forecast"]["model"] == "rolling_mean"
+    assert resp.json()["evidence"]["ledger_write"] == "disabled_public_preview"
 
     # 2. Query ledger
     ledger_resp = CLIENT.get("/api/v1/volatility/ledger", params={"ticker": "MSFT", "horizon": 5})
@@ -152,14 +163,11 @@ def test_volatility_ledger_routes(monkeypatch, tmp_path):
     assert l_body["ticker"] == "MSFT"
     assert "live_track_record" in l_body
     assert "replay_track_record" in l_body
-    assert len(l_body["entries"]) >= 1
-    assert l_body["entries"][0]["ticker"] == "MSFT"
-    assert l_body["entries"][0]["status"] == "pending"
-    assert l_body["entries"][0]["record_source"] == "live"
-    assert l_body["entries"][0]["data_provider"] == "alpaca"
+    assert l_body["entries"] == []
+    assert test_ledger.export_records(record_source="live") == []
 
 
-def test_forecast_can_skip_ledger_for_deployment_smoke(monkeypatch):
+def test_public_forecast_never_opens_ledger(monkeypatch):
     monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
     monkeypatch.setattr(
         volatility,
@@ -168,12 +176,86 @@ def test_forecast_can_skip_ledger_for_deployment_smoke(monkeypatch):
     )
     response = CLIENT.get(
         "/api/v1/volatility/forecast",
-        params={"ticker": "MSFT", "horizon": 5, "record_ledger": "false"},
+        params={"ticker": "MSFT", "horizon": 5, "record_ledger": "true"},
     )
     assert response.status_code == 200
+    assert response.json()["evidence"]["ledger_write"] == "disabled_public_preview"
 
 
-def test_forecast_rejects_recording_when_ledger_is_unavailable(monkeypatch):
+def test_collector_requires_configured_authentication(monkeypatch):
+    monkeypatch.delenv("FORECAST_COLLECTOR_TOKEN", raising=False)
+    response = CLIENT.post("/api/v1/volatility/collect", params={"ticker": "MSFT", "horizon": 5})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Collector authentication is unavailable."}
+
+
+def test_unauthenticated_collection_and_settlement_are_rejected(monkeypatch):
+    monkeypatch.setenv("FORECAST_COLLECTOR_TOKEN", "test-collector-secret")
+    collection = CLIENT.post("/api/v1/volatility/collect", params={"ticker": "MSFT", "horizon": 5})
+    settlement = CLIENT.post("/api/v1/volatility/score-ledger?ticker=MSFT")
+    assert collection.status_code == 401
+    assert settlement.status_code == 401
+    assert "test-collector-secret" not in collection.text + settlement.text
+
+
+def test_authenticated_collection_is_idempotent(monkeypatch, tmp_path):
+    from services.forecast_ledger import ForecastLedger
+
+    ledger = ForecastLedger(tmp_path / "collector.db")
+    monkeypatch.setenv("FORECAST_COLLECTOR_TOKEN", "test-collector-secret")
+    monkeypatch.setattr(volatility, "get_forecast_ledger", lambda: ledger)
+    monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
+    headers = {"Authorization": "Bearer test-collector-secret"}
+
+    first = CLIENT.post(
+        "/api/v1/volatility/collect",
+        params={"ticker": "MSFT", "horizon": 5},
+        headers=headers,
+    )
+    second = CLIENT.post(
+        "/api/v1/volatility/collect",
+        params={"ticker": "MSFT", "horizon": 5},
+        headers=headers,
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert (
+        first.json()["evidence"]["forecast_fingerprint"]
+        == second.json()["evidence"]["forecast_fingerprint"]
+    )
+    assert first.json()["evidence"]["ledger_write"] == "recorded_live"
+    assert len(ledger.export_records(record_source="live")) == 1
+
+
+def test_collection_rejects_out_of_contract_item(monkeypatch):
+    monkeypatch.setenv("FORECAST_COLLECTOR_TOKEN", "test-collector-secret")
+    response = CLIENT.post(
+        "/api/v1/volatility/collect",
+        params={"ticker": "TSLA", "horizon": 5},
+        headers={"Authorization": "Bearer test-collector-secret"},
+    )
+    assert response.status_code == 400
+    assert "frozen live universe" in response.json()["detail"]
+
+
+def test_collection_enforces_live_start_date(monkeypatch):
+    monkeypatch.setenv("FORECAST_COLLECTOR_TOKEN", "test-collector-secret")
+    monkeypatch.setattr(
+        volatility,
+        "build_volatility_inference_snapshot",
+        lambda ticker: _snapshot(ticker, "2026-09-01"),
+    )
+    response = CLIENT.post(
+        "/api/v1/volatility/collect",
+        params={"ticker": "MSFT", "horizon": 5},
+        headers={"Authorization": "Bearer test-collector-secret"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"] == "LIVE_COLLECTION_NOT_ELIGIBLE"
+
+
+def test_collector_rejects_recording_when_ledger_is_unavailable(monkeypatch):
+    monkeypatch.setenv("FORECAST_COLLECTOR_TOKEN", "test-collector-secret")
     monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
     monkeypatch.setattr(
         volatility,
@@ -181,9 +263,10 @@ def test_forecast_rejects_recording_when_ledger_is_unavailable(monkeypatch):
         lambda: (_ for _ in ()).throw(LedgerUnavailableError("database offline")),
     )
 
-    response = CLIENT.get(
-        "/api/v1/volatility/forecast",
-        params={"ticker": "MSFT", "horizon": 5, "record_ledger": "true"},
+    response = CLIENT.post(
+        "/api/v1/volatility/collect",
+        params={"ticker": "MSFT", "horizon": 5},
+        headers={"Authorization": "Bearer test-collector-secret"},
     )
 
     assert response.status_code == 503
@@ -191,6 +274,39 @@ def test_forecast_rejects_recording_when_ledger_is_unavailable(monkeypatch):
         "error": "FORECAST_LEDGER_UNAVAILABLE",
         "message": "The forecast was not recorded because the forecast ledger is temporarily unavailable.",
     }
+
+
+def test_authenticated_export_contains_live_records_only(monkeypatch, tmp_path):
+    from services.forecast_ledger import ForecastLedger
+
+    ledger = ForecastLedger(tmp_path / "export.db")
+    common = {
+        "forecast_date": "2026-09-02",
+        "ticker": "MSFT",
+        "horizon": 5,
+        "target_date": "2026-09-10",
+        "model_name": "rolling_mean",
+        "predicted_volatility": 0.25,
+        "recent_realized_volatility": 0.2,
+        "origin_price": 500.0,
+        "lower_scenario_price": 475.0,
+        "upper_scenario_price": 525.0,
+        "data_as_of": "2026-09-02",
+        "data_provider": "alpaca",
+    }
+    ledger.record_forecast(**common, record_source="live")
+    ledger.record_forecast(**common, record_source="historical_replay")
+    monkeypatch.setenv("FORECAST_COLLECTOR_TOKEN", "test-collector-secret")
+    monkeypatch.setattr(volatility, "get_forecast_ledger", lambda: ledger)
+
+    response = CLIENT.get(
+        "/api/v1/volatility/export-ledger",
+        headers={"Authorization": "Bearer test-collector-secret"},
+    )
+    assert response.status_code == 200
+    assert response.json()["record_source"] == "live"
+    assert len(response.json()["entries"]) == 1
+    assert response.json()["entries"][0]["record_source"] == "live"
 
 
 def test_transport_failure_uses_stable_sanitized_503(monkeypatch):

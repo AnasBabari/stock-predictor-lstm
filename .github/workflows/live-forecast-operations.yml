@@ -1,0 +1,138 @@
+name: Live Forecast Operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation to run (dry-run never writes live records)
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - live
+          - settle
+          - export
+  schedule:
+    # GitHub cron is UTC. These paired invocations cover 22:30 Europe/London
+    # across BST/GMT; the exchange-aware collector accepts only the correct one.
+    - cron: "30 21 * * 1-5"
+    - cron: "30 22 * * 1-5"
+    # Settlement is a separate mutation after both candidate collection slots.
+    - cron: "45 23 * * 1-5"
+    # Weekly deterministic audit export.
+    - cron: "15 9 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-forecast-operations
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       (inputs.operation == 'dry-run' || inputs.operation == 'live')) ||
+      (github.event_name == 'schedule' &&
+       (github.event.schedule == '30 21 * * 1-5' || github.event.schedule == '30 22 * * 1-5') &&
+       vars.LIVE_COLLECTION_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install collector dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Run authoritative collection operation
+        env:
+          FORECAST_COLLECTOR_TOKEN: ${{ secrets.FORECAST_COLLECTOR_TOKEN }}
+          RENDER_PRODUCTION_BASE_URL: ${{ vars.RENDER_PRODUCTION_BASE_URL }}
+          REQUESTED_OPERATION: ${{ inputs.operation }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          mode="${REQUESTED_OPERATION:-live}"
+          scheduled=""
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            mode="live"
+            scheduled="--scheduled"
+          fi
+          python scripts/collect_live_forecasts.py \
+            --base-url "$RENDER_PRODUCTION_BASE_URL" \
+            --mode "$mode" \
+            $scheduled \
+            --output-dir artifacts/live-collection
+      - name: Upload operational manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-collection-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/live-collection/*.json
+          if-no-files-found: error
+          retention-days: 90
+
+  settle:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.operation == 'settle') ||
+      (github.event_name == 'schedule' && github.event.schedule == '45 23 * * 1-5' &&
+       vars.LIVE_SETTLEMENT_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r backend/requirements.txt
+      - name: Settle eligible records
+        env:
+          FORECAST_COLLECTOR_TOKEN: ${{ secrets.FORECAST_COLLECTOR_TOKEN }}
+          RENDER_PRODUCTION_BASE_URL: ${{ vars.RENDER_PRODUCTION_BASE_URL }}
+        run: >-
+          python scripts/collect_live_forecasts.py
+          --base-url "$RENDER_PRODUCTION_BASE_URL"
+          --mode settle
+          --output-dir artifacts/live-collection
+      - name: Upload settlement manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-settlement-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/live-collection/*.json
+          if-no-files-found: error
+          retention-days: 90
+
+  export:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.operation == 'export') ||
+      (github.event_name == 'schedule' && github.event.schedule == '15 9 * * 0' &&
+       vars.LIVE_EXPORT_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r backend/requirements.txt
+      - name: Export immutable live ledger
+        env:
+          FORECAST_COLLECTOR_TOKEN: ${{ secrets.FORECAST_COLLECTOR_TOKEN }}
+          RENDER_PRODUCTION_BASE_URL: ${{ vars.RENDER_PRODUCTION_BASE_URL }}
+        run: >-
+          python scripts/collect_live_forecasts.py
+          --base-url "$RENDER_PRODUCTION_BASE_URL"
+          --mode export
+          --output-dir artifacts/live-ledger-export
+      - name: Upload deterministic audit copy
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-ledger-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/live-ledger-export/*
+          if-no-files-found: error
+          retention-days: 90
