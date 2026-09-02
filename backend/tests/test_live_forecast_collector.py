@@ -30,11 +30,15 @@ class FakeClient:
         fail_preview: tuple[str, int] | None = None,
         fail_live: tuple[str, int] | None = None,
         conflict_live: tuple[str, int] | None = None,
+        market_cold_until_preview: bool = False,
+        ledger_available: bool = True,
     ) -> None:
         self.session = session
         self.fail_preview = fail_preview
         self.fail_live = fail_live
         self.conflict_live = conflict_live
+        self.market_cold_until_preview = market_cold_until_preview
+        self.ledger_available = ledger_available
         self.calls: list[tuple[str, str, dict[str, Any]]] = []
 
     def request(
@@ -50,7 +54,28 @@ class FakeClient:
         params = params or {}
         self.calls.append((method, path, params))
         if path == "/ready":
-            return ApiResult(200, {"status": "ready"})
+            has_preview = any(
+                call_path == "/api/v1/volatility/forecast" for _, call_path, _ in self.calls
+            )
+            market_available = not self.market_cold_until_preview or has_preview
+            ready = self.ledger_available and market_available
+            return ApiResult(
+                200 if ready else 503,
+                {
+                    "status": "ready" if ready else "degraded",
+                    "dependencies": {
+                        "market_data": {
+                            "status": "available" if market_available else "unavailable"
+                        },
+                        "forecast_ledger": {
+                            "status": "available" if self.ledger_available else "unavailable",
+                            "backend": "postgresql",
+                            "durable": True,
+                            "required": True,
+                        },
+                    },
+                },
+            )
         if path == "/api/v1/volatility/export-ledger":
             return ApiResult(
                 200,
@@ -110,6 +135,22 @@ def test_dry_run_previews_all_60_without_posting() -> None:
     assert manifest["succeeded_count"] == LIVE_EXPECTED_RECORD_COUNT
     assert len(manifest["items"]) == LIVE_EXPECTED_RECORD_COUNT
     assert all(method == "GET" for method, _path, _params in client.calls)
+
+
+def test_preflight_safely_warms_cold_market_but_never_ignores_ledger_failure() -> None:
+    cold_client = FakeClient(market_cold_until_preview=True)
+    cold_manifest = _preflight(cold_client)
+    assert cold_manifest["batch_status"] == "dry_run_passed"
+    assert cold_manifest["batch_errors"] == []
+
+    ledger_client = FakeClient(ledger_available=False)
+    ledger_manifest = _preflight(ledger_client)
+    assert ledger_manifest["batch_status"] == "aborted"
+    assert ledger_manifest["abort_reason"] == "initial_readiness_failed"
+    assert "ledger_unavailable" in ledger_manifest["batch_errors"]
+    assert not any(
+        path == "/api/v1/volatility/forecast" for _method, path, _params in ledger_client.calls
+    )
 
 
 def test_failed_or_stale_preflight_produces_zero_live_writes() -> None:

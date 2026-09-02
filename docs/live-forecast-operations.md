@@ -40,8 +40,11 @@ python scripts/collect_live_forecasts.py `
   --mode dry-run
 ```
 
-The preflight requires `/ready == 200`, determines the latest completed NYSE
-session, and validates all 60 previews before any write. Every response must
+The preflight requires a healthy durable PostgreSQL ledger, determines the
+latest completed NYSE session, and validates all 60 previews before any write.
+After a Render cold start, an initial market-only degraded readiness state may
+be warmed by those read-only previews; `/ready == 200` is then mandatory after
+all previews and immediately before live collection. Every response must
 have the expected ticker, horizon, data date, frozen policy model, code commit,
 and a valid SHA-256 fingerprint. One failure aborts with zero live writes.
 

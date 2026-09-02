@@ -154,6 +154,33 @@ def _validate_preview(
     return errors
 
 
+def _readiness_errors(payload: dict[str, Any], *, allow_market_cold: bool) -> list[str]:
+    dependencies = (
+        payload.get("dependencies") if isinstance(payload.get("dependencies"), dict) else {}
+    )
+    market = (
+        dependencies.get("market_data") if isinstance(dependencies.get("market_data"), dict) else {}
+    )
+    ledger = (
+        dependencies.get("forecast_ledger")
+        if isinstance(dependencies.get("forecast_ledger"), dict)
+        else {}
+    )
+    errors: list[str] = []
+    if ledger.get("status") != "available":
+        errors.append("ledger_unavailable")
+    if ledger.get("backend") != "postgresql":
+        errors.append("ledger_not_postgresql")
+    if ledger.get("durable") is not True:
+        errors.append("ledger_not_durable")
+    if ledger.get("required") is not True:
+        errors.append("ledger_not_required")
+    market_status = market.get("status")
+    if market_status != "available" and not (allow_market_cold and market_status == "unavailable"):
+        errors.append("market_data_unavailable")
+    return errors
+
+
 def run_preflight(
     client: CollectorClient,
     *,
@@ -162,10 +189,12 @@ def run_preflight(
     interval_seconds: float,
 ) -> dict[str, Any]:
     """Preview all 60 combinations and write nothing."""
-    ready = client.request("GET", "/ready", attempts=1)
+    initial_ready = client.request("GET", "/ready", attempts=1)
     manifest = _base_manifest(run_timestamp, expected_session)
-    if ready.status_code != 200 or ready.payload.get("status") != "ready":
-        manifest["abort_reason"] = "readiness_failed"
+    initial_readiness_errors = _readiness_errors(initial_ready.payload, allow_market_cold=True)
+    if initial_readiness_errors:
+        manifest["abort_reason"] = "initial_readiness_failed"
+        manifest["batch_errors"] = initial_readiness_errors
         return manifest
 
     commits: set[str] = set()
@@ -200,10 +229,18 @@ def run_preflight(
         if interval_seconds and index + 1 < LIVE_EXPECTED_RECORD_COUNT:
             time.sleep(interval_seconds)
 
+    final_ready = client.request("GET", "/ready", attempts=1)
+    final_readiness_errors = _readiness_errors(final_ready.payload, allow_market_cold=False)
+    if final_ready.status_code != 200 or final_ready.payload.get("status") != "ready":
+        final_readiness_errors.append("final_readiness_not_ready")
+
     failures = sum(bool(item["errors"]) for item in manifest["items"])
     manifest["succeeded_count"] = LIVE_EXPECTED_RECORD_COUNT - failures
     manifest["failed_count"] = failures
-    manifest["batch_errors"] = []
+    manifest["batch_errors"] = list(dict.fromkeys(final_readiness_errors))
+    if final_readiness_errors:
+        manifest["abort_reason"] = "final_readiness_failed"
+        failures += 1
     if len(commits) == 1:
         manifest["deployed_code_commit"] = next(iter(commits))
     elif commits:
