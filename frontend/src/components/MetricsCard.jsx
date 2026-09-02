@@ -19,7 +19,7 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
   const hasReturnDistribution = engine.certified_head === 'return_distribution'
     && Array.isArray(stockData.predicted_prices);
   const perHorizon = Array.isArray(m.per_horizon) ? m.per_horizon : [];
-  const selectedHorizon = Number(val.selected_horizon || m.horizon || stockData.forecast_days || 7);
+  const selectedHorizon = Number(val.selected_horizon || m.horizon || stockData.forecast_days || 5);
   const bestValidatedHorizon = val.best_validated_horizon;
 
   const latestClose = Number(stockData.historical_prices?.at(-1));
@@ -32,7 +32,9 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
 
   return (
     <section id="metricsCard" className="metrics-dashboard-card glow-border" aria-label="Forecast Metrics Dashboard">
-      <h3 className="sr-only">{isTrend ? 'Trend Forecast Metrics' : 'Price Forecast Metrics'}</h3>
+      <h3 className="sr-only">
+        {isTrend ? 'Trend Forecast Metrics' : isVolatility ? 'Volatility Forecast Metrics' : 'Price Forecast Metrics'}
+      </h3>
       <div className="metrics-tabs-header" role="tablist">
         <button
           type="button"
@@ -105,10 +107,10 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
                   <div className="summary-card">
                     <span className="card-label">Expected Return</span>
                     <span className="card-value mono">{formatPercent(priceChangePct)}</span>
-                    <span className="card-subtext">{selectedHorizon}-day certified location</span>
+                    <span className="card-subtext">{selectedHorizon}-session certified location</span>
                   </div>
                   <div className="summary-card">
-                    <span className="card-label">90% Forecast Range</span>
+                    <span className="card-label">90% Student-t Scenario Range</span>
                     <span className="card-value mono text-teal">
                       {formatPrice(volatilityLow)} – {formatPrice(volatilityHigh)}
                     </span>
@@ -118,7 +120,7 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
               ) : isVolatility ? (
                 <>
                   <div className="summary-card">
-                    <span className="card-label">90% Forecast Range</span>
+                    <span className="card-label">90% Gaussian Scenario Range</span>
                     <span className="card-value mono text-teal">
                       {formatPrice(volatilityLow)} – {formatPrice(volatilityHigh)}
                     </span>
@@ -211,12 +213,12 @@ export default function MetricsCard({ stockData, forecastType, onSwitchHorizon }
                     <span className="kpi-note">&lt; 1.000× beats the matched baseline</span>
                   </div>
                   <div className="kpi-card">
-                    <span className="kpi-label">80% Cone Coverage</span>
+                    <span className="kpi-label">80% Scenario Coverage</span>
                     <span className="kpi-value mono">{formatPercent(m.coverage_80 != null ? m.coverage_80 * 100 : null, { includePlus: false })}</span>
                     <span className="kpi-note">Locked purged walk-forward</span>
                   </div>
                   <div className="kpi-card">
-                    <span className="kpi-label">95% Cone Coverage</span>
+                    <span className="kpi-label">95% Scenario Coverage</span>
                     <span className="kpi-value mono">{formatPercent(m.coverage_95 != null ? m.coverage_95 * 100 : null, { includePlus: false })}</span>
                     <span className="kpi-note">Untouched evidence source</span>
                   </div>

@@ -7,7 +7,7 @@ import {
 } from './volatilityClient';
 
 function body(overrides = {}) {
-  const days = 7;
+  const days = 5;
   const dates = Array.from({ length: 6 }, (_, index) => `2026-08-${15 + index}`);
   const future = Array.from({ length: days }, (_, index) => `2026-08-${21 + index}`);
   const values = Array.from({ length: days }, (_, index) => 100 + index * 0.5);
@@ -36,8 +36,14 @@ function body(overrides = {}) {
       certified_heads: { volatility: true, return_distribution: false, direction: false },
       metric_source: 'locked_purged_walk_forward',
       model_id: 'global-volatility-tcn-v1',
+      model_version: 'deployable_v5',
+      model_policy_version: 'empirical_volatility_benchmark_v3',
       snapshot_id: 'snapshot-1',
-      horizon_certification: { '7': { decision: 'pass', relative_qlike: 0.91 } },
+      data_provider: 'alpaca',
+      data_as_of: '2026-08-20',
+      code_commit: 'abc1234',
+      forecast_fingerprint: 'a'.repeat(64),
+      horizon_certification: { '5': { decision: 'pass', relative_qlike: 0.91 } },
     },
     ...overrides,
   };
@@ -45,13 +51,20 @@ function body(overrides = {}) {
 
 describe('volatility client contract', () => {
   it('maps a certified volatility response without exposing a flat price forecast', () => {
-    const result = mapVolatilityResponse(body(), 'MSFT', 7);
+    const result = mapVolatilityResponse(body(), 'MSFT', 5);
     expect(result.predicted_prices).toBeNull();
     expect(result.persistence_forecast).toBeNull();
-    expect(result.historical_error_band.lower_prices).toHaveLength(7);
+    expect(result.historical_error_band.lower_prices).toHaveLength(5);
     expect(result.forecast_status.decision).toBe('volatility_cone');
     expect(result.validation.promoted).toBe(true);
     expect(result.metadata.engine.role).toBe('server_artifact_loaded');
+    expect(result.metadata.model_version).toBe('deployable_v5');
+    expect(result.metadata.model_policy_version).toBe('empirical_volatility_benchmark_v3');
+    expect(result.metadata.data_provider).toBe('alpaca');
+    expect(result.metadata.data_as_of).toBe('2026-08-20');
+    expect(result.metadata.code_commit).toBe('abc1234');
+    expect(result.metadata.forecast_fingerprint).toBe('a'.repeat(64));
+    expect(result.metadata.data_snapshot.provider).toBe('alpaca');
     expect(result.metrics.relative_qlike).toBe(0.91);
   });
 
@@ -69,7 +82,7 @@ describe('volatility client contract', () => {
         schema_version: 'deployable_v5',
         snapshot_id: 'snapshot-1',
       },
-    }), 'MSFT', 7);
+    }), 'MSFT', 5);
     expect(result.predicted_prices).toBeNull();
     expect(result.forecast_status).toMatchObject({ state: 'baseline', decision: 'baseline' });
     expect(result.validation.promoted).toBe(false);
@@ -85,7 +98,7 @@ describe('volatility client contract', () => {
 
   it('requests the active v1 volatility endpoint', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => body() }));
-    await fetchVolatilityForecast('MSFT', 7, undefined, { baseUrl: 'https://api.test', fetchImpl });
+    await fetchVolatilityForecast('MSFT', 5, undefined, { baseUrl: 'https://api.test', fetchImpl });
     expect(fetchImpl.mock.calls[0][0]).toContain('/api/v1/volatility/forecast');
   });
 
@@ -96,7 +109,7 @@ describe('volatility client contract', () => {
         ...body().forecast,
         price_quantiles: {
           ...body().forecast.price_quantiles,
-          p50: Array.from({ length: 7 }, (_, index) => 100 * Math.exp(location * (index + 1) / 7)),
+          p50: Array.from({ length: 5 }, (_, index) => 100 * Math.exp(location * (index + 1) / 5)),
         },
         expected_cumulative_return: location,
         return_distribution_variance: 0.0006,
@@ -107,11 +120,11 @@ describe('volatility client contract', () => {
         certified_heads: { volatility: true, return_distribution: true, direction: false },
       },
     });
-    const result = mapVolatilityResponse(distribution, 'MSFT', 7);
+    const result = mapVolatilityResponse(distribution, 'MSFT', 5);
     expect(result.predicted_prices).toEqual(result.volatility_cone.p50);
     expect(result.learned_prices).toEqual(result.volatility_cone.p50);
     expect(result.predicted_prices.at(-1)).toBeCloseTo(100 * Math.exp(location), 8);
-    expect(result.persistence_forecast).toEqual(Array(7).fill(100));
+    expect(result.persistence_forecast).toEqual(Array(5).fill(100));
     expect(result.forecast_status).toMatchObject({
       state: 'certified_return_distribution',
       decision: 'return_distribution',
@@ -135,7 +148,7 @@ describe('volatility client contract', () => {
         certified_heads: { volatility: true, return_distribution: true, direction: false },
       },
     });
-    expect(() => validateVolatilityResponse(invalid, 'MSFT', 7)).toThrow(/p50 path/);
+    expect(() => validateVolatilityResponse(invalid, 'MSFT', 5)).toThrow(/p50 path/);
   });
 
   it('preserves the structured abstention code for safe UI mapping', async () => {
@@ -150,24 +163,32 @@ describe('volatility client contract', () => {
       }),
     }));
     await expect(
-      fetchVolatilityForecast('MSFT', 7, undefined, { baseUrl: 'https://api.test', fetchImpl }),
+      fetchVolatilityForecast('MSFT', 5, undefined, { baseUrl: 'https://api.test', fetchImpl }),
     ).rejects.toMatchObject({
       name: 'VolatilityApiError',
       code: 'abstain_no_certified_model',
       httpStatus: 503,
     });
-    await fetchVolatilityForecast('MSFT', 7, undefined, { baseUrl: 'https://api.test', fetchImpl })
+    await fetchVolatilityForecast('MSFT', 5, undefined, { baseUrl: 'https://api.test', fetchImpl })
       .catch((error) => expect(error).toBeInstanceOf(VolatilityApiError));
   });
 
   it('rejects missing or unrecognised volatility evidence', () => {
-    expect(() => validateVolatilityResponse(body({ evidence: {} }), 'MSFT', 7)).toThrow(/evidence/);
-    expect(() => validateVolatilityResponse(body({ ticker: 'AAPL' }), 'MSFT', 7)).toThrow(/match/);
+    expect(() => validateVolatilityResponse(body({ evidence: {} }), 'MSFT', 5)).toThrow(/evidence/);
+    expect(() => validateVolatilityResponse(body({ ticker: 'AAPL' }), 'MSFT', 5)).toThrow(/match/);
+  });
+
+  it('rejects a malformed provenance fingerprint when one is supplied', () => {
+    expect(() => validateVolatilityResponse(
+      body({ evidence: { ...body().evidence, forecast_fingerprint: 'not-a-sha256' } }),
+      'MSFT',
+      5,
+    )).toThrow(/fingerprint/);
   });
 
   it('rejects a non-chronological future path', () => {
     const invalid = body();
-    invalid.forecast.future_dates = ['2026-08-21', '2026-08-23', '2026-08-22', '2026-08-24', '2026-08-25', '2026-08-26', '2026-08-27'];
-    expect(() => validateVolatilityResponse(invalid, 'MSFT', 7)).toThrow(/chronological/);
+    invalid.forecast.future_dates = ['2026-08-21', '2026-08-23', '2026-08-22', '2026-08-24', '2026-08-25'];
+    expect(() => validateVolatilityResponse(invalid, 'MSFT', 5)).toThrow(/chronological/);
   });
 });

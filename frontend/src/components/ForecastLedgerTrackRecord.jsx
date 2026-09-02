@@ -81,7 +81,7 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
             Forecast Ledger & Track Record
           </h3>
           <span className="badge badge-neutral">
-            {ticker} {horizon ? `${horizon}d` : 'Multi-Horizon'}
+            {ticker} {horizon ? `${horizon} ${Number(horizon) === 1 ? 'session' : 'sessions'}` : 'Multi-Horizon'}
           </span>
         </div>
         <div className="ledger-tab-group">
@@ -199,7 +199,7 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
                         }
                       >
                         <td className="mono">{entry.forecast_date}</td>
-                        <td>{entry.horizon}d</td>
+                        <td>{entry.horizon} {Number(entry.horizon) === 1 ? 'session' : 'sessions'}</td>
                         <td>
                           <span className="model-chip">{entry.model_name.replace('_', ' ')}</span>
                         </td>

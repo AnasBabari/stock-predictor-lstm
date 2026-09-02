@@ -54,7 +54,7 @@ vi.mock('./utils/exportService', () => ({
   exportCompleteAnalysis: vi.fn(),
 }));
 
-const makeVolatilityResponse = (ticker = 'TSLA', days = 7) => ({
+const makeVolatilityResponse = (ticker = 'TSLA', days = 5) => ({
   ticker,
   horizon: days,
   current_price: 400.0,
@@ -104,7 +104,7 @@ function mockFetchSequence() {
     const requestUrl = String(url);
     const parsedUrl = new URL(requestUrl, 'http://localhost');
     const ticker = parsedUrl.searchParams.get('ticker') || 'TSLA';
-    const horizon = Number(parsedUrl.searchParams.get('horizon')) || 7;
+    const horizon = Number(parsedUrl.searchParams.get('horizon')) || 5;
     if (requestUrl.includes('/api/v1/search')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ results: [] }) });
     }
@@ -158,9 +158,9 @@ describe('forecast integration', () => {
     await user.click(screen.getByRole('button', { name: /^predict$/i }));
 
     expect(await screen.findByText('TSLA')).toBeInTheDocument();
-    expect(screen.getByText(/Historical vs Volatility Cone/i)).toBeInTheDocument();
-    expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument();
-    expect(screen.getAllByText('90% Forecast Range').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Historical vs (?:Causal )?Volatility Scenario(?: Range)?/i)).toBeInTheDocument();
+    expect(screen.getByText('Volatility Forecast Metrics')).toBeInTheDocument();
+    expect(screen.getAllByText('90% Gaussian Scenario Range').length).toBeGreaterThanOrEqual(1);
   });
 
   it.each([
@@ -233,7 +233,7 @@ describe('forecast integration', () => {
       if (requestUrl.includes('ticker=AAPL')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve(makeVolatilityResponse('AAPL', 7)),
+          json: () => Promise.resolve(makeVolatilityResponse('AAPL', 5)),
         });
       }
       return Promise.reject(new Error(`Unhandled fetch: ${requestUrl}`));
@@ -244,21 +244,21 @@ describe('forecast integration', () => {
     await user.clear(input);
     await user.type(input, 'AAPL');
     await user.click(screen.getByRole('button', { name: /^predict$/i }));
-    expect(await screen.findByText('Price Forecast Metrics')).toBeInTheDocument();
+    expect(await screen.findByText('Volatility Forecast Metrics')).toBeInTheDocument();
 
     rejectFirstPrediction(new Error('Prediction capacity is temporarily full.'));
     await waitFor(() => {
       expect(
         screen.queryByText('Prediction capacity is currently full. Please try again shortly.')
       ).not.toBeInTheDocument();
-      expect(screen.getByText('Price Forecast Metrics')).toBeInTheDocument();
+      expect(screen.getByText('Volatility Forecast Metrics')).toBeInTheDocument();
     });
   });
 
   it('preserves active prediction state when an earlier export operation finishes or rejects', async () => {
     mockFetchSequence();
     const user = await submitPrediction();
-    expect(await screen.findByText('Price Forecast Metrics')).toBeInTheDocument();
+    expect(await screen.findByText('Volatility Forecast Metrics')).toBeInTheDocument();
 
     // 1. Click Complete Analysis
     const completeAnalysisBtn = screen.queryByRole('button', { name: /export complete analysis/i });
@@ -273,7 +273,7 @@ describe('forecast integration', () => {
     await user.click(screen.getByRole('button', { name: /^predict$/i }));
 
     // 3. Verify active prediction state displays cleanly for MSFT without stale export interference
-    expect(await screen.findByText('Price Forecast Metrics')).toBeInTheDocument();
+    expect(await screen.findByText('Volatility Forecast Metrics')).toBeInTheDocument();
     expect(screen.getByText('MSFT')).toBeInTheDocument();
   });
 });

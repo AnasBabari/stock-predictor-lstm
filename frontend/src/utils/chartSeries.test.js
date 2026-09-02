@@ -90,8 +90,8 @@ describe('buildPriceSeries — core contract', () => {
     const labels = series.datasets.map((dataset) => dataset.label);
     expect(labels).toEqual([
       'Historical Price',
-      'Certified volatility cone (upper)',
-      'Certified volatility cone (lower)',
+      'Certified Gaussian scenario (upper)',
+      'Certified Gaussian scenario (lower)',
     ]);
     expect(labels.join(' ')).not.toMatch(/unchanged|persistence|model forecast/i);
   });

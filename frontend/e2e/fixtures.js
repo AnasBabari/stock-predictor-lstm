@@ -158,7 +158,7 @@ export function deterministicSnapshot(ticker = 'MSFT') {
   };
 }
 
-export function volatilityForecastPayload(ticker = 'MSFT', days = 7, origin = '2026-08-05') {
+export function volatilityForecastPayload(ticker = 'MSFT', days = 5, origin = '2026-08-05') {
   const historyLength = 120;
   const originDate = new Date(`${origin}T00:00:00Z`);
   const originIndex = 479;
@@ -216,6 +216,38 @@ export function volatilityForecastPayload(ticker = 'MSFT', days = 7, origin = '2
   };
 }
 
-export function serverForecastPayload(ticker = 'MSFT', days = 7, origin = '2026-08-05') {
-  return volatilityForecastPayload(ticker, days, origin);
+export function activeVolatilityForecastPayload(ticker = 'MSFT', days = 5, origin = '2026-08-05') {
+  const payload = volatilityForecastPayload(ticker, days, origin);
+  payload.forecast.model = 'rolling_mean';
+  payload.forecast.requested_model = 'auto';
+  payload.evidence = {
+    model_status: 'baseline',
+    model_family: 'statistical_baseline',
+    model_name: 'rolling_mean',
+    model_version: 'deployable_v5',
+    feature_set_version: 'deployable_feature_columns_v5',
+    model_policy_version: 'empirical_volatility_benchmark_v3',
+    auto_model_policy: {
+      '1': 'garch_11',
+      '5': 'rolling_mean',
+      '10': 'rolling_mean',
+      '20': 'rolling_mean',
+    },
+    requested_model: 'auto',
+    code_commit: 'abc1234def56',
+    forecast_fingerprint: 'a'.repeat(64),
+    metric_source: 'baseline_definition',
+    snapshot_id: `${ticker}-causal-snapshot-v5`,
+    data_provider: 'alpaca',
+    data_as_of: origin,
+    scenario_label: 'gaussian_model_implied_price_range',
+    interval_method: 'gaussian_reference_scenario',
+    interval_nominal_coverage: 0.90,
+    interval_scope: 'pointwise_marginal_reference_not_empirically_calibrated',
+  };
+  return payload;
+}
+
+export function serverForecastPayload(ticker = 'MSFT', days = 5, origin = '2026-08-05') {
+  return activeVolatilityForecastPayload(ticker, days, origin);
 }

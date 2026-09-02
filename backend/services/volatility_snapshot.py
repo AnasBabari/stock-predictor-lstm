@@ -7,13 +7,19 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import minimize
 
 from calendars import future_trading_dates
 from data_pipeline import _download_ohlcv
+from services.volatility_contract import (
+    SUPPORTED_VOLATILITY_HORIZONS,
+    VOLATILITY_MAX_HORIZON,
+    VOLATILITY_MODEL_VERSION,
+)
 
-VOLATILITY_HORIZONS = (1, 3, 5, 7, 14, 30)
+VOLATILITY_HORIZONS = SUPPORTED_VOLATILITY_HORIZONS
 VOLATILITY_WINDOW_SIZE = 60
-VOLATILITY_PATH_HORIZONS = tuple(range(1, max(VOLATILITY_HORIZONS) + 1))
+VOLATILITY_PATH_HORIZONS = tuple(range(1, VOLATILITY_MAX_HORIZON + 1))
 
 DEPLOYABLE_FEATURE_COLUMNS_V5 = (
     "log_return_1d",
@@ -43,6 +49,81 @@ def realized_variance_proxies(df: pd.DataFrame) -> pd.DataFrame:
     ret[1:] = np.log(close[1:] / close[:-1])
     rv_c2c = ret**2
     return pd.DataFrame({"RV_C2C": rv_c2c}, index=df.index)
+
+
+def _garch11_cumulative_variance_path(
+    close: np.ndarray,
+    maximum_horizon: int = VOLATILITY_MAX_HORIZON,
+) -> np.ndarray:
+    """Fit a causal Gaussian GARCH(1,1) and return cumulative daily variance.
+
+    The fit uses only the trailing 252 completed close-to-close returns.  The
+    resulting path is used by the active one-session policy and by its
+    horizon-coherent Gaussian scenario range.  This intentionally mirrors the
+    MLE parameterization in the offline benchmark without importing the
+    research package into the production request path.
+    """
+
+    prices = np.asarray(close, dtype=np.float64).reshape(-1)
+    if maximum_horizon < 1 or len(prices) < 21:
+        raise ValueError("GARCH(1,1) requires at least twenty-one close observations")
+    finite_prices = prices[np.isfinite(prices) & (prices > 0)]
+    returns = np.diff(np.log(finite_prices))
+    returns = returns[np.isfinite(returns)][-252:]
+    if len(returns) < 20:
+        raise ValueError("GARCH(1,1) requires at least twenty valid returns")
+
+    sample_var = float(np.var(returns, ddof=1))
+    sample_var = max(sample_var, 1e-8)
+
+    def negative_log_likelihood(params: np.ndarray) -> float:
+        omega, alpha, beta = params
+        if omega <= 0 or alpha < 0 or beta < 0 or alpha + beta >= 1:
+            return 1e12
+        conditional = np.empty(len(returns), dtype=np.float64)
+        conditional[0] = sample_var
+        for index in range(1, len(returns)):
+            conditional[index] = (
+                omega + alpha * returns[index - 1] ** 2 + beta * conditional[index - 1]
+            )
+            if conditional[index] <= 0 or not np.isfinite(conditional[index]):
+                return 1e12
+        likelihood = -0.5 * np.sum(np.log(conditional) + (returns**2) / conditional)
+        return float(-likelihood)
+
+    initial = np.array([0.05 * sample_var, 0.08, 0.87], dtype=np.float64)
+    result = minimize(
+        negative_log_likelihood,
+        initial,
+        method="L-BFGS-B",
+        bounds=[(1e-10, 1.0), (1e-4, 0.40), (0.50, 0.999)],
+        options={"maxiter": 150, "ftol": 1e-7},
+    )
+    if result.success and result.x[1] + result.x[2] < 1.0:
+        omega, alpha, beta = (float(value) for value in result.x)
+    else:
+        alpha, beta = 0.08, 0.88
+        omega = (1.0 - alpha - beta) * sample_var
+
+    persistence = alpha + beta
+    unconditional = omega / max(1.0 - persistence, 1e-5)
+    filtered = np.empty(len(returns), dtype=np.float64)
+    filtered[0] = sample_var
+    for index in range(1, len(returns)):
+        filtered[index] = omega + alpha * returns[index - 1] ** 2 + beta * filtered[index - 1]
+    next_variance = omega + alpha * returns[-1] ** 2 + beta * filtered[-1]
+
+    if persistence >= 0.9999 or abs(1.0 - persistence) < 1e-6:
+        daily_path = np.full(maximum_horizon, next_variance, dtype=np.float64)
+    else:
+        daily_path = unconditional + (next_variance - unconditional) * persistence ** np.arange(
+            maximum_horizon, dtype=np.float64
+        )
+    daily_path = np.maximum(daily_path, 1e-12)
+    cumulative_path = np.cumsum(daily_path)
+    if not np.isfinite(cumulative_path).all() or np.any(np.diff(cumulative_path) < -1e-12):
+        raise ValueError("GARCH(1,1) produced an invalid cumulative variance path")
+    return cumulative_path
 
 
 def _log_har_row(history: np.ndarray) -> np.ndarray:
@@ -212,6 +293,8 @@ class VolatilityInferenceSnapshot:
     historical_prices: np.ndarray
     future_dates: tuple[str, ...] = ()
     baseline_variance_paths: dict[str, np.ndarray] | None = None
+    garch_variance_path: np.ndarray | None = None
+    data_as_of: str | None = None
 
     def __post_init__(self) -> None:
         if self.features.shape != (VOLATILITY_WINDOW_SIZE, len(self.feature_names)):
@@ -222,6 +305,15 @@ class VolatilityInferenceSnapshot:
             raise ValueError("volatility feature window must be finite")
         if not np.isfinite(self.causal_har_variance).all() or (self.causal_har_variance <= 0).any():
             raise ValueError("volatility HAR baseline must be finite and positive")
+        if self.garch_variance_path is not None:
+            if self.garch_variance_path.shape != (VOLATILITY_MAX_HORIZON,):
+                raise ValueError("GARCH variance path has an incompatible shape")
+            if (
+                not np.isfinite(self.garch_variance_path).all()
+                or (self.garch_variance_path <= 0).any()
+                or np.any(np.diff(self.garch_variance_path) < -1e-12)
+            ):
+                raise ValueError("GARCH variance path must be finite, positive, and cumulative")
         if self.baseline_variance_paths is not None:
             if "causal_log_har" not in self.baseline_variance_paths:
                 raise ValueError("baseline variance paths must contain causal_log_har")
@@ -232,7 +324,11 @@ class VolatilityInferenceSnapshot:
                 raise ValueError("HAR variance path must be finite and positive")
 
 
-def _baseline_candidates(feature_row: pd.Series, har_variance: np.ndarray) -> dict[str, np.ndarray]:
+def _baseline_candidates(
+    feature_row: pd.Series,
+    har_variance: np.ndarray,
+    garch_path: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
     """Map causal trailing features to multi-horizon variance forecasts."""
     candidates: dict[str, np.ndarray] = {
         "causal_log_har": np.asarray(har_variance, dtype=np.float64)
@@ -259,6 +355,10 @@ def _baseline_candidates(feature_row: pd.Series, har_variance: np.ndarray) -> di
         candidates["rolling_c2c_multiscale"] = np.exp(
             np.mean(np.log(np.maximum(np.stack(rolling), 1e-12)), axis=0)
         )
+    if garch_path is not None:
+        path = np.asarray(garch_path, dtype=np.float64).reshape(-1)
+        if path.shape == (VOLATILITY_MAX_HORIZON,) and np.isfinite(path).all():
+            candidates["garch_11"] = path[np.asarray(VOLATILITY_HORIZONS) - 1]
     return candidates
 
 
@@ -269,11 +369,13 @@ def _snapshot_identity(
     baseline: np.ndarray,
     baseline_paths: dict[str, np.ndarray] | None = None,
     data_provider: str = "unknown",
+    data_as_of: str = "",
 ) -> str:
     hasher = hashlib.sha256()
     hasher.update(ticker.encode("ascii"))
-    hasher.update("deployable_v5".encode("ascii"))
+    hasher.update(VOLATILITY_MODEL_VERSION.encode("ascii"))
     hasher.update(data_provider.encode("utf-8"))
+    hasher.update(str(data_as_of).encode("utf-8"))
     hasher.update("|".join(DEPLOYABLE_FEATURE_COLUMNS_V5).encode("utf-8"))
     hasher.update(
         "|".join(pd.Timestamp(value).date().isoformat() for value in dates).encode("ascii")
@@ -287,7 +389,11 @@ def _snapshot_identity(
     return hasher.hexdigest()
 
 
-def _baseline_variance_paths(feature_row: pd.Series, har_path: np.ndarray) -> dict[str, np.ndarray]:
+def _baseline_variance_paths(
+    feature_row: pd.Series,
+    har_path: np.ndarray,
+    garch_path: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
     """Build cumulative variance paths for the active train-free baselines."""
     days = np.arange(1, max(VOLATILITY_HORIZONS) + 1, dtype=np.float64)
     paths: dict[str, np.ndarray] = {}
@@ -311,6 +417,15 @@ def _baseline_variance_paths(feature_row: pd.Series, har_path: np.ndarray) -> di
         and not np.any(np.diff(har_values) < -1e-12)
     ):
         paths["causal_log_har"] = har_values
+    if garch_path is not None:
+        garch_values = np.asarray(garch_path, dtype=np.float64).reshape(-1)
+        if (
+            garch_values.shape == days.shape
+            and np.isfinite(garch_values).all()
+            and (garch_values > 0).all()
+            and not np.any(np.diff(garch_values) < -1e-12)
+        ):
+            paths["garch_11"] = garch_values
     rolling = [
         paths[name]
         for name in ("rolling_c2c_5", "rolling_c2c_20", "rolling_c2c_60")
@@ -335,13 +450,16 @@ def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnaps
     proxy = realized_variance_proxies(raw)["RV_C2C"].clip(lower=1e-12)
     har = causal_log_har_forecasts(proxy, VOLATILITY_HORIZONS)
     har_path = causal_log_har_forecasts(proxy, VOLATILITY_PATH_HORIZONS)[-1]
+    garch_path = _garch11_cumulative_variance_path(
+        raw["Close"].to_numpy(dtype=np.float64), VOLATILITY_MAX_HORIZON
+    )
     feature_matrix = features[list(DEPLOYABLE_FEATURE_COLUMNS_V5)].to_numpy(dtype=np.float64)
     last = len(raw) - 1
     if last < VOLATILITY_WINDOW_SIZE - 1:
         raise ValueError("market history is too short for volatility inference")
     window = feature_matrix[last - VOLATILITY_WINDOW_SIZE + 1 : last + 1]
     baseline = har[last]
-    baseline_paths = _baseline_variance_paths(features.iloc[last], har_path)
+    baseline_paths = _baseline_variance_paths(features.iloc[last], har_path, garch_path)
     if "causal_log_har" not in baseline_paths:
         raise ValueError("latest market history cannot form a finite HAR variance path")
     if not np.isfinite(window).all() or not np.isfinite(baseline).all() or (baseline <= 0).any():
@@ -353,10 +471,19 @@ def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnaps
         pd.Timestamp(raw.index[last]),
         max(VOLATILITY_HORIZONS),
     )
+    data_as_of = str(
+        raw.attrs.get("data_as_of") or pd.Timestamp(raw.index[last]).date().isoformat()
+    )
     return VolatilityInferenceSnapshot(
         ticker=symbol,
         snapshot_id=_snapshot_identity(
-            symbol, dates, window, baseline, baseline_paths, data_provider=data_provider
+            symbol,
+            dates,
+            window,
+            baseline,
+            baseline_paths,
+            data_provider=data_provider,
+            data_as_of=data_as_of,
         ),
         origin_date=pd.Timestamp(raw.index[last]).date().isoformat(),
         origin_close=float(raw["Close"].iloc[last]),
@@ -365,9 +492,11 @@ def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnaps
         feature_names=DEPLOYABLE_FEATURE_COLUMNS_V5,
         features=window.astype(np.float32),
         causal_har_variance=baseline.astype(np.float32),
-        baseline_candidates=_baseline_candidates(features.iloc[last], baseline),
+        baseline_candidates=_baseline_candidates(features.iloc[last], baseline, garch_path),
         baseline_variance_paths=baseline_paths,
+        garch_variance_path=garch_path.astype(np.float32),
         historical_dates=tuple(pd.Timestamp(value).date().isoformat() for value in history.index),
         historical_prices=history["Close"].to_numpy(dtype=np.float64),
         future_dates=tuple(future_dates),
+        data_as_of=data_as_of,
     )

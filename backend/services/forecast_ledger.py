@@ -22,6 +22,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from services.volatility_contract import validate_volatility_horizon
+
 logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -380,7 +382,9 @@ class ForecastLedger:
         now_iso = datetime.now(UTC).isoformat()
         f_date_str = str(forecast_date).strip()
         ticker_str = str(ticker).strip().upper()
-        h_int = int(horizon)
+        # Validate before coercion so a direct caller cannot smuggle a
+        # fractional value such as 5.5 into the live ledger as horizon 5.
+        h_int = validate_volatility_horizon(horizon) if source_str == "live" else int(horizon)
         t_date_str = str(target_date).strip()
         m_name_str = str(model_name).strip()
         m_version_str = str(model_version).strip()

@@ -6,7 +6,9 @@
  * is no longer required for ordinary forecasts.
  */
 
-export const VOLATILITY_HORIZONS = [1, 3, 5, 7, 14, 30];
+import { VOLATILITY_HORIZONS } from './volatilityContract';
+
+export { VOLATILITY_HORIZONS } from './volatilityContract';
 const QUANTILE_KEYS = ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'];
 
 function apiErrorBody(body) {
@@ -87,6 +89,12 @@ export function validateVolatilityResponse(body, ticker, days) {
   if (!isBaseline && !isLegacyCertified) {
     throw new Error('Volatility response has no recognised baseline or learned-model evidence.');
   }
+  if (
+    body.evidence?.forecast_fingerprint != null
+    && !/^[0-9a-f]{64}$/i.test(String(body.evidence.forecast_fingerprint))
+  ) {
+    throw new Error('Volatility response contains an invalid forecast fingerprint.');
+  }
   const hasReturnDistribution = !isBaseline
     && body.evidence?.certified_heads?.return_distribution === true;
   if (hasReturnDistribution) {
@@ -122,6 +130,9 @@ export function mapVolatilityResponse(body, ticker, days) {
   const isBaseline = data.evidence?.model_status === 'baseline';
   const summary = data.evidence?.horizon_certification?.[String(days)] || {};
   const metricSource = data.evidence?.metric_source || (isBaseline ? 'baseline_definition' : 'locked_purged_walk_forward');
+  const evidence = data.evidence || {};
+  const dataAsOf = evidence.data_as_of || data.as_of;
+  const modelVersion = evidence.model_version || evidence.model_id || data.forecast?.model;
   const hasReturnDistribution = data.evidence?.certified_heads?.return_distribution === true;
   const learnedMedian = hasReturnDistribution ? data.quantiles.p50 : null;
   const summaryMetrics = summary?.metrics && typeof summary.metrics === 'object'
@@ -195,7 +206,14 @@ export function mapVolatilityResponse(body, ticker, days) {
       feature_count: data.evidence?.feature_count ?? null,
       window_size: 60,
       snapshot_id: data.evidence?.snapshot_id,
-      model_version: data.evidence?.model_id || data.forecast?.model,
+      model_version: modelVersion,
+      model_policy_version: evidence.model_policy_version,
+      selected_model: data.forecast?.model,
+      requested_model: data.forecast?.requested_model || evidence.requested_model,
+      forecast_fingerprint: evidence.forecast_fingerprint,
+      code_commit: evidence.code_commit,
+      data_as_of: dataAsOf,
+      data_provider: evidence.data_provider,
       metric_source: metricSource,
       browser_training: false,
       engine: {
@@ -208,9 +226,16 @@ export function mapVolatilityResponse(body, ticker, days) {
         return_distribution_family: data.forecast?.return_distribution_family || 'zero_location_normal',
         volatility_forecast: true,
       },
-      data_snapshot: { as_of: data.as_of, source: isBaseline ? 'causal_market_snapshot' : 'server_causal_market_snapshot' },
+      data_snapshot: {
+        as_of: dataAsOf,
+        source: isBaseline ? 'causal_market_snapshot' : 'server_causal_market_snapshot',
+        provider: evidence.data_provider,
+        snapshot_id: evidence.snapshot_id,
+        market_data_cache: evidence.market_data_cache,
+        code_commit: evidence.code_commit,
+      },
     },
-    evidence: data.evidence,
+    evidence,
   };
 }
 

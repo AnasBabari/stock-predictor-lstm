@@ -11,6 +11,9 @@ from fastapi.responses import JSONResponse
 
 from config import APP_VERSION, settings
 from data_pipeline import market_circuit_breaker, market_data_service
+from services.live_volatility import SUPPORTED_BASELINES
+from services.volatility_contract import AUTO_MODEL_POLICY, VOLATILITY_MODEL_POLICY_VERSION
+from services.volatility_snapshot import VOLATILITY_HORIZONS
 
 router = APIRouter(tags=["health"])
 
@@ -99,15 +102,12 @@ def models_discovery():
             "status": "available",
             "endpoint": "/api/v1/volatility/forecast",
             "metric_source": "baseline_definition",
-            "supported_horizons": [1, 3, 5, 7, 14, 30],
-            "supported_models": [
-                "auto",
-                "rolling_mean",
-                "har_rv",
-                "ewma",
-                "persistence",
-                "garch_11",
-            ],
+            "supported_horizons": list(VOLATILITY_HORIZONS),
+            "supported_models": list(SUPPORTED_BASELINES),
+            "model_policy_version": VOLATILITY_MODEL_POLICY_VERSION,
+            "auto_model_policy": {
+                str(horizon): model for horizon, model in AUTO_MODEL_POLICY.items()
+            },
         },
         "model_storage": {
             "required": False,

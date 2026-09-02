@@ -104,6 +104,8 @@ describe('ForecastLedgerTrackRecord', () => {
     await waitFor(() => {
       expect(screen.getByText('Forecast Ledger & Track Record')).toBeInTheDocument();
     });
+    expect(screen.getByText('AAPL 5 sessions')).toBeInTheDocument();
+    expect(screen.getAllByText('5 sessions').length).toBeGreaterThan(0);
 
     // Headline live settlements KPI shows 1 scored live forecast
     expect(screen.getByText('1')).toBeInTheDocument();

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { volatilityForecastPayload } from './fixtures.js';
+import { activeVolatilityForecastPayload } from './fixtures.js';
 
 function mockVolatilityApi(page, forecastHandler) {
   const calls = { forecast: [], search: 0, info: 0 };
@@ -11,29 +11,29 @@ function mockVolatilityApi(page, forecastHandler) {
     calls.info += 1;
     return route.fulfill({ json: { longName: 'Microsoft Corp.', sector: 'Technology' } });
   });
-  page.route('**/api/v2/forecast?*', (route) => {
+  page.route('**/api/v1/volatility/forecast?*', (route) => {
     calls.forecast.push(route.request().url());
     return forecastHandler(route);
   });
   return calls;
 }
 
-test('server volatility forecast is rendered with volatility cone and certification metrics', async ({ page }) => {
+test('active volatility baseline is rendered with an honest scenario range', async ({ page }) => {
   test.setTimeout(30_000);
   const calls = mockVolatilityApi(page, (route) =>
-    route.fulfill({ json: volatilityForecastPayload('MSFT', 7) })
+    route.fulfill({ json: activeVolatilityForecastPayload('MSFT', 5) })
   );
   await page.goto('/');
   await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
 
   await expect(page.locator('#metricsCard')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/VOLATILITY CERTIFIED|PROMOTED/i).first()).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/Historical vs Volatility Cone/i)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('BASELINE').first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/Historical vs Causal Volatility Scenario/i)).toBeVisible({ timeout: 10_000 });
 
   expect(calls.forecast).toHaveLength(1);
   expect(calls.forecast[0]).toContain('ticker=MSFT');
-  expect(calls.forecast[0]).toContain('horizon=7');
+  expect(calls.forecast[0]).toContain('horizon=5');
 });
 
 test('server 503 abstention surfaces truthful message and does not substitute a baseline', async ({ page }) => {
@@ -54,7 +54,7 @@ test('server 503 abstention surfaces truthful message and does not substitute a 
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
 
   await expect(
-    page.getByText(/No certified global model is available yet|Forecasting is paused/i).first()
+    page.getByText(/legacy global model is unavailable|active volatility forecast/i).first()
   ).toBeVisible({ timeout: 15_000 });
 
   expect(calls.forecast).toHaveLength(1);
@@ -78,7 +78,7 @@ test('server integrity failure fails closed with error toast/message', async ({ 
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
 
   await expect(
-    page.getByText(/certified forecast service is temporarily unavailable|integrity failure/i).first()
+    page.getByText(/volatility forecast service is temporarily unavailable|integrity failure/i).first()
   ).toBeVisible({ timeout: 15_000 });
 
   expect(calls.forecast).toHaveLength(1);
@@ -102,7 +102,7 @@ test('uncertified horizon returns 503 and displays clean error without baseline 
   await page.getByRole('button', { name: 'Predict', exact: true }).click();
 
   await expect(
-    page.getByText(/selected horizon is not certified/i).first()
+    page.getByText(/selected volatility horizon is not available/i).first()
   ).toBeVisible({ timeout: 15_000 });
 
   expect(calls.forecast).toHaveLength(1);

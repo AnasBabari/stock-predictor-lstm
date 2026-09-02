@@ -1984,3 +1984,11 @@ canvas {
     font-size: 0.85rem;
     color: var(--text-muted);
 }
+
+.volatility-disclaimer {
+  grid-column: 1 / -1;
+  margin: -0.2rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}

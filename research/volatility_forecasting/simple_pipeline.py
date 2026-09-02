@@ -35,6 +35,8 @@ from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.linear_model import ElasticNet, Ridge
 from sklearn.preprocessing import StandardScaler
 
+SUPPORTED_HORIZONS = (1, 5, 10, 20)
+
 
 def _log_har_row(history: np.ndarray) -> np.ndarray:
     """Log-HAR predictors ending at the final value in ``history``."""
@@ -54,7 +56,7 @@ def _log_har_row(history: np.ndarray) -> np.ndarray:
 
 def causal_log_har_forecasts(
     rv_daily: pd.Series | np.ndarray,
-    horizons: tuple[int, ...] | list[int] = (1, 3, 5, 7, 14, 30),
+    horizons: tuple[int, ...] | list[int] = SUPPORTED_HORIZONS,
     *,
     minimum_history: int = 60,
     refit_every: int = 5,

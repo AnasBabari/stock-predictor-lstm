@@ -97,19 +97,30 @@ test('snapshot rows are non-constant and fully deterministic', () => {
   expect(first.features[0]).not.toEqual(first.features[1]);
 });
 
-test('server forecast payload keeps strictly increasing dates and valid volatility cone', () => {
-  const payload = serverForecastPayload('MSFT', 7);
-  expect(payload.horizon).toBe(7);
-  expect(payload.forecast.future_dates).toHaveLength(7);
+test('server forecast payload keeps strictly increasing dates and valid volatility scenario', () => {
+  const payload = serverForecastPayload('MSFT', 5);
+  expect(payload.horizon).toBe(5);
+  expect(payload.forecast.future_dates).toHaveLength(5);
   expect(isStrictlyIncreasing(payload.forecast.future_dates)).toBe(true);
   expect(isStrictlyIncreasing(payload.historical_dates)).toBe(true);
   const finalHistorical = new Date(`${payload.historical_dates[payload.historical_dates.length - 1]}T00:00:00Z`);
   expect(new Date(`${payload.forecast.future_dates[0]}T00:00:00Z`).getTime()).toBeGreaterThan(finalHistorical.getTime());
   expect(payload.forecast.price_quantiles).toBeDefined();
-  expect(payload.forecast.price_quantiles.p50).toHaveLength(7);
+  expect(payload.forecast.price_quantiles.p50).toHaveLength(5);
   expect(payload.forecast.price_quantiles.p05.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
   expect(payload.forecast.price_quantiles.p95.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
   expect(payload.historical_prices.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
+  expect(payload.forecast.requested_model).toBe('auto');
+  expect(payload.evidence.data_provider).toBe('alpaca');
+  expect(payload.evidence.data_as_of).toBe('2026-08-05');
+  expect(payload.evidence.auto_model_policy).toEqual({
+    '1': 'garch_11',
+    '5': 'rolling_mean',
+    '10': 'rolling_mean',
+    '20': 'rolling_mean',
+  });
+  expect(payload.evidence.code_commit).toMatch(/^[0-9a-f]{12}$/);
+  expect(payload.evidence.forecast_fingerprint).toMatch(/^[0-9a-f]{64}$/);
 });
 
 test('business date generator emits only weekdays', () => {

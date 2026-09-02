@@ -75,4 +75,6 @@ $$\text{QLIKE}(\sigma^2, \hat{\sigma}^2) = \frac{\sigma^2}{\hat{\sigma}^2} - \ln
 3. **Stage C (`+NEWS` Ablation):** Adding causal financial news sentiment (VADER lexicon, negative intensity, dispersion, volume z-scores) with session-close cutoffs **failed to provide statistically robust incremental predictive power** across the 44-asset universe (all 95% bootstrap CIs spanned zero).
 
 ### Strategic Architecture Decision
-The production serving core relies on the empirically selected statistical winners (`GARCH(1,1)` at 1-day, `Rolling Mean 60d` at multi-day horizons), while the PyTorch LSTM remains available as an empirical ML comparison. News features were removed from the production forecasting path based on the empirical stopping rule.
+The production serving core relies on the empirically selected statistical winners (`GARCH(1,1)` at 1-day, `Rolling Mean 60d` at 5-, 10-, and 20-session horizons), while the PyTorch LSTM remains available as an empirical ML comparison. The active `model=auto` route is frozen to that four-horizon policy; unsupported legacy horizons are not recorded in the genuine forward ledger. News features were removed from the production forecasting path based on the empirical stopping rule.
+
+The production price display is not a directional price prediction. It is a p05–p95 Gaussian model-implied scenario range around the latest close under a zero-drift log-return reference. The nominal 90% level is a mathematical reference, not a calibrated confidence interval; calibration is monitored separately through the forward ledger.

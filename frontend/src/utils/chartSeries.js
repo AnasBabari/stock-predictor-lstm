@@ -108,7 +108,7 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
   if (errorBand && Array.isArray(errorBand.upper_prices) && Array.isArray(errorBand.lower_prices)) {
     datasets.push({
       label: isVolatility
-        ? (hasCertifiedLocation ? 'Certified return distribution (upper)' : `${isBaseline ? 'Baseline' : 'Certified'} volatility cone (upper)`)
+        ? (hasCertifiedLocation ? 'Certified return distribution (upper)' : `${isBaseline ? 'Baseline' : 'Certified'} Gaussian scenario (upper)`)
         : '90% Empirical Error Range (Upper)',
       data: padForecast(errorBand.upper_prices, forecastLead, lastClose),
       borderColor: 'transparent',
@@ -120,7 +120,7 @@ export function buildPriceSeries(stockData, daysView, isDark, showBenchmark = fa
     });
     datasets.push({
       label: isVolatility
-        ? (hasCertifiedLocation ? 'Certified return distribution (lower)' : `${isBaseline ? 'Baseline' : 'Certified'} volatility cone (lower)`)
+        ? (hasCertifiedLocation ? 'Certified return distribution (lower)' : `${isBaseline ? 'Baseline' : 'Certified'} Gaussian scenario (lower)`)
         : '90% Empirical Error Range (Lower)',
       data: padForecast(errorBand.lower_prices, forecastLead, lastClose),
       borderColor: 'transparent',

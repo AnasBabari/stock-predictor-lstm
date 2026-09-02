@@ -36,10 +36,10 @@ def test_volatility_snapshot_matches_frozen_deployable_contract(monkeypatch) -> 
     assert snapshot.origin_close == frame["Close"].iloc[-1]
     assert snapshot.feature_names == DEPLOYABLE_FEATURE_COLUMNS_V5
     assert snapshot.features.shape == (60, len(DEPLOYABLE_FEATURE_COLUMNS_V5))
-    assert snapshot.causal_har_variance.shape == (6,)
+    assert snapshot.causal_har_variance.shape == (4,)
     assert np.all(snapshot.causal_har_variance > 0)
     assert snapshot.baseline_variance_paths is not None
-    assert snapshot.baseline_variance_paths["causal_log_har"].shape == (30,)
+    assert snapshot.baseline_variance_paths["causal_log_har"].shape == (20,)
     assert np.all(np.diff(snapshot.baseline_variance_paths["causal_log_har"]) >= 0)
     assert {
         "causal_log_har",
@@ -48,8 +48,29 @@ def test_volatility_snapshot_matches_frozen_deployable_contract(monkeypatch) -> 
         "rolling_c2c_20",
         "rolling_c2c_60",
         "rolling_c2c_multiscale",
+        "garch_11",
     }.issubset(snapshot.baseline_candidates)
+    assert snapshot.garch_variance_path is not None
+    assert snapshot.garch_variance_path.shape == (20,)
     assert len(snapshot.snapshot_id) == 64
+
+
+def test_snapshot_preserves_provider_data_as_of_in_identity(monkeypatch) -> None:
+    frame = _market_frame()
+    frame.attrs.update({"data_provider": "alpaca", "data_as_of": "2026-09-01"})
+    monkeypatch.setattr(volatility_snapshot, "_download_ohlcv", lambda _ticker: frame.copy())
+    snapshot = volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+    assert snapshot.data_provider == "alpaca"
+    assert snapshot.data_as_of == "2026-09-01"
+
+    changed_as_of = frame.copy()
+    changed_as_of.attrs.update({"data_provider": "alpaca", "data_as_of": "2026-09-02"})
+    monkeypatch.setattr(
+        volatility_snapshot, "_download_ohlcv", lambda _ticker: changed_as_of.copy()
+    )
+    updated = volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+    assert updated.data_as_of == "2026-09-02"
+    assert updated.snapshot_id != snapshot.snapshot_id
 
 
 def test_volatility_snapshot_identity_changes_with_latest_observation(monkeypatch) -> None:

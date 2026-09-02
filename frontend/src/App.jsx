@@ -169,7 +169,11 @@ export default function App() {
               <div className="chart-header">
                 <h2>
                   {predictionData.ticker}{' '}
-                  {forecastType === FORECAST_TYPES.TREND ? 'Direction Probability' : 'Price Forecast'}
+                  {forecastType === FORECAST_TYPES.TREND
+                    ? 'Direction Probability'
+                    : predictionData.metadata?.engine?.volatility_forecast
+                      ? 'Volatility Scenario'
+                      : 'Price Forecast'}
                 </h2>
                 <div className="chart-controls">
                   {forecastType === FORECAST_TYPES.PRICE && (

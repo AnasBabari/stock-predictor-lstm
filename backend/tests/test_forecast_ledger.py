@@ -62,6 +62,27 @@ def test_record_forecast_and_retrieve_with_provenance(temp_ledger: ForecastLedge
     assert entries[0]["record_source"] == "live"
 
 
+def test_live_ledger_rejects_unsupported_and_fractional_horizons(
+    temp_ledger: ForecastLedger,
+) -> None:
+    params = {
+        "forecast_date": "2025-01-10",
+        "ticker": "AAPL",
+        "target_date": "2025-01-17",
+        "model_name": "rolling_mean",
+        "predicted_volatility": 0.25,
+        "recent_realized_volatility": 0.22,
+        "origin_price": 150.0,
+        "lower_scenario_price": 140.0,
+        "upper_scenario_price": 160.0,
+        "record_source": "live",
+    }
+    with pytest.raises(ValueError, match="horizon must be one of"):
+        temp_ledger.record_forecast(**params, horizon=7)
+    with pytest.raises(ValueError, match="horizon must be one of"):
+        temp_ledger.record_forecast(**params, horizon=5.5)
+
+
 def test_immutability_identical_retry_is_idempotent(temp_ledger: ForecastLedger) -> None:
     rec1 = temp_ledger.record_forecast(
         forecast_date="2025-01-10",

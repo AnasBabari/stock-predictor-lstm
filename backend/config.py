@@ -57,8 +57,10 @@ class Settings(BaseSettings):
     batch_size: int = 32
     model_dir: str = "saved_models"
     model_max_age_days: int = 7
-    default_forecast_days: int = 7
-    max_forecast_days: int = 30
+    # The legacy sequence pipeline remains available for offline research; keep
+    # its defaults aligned with the active volatility contract.
+    default_forecast_days: int = 5
+    max_forecast_days: int = 20
 
     allowed_origins: list[str] = Field(
         default_factory=lambda: [

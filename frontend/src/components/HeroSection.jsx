@@ -8,11 +8,12 @@ export default function HeroSection() {
         Causal Volatility Forecasting
       </div>
       <h1>
-        Stock Price <span className="gradient-text">Predictor</span>
+        Market Volatility <span className="gradient-text">Forecaster</span>
       </h1>
       <p className="subtitle">
-        Transparent causal baselines estimate future realised volatility and serve a dated uncertainty
-        cone around the latest close — up to 30 trading sessions ahead. Learned models are benchmarked
+        Transparent causal baselines estimate future realised volatility and serve a dated Gaussian
+        model-implied scenario range around the latest close — over 1, 5, 10, or 20 trading sessions.
+        Learned models are benchmarked
         offline before they can replace these baselines.
         Educational project; forecasts are not financial advice.
       </p>

@@ -160,7 +160,7 @@ const StockChart = forwardRef(function StockChart(
                 <h2 id="chartTitle">
                   {stockData.ticker} — {hasReturnDistribution
                     ? 'Historical vs Certified Return Distribution'
-                    : isVolatility ? `Historical vs ${isBaseline ? 'Causal Volatility Baseline' : 'Volatility Cone'}` : 'Historical vs Predicted'}
+                    : isVolatility ? `Historical vs ${isBaseline ? 'Causal Volatility Scenario' : 'Volatility Scenario Range'}` : 'Historical vs Predicted'}
                 </h2>
         <div className="chart-header-actions">
           {(!isVolatility || hasReturnDistribution) && <label className="benchmark-toggle" htmlFor="showBenchmarkCheck">

@@ -2,7 +2,7 @@
 name = "stock-predictor-lstm"
 version = "1.1.0"
 requires-python = ">=3.11"
-description = "LSTM-based stock price forecasting API"
+description = "Causal equity-volatility forecasting API"
 dependencies = [
     "boto3>=1.35.0,<2.0.0",
     "cachetools>=5.5.0,<6.0.0",

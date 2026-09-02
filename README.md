@@ -6,7 +6,7 @@
 [![React 18](https://img.shields.io/badge/React-18.3-61DAFB?logo=react&logoColor=black)](https://react.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A production-grade, empirical equity volatility forecasting platform. The system forecasts future realized volatility over multi-session horizons ($H \in \{1, 3, 5, 7, 14, 30\}$ sessions), projects Gaussian scenario price cones, and maintains an **immutable forward forecast ledger** that records predictions at the forecast origin and settles against actual market outcomes.
+A production-grade, empirical equity volatility forecasting platform. The system forecasts future realized volatility over the benchmark-backed horizons ($H \in \{1, 5, 10, 20\}$ sessions), projects Gaussian model-implied price ranges, and maintains an **immutable forward forecast ledger** that records predictions at the forecast origin and settles against actual market outcomes.
 
 ---
 
@@ -15,12 +15,14 @@ A production-grade, empirical equity volatility forecasting platform. The system
 - **Causal Realized Volatility Targets:** Forecasts forward annualized close-to-close realized volatility $RV(t, H) = \sqrt{\frac{252}{H}\sum_{k=1}^H r_{t+k}^2}$ without future lookahead bias.
 - **Empirically Selected Model Policy:** Production serving uses models selected strictly on validation QLIKE loss:
   - **1-Day Horizon:** Causal `GARCH(1,1) MLE` with numerical parameter optimization.
-  - **Multi-Day Horizons (5d, 10d, 20d, 30d):** `Rolling Mean (60d)` sample standard deviation.
+  - **Multi-Day Horizons (5d, 10d, 20d):** `Rolling Mean (60d)` sample standard deviation.
   - **Research & ML Baselines:** PyTorch `SOFTPLUS_VOLATILITY` LSTM, `HAR-RV`, `EWMA (0.94)`, and regularized regressors (`ElasticNet`, `Ridge`).
 - **Resilient Market Data Boundary:** Render uses authenticated Alpaca daily bars with explicit adjusted-price semantics, bounded requests, session-aware ephemeral caching, and safe `503` handling. Yahoo is opt-in for local development only.
-- **Immutable Forecast Ledger & Track Record:** Every live forecast is recorded with a deterministic SHA-256 fingerprint that includes the market-data provider alongside code, data date, model, origin price, predictions, and scenarios. Settled records cannot be mutated or overwritten.
+- **Immutable Forecast Ledger & Track Record:** Every live forecast is recorded with a deterministic SHA-256 fingerprint that includes the market-data provider alongside code, data date, model, origin price, predictions, and scenarios. Settled records cannot be mutated or overwritten. The free Render filesystem is ephemeral, so a durable public track record requires an external database or scheduled ledger export.
 - **Exchange Calendar Synchronization:** Forecast origins and news cutoffs follow the official NYSE trading calendar via `pandas_market_calendars`, failing closed on weekends and holidays.
-- **Modern Interactive UI:** React 18 dashboard with scenario cone visualization, live scorecard (MAE, RMSE, QLIKE), and transparent model evaluation rationale.
+- **Modern Interactive UI:** React 18 dashboard with volatility scenario-range visualization, live scorecard (MAE, RMSE, QLIKE), and transparent model evaluation rationale.
+
+The public volatility contract accepts only 1, 5, 10, and 20 trading sessions. `model=auto` follows the frozen validation policy (`GARCH(1,1)` at 1 session and `Rolling Mean (60d)` at 5, 10, and 20). The displayed p05–p95 band is a Gaussian model-implied scenario under zero drift; its midpoint is the unchanged latest close, not a point-price prediction, and the nominal 90% coverage is not an empirical confidence interval.
 
 ---
 

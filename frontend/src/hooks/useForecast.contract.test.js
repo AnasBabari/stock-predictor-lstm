@@ -23,9 +23,9 @@ describe('forecast horizon request contract', () => {
     const response = {
       ticker: 'MSFT',
       requested_horizon_mode: 'auto',
-      forecast_days: 3,
-      predicted_prices: [101, 102, 103],
-      future_dates: ['2026-08-25', '2026-08-26', '2026-08-27'],
+      forecast_days: 5,
+      predicted_prices: [101, 102, 103, 104, 105],
+      future_dates: ['2026-08-25', '2026-08-26', '2026-08-27', '2026-08-28', '2026-08-29'],
     };
     expect(assertForecastIdentity(response, 'MSFT', 'auto', FORECAST_TYPES.PRICE)).toBe(response);
     expect(() => assertForecastIdentity(
@@ -43,29 +43,29 @@ describe('forecast horizon request contract', () => {
   it('accepts a certified volatility distribution without a fabricated price path', () => {
     const response = {
       ticker: 'MSFT',
-      forecast_days: 3,
-      future_dates: ['2026-08-25', '2026-08-26', '2026-08-27'],
+      forecast_days: 5,
+      future_dates: ['2026-08-25', '2026-08-26', '2026-08-27', '2026-08-28', '2026-08-29'],
       predicted_prices: null,
       volatility_cone: Object.fromEntries(
-        ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'].map((key) => [key, [99, 100, 101]]),
+        ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'].map((key) => [key, [99, 100, 101, 102, 103]]),
       ),
       metadata: { engine: { certified_head: 'volatility' } },
     };
-    expect(assertForecastIdentity(response, 'MSFT', 3, FORECAST_TYPES.PRICE)).toBe(response);
+    expect(assertForecastIdentity(response, 'MSFT', 5, FORECAST_TYPES.PRICE)).toBe(response);
   });
 
   it('accepts a certified return-distribution median path', () => {
     const response = {
       ticker: 'MSFT',
-      forecast_days: 3,
-      future_dates: ['2026-08-25', '2026-08-26', '2026-08-27'],
-      predicted_prices: [101, 102, 103],
+      forecast_days: 5,
+      future_dates: ['2026-08-25', '2026-08-26', '2026-08-27', '2026-08-28', '2026-08-29'],
+      predicted_prices: [101, 102, 103, 104, 105],
       volatility_cone: Object.fromEntries(
-        ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'].map((key) => [key, [99, 100, 103]]),
+        ['p05', 'p10', 'p25', 'p50', 'p75', 'p90', 'p95'].map((key) => [key, [99, 100, 103, 104, 105]]),
       ),
       metadata: { engine: { certified_head: 'return_distribution' } },
     };
-    expect(assertForecastIdentity(response, 'MSFT', 3, FORECAST_TYPES.PRICE)).toBe(response);
+    expect(assertForecastIdentity(response, 'MSFT', 5, FORECAST_TYPES.PRICE)).toBe(response);
   });
 
   it('explains strict abstention instead of mislabelling it as capacity pressure', () => {

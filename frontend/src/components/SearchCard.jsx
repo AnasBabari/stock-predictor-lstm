@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ForecastTypeToggle from './ForecastTypeToggle';
+import { VOLATILITY_HORIZONS } from '../ml/volatilityContract';
 
 export default function SearchCard({
   ticker,
@@ -209,12 +210,11 @@ export default function SearchCard({
             {!volatilityServingEnabled && (
               <option value="auto">Auto · development-ranked</option>
             )}
-            <option value={1}>1 day</option>
-            <option value={3}>3 days</option>
-            <option value={5}>5 days</option>
-            <option value={7}>7 days</option>
-            <option value={14}>14 days</option>
-            <option value={30}>30 days</option>
+            {VOLATILITY_HORIZONS.map((horizon) => (
+              <option key={horizon} value={horizon}>
+                {horizon} {horizon === 1 ? 'session' : 'sessions'}
+              </option>
+            ))}
           </select>
         </div>
 

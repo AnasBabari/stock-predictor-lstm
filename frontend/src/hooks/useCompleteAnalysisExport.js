@@ -77,7 +77,12 @@ export function useCompleteAnalysisExport({
             : 'signed_global_volatility',
           metric_source: priceData.metrics?.metric_source,
           model_id: priceData.metadata?.model_version,
+          model_policy_version: priceData.metadata?.model_policy_version,
           snapshot_id: priceData.metadata?.snapshot_id,
+          forecast_fingerprint: priceData.metadata?.forecast_fingerprint,
+          data_provider: priceData.metadata?.data_provider,
+          data_as_of: priceData.metadata?.data_as_of,
+          code_commit: priceData.metadata?.code_commit,
           location_source: priceData.metadata?.engine?.location_source,
         };
         await exportCompleteAnalysis({

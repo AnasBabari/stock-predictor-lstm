@@ -47,7 +47,7 @@ export default function StatsBar({ stockData, forecastType }) {
       const annualizedVolatility = Number(stockData.forecast?.expected_annualized_volatility);
       return {
         ticker: stockData.ticker,
-        forecastLabel: `Volatility cone (${stockData.forecast_days || 7}d)`,
+        forecastLabel: `Volatility scenario (${stockData.forecast_days || 5} sessions)`,
         lastClose: formatPrice(lastClose),
         forecast: Number.isFinite(low) && Number.isFinite(high)
           ? `${formatPrice(low)} – ${formatPrice(high)}`
@@ -105,7 +105,7 @@ export default function StatsBar({ stockData, forecastType }) {
         <span className="stat-value mono">{stats.lastClose}</span>
       </div>
       <div className="stat">
-        <span className="stat-label">{stats.volatilityOnly ? '90% Forecast Range' : 'Predicted Endpoint'}</span>
+        <span className="stat-label">{stats.volatilityOnly ? '90% Gaussian Scenario Range' : 'Predicted Endpoint'}</span>
         <span className="stat-value mono text-teal">{stats.forecast}</span>
       </div>
       <div className="stat">
@@ -120,6 +120,11 @@ export default function StatsBar({ stockData, forecastType }) {
           <ValidationBadge state={stats.valState} />
         </span>
       </div>
+      {stats.volatilityOnly && (
+        <p className="volatility-disclaimer">
+          The range is a Gaussian model-implied scenario under zero drift; its midpoint is not a price forecast and the nominal 90% coverage is not calibrated.
+        </p>
+      )}
     </section>
   );
 }

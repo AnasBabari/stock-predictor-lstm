@@ -24,6 +24,13 @@ therefore lives under `/tmp`, can survive repeated requests within an instance,
 and is lost when the instance is replaced or restarted. It is an availability
 optimization, not durable storage.
 
+The forward forecast ledger is also SQLite-backed and defaults to the repository
+`data/forecast_ledger.db` path. Its fingerprints and settlement updates are
+immutable while the database exists, but the free Render filesystem can lose the
+database on a restart or replacement. Before treating the live track record as a
+permanent public audit trail, configure durable database/object storage or export
+the ledger on a scheduled basis.
+
 ## Cache and session freshness
 
 Cache keys contain provider and uppercase symbol. A cache entry is usable only
@@ -56,16 +63,35 @@ management so a temporary market-data outage does not create a restart loop.
 ## Provenance and safe smoke tests
 
 Successful forecasts disclose `evidence.data_provider`, `evidence.data_as_of`,
-and `evidence.market_data_cache`. `data_provider` is also part of every new
+`evidence.code_commit`, `evidence.snapshot_id`, and `evidence.market_data_cache`.
+They also disclose the selected horizon, model-policy version, and the exact
+`auto_model_policy` mapping. `data_provider` is also part of every new
 forecast-ledger fingerprint; existing SQLite databases migrate atomically with
 `unknown` recorded for legacy entries.
+
+## Production horizon and model policy
+
+The active endpoint and genuine live ledger are locked to **1, 5, 10, and 20
+completed trading sessions**. Requests for 3, 7, 14, or 30 sessions are rejected
+even though older browser and replay artifacts may contain those values. With
+`model=auto`, the frozen `empirical_volatility_benchmark_v3` policy selects
+`garch_11` for 1 session and `rolling_mean` for 5, 10, and 20 sessions. The
+response records this policy so a horizon cannot silently inherit a legacy
+7-session route.
+
+The p05–p95 output is a **Gaussian model-implied price range**. It uses a
+zero-drift log-return reference process to show conditional price dispersion;
+the midpoint is not a price forecast and the nominal 90% level is not a
+calibrated confidence interval.
 
 Deployment verification may call:
 
 ```text
-GET /api/v1/volatility/forecast?ticker=AAPL&horizon=7&record_ledger=false
+GET /api/v1/volatility/forecast?ticker=AAPL&horizon=5&record_ledger=false
 ```
 
 This exercises acquisition, normalization, features, calendar generation, and
 forecasting without creating a forward-ledger observation. Genuine user-facing
-forecast collection keeps the default `record_ledger=true`.
+forecast collection keeps the default `record_ledger=true` after selecting one
+of the four supported horizons; legacy 7-session ledger rows are retained for
+audit but cannot be created by the active route.

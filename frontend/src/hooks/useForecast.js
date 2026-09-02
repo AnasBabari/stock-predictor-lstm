@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchVolatilityForecast } from '../ml/volatilityClient';
+import { DEFAULT_VOLATILITY_HORIZON, VOLATILITY_HORIZONS } from '../ml/volatilityContract';
 
 const API_BASE = import.meta.env.VITE_API_URL || window.STOCKLSTM_API_BASE || '';
 
@@ -82,8 +83,8 @@ export function normalizeHorizonRequest(value) {
     return { horizon_mode: 'auto', requested_horizon: null };
   }
   const numeric = Number(value?.requested_horizon ?? value);
-  if (![1, 3, 5, 7, 14, 30].includes(numeric)) {
-    throw new Error('Forecast horizon must be Auto or one of 1, 3, 5, 7, 14, or 30 days.');
+  if (!VOLATILITY_HORIZONS.includes(numeric)) {
+    throw new Error(`Forecast horizon must be Auto or one of ${VOLATILITY_HORIZONS.join(', ')} sessions.`);
   }
   return { horizon_mode: 'explicit', requested_horizon: numeric };
 }
@@ -127,7 +128,7 @@ export function assertForecastIdentity(data, ticker, days, type) {
 
 export function useForecast({ addToast, onNewTickerSearched }) {
   const [ticker, setTicker] = useState('');
-  const [forecastDays, setForecastDays] = useState(7);
+  const [forecastDays, setForecastDays] = useState(DEFAULT_VOLATILITY_HORIZON);
   const [daysView, setDaysView] = useState(21);
   const [forecastType, setForecastType] = useState(FORECAST_TYPES.PRICE);
   const [isLoading, setIsLoading] = useState(false);

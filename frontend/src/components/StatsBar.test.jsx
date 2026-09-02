@@ -20,7 +20,7 @@ describe('StatsBar certified volatility presentation', () => {
         }}
       />,
     );
-    expect(screen.getByText('90% Forecast Range')).toBeInTheDocument();
+    expect(screen.getByText('90% Gaussian Scenario Range')).toBeInTheDocument();
     expect(screen.getByText('$94.00 – $109.00')).toBeInTheDocument();
     expect(screen.getByText('Annualized Volatility')).toBeInTheDocument();
     expect(screen.getByText('27.00%')).toBeInTheDocument();
