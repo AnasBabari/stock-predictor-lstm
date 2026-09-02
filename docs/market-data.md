@@ -24,12 +24,28 @@ therefore lives under `/tmp`, can survive repeated requests within an instance,
 and is lost when the instance is replaced or restarted. It is an availability
 optimization, not durable storage.
 
-The forward forecast ledger is also SQLite-backed and defaults to the repository
-`data/forecast_ledger.db` path. Its fingerprints and settlement updates are
-immutable while the database exists, but the free Render filesystem can lose the
-database on a restart or replacement. Before treating the live track record as a
-permanent public audit trail, configure durable database/object storage or export
-the ledger on a scheduled basis.
+The forward forecast ledger uses SQLite at `data/forecast_ledger.db` for local
+development and deterministic tests. Production must set
+`FORECAST_LEDGER_DATABASE_URL` (or the platform-standard `DATABASE_URL`) to a
+managed PostgreSQL database and set `FORECAST_LEDGER_DATABASE_REQUIRED=true`.
+When that flag is enabled, a missing/unreachable PostgreSQL store keeps `/ready`
+at `503` and a `record_ledger=true` forecast is rejected with a sanitized `503`;
+the API never silently falls back to ephemeral SQLite. This prevents a Render
+instance replacement from erasing genuine forward observations.
+
+Migrate an existing local database explicitly, after taking a backup:
+
+```text
+python scripts/migrate_forecast_ledger.py \
+  --sqlite-path data/forecast_ledger.db \
+  --database-url "$FORECAST_LEDGER_DATABASE_URL"
+```
+
+The migration is idempotent, preserves ids/status/settlement values and
+fingerprints, and aborts on an immutable logical-key conflict. It does not
+invent live history. `scripts/export_forecast_ledger.py` can produce separate
+deterministic JSON/CSV exports for `live` and `historical_replay` records before
+or after migration.
 
 ## Cache and session freshness
 
@@ -95,3 +111,10 @@ forecasting without creating a forward-ledger observation. Genuine user-facing
 forecast collection keeps the default `record_ledger=true` after selecting one
 of the four supported horizons; legacy 7-session ledger rows are retained for
 audit but cannot be created by the active route.
+
+`/health` is intentionally an O(1) liveness check. `/ready` includes a
+`forecast_ledger` dependency object with `backend`, `durable`, and `required`
+fields. Configure the PostgreSQL URL and verify that this object reports
+`status=available` before starting a public collection run. On a Render free
+service the application process can still be healthy while readiness remains
+degraded until the external database is supplied.

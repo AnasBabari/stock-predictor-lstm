@@ -18,7 +18,7 @@ A production-grade, empirical equity volatility forecasting platform. The system
   - **Multi-Day Horizons (5d, 10d, 20d):** `Rolling Mean (60d)` sample standard deviation.
   - **Research & ML Baselines:** PyTorch `SOFTPLUS_VOLATILITY` LSTM, `HAR-RV`, `EWMA (0.94)`, and regularized regressors (`ElasticNet`, `Ridge`).
 - **Resilient Market Data Boundary:** Render uses authenticated Alpaca daily bars with explicit adjusted-price semantics, bounded requests, session-aware ephemeral caching, and safe `503` handling. Yahoo is opt-in for local development only.
-- **Immutable Forecast Ledger & Track Record:** Every live forecast is recorded with a deterministic SHA-256 fingerprint that includes the market-data provider alongside code, data date, model, origin price, predictions, and scenarios. Settled records cannot be mutated or overwritten. The free Render filesystem is ephemeral, so a durable public track record requires an external database or scheduled ledger export.
+- **Immutable Forecast Ledger & Track Record:** Every live forecast is recorded with a deterministic SHA-256 fingerprint that includes the market-data provider alongside code, data date, model, origin price, predictions, and scenarios. Settled records cannot be mutated or overwritten. Local/test runs use SQLite; production requires a managed PostgreSQL `DATABASE_URL` and fails closed when it is unavailable, so a free Render filesystem can never silently become the public record store.
 - **Exchange Calendar Synchronization:** Forecast origins and news cutoffs follow the official NYSE trading calendar via `pandas_market_calendars`, failing closed on weekends and holidays.
 - **Modern Interactive UI:** React 18 dashboard with volatility scenario-range visualization, live scorecard (MAE, RMSE, QLIKE), and transparent model evaluation rationale.
 
@@ -65,7 +65,9 @@ Across a diverse benchmark universe of **44 liquid equities and ETFs** across 8 
 │   └── tests/                # Research test suites
 ├── scripts/                  # Empirical evaluation & E2E verification
 │   ├── run_comprehensive_empirical_study.py # 44-asset benchmark runner
-│   └── verify_forecast_ledger_e2e.py        # 8-point ledger integrity simulator
+│   ├── verify_forecast_ledger_e2e.py        # 8-point ledger integrity simulator
+│   ├── migrate_forecast_ledger.py           # explicit SQLite → PostgreSQL migration
+│   └── export_forecast_ledger.py            # deterministic live/replay export
 ├── reports/                  # Versioned benchmark summaries & JSON artifacts
 ├── docs/                     # Detailed technical documentation
 │   ├── methodology.md        # Mathematical targets, metrics, and protocols
@@ -101,7 +103,10 @@ API will be live at `http://127.0.0.1:8000` (interactive OpenAPI docs at `http:/
 
 Local development defaults to Yahoo. Production must set `MARKET_DATA_PROVIDER=alpaca`,
 `ALPACA_API_KEY_ID`, and `ALPACA_API_SECRET_KEY`; credentials are never sent to the browser.
-See [Production Market Data](docs/market-data.md) for cache, readiness, and error semantics.
+Before collecting genuine live forecasts, also set `FORECAST_LEDGER_DATABASE_URL`
+to a managed PostgreSQL database and `FORECAST_LEDGER_DATABASE_REQUIRED=true`.
+See [Production Market Data](docs/market-data.md) for cache, readiness, ledger migration,
+and error semantics.
 
 ### 2. Frontend Setup
 ```powershell

@@ -19,6 +19,8 @@ from data_pipeline import MarketDataUnavailable, MarketTransportError, UnknownTi
 from features.market import MarketContextUnavailable
 from routes.common import limiter, validate_ticker
 from services.forecast_ledger import (
+    LedgerConflictError,
+    LedgerUnavailableError,
     compute_forecast_fingerprint,
     get_current_code_commit,
     get_forecast_ledger,
@@ -39,6 +41,11 @@ router = APIRouter(tags=["volatility"])
 MARKET_DATA_UNAVAILABLE_BODY = {
     "error": "MARKET_DATA_UNAVAILABLE",
     "message": "Current market data is temporarily unavailable. Please try again later.",
+}
+
+FORECAST_LEDGER_UNAVAILABLE_BODY = {
+    "error": "FORECAST_LEDGER_UNAVAILABLE",
+    "message": "The forecast was not recorded because the forecast ledger is temporarily unavailable.",
 }
 
 
@@ -149,8 +156,21 @@ def volatility_forecast(
                 data_as_of=data_as_of,
                 data_provider=data_provider,
             )
-        except Exception as ledger_err:
-            logger.warning("Could not record forecast to ledger for %s: %s", symbol, ledger_err)
+        except LedgerConflictError:
+            logger.error("Conflicting immutable ledger evidence for %s", symbol)
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "error": "FORECAST_LEDGER_CONFLICT",
+                    "message": "A forecast with this origin already exists with different evidence.",
+                },
+            )
+        except LedgerUnavailableError:
+            logger.error("Forecast ledger unavailable for %s", symbol)
+            return JSONResponse(status_code=503, content=FORECAST_LEDGER_UNAVAILABLE_BODY)
+        except Exception:
+            logger.exception("Could not record forecast to ledger for %s", symbol)
+            return JSONResponse(status_code=503, content=FORECAST_LEDGER_UNAVAILABLE_BODY)
 
         return forecast_result
     except UnknownTickerError as err:
@@ -198,42 +218,60 @@ def get_volatility_ledger_route(
                 status_code=400,
                 detail=f"Horizon must be one of {list(VOLATILITY_HORIZONS)}.",
             ) from err
-    ledger = get_forecast_ledger()
+    try:
+        ledger = get_forecast_ledger()
+    except LedgerUnavailableError:
+        logger.error("Forecast ledger unavailable while reading %s", symbol)
+        return JSONResponse(status_code=503, content=FORECAST_LEDGER_UNAVAILABLE_BODY)
 
-    entries = ledger.get_ledger_entries(
-        ticker=symbol, horizon=horizon, record_source=record_source, limit=limit
-    )
-    if not entries:
-        try:
-            from data_pipeline import fetch_historical_frame
+    try:
+        entries = ledger.get_ledger_entries(
+            ticker=symbol, horizon=horizon, record_source=record_source, limit=limit
+        )
+        if not entries:
+            try:
+                from data_pipeline import fetch_historical_frame
 
-            df = fetch_historical_frame(symbol)
-            if df is not None and not df.empty:
-                replay_model = AUTO_MODEL_POLICY.get(horizon or 5, "rolling_mean")
-                ledger.generate_historical_replay_ledger(
-                    symbol, df, horizon=horizon or 5, model_name=replay_model
+                df = fetch_historical_frame(symbol)
+                if df is not None and not df.empty:
+                    replay_model = AUTO_MODEL_POLICY.get(horizon or 5, "rolling_mean")
+                    ledger.generate_historical_replay_ledger(
+                        symbol, df, horizon=horizon or 5, model_name=replay_model
+                    )
+                    entries = ledger.get_ledger_entries(
+                        ticker=symbol,
+                        horizon=horizon,
+                        record_source=record_source,
+                        limit=limit,
+                    )
+            except LedgerUnavailableError:
+                raise
+            except Exception as seed_err:
+                logger.debug(
+                    "Could not auto-generate historical replay for %s: %s", symbol, seed_err
                 )
-                entries = ledger.get_ledger_entries(
-                    ticker=symbol, horizon=horizon, record_source=record_source, limit=limit
-                )
-        except Exception as seed_err:
-            logger.debug("Could not auto-generate historical replay for %s: %s", symbol, seed_err)
 
-    live_metrics = ledger.get_track_record_metrics(
-        ticker=symbol, horizon=horizon, record_source="live"
-    )
-    replay_metrics = ledger.get_track_record_metrics(
-        ticker=symbol, horizon=horizon, record_source="historical_replay"
-    )
+        live_metrics = ledger.get_track_record_metrics(
+            ticker=symbol, horizon=horizon, record_source="live"
+        )
+        replay_metrics = ledger.get_track_record_metrics(
+            ticker=symbol, horizon=horizon, record_source="historical_replay"
+        )
 
-    return {
-        "ticker": symbol,
-        "horizon": horizon,
-        "live_track_record": live_metrics,
-        "replay_track_record": replay_metrics,
-        "track_record": live_metrics,
-        "entries": entries,
-    }
+        return {
+            "ticker": symbol,
+            "horizon": horizon,
+            "live_track_record": live_metrics,
+            "replay_track_record": replay_metrics,
+            "track_record": live_metrics,
+            "entries": entries,
+        }
+    except LedgerUnavailableError:
+        logger.error("Forecast ledger unavailable while reading %s", symbol)
+        return JSONResponse(status_code=503, content=FORECAST_LEDGER_UNAVAILABLE_BODY)
+    except Exception:
+        logger.exception("Could not read forecast ledger for %s", symbol)
+        return JSONResponse(status_code=503, content=FORECAST_LEDGER_UNAVAILABLE_BODY)
 
 
 @router.post("/api/v1/volatility/score-ledger")
@@ -244,7 +282,11 @@ def score_volatility_ledger_route(
 ) -> dict[str, Any]:
     """Score pending ledger forecasts against subsequent realized volatility."""
     symbol = validate_ticker(ticker)
-    ledger = get_forecast_ledger()
+    try:
+        ledger = get_forecast_ledger()
+    except LedgerUnavailableError:
+        logger.error("Forecast ledger unavailable while scoring %s", symbol)
+        return JSONResponse(status_code=503, content=FORECAST_LEDGER_UNAVAILABLE_BODY)
     try:
         from data_pipeline import fetch_historical_frame
 
@@ -267,9 +309,12 @@ def score_volatility_ledger_route(
         }
     except HTTPException:
         raise
-    except Exception as err:
+    except LedgerUnavailableError:
+        logger.error("Forecast ledger unavailable while scoring %s", symbol)
+        return JSONResponse(status_code=503, content=FORECAST_LEDGER_UNAVAILABLE_BODY)
+    except Exception:
         logger.exception("Failed to score volatility ledger for %s", symbol)
-        raise HTTPException(status_code=500, detail=str(err)) from err
+        return JSONResponse(status_code=503, content=FORECAST_LEDGER_UNAVAILABLE_BODY)
 
 
 __all__ = [

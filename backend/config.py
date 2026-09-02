@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -136,6 +136,19 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     s3_key_prefix: str = "artifacts"
     training_mode: Literal["browser_only", "hybrid", "server_pretrained"] = "browser_only"
+
+    # Forward forecast ledger storage.  SQLite is intentionally useful for
+    # local development and deterministic tests; production can select a
+    # durable PostgreSQL database through the conventional DATABASE_URL name.
+    # The explicit required flag lets deployments fail readiness until that
+    # durable store is configured rather than silently collecting ephemeral
+    # records on a container filesystem.
+    forecast_ledger_database_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DATABASE_URL", "FORECAST_LEDGER_DATABASE_URL"),
+    )
+    forecast_ledger_database_required: bool = False
+    forecast_ledger_connection_timeout_seconds: int = Field(default=10, ge=1, le=60)
 
     @field_validator("server_forecast_allowlist", mode="before")
     @classmethod

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from config import APP_VERSION, settings
 from data_pipeline import market_circuit_breaker, market_data_service
+from services.forecast_ledger import LedgerUnavailableError, get_forecast_ledger
 from services.live_volatility import SUPPORTED_BASELINES
 from services.volatility_contract import AUTO_MODEL_POLICY, VOLATILITY_MODEL_POLICY_VERSION
 from services.volatility_snapshot import VOLATILITY_HORIZONS
@@ -75,13 +76,41 @@ def health():
 
 @router.get("/ready")
 def ready():
-    """Readiness checks market data ingestion connectivity."""
+    """Readiness checks market data and required forecast-ledger connectivity.
+
+    Liveness remains deliberately independent of external services.  A
+    configured PostgreSQL ledger is a hard production dependency; an
+    inaccessible or missing durable store therefore keeps this endpoint at
+    503 instead of allowing unpersisted live observations.
+    """
     provider_ready, upstream = market_data_service.readiness()
     circuit_ready, circuit = market_circuit_breaker.is_ready()
     upstream["circuit"] = circuit
-    is_ready = provider_ready and circuit_ready
+
+    configured_database_url = (
+        settings.forecast_ledger_database_url
+        or os.getenv("DATABASE_URL")
+        or os.getenv("FORECAST_LEDGER_DATABASE_URL")
+    )
+    ledger_required = bool(configured_database_url or settings.forecast_ledger_database_required)
+    try:
+        ledger = get_forecast_ledger()
+        ledger_status = ledger.check_connection()
+    except LedgerUnavailableError:
+        ledger_status = {
+            "status": "unavailable",
+            "backend": "postgresql"
+            if configured_database_url or settings.forecast_ledger_database_required
+            else "sqlite",
+            "durable": bool(configured_database_url),
+            "required": ledger_required,
+        }
+    ledger_status["required"] = ledger_required
+    ledger_ready = ledger_status.get("status") == "available"
+    is_ready = provider_ready and circuit_ready and (ledger_ready or not ledger_required)
     dependencies = {
         "market_data": upstream,
+        "forecast_ledger": ledger_status,
     }
 
     content = {
@@ -112,5 +141,20 @@ def models_discovery():
         "model_storage": {
             "required": False,
             "status": "not_required",
+        },
+        "forecast_ledger": {
+            "configured_backend": "postgresql"
+            if settings.forecast_ledger_database_url
+            or os.getenv("DATABASE_URL")
+            or os.getenv("FORECAST_LEDGER_DATABASE_URL")
+            or settings.forecast_ledger_database_required
+            else "sqlite",
+            "durable_required": bool(
+                settings.forecast_ledger_database_url
+                or os.getenv("DATABASE_URL")
+                or os.getenv("FORECAST_LEDGER_DATABASE_URL")
+                or settings.forecast_ledger_database_required
+            ),
+            "note": "SQLite is for local/test use; configure DATABASE_URL before collecting public live records.",
         },
     }

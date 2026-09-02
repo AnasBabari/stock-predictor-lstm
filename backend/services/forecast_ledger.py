@@ -14,6 +14,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,89 @@ _EPS = 1e-6
 
 VALID_RECORD_SOURCES = frozenset({"live", "historical_replay"})
 SUPPORTED_REPLAY_MODELS = ("rolling_mean", "har_rv", "ewma", "persistence", "garch_11")
+
+
+class LedgerUnavailableError(RuntimeError):
+    """Raised when the configured forecast-ledger store cannot be used."""
+
+
+class LedgerConflictError(ValueError):
+    """Raised when an immutable logical ledger key has different evidence."""
+
+
+def _truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+class _LedgerConnection:
+    """Small DB-API adapter allowing the ledger SQL to run on SQLite or psycopg.
+
+    Existing ledger queries deliberately use SQLite's ``?`` placeholder.  The
+    adapter translates only placeholders for PostgreSQL, keeping the two
+    backends on one tested code path and avoiding string interpolation of data.
+    """
+
+    def __init__(self, raw: Any, backend: str) -> None:
+        self.raw = raw
+        self.backend = backend
+
+    def _translate(self, query: str) -> str:
+        return query.replace("?", "%s") if self.backend == "postgres" else query
+
+    def execute(self, query: str, params: Iterable[Any] = ()) -> Any:
+        return self.raw.execute(self._translate(query), tuple(params))
+
+    def executemany(self, query: str, params: Iterable[Iterable[Any]]) -> Any:
+        return self.raw.executemany(self._translate(query), params)
+
+    def commit(self) -> None:
+        self.raw.commit()
+
+    def rollback(self) -> None:
+        self.raw.rollback()
+
+    def close(self) -> None:
+        self.raw.close()
+
+    def __enter__(self) -> _LedgerConnection:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        try:
+            if exc_type is not None:
+                self.rollback()
+        finally:
+            self.close()
+
+
+_POSTGRES_REQUIRED_COLUMNS = frozenset(
+    {
+        "id",
+        "forecast_date",
+        "ticker",
+        "horizon",
+        "target_date",
+        "model_name",
+        "predicted_volatility",
+        "recent_realized_volatility",
+        "origin_price",
+        "lower_scenario_price",
+        "upper_scenario_price",
+        "actual_realized_volatility",
+        "forecast_error",
+        "abs_error",
+        "qlike_loss",
+        "status",
+        "record_source",
+        "model_version",
+        "feature_set_version",
+        "code_commit",
+        "data_as_of",
+        "data_provider",
+        "forecast_fingerprint",
+        "created_at",
+    }
+)
 
 
 def get_current_code_commit() -> str:
@@ -131,19 +215,136 @@ class ForecastRecord:
 
 
 class ForecastLedger:
-    """SQLite-backed immutable forecast ledger with strict provenance tracking and fingerprinting."""
+    """Immutable forecast ledger backed by SQLite or PostgreSQL.
 
-    def __init__(self, db_path: Path | str | None = None) -> None:
-        self.db_path = Path(db_path or _DEFAULT_DB_PATH)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+    A caller that supplies ``db_path`` always gets SQLite.  The default
+    application ledger selects PostgreSQL when ``DATABASE_URL`` (or its
+    explicit ``FORECAST_LEDGER_DATABASE_URL`` alias) is configured.  This
+    precedence is intentional: tests and offline replay can use an explicit
+    SQLite path without inheriting a deployment database environment.
+    """
 
-    def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def __init__(
+        self,
+        db_path: Path | str | None = None,
+        *,
+        database_url: str | None = None,
+        database_required: bool | None = None,
+    ) -> None:
+        self.db_path: Path | None = Path(db_path) if db_path is not None else None
+        self.database_url = self._resolve_database_url(database_url)
+        self.connection_timeout_seconds = self._resolve_connection_timeout()
+        self.database_required = (
+            bool(database_required)
+            if database_required is not None
+            else self._resolve_database_required()
+        )
+        if self.db_path is not None:
+            self.backend = "sqlite"
+        elif self.database_url:
+            self.backend = "postgres"
+        else:
+            self.backend = "sqlite"
+            if self.database_required:
+                raise LedgerUnavailableError(
+                    "A durable PostgreSQL forecast ledger is required but DATABASE_URL is not configured"
+                )
+            self.db_path = _DEFAULT_DB_PATH
+
+        if self.backend == "sqlite":
+            assert self.db_path is not None
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            self._validate_database_url()
+        try:
+            self._init_db()
+        except LedgerUnavailableError:
+            raise
+        except Exception as exc:
+            raise LedgerUnavailableError("Forecast ledger schema is unavailable") from exc
+
+    @staticmethod
+    def _resolve_database_url(database_url: str | None) -> str | None:
+        if database_url is not None:
+            value = str(database_url).strip()
+            return value or None
+        # Read the settings object when available, then fall back to direct
+        # environment lookup for migration scripts and lightweight imports.
+        try:
+            from config import settings
+
+            configured = getattr(settings, "forecast_ledger_database_url", None)
+            if configured:
+                return str(configured).strip()
+        except Exception:
+            pass
+        value = os.environ.get("DATABASE_URL") or os.environ.get("FORECAST_LEDGER_DATABASE_URL")
+        return str(value).strip() if value and str(value).strip() else None
+
+    @staticmethod
+    def _resolve_database_required() -> bool:
+        try:
+            from config import settings
+
+            if bool(getattr(settings, "forecast_ledger_database_required", False)):
+                return True
+        except Exception:
+            pass
+        return _truthy(os.environ.get("FORECAST_LEDGER_DATABASE_REQUIRED", "false"))
+
+    @staticmethod
+    def _resolve_connection_timeout() -> int:
+        try:
+            from config import settings
+
+            value = int(getattr(settings, "forecast_ledger_connection_timeout_seconds", 10))
+        except Exception:
+            try:
+                value = int(os.environ.get("FORECAST_LEDGER_CONNECTION_TIMEOUT_SECONDS", "10"))
+            except ValueError:
+                value = 10
+        return max(1, min(value, 60))
+
+    def _validate_database_url(self) -> None:
+        if not self.database_url or not self.database_url.lower().startswith(
+            ("postgresql://", "postgres://")
+        ):
+            raise LedgerUnavailableError(
+                "Forecast ledger DATABASE_URL must use a PostgreSQL connection URL"
+            )
+
+    def _get_connection(self) -> _LedgerConnection:
+        if self.backend == "sqlite":
+            assert self.db_path is not None
+            try:
+                raw = sqlite3.connect(
+                    str(self.db_path), timeout=float(self.connection_timeout_seconds)
+                )
+                raw.row_factory = sqlite3.Row
+                return _LedgerConnection(raw, "sqlite")
+            except Exception as exc:
+                raise LedgerUnavailableError("SQLite forecast ledger is unavailable") from exc
+
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            raw = psycopg.connect(
+                self.database_url,
+                connect_timeout=self.connection_timeout_seconds,
+                row_factory=dict_row,
+            )
+            return _LedgerConnection(raw, "postgres")
+        except Exception as exc:
+            # Do not include the URL: it can contain a password and is never
+            # safe to put in logs or an HTTP response.
+            raise LedgerUnavailableError("PostgreSQL forecast ledger is unavailable") from exc
 
     def _init_db(self) -> None:
+        if self.backend == "postgres":
+            self._init_postgres_db()
+            return
+
         with self._get_connection() as conn:
             table_info = conn.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='forecast_ledger'"
@@ -346,6 +547,119 @@ class ForecastLedger:
             )
             conn.commit()
 
+    def _init_postgres_db(self) -> None:
+        """Create or validate the durable PostgreSQL ledger schema.
+
+        Existing incompatible schemas fail closed.  The SQLite migration
+        command is deliberately explicit so a deployment cannot accidentally
+        drop or reinterpret production history during application startup.
+        """
+        try:
+            with self._get_connection() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS forecast_ledger (
+                        id BIGSERIAL PRIMARY KEY,
+                        forecast_date TEXT NOT NULL,
+                        ticker TEXT NOT NULL,
+                        horizon INTEGER NOT NULL CHECK (horizon > 0),
+                        target_date TEXT NOT NULL,
+                        model_name TEXT NOT NULL,
+                        predicted_volatility DOUBLE PRECISION NOT NULL,
+                        recent_realized_volatility DOUBLE PRECISION NOT NULL,
+                        origin_price DOUBLE PRECISION NOT NULL,
+                        lower_scenario_price DOUBLE PRECISION NOT NULL,
+                        upper_scenario_price DOUBLE PRECISION NOT NULL,
+                        actual_realized_volatility DOUBLE PRECISION,
+                        forecast_error DOUBLE PRECISION,
+                        abs_error DOUBLE PRECISION,
+                        qlike_loss DOUBLE PRECISION,
+                        status TEXT NOT NULL CHECK (status IN ('pending', 'scored')),
+                        record_source TEXT NOT NULL DEFAULT 'live'
+                            CHECK (record_source IN ('live', 'historical_replay')),
+                        model_version TEXT NOT NULL DEFAULT 'deployable_v5',
+                        feature_set_version TEXT NOT NULL DEFAULT 'deployable_feature_columns_v5',
+                        code_commit TEXT NOT NULL DEFAULT 'dev-local',
+                        data_as_of TEXT NOT NULL DEFAULT '',
+                        data_provider TEXT NOT NULL DEFAULT 'unknown',
+                        forecast_fingerprint TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL,
+                        UNIQUE (forecast_date, ticker, horizon, model_name, record_source)
+                    )
+                    """
+                )
+                columns = {
+                    str(row["column_name"])
+                    for row in conn.execute(
+                        """
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_schema = current_schema() AND table_name = 'forecast_ledger'
+                        """
+                    ).fetchall()
+                }
+                missing = _POSTGRES_REQUIRED_COLUMNS - columns
+                if missing:
+                    raise LedgerUnavailableError(
+                        "PostgreSQL forecast ledger schema is incompatible; "
+                        f"missing columns: {', '.join(sorted(missing))}"
+                    )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ledger_ticker_source "
+                    "ON forecast_ledger(ticker, horizon, record_source)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ledger_status_source "
+                    "ON forecast_ledger(status, record_source)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ledger_fingerprint "
+                    "ON forecast_ledger(forecast_fingerprint)"
+                )
+                conn.commit()
+        except LedgerUnavailableError:
+            raise
+        except Exception as exc:
+            raise LedgerUnavailableError(
+                "PostgreSQL forecast ledger schema is unavailable"
+            ) from exc
+
+    @property
+    def storage_kind(self) -> str:
+        """Return the selected storage backend without exposing credentials."""
+        return "postgresql" if self.backend == "postgres" else "sqlite"
+
+    @property
+    def durable(self) -> bool:
+        """Whether records survive replacement of an application instance."""
+        return self.backend == "postgres"
+
+    def check_connection(self) -> dict[str, Any]:
+        """Run a bounded, read-only connectivity check for readiness probes."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("SELECT 1").fetchone()
+            return {
+                "status": "available",
+                "backend": self.storage_kind,
+                "durable": self.durable,
+                "required": self.database_required,
+            }
+        except LedgerUnavailableError:
+            return {
+                "status": "unavailable",
+                "backend": self.storage_kind,
+                "durable": self.durable,
+                "required": self.database_required,
+            }
+        except Exception:
+            return {
+                "status": "unavailable",
+                "backend": self.storage_kind,
+                "durable": self.durable,
+                "required": self.database_required,
+            }
+
     def record_forecast(
         self,
         *,
@@ -459,7 +773,7 @@ class ForecastLedger:
 
                 if existing["status"] == "scored":
                     if existing_fp != calculated_fp:
-                        raise ValueError(
+                        raise LedgerConflictError(
                             f"Cannot modify or overwrite a settled/scored forecast for {ticker_str} "
                             f"on {f_date_str} (horizon={h_int}d, model={m_name_str}, source={source_str}). "
                             f"Settled fingerprint={existing_fp[:12]}..., incoming fingerprint={calculated_fp[:12]}... "
@@ -468,7 +782,7 @@ class ForecastLedger:
                     return self._row_to_record(existing)
 
                 if existing_fp != calculated_fp:
-                    raise ValueError(
+                    raise LedgerConflictError(
                         f"Conflicting forecast fingerprint for {ticker_str} on {f_date_str} "
                         f"(horizon={h_int}d, model={m_name_str}, source={source_str}). "
                         f"Existing fingerprint={existing_fp[:12]}..., incoming fingerprint={calculated_fp[:12]}... "
@@ -485,6 +799,7 @@ class ForecastLedger:
                     record_source, model_version, feature_set_version,
                     code_commit, data_as_of, data_provider, forecast_fingerprint, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (forecast_date, ticker, horizon, model_name, record_source) DO NOTHING
                 """,
                 (
                     f_date_str,
@@ -517,6 +832,14 @@ class ForecastLedger:
                 (f_date_str, ticker_str, h_int, m_name_str, source_str),
             )
             row = cursor.fetchone()
+            if row is None:
+                raise LedgerUnavailableError("Forecast ledger insert was not durable")
+            stored_fp = row["forecast_fingerprint"]
+            if stored_fp != calculated_fp:
+                raise LedgerConflictError(
+                    f"Concurrent forecast conflict for {ticker_str} on {f_date_str} "
+                    f"(horizon={h_int}d, model={m_name_str}, source={source_str})"
+                )
             return self._row_to_record(row)
 
     def score_pending_forecasts(
@@ -548,6 +871,10 @@ class ForecastLedger:
             if record_source is not None:
                 query += " AND record_source=?"
                 params.append(str(record_source))
+            if self.backend == "postgres":
+                # Prevent two settlement workers from scoring the same row;
+                # SQLite serializes the write transaction for local runs.
+                query += " FOR UPDATE"
 
             cursor = conn.execute(query, params)
             rows = cursor.fetchall()
@@ -579,7 +906,7 @@ class ForecastLedger:
 
                 actual_target_date = date_str_list[origin_idx + horizon]
 
-                conn.execute(
+                update_cursor = conn.execute(
                     """
                     UPDATE forecast_ledger
                     SET target_date=?,
@@ -589,10 +916,12 @@ class ForecastLedger:
                         qlike_loss=?,
                         status='scored'
                     WHERE id=?
+                      AND status='pending'
                     """,
                     (actual_target_date, actual_rv, error, abs_error, qlike, row["id"]),
                 )
-                scored_count += 1
+                if update_cursor.rowcount == 1:
+                    scored_count += 1
 
             conn.commit()
 
@@ -694,6 +1023,145 @@ class ForecastLedger:
             ),
         }
 
+    def export_records(self, *, record_source: str | None = None) -> list[ForecastRecord]:
+        """Return a deterministic snapshot ordered by database id.
+
+        This is used by the explicit SQLite→PostgreSQL migration and export
+        tools.  It never merges live and historical-replay tracks unless the
+        caller intentionally omits ``record_source``.
+        """
+        query = "SELECT * FROM forecast_ledger"
+        params: list[Any] = []
+        if record_source is not None:
+            if str(record_source) not in VALID_RECORD_SOURCES:
+                raise ValueError(f"Unsupported record_source: {record_source}")
+            query += " WHERE record_source=?"
+            params.append(str(record_source))
+        query += " ORDER BY id ASC"
+        with self._get_connection() as conn:
+            return [self._row_to_record(row) for row in conn.execute(query, params).fetchall()]
+
+    def import_records(self, records: Iterable[ForecastRecord]) -> int:
+        """Idempotently import records while preserving immutable evidence.
+
+        The method is intentionally separate from ``record_forecast``: a
+        migration must preserve historical status, settlement values, ids, and
+        creation timestamps exactly rather than recomputing a new forecast.
+        A logical-key collision is accepted only when every immutable field
+        matches; otherwise the whole transaction fails closed.
+        """
+        columns = (
+            "id, forecast_date, ticker, horizon, target_date, model_name, "
+            "predicted_volatility, recent_realized_volatility, origin_price, "
+            "lower_scenario_price, upper_scenario_price, actual_realized_volatility, "
+            "forecast_error, abs_error, qlike_loss, status, record_source, model_version, "
+            "feature_set_version, code_commit, data_as_of, data_provider, "
+            "forecast_fingerprint, created_at"
+        )
+        records_list = list(records)
+        if not records_list:
+            return 0
+
+        inserted = 0
+        with self._get_connection() as conn:
+            for record in records_list:
+                if record.record_source not in VALID_RECORD_SOURCES:
+                    raise ValueError(f"Unsupported record_source: {record.record_source}")
+                values = (
+                    record.id,
+                    record.forecast_date,
+                    record.ticker,
+                    int(record.horizon),
+                    record.target_date,
+                    record.model_name,
+                    record.predicted_volatility,
+                    record.recent_realized_volatility,
+                    record.origin_price,
+                    record.lower_scenario_price,
+                    record.upper_scenario_price,
+                    record.actual_realized_volatility,
+                    record.forecast_error,
+                    record.abs_error,
+                    record.qlike_loss,
+                    record.status,
+                    record.record_source,
+                    record.model_version,
+                    record.feature_set_version,
+                    record.code_commit,
+                    record.data_as_of,
+                    record.data_provider,
+                    record.forecast_fingerprint,
+                    record.created_at,
+                )
+                insert_cursor = conn.execute(
+                    f"INSERT INTO forecast_ledger ({columns}) VALUES "
+                    f"({', '.join('?' for _ in values)}) "
+                    "ON CONFLICT (forecast_date, ticker, horizon, model_name, record_source) "
+                    "DO NOTHING",
+                    values,
+                )
+                inserted_now = insert_cursor.rowcount == 1
+                if inserted_now:
+                    inserted += 1
+                existing = conn.execute(
+                    """
+                    SELECT * FROM forecast_ledger
+                    WHERE forecast_date=? AND ticker=? AND horizon=? AND model_name=? AND record_source=?
+                    """,
+                    (
+                        record.forecast_date,
+                        record.ticker,
+                        int(record.horizon),
+                        record.model_name,
+                        record.record_source,
+                    ),
+                ).fetchone()
+                if existing is None:
+                    raise LedgerUnavailableError("Imported forecast record could not be verified")
+
+                existing_record = self._row_to_record(existing)
+                for field in (
+                    "forecast_date",
+                    "ticker",
+                    "horizon",
+                    "target_date",
+                    "model_name",
+                    "predicted_volatility",
+                    "recent_realized_volatility",
+                    "origin_price",
+                    "lower_scenario_price",
+                    "upper_scenario_price",
+                    "actual_realized_volatility",
+                    "forecast_error",
+                    "abs_error",
+                    "qlike_loss",
+                    "status",
+                    "record_source",
+                    "model_version",
+                    "feature_set_version",
+                    "code_commit",
+                    "data_as_of",
+                    "data_provider",
+                    "forecast_fingerprint",
+                    "created_at",
+                ):
+                    if getattr(existing_record, field) != getattr(record, field):
+                        raise LedgerConflictError(
+                            "Imported forecast conflicts with an existing immutable logical key"
+                        )
+            if self.backend == "postgres":
+                conn.execute(
+                    """
+                    SELECT setval(
+                        pg_get_serial_sequence('forecast_ledger', 'id'),
+                        COALESCE((SELECT MAX(id) FROM forecast_ledger), 1),
+                        EXISTS (SELECT 1 FROM forecast_ledger)
+                    )
+                    """
+                ).fetchone()
+            conn.commit()
+        return inserted
+
     def generate_historical_replay_ledger(
         self,
         ticker: str,
@@ -788,7 +1256,7 @@ class ForecastLedger:
         return seeded
 
     @staticmethod
-    def _row_to_record(row: sqlite3.Row) -> ForecastRecord:
+    def _row_to_record(row: Mapping[str, Any]) -> ForecastRecord:
         keys = row.keys()
         return ForecastRecord(
             id=row["id"],
@@ -831,12 +1299,37 @@ class ForecastLedger:
 
 
 _DEFAULT_LEDGER: ForecastLedger | None = None
+_DEFAULT_LEDGER_CONFIG: tuple[str | None, bool] | None = None
 
 
-def get_forecast_ledger(db_path: Path | str | None = None) -> ForecastLedger:
-    global _DEFAULT_LEDGER
-    if db_path is not None:
-        return ForecastLedger(db_path)
-    if _DEFAULT_LEDGER is None:
-        _DEFAULT_LEDGER = ForecastLedger()
+def get_forecast_ledger(
+    db_path: Path | str | None = None,
+    *,
+    database_url: str | None = None,
+    database_required: bool | None = None,
+) -> ForecastLedger:
+    """Return the process-shared default ledger or an explicit backend.
+
+    Explicit paths/URLs are never cached, which keeps tests and migration
+    commands isolated.  The default object is recreated if deployment
+    configuration changes during a process lifetime (useful for test harnesses
+    and controlled reloads).
+    """
+    global _DEFAULT_LEDGER, _DEFAULT_LEDGER_CONFIG
+    if db_path is not None or database_url is not None or database_required is not None:
+        return ForecastLedger(
+            db_path,
+            database_url=database_url,
+            database_required=database_required,
+        )
+
+    resolved_url = ForecastLedger._resolve_database_url(None)
+    resolved_required = ForecastLedger._resolve_database_required()
+    config_signature = (resolved_url, resolved_required)
+    if _DEFAULT_LEDGER is None or config_signature != _DEFAULT_LEDGER_CONFIG:
+        _DEFAULT_LEDGER = ForecastLedger(
+            database_url=resolved_url,
+            database_required=resolved_required,
+        )
+        _DEFAULT_LEDGER_CONFIG = config_signature
     return _DEFAULT_LEDGER

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from services.forecast_ledger import ForecastLedger
+from services.forecast_ledger import ForecastLedger, LedgerUnavailableError
 
 
 @pytest.fixture
@@ -475,3 +475,36 @@ def test_canonical_garch_mle_parity(temp_ledger: ForecastLedger) -> None:
     ]
     assert len(matching) == 1
     assert abs(matching[0]["predicted_volatility"] - expected_mle_vol) < 1e-6
+
+
+def test_required_durable_ledger_fails_without_database_url() -> None:
+    with pytest.raises(LedgerUnavailableError, match="DATABASE_URL"):
+        ForecastLedger(database_url="", database_required=True)
+
+
+def test_import_records_is_idempotent_and_preserves_settlement(tmp_path: Path) -> None:
+    source = ForecastLedger(tmp_path / "source.db")
+    df = _make_ohlcv(100)
+    dates = df.index.strftime("%Y-%m-%d").to_list()
+    source.record_forecast(
+        forecast_date=dates[20],
+        ticker="AAPL",
+        horizon=5,
+        target_date=dates[25],
+        model_name="rolling_mean",
+        predicted_volatility=0.24,
+        recent_realized_volatility=0.20,
+        origin_price=float(df["Close"].iloc[20]),
+        lower_scenario_price=float(df["Close"].iloc[20] * 0.95),
+        upper_scenario_price=float(df["Close"].iloc[20] * 1.05),
+        record_source="live",
+        code_commit="migration-test",
+        data_provider="alpaca",
+    )
+    assert source.score_pending_forecasts("AAPL", df) == 1
+    records = source.export_records()
+
+    destination = ForecastLedger(tmp_path / "destination.db")
+    assert destination.import_records(records) == 1
+    assert destination.import_records(records) == 0
+    assert destination.export_records() == records

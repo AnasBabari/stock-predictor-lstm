@@ -49,6 +49,14 @@ services:
         sync: false
       - key: ALPACA_API_SECRET_KEY
         sync: false
+      # A durable external PostgreSQL URL is required before genuine live
+      # forecast collection.  Render's free filesystem SQLite fallback remains
+      # available for local development only; /ready stays 503 until this is
+      # supplied in the Render dashboard.
+      - key: FORECAST_LEDGER_DATABASE_URL
+        sync: false
+      - key: FORECAST_LEDGER_DATABASE_REQUIRED
+        value: "true"
       - key: CORS_ORIGIN
         sync: false
       - key: PREVIEW_CORS_ORIGIN_REGEX

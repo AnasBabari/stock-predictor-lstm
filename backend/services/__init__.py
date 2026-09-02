@@ -3,6 +3,8 @@
 from .forecast_ledger import (
     ForecastLedger,
     ForecastRecord,
+    LedgerConflictError,
+    LedgerUnavailableError,
     compute_forecast_fingerprint,
     get_current_code_commit,
     get_forecast_ledger,
@@ -35,6 +37,8 @@ __all__ = [
     "DEPLOYABLE_FEATURE_COLUMNS_V5",
     "ForecastLedger",
     "ForecastRecord",
+    "LedgerConflictError",
+    "LedgerUnavailableError",
     "AUTO_MODEL_POLICY",
     "SUPPORTED_BASELINES",
     "SUPPORTED_VOLATILITY_HORIZONS",

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from api import app
 from routes import volatility
+from services.forecast_ledger import LedgerUnavailableError
 from services.volatility_snapshot import VOLATILITY_HORIZONS
 
 CLIENT = TestClient(app)
@@ -42,7 +43,7 @@ def test_active_route_returns_explicit_causal_baseline(monkeypatch):
     monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
     response = CLIENT.get(
         "/api/v1/volatility/forecast",
-        params={"ticker": "msft", "horizon": 5, "model": "har_rv"},
+        params={"ticker": "msft", "horizon": 5, "model": "har_rv", "record_ledger": "false"},
     )
 
     assert response.status_code == 200
@@ -170,6 +171,26 @@ def test_forecast_can_skip_ledger_for_deployment_smoke(monkeypatch):
         params={"ticker": "MSFT", "horizon": 5, "record_ledger": "false"},
     )
     assert response.status_code == 200
+
+
+def test_forecast_rejects_recording_when_ledger_is_unavailable(monkeypatch):
+    monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
+    monkeypatch.setattr(
+        volatility,
+        "get_forecast_ledger",
+        lambda: (_ for _ in ()).throw(LedgerUnavailableError("database offline")),
+    )
+
+    response = CLIENT.get(
+        "/api/v1/volatility/forecast",
+        params={"ticker": "MSFT", "horizon": 5, "record_ledger": "true"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "FORECAST_LEDGER_UNAVAILABLE",
+        "message": "The forecast was not recorded because the forecast ledger is temporarily unavailable.",
+    }
 
 
 def test_transport_failure_uses_stable_sanitized_503(monkeypatch):
