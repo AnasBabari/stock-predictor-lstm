@@ -129,6 +129,13 @@ class AlpacaProvider:
                 except ValueError as err:
                     raise MarketDataProviderError("Alpaca returned malformed JSON") from err
                 page = payload.get("bars") if isinstance(payload, dict) else None
+                # Alpaca normally returns an empty list for a valid symbol with
+                # no bars.  Some account/feed combinations have also returned
+                # an empty object; treat either empty representation as an
+                # authoritative no-data response, and do not follow a stale
+                # pagination token from an empty page.
+                if page == [] or page == {}:
+                    break
                 if not isinstance(page, list):
                     raise MarketDataProviderError("Alpaca returned a malformed bars payload")
                 bars.extend(item for item in page if isinstance(item, dict))
