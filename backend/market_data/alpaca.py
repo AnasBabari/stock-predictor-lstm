@@ -134,7 +134,7 @@ class AlpacaProvider:
                 # an empty object; treat either empty representation as an
                 # authoritative no-data response, and do not follow a stale
                 # pagination token from an empty page.
-                if page == [] or page == {}:
+                if isinstance(payload, dict) and "bars" in payload and page in (None, [], {}):
                     break
                 if not isinstance(page, list):
                     raise MarketDataProviderError("Alpaca returned a malformed bars payload")

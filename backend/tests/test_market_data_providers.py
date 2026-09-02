@@ -105,7 +105,7 @@ def test_alpaca_symbol_error_in_422_is_authoritative_unknown() -> None:
         provider.fetch_daily_bars("NOTREAL", years=8)
 
 
-@pytest.mark.parametrize("bars", [[], {}])
+@pytest.mark.parametrize("bars", [None, [], {}])
 def test_alpaca_empty_success_page_is_authoritative_unknown(bars) -> None:
     provider = _alpaca(
         lambda _request: httpx.Response(200, json={"bars": bars, "next_page_token": "stale"})
