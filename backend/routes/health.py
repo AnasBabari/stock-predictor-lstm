@@ -10,7 +10,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from config import APP_VERSION, settings
-from data_pipeline import market_circuit_breaker
+from data_pipeline import market_circuit_breaker, market_data_service
 
 router = APIRouter(tags=["health"])
 
@@ -73,8 +73,10 @@ def health():
 @router.get("/ready")
 def ready():
     """Readiness checks market data ingestion connectivity."""
-    market_ready, upstream = market_circuit_breaker.is_ready()
-    is_ready = market_ready
+    provider_ready, upstream = market_data_service.readiness()
+    circuit_ready, circuit = market_circuit_breaker.is_ready()
+    upstream["circuit"] = circuit
+    is_ready = provider_ready and circuit_ready
     dependencies = {
         "market_data": upstream,
     }

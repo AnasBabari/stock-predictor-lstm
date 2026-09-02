@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pandas_market_calendars as mcal
@@ -14,6 +15,22 @@ SUFFIX_CALENDARS = {
     ".AX": "ASX",
     ".HK": "HKEX",
 }
+
+
+def latest_completed_trading_session(now: datetime | pd.Timestamp | None = None) -> pd.Timestamp:
+    """Return the latest NYSE session whose regular close has passed."""
+    instant = pd.Timestamp(now if now is not None else datetime.now(UTC))
+    instant = instant.tz_localize(UTC) if instant.tzinfo is None else instant.tz_convert(UTC)
+    ny_now = instant.tz_convert(ZoneInfo("America/New_York"))
+    calendar = mcal.get_calendar("NYSE")
+    schedule = calendar.schedule(
+        start_date=(ny_now - timedelta(days=14)).date(),
+        end_date=ny_now.date(),
+    )
+    completed = schedule.loc[schedule["market_close"] <= instant]
+    if completed.empty:
+        raise ValueError("Could not determine the latest completed NYSE session.")
+    return pd.Timestamp(completed.index[-1]).tz_localize(None).normalize()
 
 
 def resolve_calendar(ticker: str) -> tuple[str, str]:

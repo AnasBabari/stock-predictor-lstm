@@ -202,6 +202,8 @@ class VolatilityInferenceSnapshot:
     snapshot_id: str
     origin_date: str
     origin_close: float
+    data_provider: str
+    market_data_cache: str
     feature_names: tuple[str, ...]
     features: np.ndarray
     causal_har_variance: np.ndarray
@@ -266,10 +268,12 @@ def _snapshot_identity(
     features: np.ndarray,
     baseline: np.ndarray,
     baseline_paths: dict[str, np.ndarray] | None = None,
+    data_provider: str = "unknown",
 ) -> str:
     hasher = hashlib.sha256()
     hasher.update(ticker.encode("ascii"))
     hasher.update("deployable_v5".encode("ascii"))
+    hasher.update(data_provider.encode("utf-8"))
     hasher.update("|".join(DEPLOYABLE_FEATURE_COLUMNS_V5).encode("utf-8"))
     hasher.update(
         "|".join(pd.Timestamp(value).date().isoformat() for value in dates).encode("ascii")
@@ -325,6 +329,8 @@ def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnaps
     if not symbol:
         raise ValueError("volatility ticker is required")
     raw = _download_ohlcv(symbol)
+    data_provider = str(raw.attrs.get("data_provider", "unknown"))
+    market_data_cache = str(raw.attrs.get("market_data_cache", "unknown"))
     features = build_features_v5(raw)
     proxy = realized_variance_proxies(raw)["RV_C2C"].clip(lower=1e-12)
     har = causal_log_har_forecasts(proxy, VOLATILITY_HORIZONS)
@@ -349,9 +355,13 @@ def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnaps
     )
     return VolatilityInferenceSnapshot(
         ticker=symbol,
-        snapshot_id=_snapshot_identity(symbol, dates, window, baseline, baseline_paths),
+        snapshot_id=_snapshot_identity(
+            symbol, dates, window, baseline, baseline_paths, data_provider=data_provider
+        ),
         origin_date=pd.Timestamp(raw.index[last]).date().isoformat(),
         origin_close=float(raw["Close"].iloc[last]),
+        data_provider=data_provider,
+        market_data_cache=market_data_cache,
         feature_names=DEPLOYABLE_FEATURE_COLUMNS_V5,
         features=window.astype(np.float32),
         causal_har_variance=baseline.astype(np.float32),

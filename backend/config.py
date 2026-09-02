@@ -6,6 +6,7 @@ import tomllib
 from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
@@ -91,6 +92,19 @@ class Settings(BaseSettings):
     deployment_environment: str | None = None
     deployment_commit: str | None = None
 
+    # Production market-data boundary. Alpaca is the intended Render provider;
+    # Yahoo remains an explicit local/development fallback only.
+    market_data_provider: Literal["alpaca", "yahoo", "auto"] = "yahoo"
+    market_data_yahoo_fallback_enabled: bool = False
+    market_data_cache_enabled: bool = True
+    market_data_cache_dir: str = str(Path(tempfile.gettempdir()) / "stocklstm-market-data-cache")
+    market_data_timeout_seconds: float = Field(default=15.0, ge=1.0, le=60.0)
+    alpaca_api_key_id: str | None = None
+    alpaca_api_secret_key: str | None = None
+    alpaca_data_base_url: str = "https://data.alpaca.markets"
+    alpaca_data_feed: Literal["iex", "sip"] = "iex"
+    alpaca_adjustment: Literal["raw", "split", "dividend", "all"] = "all"
+
     # Hybrid server/browser training foundation (defaults keep today's behaviour).
     server_forecast_serving_enabled: bool = False
     server_training_enabled: bool = False
@@ -128,6 +142,22 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip().upper() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("alpaca_data_base_url")
+    @classmethod
+    def validate_alpaca_data_base_url(cls, value: str) -> str:
+        """Prevent sending Alpaca credentials to an unexpected origin."""
+        parsed = urlparse(value.strip())
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "data.alpaca.markets"
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("ALPACA_DATA_BASE_URL must be https://data.alpaca.markets")
+        return "https://data.alpaca.markets"
 
     @field_validator("trusted_proxy_ips")
     @classmethod

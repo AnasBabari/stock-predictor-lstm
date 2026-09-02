@@ -17,6 +17,8 @@ def _snapshot(ticker: str = "MSFT") -> SimpleNamespace:
         snapshot_id="a" * 64,
         origin_date="2026-08-28",
         origin_close=500.0,
+        data_provider="alpaca",
+        market_data_cache="miss",
         feature_names=("Return_1D", "Vol_C2C_20"),
         features=np.ones((60, 2), dtype=np.float32),
         causal_har_variance=np.full(6, 0.04, dtype=np.float32),
@@ -49,6 +51,7 @@ def test_active_route_returns_explicit_causal_baseline(monkeypatch):
     assert body["evidence"]["model_status"] == "baseline"
     assert body["evidence"]["metric_source"] == "baseline_definition"
     assert body["evidence"]["news_status"] == "not_used"
+    assert body["evidence"]["data_provider"] == "alpaca"
     assert body["evidence"]["interval_method"] == "gaussian_reference_scenario"
     assert body["evidence"]["interval_nominal_coverage"] == 0.90
     assert "not_empirically_calibrated" in body["evidence"]["interval_scope"]
@@ -127,3 +130,46 @@ def test_volatility_ledger_routes(monkeypatch, tmp_path):
     assert l_body["entries"][0]["ticker"] == "MSFT"
     assert l_body["entries"][0]["status"] == "pending"
     assert l_body["entries"][0]["record_source"] == "live"
+    assert l_body["entries"][0]["data_provider"] == "alpaca"
+
+
+def test_forecast_can_skip_ledger_for_deployment_smoke(monkeypatch):
+    monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", _snapshot)
+    monkeypatch.setattr(
+        volatility,
+        "get_forecast_ledger",
+        lambda: (_ for _ in ()).throw(AssertionError("ledger must not be opened")),
+    )
+    response = CLIENT.get(
+        "/api/v1/volatility/forecast",
+        params={"ticker": "MSFT", "horizon": 7, "record_ledger": "false"},
+    )
+    assert response.status_code == 200
+
+
+def test_transport_failure_uses_stable_sanitized_503(monkeypatch):
+    from data_pipeline import MarketTransportError
+
+    def fail(_ticker):
+        raise MarketTransportError("credential or provider secret")
+
+    monkeypatch.setattr(volatility, "build_volatility_inference_snapshot", fail)
+    response = CLIENT.get("/api/v1/volatility/forecast?ticker=MSFT")
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "MARKET_DATA_UNAVAILABLE",
+        "message": "Current market data is temporarily unavailable. Please try again later.",
+    }
+    assert "secret" not in response.text
+
+
+def test_unknown_symbol_remains_404(monkeypatch):
+    from data_pipeline import UnknownTickerError
+
+    monkeypatch.setattr(
+        volatility,
+        "build_volatility_inference_snapshot",
+        lambda _ticker: (_ for _ in ()).throw(UnknownTickerError("provider detail")),
+    )
+    response = CLIENT.get("/api/v1/volatility/forecast?ticker=ZZZZ")
+    assert response.status_code == 404

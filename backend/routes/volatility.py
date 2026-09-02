@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from data_pipeline import MarketDataUnavailable, MarketTransportError, UnknownTickerError
 from features.market import MarketContextUnavailable
@@ -24,6 +25,11 @@ from services.volatility_snapshot import VOLATILITY_HORIZONS, build_volatility_i
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["volatility"])
 
+MARKET_DATA_UNAVAILABLE_BODY = {
+    "error": "MARKET_DATA_UNAVAILABLE",
+    "message": "Current market data is temporarily unavailable. Please try again later.",
+}
+
 
 @router.get("/api/v1/volatility/forecast")
 @limiter.limit("30/minute")
@@ -32,7 +38,8 @@ def volatility_forecast(
     ticker: str = Query(default="AAPL", min_length=1, max_length=12),
     horizon: int = Query(default=7, ge=1, le=30),
     model: str = Query(default="auto"),
-) -> dict[str, Any]:
+    record_ledger: bool = Query(default=True),
+) -> Any:
     """Return a causal volatility cone for one supported trading horizon.
 
     The endpoint never accepts client-provided features or model paths.  It
@@ -63,6 +70,8 @@ def volatility_forecast(
 
         # Record forecast in persistent ledger for subsequent track record scoring
         try:
+            if not record_ledger:
+                return forecast_result
             ledger = get_forecast_ledger()
             future_dates = forecast_result.get("forecast", {}).get("future_dates", [])
             target_date = future_dates[-1] if future_dates else ""
@@ -89,6 +98,7 @@ def volatility_forecast(
                 feature_set_version="deployable_feature_columns_v5",
                 code_commit=get_current_code_commit(),
                 data_as_of=snapshot.origin_date,
+                data_provider=getattr(snapshot, "data_provider", "unknown"),
             )
         except Exception as ledger_err:
             logger.warning("Could not record forecast to ledger for %s: %s", symbol, ledger_err)
@@ -99,10 +109,8 @@ def volatility_forecast(
             status_code=404, detail="No market data is available for this ticker."
         ) from err
     except (MarketTransportError, MarketContextUnavailable) as err:
-        raise HTTPException(
-            status_code=503,
-            detail="Market data is temporarily unavailable. Please retry shortly.",
-        ) from err
+        logger.warning("Market data unavailable for %s: %s", symbol, type(err).__name__)
+        return JSONResponse(status_code=503, content=MARKET_DATA_UNAVAILABLE_BODY)
     except MarketDataUnavailable as err:
         raise HTTPException(
             status_code=422,

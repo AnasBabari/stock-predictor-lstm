@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import threading
 import time
@@ -9,7 +8,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import yfinance as yf  # type: ignore[import-untyped]
 from sklearn.preprocessing import RobustScaler  # type: ignore[import-untyped]
 
 from config import (
@@ -20,8 +18,15 @@ from config import (
     SNAPSHOT_SCHEMA_VERSION,
     TRAIN_SPLIT,
     WINDOW_SIZE,
+    settings,
 )
 from features.pipeline import build_browser_features, build_features
+from market_data import (
+    MarketDataProviderError,
+    MarketDataServiceError,
+    MarketDataSymbolNotFound,
+    build_market_data_service,
+)
 
 ROBUST_SCALER_QUANTILE_RANGE = (25.0, 75.0)
 
@@ -69,16 +74,17 @@ class MarketCircuitBreaker:
         self._last_error: str | None = None
         self._last_checked_epoch: float | None = None
         self._half_open_in_flight = False
-        self._negative_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._negative_cache: OrderedDict[str, tuple[float, str, bool]] = OrderedDict()
 
     def check_can_execute(self, ticker: str) -> None:
         with self._lock:
             now = time.time()
             # Check negative cache for ticker
             if ticker in self._negative_cache:
-                cached_time, cached_reason = self._negative_cache[ticker]
+                cached_time, cached_reason, is_unknown = self._negative_cache[ticker]
                 if now - cached_time < self.negative_cache_ttl:
-                    raise MarketDataUnavailable(
+                    error_type = UnknownTickerError if is_unknown else MarketDataUnavailable
+                    raise error_type(
                         f"Ticker {ticker} is temporarily cached as unavailable: {cached_reason}"
                     )
                 del self._negative_cache[ticker]
@@ -142,7 +148,11 @@ class MarketCircuitBreaker:
             elif isinstance(exception, (ValueError, MarketDataUnavailable)):
                 if len(self._negative_cache) >= self.max_negative_cache:
                     self._negative_cache.popitem(last=False)
-                self._negative_cache[ticker] = (now, str(exception))
+                self._negative_cache[ticker] = (
+                    now,
+                    str(exception),
+                    isinstance(exception, UnknownTickerError),
+                )
 
     def is_ready(self) -> tuple[bool, dict[str, Any]]:
         """Evaluate readiness of the upstream market data dependency."""
@@ -173,31 +183,15 @@ class MarketCircuitBreaker:
 
 # Module-level shared breaker instance
 market_circuit_breaker = MarketCircuitBreaker()
+market_data_service = build_market_data_service(settings)
 
 
 def _download_ohlcv(ticker: str) -> pd.DataFrame:
     market_circuit_breaker.check_can_execute(ticker)
     try:
-        data = None
-        with contextlib.suppress(Exception):
-            data = yf.download(
-                ticker,
-                period=f"{HISTORICAL_YEARS}y",
-                progress=False,
-                auto_adjust=True,
-                timeout=15,
-            )
-        if data is None or not isinstance(data, pd.DataFrame) or data.empty:
-            with contextlib.suppress(Exception):
-                data = yf.Ticker(ticker).history(period=f"{HISTORICAL_YEARS}y", auto_adjust=True)
-        if not isinstance(data, pd.DataFrame) or data.empty:
-            raise UnknownTickerError(f"No market data is available for {ticker}.")
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-
+        result = market_data_service.fetch_daily_bars(ticker, years=HISTORICAL_YEARS)
+        data = result.frame.copy()
         required_ohlcv = {"Open", "High", "Low", "Close", "Volume"}
-        if not required_ohlcv.issubset(data.columns):
-            raise UnknownTickerError(f"No usable OHLCV market data is available for {ticker}.")
         data = (
             data.loc[~data.index.duplicated(keep="last")].sort_index().dropna(subset=required_ohlcv)
         )
@@ -213,8 +207,27 @@ def _download_ohlcv(ticker: str) -> pd.DataFrame:
                 f"Not enough historical data for {ticker}. Need at least {min_rows} trading days."
             )
 
+        data.attrs.update(
+            {
+                "data_provider": result.provider,
+                "data_as_of": result.data_as_of,
+                "market_data_cache": result.cache_status,
+            }
+        )
         market_circuit_breaker.record_success(ticker)
         return data
+    except MarketDataSymbolNotFound as err:
+        translated = UnknownTickerError(f"No market data is available for {ticker}.")
+        market_circuit_breaker.record_failure(ticker, translated)
+        raise translated from err
+    except MarketDataServiceError as err:
+        translated = MarketTransportError("Market data provider is temporarily unavailable.")
+        market_circuit_breaker.record_failure(ticker, translated)
+        raise translated from err
+    except MarketDataProviderError as err:
+        translated = MarketTransportError("Market data provider returned an invalid response.")
+        market_circuit_breaker.record_failure(ticker, translated)
+        raise translated from err
     except Exception as err:
         market_circuit_breaker.record_failure(ticker, err)
         raise
@@ -235,6 +248,9 @@ def fetch_data(ticker: str):
     feature_metadata["snapshot_id"] = snapshot_hasher.hexdigest()
     feature_metadata["ticker"] = ticker
     feature_metadata["feature_schema_version"] = 3
+    feature_metadata["data_provider"] = data.attrs.get("data_provider", "unknown")
+    feature_metadata["data_as_of"] = data.attrs.get("data_as_of")
+    feature_metadata["market_data_cache"] = data.attrs.get("market_data_cache", "unknown")
     closing_prices = feature_df["Close"].to_numpy()
 
     return feature_df, closing_prices, feature_df.index, feature_metadata
@@ -263,6 +279,9 @@ def fetch_browser_data(ticker: str):
     feature_metadata["ticker"] = ticker
     feature_metadata["feature_schema_version"] = SNAPSHOT_SCHEMA_VERSION
     feature_metadata["adjusted_prices"] = True
+    feature_metadata["data_provider"] = data.attrs.get("data_provider", "unknown")
+    feature_metadata["data_as_of"] = data.attrs.get("data_as_of")
+    feature_metadata["market_data_cache"] = data.attrs.get("market_data_cache", "unknown")
     feature_metadata["quality"] = snapshot_quality_diagnostics(
         feature_df,
         closing_prices,

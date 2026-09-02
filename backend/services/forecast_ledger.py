@@ -66,6 +66,7 @@ def compute_forecast_fingerprint(
     feature_set_version: str,
     code_commit: str,
     data_as_of: str,
+    data_provider: str,
     record_source: str,
     predicted_volatility: float,
     recent_realized_volatility: float,
@@ -77,6 +78,7 @@ def compute_forecast_fingerprint(
     payload = {
         "code_commit": str(code_commit).strip(),
         "data_as_of": str(data_as_of).strip(),
+        "data_provider": str(data_provider).strip().lower(),
         "feature_set_version": str(feature_set_version).strip(),
         "forecast_date": str(forecast_date).strip(),
         "horizon": int(horizon),
@@ -118,6 +120,7 @@ class ForecastRecord:
     feature_set_version: str
     code_commit: str
     data_as_of: str
+    data_provider: str
     forecast_fingerprint: str
     created_at: str
 
@@ -169,6 +172,7 @@ class ForecastLedger:
                         feature_set_version TEXT NOT NULL DEFAULT 'deployable_feature_columns_v5',
                         code_commit TEXT NOT NULL DEFAULT 'dev-local',
                         data_as_of TEXT NOT NULL DEFAULT '',
+                        data_provider TEXT NOT NULL DEFAULT 'unknown',
                         forecast_fingerprint TEXT NOT NULL DEFAULT '',
                         created_at TEXT NOT NULL,
                         UNIQUE(forecast_date, ticker, horizon, model_name, record_source)
@@ -186,6 +190,7 @@ class ForecastLedger:
                 expected_unique = "UNIQUE(forecast_date,ticker,horizon,model_name,record_source)"
                 needs_migration = (
                     "forecast_fingerprint" not in existing_cols
+                    or "data_provider" not in existing_cols
                     or "record_source" not in existing_cols
                     or expected_unique not in sql_compact
                 )
@@ -218,6 +223,7 @@ class ForecastLedger:
                             feature_set_version TEXT NOT NULL DEFAULT 'deployable_feature_columns_v5',
                             code_commit TEXT NOT NULL DEFAULT 'dev-local',
                             data_as_of TEXT NOT NULL DEFAULT '',
+                            data_provider TEXT NOT NULL DEFAULT 'unknown',
                             forecast_fingerprint TEXT NOT NULL DEFAULT '',
                             created_at TEXT NOT NULL,
                             UNIQUE(forecast_date, ticker, horizon, model_name, record_source)
@@ -261,6 +267,9 @@ class ForecastLedger:
                         )
                         c_commit = str(r["code_commit"]) if "code_commit" in r_keys else "dev-local"
                         d_as_of = str(r["data_as_of"]) if "data_as_of" in r_keys else f_date
+                        d_provider = (
+                            str(r["data_provider"]) if "data_provider" in r_keys else "unknown"
+                        )
                         created_at = str(r["created_at"])
 
                         fp = compute_forecast_fingerprint(
@@ -273,6 +282,7 @@ class ForecastLedger:
                             feature_set_version=f_ver,
                             code_commit=c_commit,
                             data_as_of=d_as_of,
+                            data_provider=d_provider,
                             record_source=rec_src,
                             predicted_volatility=pred_vol,
                             recent_realized_volatility=recent_rv,
@@ -289,8 +299,8 @@ class ForecastLedger:
                                 lower_scenario_price, upper_scenario_price, actual_realized_volatility,
                                 forecast_error, abs_error, qlike_loss, status,
                                 record_source, model_version, feature_set_version, code_commit,
-                                data_as_of, forecast_fingerprint, created_at
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                data_as_of, data_provider, forecast_fingerprint, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 r["id"],
@@ -314,6 +324,7 @@ class ForecastLedger:
                                 f_ver,
                                 c_commit,
                                 d_as_of,
+                                d_provider,
                                 fp,
                                 created_at,
                             ),
@@ -351,6 +362,7 @@ class ForecastLedger:
         feature_set_version: str = "deployable_feature_columns_v5",
         code_commit: str | None = None,
         data_as_of: str = "",
+        data_provider: str = "unknown",
     ) -> ForecastRecord:
         """Insert a forecast entry into the ledger with strict immutability and fingerprint verification.
 
@@ -375,6 +387,7 @@ class ForecastLedger:
         f_version_str = str(feature_set_version).strip()
         commit_str = str(code_commit).strip() if code_commit else get_current_code_commit()
         as_of_str = str(data_as_of).strip() or f_date_str
+        provider_str = str(data_provider).strip().lower() or "unknown"
 
         pred_vol_f = float(predicted_volatility)
         recent_rv_f = float(recent_realized_volatility)
@@ -392,6 +405,7 @@ class ForecastLedger:
             feature_set_version=f_version_str,
             code_commit=commit_str,
             data_as_of=as_of_str,
+            data_provider=provider_str,
             record_source=source_str,
             predicted_volatility=pred_vol_f,
             recent_realized_volatility=recent_rv_f,
@@ -425,6 +439,11 @@ class ForecastLedger:
                         feature_set_version=existing["feature_set_version"],
                         code_commit=existing["code_commit"],
                         data_as_of=existing["data_as_of"],
+                        data_provider=(
+                            existing["data_provider"]
+                            if "data_provider" in existing_keys
+                            else "unknown"
+                        ),
                         record_source=existing["record_source"],
                         predicted_volatility=existing["predicted_volatility"],
                         recent_realized_volatility=existing["recent_realized_volatility"],
@@ -460,8 +479,8 @@ class ForecastLedger:
                     predicted_volatility, recent_realized_volatility, origin_price,
                     lower_scenario_price, upper_scenario_price, status,
                     record_source, model_version, feature_set_version,
-                    code_commit, data_as_of, forecast_fingerprint, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+                    code_commit, data_as_of, data_provider, forecast_fingerprint, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     f_date_str,
@@ -479,6 +498,7 @@ class ForecastLedger:
                     f_version_str,
                     commit_str,
                     as_of_str,
+                    provider_str,
                     calculated_fp,
                     now_iso,
                 ),
@@ -756,6 +776,7 @@ class ForecastLedger:
                 feature_set_version="deployable_feature_columns_v5",
                 code_commit=commit_id,
                 data_as_of=f_date,
+                data_provider="historical_replay",
             )
             seeded += 1
 
@@ -797,6 +818,7 @@ class ForecastLedger:
             ),
             code_commit=row["code_commit"] if "code_commit" in keys else "dev-local",
             data_as_of=row["data_as_of"] if "data_as_of" in keys else "",
+            data_provider=row["data_provider"] if "data_provider" in keys else "unknown",
             forecast_fingerprint=(
                 row["forecast_fingerprint"] if "forecast_fingerprint" in keys else ""
             ),
