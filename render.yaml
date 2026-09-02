@@ -33,6 +33,22 @@ services:
         value: render
       - key: DEPLOYMENT_ENVIRONMENT
         value: production
+      - key: MARKET_DATA_PROVIDER
+        value: alpaca
+      - key: MARKET_DATA_YAHOO_FALLBACK_ENABLED
+        value: "false"
+      - key: MARKET_DATA_CACHE_ENABLED
+        value: "true"
+      - key: MARKET_DATA_CACHE_DIR
+        value: /tmp/stocklstm-market-data-cache
+      - key: ALPACA_DATA_FEED
+        value: iex
+      - key: ALPACA_ADJUSTMENT
+        value: all
+      - key: ALPACA_API_KEY_ID
+        sync: false
+      - key: ALPACA_API_SECRET_KEY
+        sync: false
       - key: CORS_ORIGIN
         sync: false
       - key: PREVIEW_CORS_ORIGIN_REGEX

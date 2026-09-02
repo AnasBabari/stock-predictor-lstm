@@ -17,7 +17,8 @@ A production-grade, empirical equity volatility forecasting platform. The system
   - **1-Day Horizon:** Causal `GARCH(1,1) MLE` with numerical parameter optimization.
   - **Multi-Day Horizons (5d, 10d, 20d, 30d):** `Rolling Mean (60d)` sample standard deviation.
   - **Research & ML Baselines:** PyTorch `SOFTPLUS_VOLATILITY` LSTM, `HAR-RV`, `EWMA (0.94)`, and regularized regressors (`ElasticNet`, `Ridge`).
-- **Immutable Forecast Ledger & Track Record:** Every live forecast is recorded with a deterministic SHA-256 fingerprint covering 14 immutable fields (`code_commit`, `data_as_of`, `origin_price`, predictions, scenarios). Settled records cannot be mutated or overwritten.
+- **Resilient Market Data Boundary:** Render uses authenticated Alpaca daily bars with explicit adjusted-price semantics, bounded requests, session-aware ephemeral caching, and safe `503` handling. Yahoo is opt-in for local development only.
+- **Immutable Forecast Ledger & Track Record:** Every live forecast is recorded with a deterministic SHA-256 fingerprint that includes the market-data provider alongside code, data date, model, origin price, predictions, and scenarios. Settled records cannot be mutated or overwritten.
 - **Exchange Calendar Synchronization:** Forecast origins and news cutoffs follow the official NYSE trading calendar via `pandas_market_calendars`, failing closed on weekends and holidays.
 - **Modern Interactive UI:** React 18 dashboard with scenario cone visualization, live scorecard (MAE, RMSE, QLIKE), and transparent model evaluation rationale.
 
@@ -49,6 +50,7 @@ Across a diverse benchmark universe of **44 liquid equities and ETFs** across 8 
 │   ├── routes/               # Modular REST endpoints (volatility, market, health)
 │   ├── services/             # Forecast ledger, snapshot builder, live volatility
 │   ├── features/             # Causal market context and feature builders
+│   ├── market_data/          # Alpaca/Yahoo adapters, normalization, cache, readiness
 │   ├── data_pipeline.py      # Market data ingestion & validation
 │   ├── calendars.py          # NYSE session calendar utilities
 │   └── tests/                # Comprehensive pytest suite
@@ -95,6 +97,10 @@ uvicorn api:app --reload --port 8000
 ```
 API will be live at `http://127.0.0.1:8000` (interactive OpenAPI docs at `http://127.0.0.1:8000/docs`).
 
+Local development defaults to Yahoo. Production must set `MARKET_DATA_PROVIDER=alpaca`,
+`ALPACA_API_KEY_ID`, and `ALPACA_API_SECRET_KEY`; credentials are never sent to the browser.
+See [Production Market Data](docs/market-data.md) for cache, readiness, and error semantics.
+
 ### 2. Frontend Setup
 ```powershell
 # Navigate to frontend directory
@@ -127,6 +133,7 @@ python scripts/verify_forecast_ledger_e2e.py
 - [Methodology & Mathematical Targets](docs/methodology.md)
 - [System Architecture & Immutability](docs/architecture.md)
 - [REST API Reference](docs/api.md)
+- [Production Market Data](docs/market-data.md)
 - [Benchmark Reports](reports/)
 
 ---
