@@ -154,7 +154,23 @@ def _validate_preview(
     return errors
 
 
-def _readiness_errors(payload: dict[str, Any], *, allow_market_cold: bool) -> list[str]:
+def _readiness_errors(
+    payload: dict[str, Any],
+    *,
+    allow_market_cold: bool,
+    status_code: int | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    if status_code is not None:
+        if allow_market_cold:
+            if status_code not in (200, 503):
+                return [f"unexpected_readiness_status_{status_code}"]
+            if status_code == 200 and payload.get("status") != "ready":
+                errors.append("initial_readiness_not_ready")
+            if status_code == 503 and payload.get("status") != "degraded":
+                errors.append("unexpected_readiness_status_503")
+        elif status_code != 200:
+            errors.append(f"unexpected_readiness_status_{status_code}")
     dependencies = (
         payload.get("dependencies") if isinstance(payload.get("dependencies"), dict) else {}
     )
@@ -166,7 +182,6 @@ def _readiness_errors(payload: dict[str, Any], *, allow_market_cold: bool) -> li
         if isinstance(dependencies.get("forecast_ledger"), dict)
         else {}
     )
-    errors: list[str] = []
     if ledger.get("status") != "available":
         errors.append("ledger_unavailable")
     if ledger.get("backend") != "postgresql":
@@ -191,7 +206,9 @@ def run_preflight(
     """Preview all 60 combinations and write nothing."""
     initial_ready = client.request("GET", "/ready", attempts=1)
     manifest = _base_manifest(run_timestamp, expected_session)
-    initial_readiness_errors = _readiness_errors(initial_ready.payload, allow_market_cold=True)
+    initial_readiness_errors = _readiness_errors(
+        initial_ready.payload, allow_market_cold=True, status_code=initial_ready.status_code
+    )
     if initial_readiness_errors:
         manifest["abort_reason"] = "initial_readiness_failed"
         manifest["batch_errors"] = initial_readiness_errors
@@ -230,7 +247,9 @@ def run_preflight(
             time.sleep(interval_seconds)
 
     final_ready = client.request("GET", "/ready", attempts=1)
-    final_readiness_errors = _readiness_errors(final_ready.payload, allow_market_cold=False)
+    final_readiness_errors = _readiness_errors(
+        final_ready.payload, allow_market_cold=False, status_code=final_ready.status_code
+    )
     if final_ready.status_code != 200 or final_ready.payload.get("status") != "ready":
         final_readiness_errors.append("final_readiness_not_ready")
 

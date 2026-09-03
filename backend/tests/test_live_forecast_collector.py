@@ -8,6 +8,7 @@ from typing import Any
 
 from scripts.collect_live_forecasts import (
     ApiResult,
+    _readiness_errors,
     collection_session,
     export_live_ledger,
     run_live_collection,
@@ -224,3 +225,71 @@ def test_manifest_and_live_only_export_checksums(tmp_path: Path) -> None:
     for line in checksum_lines:
         digest, filename = line.split("  ")
         assert hashlib.sha256((tmp_path / filename).read_bytes()).hexdigest() == digest
+
+
+def _healthy_payload(*, status: str, market: str) -> dict[str, Any]:
+    return {
+        "status": status,
+        "dependencies": {
+            "market_data": {"status": market},
+            "forecast_ledger": {
+                "status": "available",
+                "backend": "postgresql",
+                "durable": True,
+                "required": True,
+            },
+        },
+    }
+
+
+def test_readiness_rejects_unexpected_http_status_even_with_healthy_body() -> None:
+    healthy_ready = _healthy_payload(status="ready", market="available")
+    assert _readiness_errors(healthy_ready, allow_market_cold=True, status_code=500) == [
+        "unexpected_readiness_status_500"
+    ]
+    assert _readiness_errors(healthy_ready, allow_market_cold=False, status_code=500) == [
+        "unexpected_readiness_status_500"
+    ]
+    assert _readiness_errors(healthy_ready, allow_market_cold=True, status_code=0) == [
+        "unexpected_readiness_status_0"
+    ]
+    # Initial 200 must be ready; a degraded body on 200 cannot pass.
+    degraded_body = _healthy_payload(status="degraded", market="available")
+    assert "initial_readiness_not_ready" in _readiness_errors(
+        degraded_body, allow_market_cold=True, status_code=200
+    )
+    # Valid states still pass.
+    assert _readiness_errors(healthy_ready, allow_market_cold=True, status_code=200) == []
+    assert (
+        _readiness_errors(
+            _healthy_payload(status="degraded", market="unavailable"),
+            allow_market_cold=True,
+            status_code=503,
+        )
+        == []
+    )
+    assert _readiness_errors(healthy_ready, allow_market_cold=False, status_code=200) == []
+
+
+def test_preflight_aborts_on_malformed_500_readiness_without_preview_writes() -> None:
+    class MalformedReadyClient(FakeClient):
+        def request(
+            self,
+            method: str,
+            path: str,
+            *,
+            params: dict[str, Any] | None = None,
+            token: str | None = None,
+            attempts: int = 2,
+        ) -> ApiResult:
+            if path == "/ready":
+                self.calls.append((method, path, params or {}))
+                return ApiResult(500, _healthy_payload(status="ready", market="available"))
+            return super().request(method, path, params=params, token=token, attempts=attempts)
+
+    client = MalformedReadyClient()
+    manifest = _preflight(client)
+    assert manifest["batch_status"] == "aborted"
+    assert manifest["abort_reason"] == "initial_readiness_failed"
+    assert manifest["batch_errors"] == ["unexpected_readiness_status_500"]
+    assert not any(path == "/api/v1/volatility/forecast" for _method, path, _params in client.calls)
