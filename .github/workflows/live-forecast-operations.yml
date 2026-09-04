@@ -69,7 +69,7 @@ jobs:
             --output-dir artifacts/live-collection
       - name: Upload operational manifest
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: live-collection-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/live-collection/*.json
@@ -100,7 +100,7 @@ jobs:
           --output-dir artifacts/live-collection
       - name: Upload settlement manifest
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: live-settlement-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/live-collection/*.json
@@ -130,7 +130,7 @@ jobs:
           --mode export
           --output-dir artifacts/live-ledger-export
       - name: Upload deterministic audit copy
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: live-ledger-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/live-ledger-export/*
