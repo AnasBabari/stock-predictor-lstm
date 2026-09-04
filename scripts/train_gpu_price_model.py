@@ -20,14 +20,29 @@ from research.price_forecasting import (  # noqa: E402
     build_global_price_dataset,
     train_cuda_price_model,
 )
+from research.price_forecasting.gpu_pipeline import TRI_EXCHANGE_TICKERS  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tickers", default=",".join(DEFAULT_TICKERS))
-    parser.add_argument("--cache-dir", type=Path, default=REPO_ROOT / "data" / "ndx100" / "cache")
     parser.add_argument(
-        "--output-dir", type=Path, default=REPO_ROOT / "artifacts" / "simple_price_gpu_v1"
+        "--universe",
+        choices=["tri_exchange", "five_ticker", "custom"],
+        default="tri_exchange",
+        help="Target universe: tri_exchange (30 LSE/NASDAQ/NYSE), five_ticker (US), or custom",
+    )
+    parser.add_argument("--tickers", default=None, help="Comma-separated ticker list override")
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Directory containing per-ticker .parquet cache",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=REPO_ROOT / "artifacts" / "tri_exchange_gpu_v1",
+        help="Target directory to save model checkpoint and report",
     )
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--patience", type=int, default=12)
@@ -214,13 +229,34 @@ def run_ablation(
 
 def main() -> int:
     args = parse_args()
-    tickers = tuple(value.strip().upper() for value in args.tickers.split(",") if value.strip())
+    if args.tickers:
+        tickers = tuple(value.strip().upper() for value in args.tickers.split(",") if value.strip())
+        cache_dir = args.cache_dir or (REPO_ROOT / "data" / "tri_exchange" / "cache")
+    elif args.universe == "tri_exchange":
+        tickers = TRI_EXCHANGE_TICKERS
+        cache_dir = args.cache_dir or (REPO_ROOT / "data" / "tri_exchange" / "cache")
+    elif args.universe == "five_ticker":
+        tickers = DEFAULT_TICKERS
+        cache_dir = args.cache_dir or (REPO_ROOT / "data" / "ndx100" / "cache")
+    else:
+        tickers = TRI_EXCHANGE_TICKERS
+        cache_dir = args.cache_dir or (REPO_ROOT / "data" / "tri_exchange" / "cache")
+
     frames: dict[str, pd.DataFrame] = {}
     for ticker in tickers:
-        path = args.cache_dir / f"{ticker}.parquet"
-        if not path.is_file():
-            raise FileNotFoundError(f"Missing immutable OHLCV input: {path}")
-        frames[ticker] = pd.read_parquet(path)
+        path = cache_dir / f"{ticker}.parquet"
+        if path.is_file():
+            frames[ticker] = pd.read_parquet(path)
+        else:
+            # Fallback to downloading and caching
+            from backend.data_pipeline import _download_ohlcv
+            from research.price_forecasting.gpu_pipeline import _normalise_ohlcv
+
+            df = _download_ohlcv(ticker)
+            norm = _normalise_ohlcv(df)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            norm.to_parquet(path)
+            frames[ticker] = norm
 
     if args.feature_mode == "compare_ablation":
         run_ablation(frames, args)

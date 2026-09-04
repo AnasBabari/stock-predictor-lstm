@@ -3,20 +3,33 @@ import { fetchSimpleForecast, fetchTickerNews, wakeForecastService } from './api
 import SimpleForecastChart, { midpointPrices } from './components/SimpleForecastChart';
 import ForecastLedgerTrackRecord from './components/ForecastLedgerTrackRecord';
 
-export const TICKERS = ['AAPL', 'GOOGL', 'MSFT', 'NVDA', 'TSLA', 'SHEL.L', 'AZN.L', 'HSBA.L'];
+export const TICKERS = [
+  // NASDAQ (10)
+  'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'COST', 'QCOM',
+  // NYSE (10)
+  'JPM', 'XOM', 'WMT', 'JNJ', 'CAT', 'KO', 'NEE', 'DIS', 'BAC', 'GE',
+  // LSE (10)
+  'SHEL.L', 'AZN.L', 'HSBA.L', 'BP.L', 'ULVR.L', 'GSK.L', 'RIO.L', 'BATS.L', 'BARC.L', 'DGE.L',
+];
 
 export const EXCHANGES = [
   {
-    id: 'US',
-    name: 'US (NASDAQ / NYSE)',
+    id: 'NASDAQ',
+    name: 'NASDAQ',
     mic: 'XNAS',
-    tickers: ['AAPL', 'GOOGL', 'MSFT', 'NVDA', 'TSLA'],
+    tickers: ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'COST', 'QCOM'],
   },
   {
-    id: 'UK',
-    name: 'UK (LSE)',
+    id: 'NYSE',
+    name: 'NYSE',
+    mic: 'XNYS',
+    tickers: ['JPM', 'XOM', 'WMT', 'JNJ', 'CAT', 'KO', 'NEE', 'DIS', 'BAC', 'GE'],
+  },
+  {
+    id: 'LSE',
+    name: 'LSE',
     mic: 'XLON',
-    tickers: ['SHEL.L', 'AZN.L', 'HSBA.L'],
+    tickers: ['SHEL.L', 'AZN.L', 'HSBA.L', 'BP.L', 'ULVR.L', 'GSK.L', 'RIO.L', 'BATS.L', 'BARC.L', 'DGE.L'],
   },
 ];
 

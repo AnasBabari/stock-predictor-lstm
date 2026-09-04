@@ -25,15 +25,9 @@ from sklearn.preprocessing import RobustScaler
 from calendars import future_trading_dates
 
 TICKER_METADATA: dict[str, dict[str, str]] = {
+    # NASDAQ (10)
     "AAPL": {
         "name": "Apple Inc.",
-        "exchange_mic": "XNAS",
-        "exchange_name": "NASDAQ",
-        "currency": "USD",
-        "currency_symbol": "$",
-    },
-    "GOOGL": {
-        "name": "Alphabet Inc.",
         "exchange_mic": "XNAS",
         "exchange_name": "NASDAQ",
         "currency": "USD",
@@ -53,6 +47,27 @@ TICKER_METADATA: dict[str, dict[str, str]] = {
         "currency": "USD",
         "currency_symbol": "$",
     },
+    "GOOGL": {
+        "name": "Alphabet Inc.",
+        "exchange_mic": "XNAS",
+        "exchange_name": "NASDAQ",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "AMZN": {
+        "name": "Amazon.com Inc.",
+        "exchange_mic": "XNAS",
+        "exchange_name": "NASDAQ",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "META": {
+        "name": "Meta Platforms Inc.",
+        "exchange_mic": "XNAS",
+        "exchange_name": "NASDAQ",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
     "TSLA": {
         "name": "Tesla Inc.",
         "exchange_mic": "XNAS",
@@ -60,6 +75,99 @@ TICKER_METADATA: dict[str, dict[str, str]] = {
         "currency": "USD",
         "currency_symbol": "$",
     },
+    "AMD": {
+        "name": "Advanced Micro Devices",
+        "exchange_mic": "XNAS",
+        "exchange_name": "NASDAQ",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "COST": {
+        "name": "Costco Wholesale Corp.",
+        "exchange_mic": "XNAS",
+        "exchange_name": "NASDAQ",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "QCOM": {
+        "name": "Qualcomm Inc.",
+        "exchange_mic": "XNAS",
+        "exchange_name": "NASDAQ",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    # NYSE (10)
+    "JPM": {
+        "name": "JPMorgan Chase & Co.",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "XOM": {
+        "name": "Exxon Mobil Corp.",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "WMT": {
+        "name": "Walmart Inc.",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "JNJ": {
+        "name": "Johnson & Johnson",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "CAT": {
+        "name": "Caterpillar Inc.",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "KO": {
+        "name": "The Coca-Cola Company",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "NEE": {
+        "name": "NextEra Energy Inc.",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "DIS": {
+        "name": "The Walt Disney Company",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "BAC": {
+        "name": "Bank of America Corp.",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    "GE": {
+        "name": "GE Aerospace",
+        "exchange_mic": "XNYS",
+        "exchange_name": "NYSE",
+        "currency": "USD",
+        "currency_symbol": "$",
+    },
+    # LSE (10)
     "SHEL.L": {
         "name": "Shell plc",
         "exchange_mic": "XLON",
@@ -76,6 +184,55 @@ TICKER_METADATA: dict[str, dict[str, str]] = {
     },
     "HSBA.L": {
         "name": "HSBC Holdings plc",
+        "exchange_mic": "XLON",
+        "exchange_name": "LSE",
+        "currency": "GBp",
+        "currency_symbol": "p",
+    },
+    "BP.L": {
+        "name": "BP p.l.c.",
+        "exchange_mic": "XLON",
+        "exchange_name": "LSE",
+        "currency": "GBp",
+        "currency_symbol": "p",
+    },
+    "ULVR.L": {
+        "name": "Unilever PLC",
+        "exchange_mic": "XLON",
+        "exchange_name": "LSE",
+        "currency": "GBp",
+        "currency_symbol": "p",
+    },
+    "GSK.L": {
+        "name": "GSK plc",
+        "exchange_mic": "XLON",
+        "exchange_name": "LSE",
+        "currency": "GBp",
+        "currency_symbol": "p",
+    },
+    "RIO.L": {
+        "name": "Rio Tinto plc",
+        "exchange_mic": "XLON",
+        "exchange_name": "LSE",
+        "currency": "GBp",
+        "currency_symbol": "p",
+    },
+    "BATS.L": {
+        "name": "British American Tobacco p.l.c.",
+        "exchange_mic": "XLON",
+        "exchange_name": "LSE",
+        "currency": "GBp",
+        "currency_symbol": "p",
+    },
+    "BARC.L": {
+        "name": "Barclays PLC",
+        "exchange_mic": "XLON",
+        "exchange_name": "LSE",
+        "currency": "GBp",
+        "currency_symbol": "p",
+    },
+    "DGE.L": {
+        "name": "Diageo plc",
         "exchange_mic": "XLON",
         "exchange_name": "LSE",
         "currency": "GBp",
@@ -270,6 +427,9 @@ def _load_gpu_lstm_model() -> tuple[Any, dict[str, Any], list[str]] | None:
         from research.price_forecasting.gpu_pipeline import PriceTrainingConfig, _build_model
 
         candidates = [
+            Path.cwd() / "artifacts" / "tri_exchange_gpu_v1" / "model.pt",
+            Path(__file__).resolve().parents[2] / "artifacts" / "tri_exchange_gpu_v1" / "model.pt",
+            Path(__file__).resolve().parents[1] / "artifacts" / "tri_exchange_gpu_v1" / "model.pt",
             Path.cwd() / "artifacts" / "simple_price_gpu_v2" / "baseline_price_only" / "model.pt",
             Path(__file__).resolve().parents[2]
             / "artifacts"
@@ -287,7 +447,12 @@ def _load_gpu_lstm_model() -> tuple[Any, dict[str, Any], list[str]] | None:
             return None
         ckpt = torch.load(ckpt_path, map_location="cpu")
         ticker_names = list(ckpt.get("ticker_names") or ["AAPL", "GOOGL", "MSFT", "NVDA", "TSLA"])
-        model = _build_model(torch, torch.nn, 25, len(ticker_names), PriceTrainingConfig())
+        embed_dim = int(
+            ckpt.get("embed_dim") or ckpt["state_dict"]["ticker_embedding.weight"].shape[1]
+        )
+        model = _build_model(
+            torch, torch.nn, 25, len(ticker_names), PriceTrainingConfig(), embed_dim=embed_dim
+        )
         model.load_state_dict(ckpt["state_dict"])
         model.eval()
         return model, ckpt["scalers"], ticker_names

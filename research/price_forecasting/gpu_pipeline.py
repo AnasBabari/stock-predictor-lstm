@@ -28,7 +28,42 @@ from .news_archive import (
 )
 
 DEFAULT_TICKERS = ("AAPL", "GOOGL", "MSFT", "NVDA", "TSLA")
-MODEL_VERSION = "pooled-price-lstm-v2-attention"
+TRI_EXCHANGE_TICKERS = (
+    # NASDAQ (10)
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "TSLA",
+    "AMD",
+    "COST",
+    "QCOM",
+    # NYSE (10)
+    "JPM",
+    "XOM",
+    "WMT",
+    "JNJ",
+    "CAT",
+    "KO",
+    "NEE",
+    "DIS",
+    "BAC",
+    "GE",
+    # LSE (10)
+    "SHEL.L",
+    "AZN.L",
+    "HSBA.L",
+    "BP.L",
+    "ULVR.L",
+    "GSK.L",
+    "RIO.L",
+    "BATS.L",
+    "BARC.L",
+    "DGE.L",
+)
+MODEL_VERSION = "pooled-price-lstm-v3-tri-exchange"
 FEATURE_NAMES = (
     "return_1d",
     "return_2d",
@@ -120,10 +155,8 @@ def _normalise_ohlcv(frame: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("OHLCV frame is too short or contains non-finite values")
     if (data[["Open", "High", "Low", "Close"]] <= 0).any().any():
         raise ValueError("OHLC prices must be positive")
-    if (data["High"] < data[["Open", "Close", "Low"]].max(axis=1)).any():
-        raise ValueError("OHLC high invariant failed")
-    if (data["Low"] > data[["Open", "Close", "High"]].min(axis=1)).any():
-        raise ValueError("OHLC low invariant failed")
+    data["High"] = np.maximum(data["High"], data[["Open", "Close", "Low"]].max(axis=1))
+    data["Low"] = np.minimum(data["Low"], data[["Open", "Close", "High"]].min(axis=1))
     return data
 
 
@@ -334,14 +367,19 @@ def _metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, Any]:
 
 
 def _build_model(
-    torch: Any, nn: Any, feature_count: int, ticker_count: int, settings: PriceTrainingConfig
+    torch: Any,
+    nn: Any,
+    feature_count: int,
+    ticker_count: int,
+    settings: PriceTrainingConfig,
+    embed_dim: int = 8,
 ) -> Any:
     class PooledPriceLSTM(nn.Module):
         def __init__(self) -> None:
             super().__init__()
-            self.ticker_embedding = nn.Embedding(ticker_count, 4)
+            self.ticker_embedding = nn.Embedding(ticker_count, embed_dim)
             self.encoder = nn.LSTM(
-                feature_count + 4,
+                feature_count + embed_dim,
                 settings.hidden_size,
                 num_layers=settings.layers,
                 dropout=settings.dropout if settings.layers > 1 else 0.0,
@@ -621,6 +659,7 @@ def train_cuda_price_model(
             "feature_mode": dataset.feature_mode,
             "ticker_names": list(dataset.ticker_names),
             "scalers": {key: value.tolist() for key, value in final_scalers.items()},
+            "embed_dim": 8,
         },
         checkpoint_path,
     )

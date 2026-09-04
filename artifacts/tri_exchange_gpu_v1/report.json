@@ -1,0 +1,2295 @@
+{
+  "model_version": "pooled-price-lstm-v3-tri-exchange",
+  "status": "development_candidate",
+  "feature_mode": "price_only",
+  "feature_count": 25,
+  "device": "NVIDIA GeForce RTX 2060",
+  "torch_version": "2.11.0+cu128",
+  "cuda_version": "12.8",
+  "config": {
+    "lookback": 60,
+    "horizon": 7,
+    "hidden_size": 64,
+    "layers": 2,
+    "dropout": 0.15,
+    "batch_size": 128,
+    "maximum_epochs": 60,
+    "patience": 12,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "seed": 42,
+    "use_attention": true,
+    "direction_weight": 0.05,
+    "feature_mode": "price_only"
+  },
+  "rows": {
+    "train": 45589,
+    "validation": 10367,
+    "test": 10388
+  },
+  "selection": {
+    "epochs": 14,
+    "best_validation_scaled_huber": 0.4207145869731903,
+    "metrics": {
+      "mae_percent": 2.5910606384277344,
+      "rmse_percent": 3.814793825149536,
+      "direction_accuracy": 0.5297578855985338,
+      "persistence_mae_percent": 2.6027443408966064,
+      "relative_mae_vs_persistence": 0.9955110064844681,
+      "per_horizon": [
+        {
+          "day": 1,
+          "mae_percent": 1.271883249282837,
+          "rmse_percent": 1.9041211605072021,
+          "direction_accuracy": 0.5143242982540754,
+          "relative_mae_vs_persistence": 0.9999286532402039
+        },
+        {
+          "day": 2,
+          "mae_percent": 1.8529900312423706,
+          "rmse_percent": 2.6868913173675537,
+          "direction_accuracy": 0.5245490498697791,
+          "relative_mae_vs_persistence": 0.998487114906311
+        },
+        {
+          "day": 3,
+          "mae_percent": 2.3009870052337646,
+          "rmse_percent": 3.2949752807617188,
+          "direction_accuracy": 0.5335198225137455,
+          "relative_mae_vs_persistence": 0.997334897518158
+        },
+        {
+          "day": 4,
+          "mae_percent": 2.6869287490844727,
+          "rmse_percent": 3.8102171421051025,
+          "direction_accuracy": 0.5340021221182598,
+          "relative_mae_vs_persistence": 0.995901882648468
+        },
+        {
+          "day": 5,
+          "mae_percent": 3.032195806503296,
+          "rmse_percent": 4.266050338745117,
+          "direction_accuracy": 0.5346773415645799,
+          "relative_mae_vs_persistence": 0.9953257441520691
+        },
+        {
+          "day": 6,
+          "mae_percent": 3.347116231918335,
+          "rmse_percent": 4.673184394836426,
+          "direction_accuracy": 0.5340021221182598,
+          "relative_mae_vs_persistence": 0.9937002062797546
+        },
+        {
+          "day": 7,
+          "mae_percent": 3.645322561264038,
+          "rmse_percent": 5.060735702514648,
+          "direction_accuracy": 0.5332304427510369,
+          "relative_mae_vs_persistence": 0.9928578734397888
+        }
+      ]
+    }
+  },
+  "untouched_test": {
+    "metric_source": "chronological_15_percent_test_after_validation_selection",
+    "pooled": {
+      "mae_percent": 2.8612570762634277,
+      "rmse_percent": 4.1797637939453125,
+      "direction_accuracy": 0.5217421200286044,
+      "persistence_mae_percent": 2.8592514991760254,
+      "relative_mae_vs_persistence": 1.0007014343047405,
+      "per_horizon": [
+        {
+          "day": 1,
+          "mae_percent": 1.4299311637878418,
+          "rmse_percent": 2.120410919189453,
+          "direction_accuracy": 0.5219484020023104,
+          "relative_mae_vs_persistence": 0.9990395307540894
+        },
+        {
+          "day": 2,
+          "mae_percent": 2.0723795890808105,
+          "rmse_percent": 2.9712071418762207,
+          "direction_accuracy": 0.522525991528687,
+          "relative_mae_vs_persistence": 0.9978123903274536
+        },
+        {
+          "day": 3,
+          "mae_percent": 2.561267852783203,
+          "rmse_percent": 3.639491319656372,
+          "direction_accuracy": 0.5302271852137082,
+          "relative_mae_vs_persistence": 0.9977376461029053
+        },
+        {
+          "day": 4,
+          "mae_percent": 2.984436273574829,
+          "rmse_percent": 4.198925495147705,
+          "direction_accuracy": 0.5329226030034655,
+          "relative_mae_vs_persistence": 0.9957079291343689
+        },
+        {
+          "day": 5,
+          "mae_percent": 3.352458953857422,
+          "rmse_percent": 4.6771979331970215,
+          "direction_accuracy": 0.5242587601078167,
+          "relative_mae_vs_persistence": 1.0014375448226929
+        },
+        {
+          "day": 6,
+          "mae_percent": 3.6683366298675537,
+          "rmse_percent": 5.104027271270752,
+          "direction_accuracy": 0.5136696187909126,
+          "relative_mae_vs_persistence": 1.0041310787200928
+        },
+        {
+          "day": 7,
+          "mae_percent": 3.959989070892334,
+          "rmse_percent": 5.492234230041504,
+          "direction_accuracy": 0.5066422795533307,
+          "relative_mae_vs_persistence": 1.0047509670257568
+        }
+      ]
+    },
+    "per_ticker": {
+      "AAPL": {
+        "mae_percent": 2.7398390769958496,
+        "rmse_percent": 3.8491647243499756,
+        "direction_accuracy": 0.5268888155724183,
+        "persistence_mae_percent": 2.7499470710754395,
+        "relative_mae_vs_persistence": 0.9963242950433817,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.244657278060913,
+            "rmse_percent": 1.8881440162658691,
+            "direction_accuracy": 0.5127020785219399,
+            "relative_mae_vs_persistence": 0.9985169768333435
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.8673665523529053,
+            "rmse_percent": 2.693864583969116,
+            "direction_accuracy": 0.5080831408775982,
+            "relative_mae_vs_persistence": 0.9943972229957581
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.4142351150512695,
+            "rmse_percent": 3.4206418991088867,
+            "direction_accuracy": 0.5404157043879908,
+            "relative_mae_vs_persistence": 0.9966192245483398
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.8757448196411133,
+            "rmse_percent": 3.955801010131836,
+            "direction_accuracy": 0.5334872979214781,
+            "relative_mae_vs_persistence": 0.997672438621521
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.306929349899292,
+            "rmse_percent": 4.377642631530762,
+            "direction_accuracy": 0.5334872979214781,
+            "relative_mae_vs_persistence": 0.9973862767219543
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.599623441696167,
+            "rmse_percent": 4.682743549346924,
+            "direction_accuracy": 0.5334872979214781,
+            "relative_mae_vs_persistence": 0.9950159788131714
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.8703150749206543,
+            "rmse_percent": 4.944643974304199,
+            "direction_accuracy": 0.5265588914549654,
+            "relative_mae_vs_persistence": 0.9956802129745483
+          }
+        ]
+      },
+      "AMD": {
+        "mae_percent": 5.7244062423706055,
+        "rmse_percent": 8.015104293823242,
+        "direction_accuracy": 0.5631804684922468,
+        "persistence_mae_percent": 5.6917595863342285,
+        "relative_mae_vs_persistence": 1.0057357756491965,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 2.877603530883789,
+            "rmse_percent": 4.107163906097412,
+            "direction_accuracy": 0.5427251732101617,
+            "relative_mae_vs_persistence": 1.002394676208496
+          },
+          {
+            "day": 2,
+            "mae_percent": 4.184722423553467,
+            "rmse_percent": 5.655844211578369,
+            "direction_accuracy": 0.5381062355658198,
+            "relative_mae_vs_persistence": 0.9946268200874329
+          },
+          {
+            "day": 3,
+            "mae_percent": 5.112489700317383,
+            "rmse_percent": 6.947570323944092,
+            "direction_accuracy": 0.581986143187067,
+            "relative_mae_vs_persistence": 0.9929945468902588
+          },
+          {
+            "day": 4,
+            "mae_percent": 5.89502477645874,
+            "rmse_percent": 8.063765525817871,
+            "direction_accuracy": 0.5958429561200924,
+            "relative_mae_vs_persistence": 0.9828099012374878
+          },
+          {
+            "day": 5,
+            "mae_percent": 6.750790119171143,
+            "rmse_percent": 8.96726131439209,
+            "direction_accuracy": 0.5796766743648961,
+            "relative_mae_vs_persistence": 1.0052062273025513
+          },
+          {
+            "day": 6,
+            "mae_percent": 7.328487873077393,
+            "rmse_percent": 9.789531707763672,
+            "direction_accuracy": 0.5612009237875288,
+            "relative_mae_vs_persistence": 1.0171948671340942
+          },
+          {
+            "day": 7,
+            "mae_percent": 7.921725749969482,
+            "rmse_percent": 10.549698829650879,
+            "direction_accuracy": 0.5427251732101617,
+            "relative_mae_vs_persistence": 1.0291788578033447
+          }
+        ]
+      },
+      "AMZN": {
+        "mae_percent": 3.1226589679718018,
+        "rmse_percent": 4.454536437988281,
+        "direction_accuracy": 0.5202903332233586,
+        "persistence_mae_percent": 3.1407623291015625,
+        "relative_mae_vs_persistence": 0.9942359977506037,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.5513094663619995,
+            "rmse_percent": 2.1959621906280518,
+            "direction_accuracy": 0.5127020785219399,
+            "relative_mae_vs_persistence": 1.000778317451477
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.2374725341796875,
+            "rmse_percent": 3.1659140586853027,
+            "direction_accuracy": 0.5080831408775982,
+            "relative_mae_vs_persistence": 0.9999326467514038
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.7948598861694336,
+            "rmse_percent": 3.9075748920440674,
+            "direction_accuracy": 0.5219399538106235,
+            "relative_mae_vs_persistence": 0.9978227019309998
+          },
+          {
+            "day": 4,
+            "mae_percent": 3.2536919116973877,
+            "rmse_percent": 4.488591194152832,
+            "direction_accuracy": 0.5381062355658198,
+            "relative_mae_vs_persistence": 0.9877786040306091
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.626556158065796,
+            "rmse_percent": 4.957005977630615,
+            "direction_accuracy": 0.5011547344110855,
+            "relative_mae_vs_persistence": 0.9936619400978088
+          },
+          {
+            "day": 6,
+            "mae_percent": 4.036522388458252,
+            "rmse_percent": 5.442858695983887,
+            "direction_accuracy": 0.5288683602771362,
+            "relative_mae_vs_persistence": 0.9935585260391235
+          },
+          {
+            "day": 7,
+            "mae_percent": 4.358198642730713,
+            "rmse_percent": 5.86871337890625,
+            "direction_accuracy": 0.5311778290993071,
+            "relative_mae_vs_persistence": 0.9926831126213074
+          }
+        ]
+      },
+      "AZN.L": {
+        "mae_percent": 2.59106707572937,
+        "rmse_percent": 3.6697635650634766,
+        "direction_accuracy": 0.49013949013949015,
+        "persistence_mae_percent": 2.5907185077667236,
+        "relative_mae_vs_persistence": 1.0001345449000352,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.2253962755203247,
+            "rmse_percent": 1.7267460823059082,
+            "direction_accuracy": 0.5387205387205387,
+            "relative_mae_vs_persistence": 1.000757098197937
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.806188702583313,
+            "rmse_percent": 2.51479434967041,
+            "direction_accuracy": 0.48484848484848486,
+            "relative_mae_vs_persistence": 1.0051710605621338
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.242171287536621,
+            "rmse_percent": 3.1001906394958496,
+            "direction_accuracy": 0.468013468013468,
+            "relative_mae_vs_persistence": 1.0070929527282715
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.681966543197632,
+            "rmse_percent": 3.668574571609497,
+            "direction_accuracy": 0.46464646464646464,
+            "relative_mae_vs_persistence": 1.0110989809036255
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.0987730026245117,
+            "rmse_percent": 4.166517734527588,
+            "direction_accuracy": 0.46464646464646464,
+            "relative_mae_vs_persistence": 1.0016605854034424
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.3907551765441895,
+            "rmse_percent": 4.525807857513428,
+            "direction_accuracy": 0.5353535353535354,
+            "relative_mae_vs_persistence": 0.989944338798523
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.6922175884246826,
+            "rmse_percent": 4.904272079467773,
+            "direction_accuracy": 0.47474747474747475,
+            "relative_mae_vs_persistence": 0.9936200976371765
+          }
+        ]
+      },
+      "BAC": {
+        "mae_percent": 2.123363494873047,
+        "rmse_percent": 2.721480369567871,
+        "direction_accuracy": 0.5220338983050847,
+        "persistence_mae_percent": 2.1381232738494873,
+        "relative_mae_vs_persistence": 0.9930968531342598,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.025985836982727,
+            "rmse_percent": 1.3342839479446411,
+            "direction_accuracy": 0.5220338983050847,
+            "relative_mae_vs_persistence": 0.9975916147232056
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.5301330089569092,
+            "rmse_percent": 1.9084522724151611,
+            "direction_accuracy": 0.5016949152542373,
+            "relative_mae_vs_persistence": 0.9938094615936279
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.855919599533081,
+            "rmse_percent": 2.3123738765716553,
+            "direction_accuracy": 0.5254237288135594,
+            "relative_mae_vs_persistence": 0.9871264696121216
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.1427056789398193,
+            "rmse_percent": 2.64631986618042,
+            "direction_accuracy": 0.5491525423728814,
+            "relative_mae_vs_persistence": 0.9874219298362732
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.484104871749878,
+            "rmse_percent": 3.026571750640869,
+            "direction_accuracy": 0.5322033898305085,
+            "relative_mae_vs_persistence": 0.9946849346160889
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.740384101867676,
+            "rmse_percent": 3.348158121109009,
+            "direction_accuracy": 0.559322033898305,
+            "relative_mae_vs_persistence": 0.989043653011322
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.0843119621276855,
+            "rmse_percent": 3.70166277885437,
+            "direction_accuracy": 0.46440677966101696,
+            "relative_mae_vs_persistence": 1.0012400150299072
+          }
+        ]
+      },
+      "BARC.L": {
+        "mae_percent": 2.540557384490967,
+        "rmse_percent": 3.4864509105682373,
+        "direction_accuracy": 0.5382395382395382,
+        "persistence_mae_percent": 2.5481419563293457,
+        "relative_mae_vs_persistence": 0.9970234892842059,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.4020416736602783,
+            "rmse_percent": 1.8431721925735474,
+            "direction_accuracy": 0.5521885521885522,
+            "relative_mae_vs_persistence": 0.9930995106697083
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.9349160194396973,
+            "rmse_percent": 2.5404016971588135,
+            "direction_accuracy": 0.569023569023569,
+            "relative_mae_vs_persistence": 0.9870917201042175
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.311159372329712,
+            "rmse_percent": 3.021425485610962,
+            "direction_accuracy": 0.5723905723905723,
+            "relative_mae_vs_persistence": 0.9914665222167969
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.6286814212799072,
+            "rmse_percent": 3.4381518363952637,
+            "direction_accuracy": 0.5589225589225589,
+            "relative_mae_vs_persistence": 0.9890155792236328
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.89768648147583,
+            "rmse_percent": 3.844338893890381,
+            "direction_accuracy": 0.5555555555555556,
+            "relative_mae_vs_persistence": 0.994866132736206
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.1703319549560547,
+            "rmse_percent": 4.2540788650512695,
+            "direction_accuracy": 0.49158249158249157,
+            "relative_mae_vs_persistence": 1.004351019859314
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.4390859603881836,
+            "rmse_percent": 4.627140045166016,
+            "direction_accuracy": 0.468013468013468,
+            "relative_mae_vs_persistence": 1.0094693899154663
+          }
+        ]
+      },
+      "BATS.L": {
+        "mae_percent": 2.5543298721313477,
+        "rmse_percent": 3.4249939918518066,
+        "direction_accuracy": 0.4728234728234728,
+        "persistence_mae_percent": 2.5107080936431885,
+        "relative_mae_vs_persistence": 1.0173742931719558,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.239432692527771,
+            "rmse_percent": 1.541651964187622,
+            "direction_accuracy": 0.4276094276094276,
+            "relative_mae_vs_persistence": 1.0094578266143799
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.777303695678711,
+            "rmse_percent": 2.3124473094940186,
+            "direction_accuracy": 0.5252525252525253,
+            "relative_mae_vs_persistence": 1.0045961141586304
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.27618670463562,
+            "rmse_percent": 2.961484909057617,
+            "direction_accuracy": 0.48484848484848486,
+            "relative_mae_vs_persistence": 1.0143945217132568
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.6886534690856934,
+            "rmse_percent": 3.466611385345459,
+            "direction_accuracy": 0.48148148148148145,
+            "relative_mae_vs_persistence": 1.0149447917938232
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.0427210330963135,
+            "rmse_percent": 3.8924901485443115,
+            "direction_accuracy": 0.4444444444444444,
+            "relative_mae_vs_persistence": 1.020343542098999
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.318422317504883,
+            "rmse_percent": 4.23673152923584,
+            "direction_accuracy": 0.4781144781144781,
+            "relative_mae_vs_persistence": 1.0207856893539429
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.537588596343994,
+            "rmse_percent": 4.52778434753418,
+            "direction_accuracy": 0.468013468013468,
+            "relative_mae_vs_persistence": 1.0247622728347778
+          }
+        ]
+      },
+      "BP.L": {
+        "mae_percent": 2.6747329235076904,
+        "rmse_percent": 3.4549448490142822,
+        "direction_accuracy": 0.493987493987494,
+        "persistence_mae_percent": 2.67151141166687,
+        "relative_mae_vs_persistence": 1.0012058761294267,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.374393343925476,
+            "rmse_percent": 1.8348876237869263,
+            "direction_accuracy": 0.5387205387205387,
+            "relative_mae_vs_persistence": 0.9924836754798889
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.9376598596572876,
+            "rmse_percent": 2.4812941551208496,
+            "direction_accuracy": 0.5084175084175084,
+            "relative_mae_vs_persistence": 0.9903093576431274
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.3827993869781494,
+            "rmse_percent": 2.992887258529663,
+            "direction_accuracy": 0.5420875420875421,
+            "relative_mae_vs_persistence": 0.9958781599998474
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.800501823425293,
+            "rmse_percent": 3.470369338989258,
+            "direction_accuracy": 0.5622895622895623,
+            "relative_mae_vs_persistence": 0.9876621961593628
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.0679078102111816,
+            "rmse_percent": 3.843278169631958,
+            "direction_accuracy": 0.45791245791245794,
+            "relative_mae_vs_persistence": 0.9981514811515808
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.4448885917663574,
+            "rmse_percent": 4.217607498168945,
+            "direction_accuracy": 0.4175084175084175,
+            "relative_mae_vs_persistence": 1.0122525691986084
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.714979887008667,
+            "rmse_percent": 4.524713516235352,
+            "direction_accuracy": 0.43097643097643096,
+            "relative_mae_vs_persistence": 1.0166245698928833
+          }
+        ]
+      },
+      "CAT": {
+        "mae_percent": 3.32950496673584,
+        "rmse_percent": 4.386346340179443,
+        "direction_accuracy": 0.5883777239709443,
+        "persistence_mae_percent": 3.3695669174194336,
+        "relative_mae_vs_persistence": 0.9881106528923679,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.7355507612228394,
+            "rmse_percent": 2.376408338546753,
+            "direction_accuracy": 0.5525423728813559,
+            "relative_mae_vs_persistence": 0.9953455328941345
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.5166871547698975,
+            "rmse_percent": 3.284501314163208,
+            "direction_accuracy": 0.5627118644067797,
+            "relative_mae_vs_persistence": 0.9878878593444824
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.9170384407043457,
+            "rmse_percent": 3.805553436279297,
+            "direction_accuracy": 0.5864406779661017,
+            "relative_mae_vs_persistence": 0.9868525266647339
+          },
+          {
+            "day": 4,
+            "mae_percent": 3.4271695613861084,
+            "rmse_percent": 4.42012357711792,
+            "direction_accuracy": 0.5966101694915255,
+            "relative_mae_vs_persistence": 0.9800789952278137
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.826070547103882,
+            "rmse_percent": 4.9111762046813965,
+            "direction_accuracy": 0.6169491525423729,
+            "relative_mae_vs_persistence": 0.9808958172798157
+          },
+          {
+            "day": 6,
+            "mae_percent": 4.225108623504639,
+            "rmse_percent": 5.279118537902832,
+            "direction_accuracy": 0.6067796610169491,
+            "relative_mae_vs_persistence": 0.9900676012039185
+          },
+          {
+            "day": 7,
+            "mae_percent": 4.658909320831299,
+            "rmse_percent": 5.677719593048096,
+            "direction_accuracy": 0.5966101694915255,
+            "relative_mae_vs_persistence": 0.9965701103210449
+          }
+        ]
+      },
+      "COST": {
+        "mae_percent": 1.960463047027588,
+        "rmse_percent": 2.6747994422912598,
+        "direction_accuracy": 0.5084130649950511,
+        "persistence_mae_percent": 1.9568798542022705,
+        "relative_mae_vs_persistence": 1.0018310745126344,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 0.977279007434845,
+            "rmse_percent": 1.3208117485046387,
+            "direction_accuracy": 0.49884526558891457,
+            "relative_mae_vs_persistence": 1.0097038745880127
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.452846884727478,
+            "rmse_percent": 1.9103580713272095,
+            "direction_accuracy": 0.5427251732101617,
+            "relative_mae_vs_persistence": 1.002897024154663
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.797628402709961,
+            "rmse_percent": 2.3298122882843018,
+            "direction_accuracy": 0.49884526558891457,
+            "relative_mae_vs_persistence": 1.0081231594085693
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.078853130340576,
+            "rmse_percent": 2.6960983276367188,
+            "direction_accuracy": 0.5103926096997691,
+            "relative_mae_vs_persistence": 1.0061571598052979
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.299790859222412,
+            "rmse_percent": 3.0121490955352783,
+            "direction_accuracy": 0.48498845265588914,
+            "relative_mae_vs_persistence": 1.0021555423736572
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.469787359237671,
+            "rmse_percent": 3.260558843612671,
+            "direction_accuracy": 0.5103926096997691,
+            "relative_mae_vs_persistence": 0.9984592795372009
+          },
+          {
+            "day": 7,
+            "mae_percent": 2.6470556259155273,
+            "rmse_percent": 3.5052239894866943,
+            "direction_accuracy": 0.5127020785219399,
+            "relative_mae_vs_persistence": 0.9936753511428833
+          }
+        ]
+      },
+      "DGE.L": {
+        "mae_percent": 2.806403160095215,
+        "rmse_percent": 3.752415418624878,
+        "direction_accuracy": 0.5141895141895142,
+        "persistence_mae_percent": 2.8045732975006104,
+        "relative_mae_vs_persistence": 1.0006524566843147,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.3698116540908813,
+            "rmse_percent": 1.944915533065796,
+            "direction_accuracy": 0.494949494949495,
+            "relative_mae_vs_persistence": 1.0046693086624146
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.10162615776062,
+            "rmse_percent": 2.8449900150299072,
+            "direction_accuracy": 0.5050505050505051,
+            "relative_mae_vs_persistence": 1.002667784690857
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.634002447128296,
+            "rmse_percent": 3.436589479446411,
+            "direction_accuracy": 0.5454545454545454,
+            "relative_mae_vs_persistence": 0.9979719519615173
+          },
+          {
+            "day": 4,
+            "mae_percent": 3.0083394050598145,
+            "rmse_percent": 3.8448641300201416,
+            "direction_accuracy": 0.5151515151515151,
+            "relative_mae_vs_persistence": 0.9969853162765503
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.3048434257507324,
+            "rmse_percent": 4.190943241119385,
+            "direction_accuracy": 0.5252525252525253,
+            "relative_mae_vs_persistence": 0.9981250166893005
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.476213216781616,
+            "rmse_percent": 4.479575157165527,
+            "direction_accuracy": 0.4882154882154882,
+            "relative_mae_vs_persistence": 1.00355863571167
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.7499873638153076,
+            "rmse_percent": 4.7396159172058105,
+            "direction_accuracy": 0.5252525252525253,
+            "relative_mae_vs_persistence": 1.0024546384811401
+          }
+        ]
+      },
+      "DIS": {
+        "mae_percent": 2.036360263824463,
+        "rmse_percent": 2.6673991680145264,
+        "direction_accuracy": 0.511864406779661,
+        "persistence_mae_percent": 2.024172306060791,
+        "relative_mae_vs_persistence": 1.0060212056686966,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.170335292816162,
+            "rmse_percent": 1.5863333940505981,
+            "direction_accuracy": 0.511864406779661,
+            "relative_mae_vs_persistence": 0.9997957348823547
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.598552942276001,
+            "rmse_percent": 2.1254289150238037,
+            "direction_accuracy": 0.4915254237288136,
+            "relative_mae_vs_persistence": 1.0009417533874512
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.8777668476104736,
+            "rmse_percent": 2.432872772216797,
+            "direction_accuracy": 0.48135593220338985,
+            "relative_mae_vs_persistence": 1.008912444114685
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.1030452251434326,
+            "rmse_percent": 2.6759402751922607,
+            "direction_accuracy": 0.4711864406779661,
+            "relative_mae_vs_persistence": 1.0098545551300049
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.3040637969970703,
+            "rmse_percent": 2.93068265914917,
+            "direction_accuracy": 0.559322033898305,
+            "relative_mae_vs_persistence": 1.0072247982025146
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.5225226879119873,
+            "rmse_percent": 3.157329797744751,
+            "direction_accuracy": 0.5457627118644067,
+            "relative_mae_vs_persistence": 1.0104045867919922
+          },
+          {
+            "day": 7,
+            "mae_percent": 2.6782352924346924,
+            "rmse_percent": 3.336775064468384,
+            "direction_accuracy": 0.5220338983050847,
+            "relative_mae_vs_persistence": 1.0016597509384155
+          }
+        ]
+      },
+      "GE": {
+        "mae_percent": 2.829745292663574,
+        "rmse_percent": 3.7043802738189697,
+        "direction_accuracy": 0.5472154963680388,
+        "persistence_mae_percent": 2.899317741394043,
+        "relative_mae_vs_persistence": 0.9760038550666003,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.496999979019165,
+            "rmse_percent": 1.9755258560180664,
+            "direction_accuracy": 0.5559322033898305,
+            "relative_mae_vs_persistence": 0.9891058802604675
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.07588267326355,
+            "rmse_percent": 2.691028118133545,
+            "direction_accuracy": 0.5423728813559322,
+            "relative_mae_vs_persistence": 0.9865026473999023
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.5353307723999023,
+            "rmse_percent": 3.2267212867736816,
+            "direction_accuracy": 0.5525423728813559,
+            "relative_mae_vs_persistence": 0.9868991374969482
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.9039509296417236,
+            "rmse_percent": 3.6694750785827637,
+            "direction_accuracy": 0.5457627118644067,
+            "relative_mae_vs_persistence": 0.9814046621322632
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.255012273788452,
+            "rmse_percent": 4.087224960327148,
+            "direction_accuracy": 0.5491525423728814,
+            "relative_mae_vs_persistence": 0.9728124141693115
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.627068042755127,
+            "rmse_percent": 4.5210771560668945,
+            "direction_accuracy": 0.5220338983050847,
+            "relative_mae_vs_persistence": 0.9714500308036804
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.913971424102783,
+            "rmse_percent": 4.8877787590026855,
+            "direction_accuracy": 0.5627118644067797,
+            "relative_mae_vs_persistence": 0.9617003202438354
+          }
+        ]
+      },
+      "GOOGL": {
+        "mae_percent": 3.1805317401885986,
+        "rmse_percent": 4.320245265960693,
+        "direction_accuracy": 0.5295282085120422,
+        "persistence_mae_percent": 3.164476156234741,
+        "relative_mae_vs_persistence": 1.0050736940843192,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.500169038772583,
+            "rmse_percent": 2.0736827850341797,
+            "direction_accuracy": 0.5080831408775982,
+            "relative_mae_vs_persistence": 1.001991868019104
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.2682228088378906,
+            "rmse_percent": 2.987543821334839,
+            "direction_accuracy": 0.5127020785219399,
+            "relative_mae_vs_persistence": 1.0005855560302734
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.877680540084839,
+            "rmse_percent": 3.719236135482788,
+            "direction_accuracy": 0.5311778290993071,
+            "relative_mae_vs_persistence": 1.001712679862976
+          },
+          {
+            "day": 4,
+            "mae_percent": 3.393327236175537,
+            "rmse_percent": 4.307276725769043,
+            "direction_accuracy": 0.5404157043879908,
+            "relative_mae_vs_persistence": 1.0039023160934448
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.7474594116210938,
+            "rmse_percent": 4.843514919281006,
+            "direction_accuracy": 0.5450346420323325,
+            "relative_mae_vs_persistence": 1.0074185132980347
+          },
+          {
+            "day": 6,
+            "mae_percent": 4.114871978759766,
+            "rmse_percent": 5.351974010467529,
+            "direction_accuracy": 0.5519630484988453,
+            "relative_mae_vs_persistence": 1.0094797611236572
+          },
+          {
+            "day": 7,
+            "mae_percent": 4.361992359161377,
+            "rmse_percent": 5.739115238189697,
+            "direction_accuracy": 0.5173210161662818,
+            "relative_mae_vs_persistence": 1.0054707527160645
+          }
+        ]
+      },
+      "GSK.L": {
+        "mae_percent": 2.3470098972320557,
+        "rmse_percent": 3.3862311840057373,
+        "direction_accuracy": 0.5016835016835017,
+        "persistence_mae_percent": 2.340245008468628,
+        "relative_mae_vs_persistence": 1.0028906754373785,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.1469755172729492,
+            "rmse_percent": 1.5721083879470825,
+            "direction_accuracy": 0.5656565656565656,
+            "relative_mae_vs_persistence": 0.9971231818199158
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.6930687427520752,
+            "rmse_percent": 2.3573355674743652,
+            "direction_accuracy": 0.5454545454545454,
+            "relative_mae_vs_persistence": 0.9962320923805237
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.1316609382629395,
+            "rmse_percent": 2.932171583175659,
+            "direction_accuracy": 0.5050505050505051,
+            "relative_mae_vs_persistence": 1.0033574104309082
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.4838814735412598,
+            "rmse_percent": 3.408787488937378,
+            "direction_accuracy": 0.5185185185185185,
+            "relative_mae_vs_persistence": 1.0016133785247803
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.768458604812622,
+            "rmse_percent": 3.821941614151001,
+            "direction_accuracy": 0.45454545454545453,
+            "relative_mae_vs_persistence": 1.0046510696411133
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.991398334503174,
+            "rmse_percent": 4.147068977355957,
+            "direction_accuracy": 0.46464646464646464,
+            "relative_mae_vs_persistence": 1.0030921697616577
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.213625907897949,
+            "rmse_percent": 4.496053695678711,
+            "direction_accuracy": 0.45791245791245794,
+            "relative_mae_vs_persistence": 1.0074917078018188
+          }
+        ]
+      },
+      "HSBA.L": {
+        "mae_percent": 2.303041458129883,
+        "rmse_percent": 3.1276955604553223,
+        "direction_accuracy": 0.5064935064935064,
+        "persistence_mae_percent": 2.297518491744995,
+        "relative_mae_vs_persistence": 1.002403883322259,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.1055964231491089,
+            "rmse_percent": 1.599079966545105,
+            "direction_accuracy": 0.5656565656565656,
+            "relative_mae_vs_persistence": 0.994594931602478
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.5783019065856934,
+            "rmse_percent": 2.2221975326538086,
+            "direction_accuracy": 0.5656565656565656,
+            "relative_mae_vs_persistence": 0.9871984124183655
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.995630145072937,
+            "rmse_percent": 2.685044765472412,
+            "direction_accuracy": 0.5622895622895623,
+            "relative_mae_vs_persistence": 0.9901367425918579
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.380401849746704,
+            "rmse_percent": 3.0977790355682373,
+            "direction_accuracy": 0.5521885521885522,
+            "relative_mae_vs_persistence": 0.9868969917297363
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.6801445484161377,
+            "rmse_percent": 3.4439260959625244,
+            "direction_accuracy": 0.4612794612794613,
+            "relative_mae_vs_persistence": 1.006098747253418
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.0144805908203125,
+            "rmse_percent": 3.80976939201355,
+            "direction_accuracy": 0.43097643097643096,
+            "relative_mae_vs_persistence": 1.0083407163619995
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.366734504699707,
+            "rmse_percent": 4.219178676605225,
+            "direction_accuracy": 0.4074074074074074,
+            "relative_mae_vs_persistence": 1.0229202508926392
+          }
+        ]
+      },
+      "JNJ": {
+        "mae_percent": 1.9931212663650513,
+        "rmse_percent": 2.6710000038146973,
+        "direction_accuracy": 0.4886198547215496,
+        "persistence_mae_percent": 1.9773106575012207,
+        "relative_mae_vs_persistence": 1.0079960166116795,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 0.8967940807342529,
+            "rmse_percent": 1.2068548202514648,
+            "direction_accuracy": 0.5186440677966102,
+            "relative_mae_vs_persistence": 1.0003222227096558
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.3598343133926392,
+            "rmse_percent": 1.7569341659545898,
+            "direction_accuracy": 0.5322033898305085,
+            "relative_mae_vs_persistence": 1.0013841390609741
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.6672195196151733,
+            "rmse_percent": 2.164417028427124,
+            "direction_accuracy": 0.5322033898305085,
+            "relative_mae_vs_persistence": 0.9957969188690186
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.0256567001342773,
+            "rmse_percent": 2.5845296382904053,
+            "direction_accuracy": 0.5694915254237288,
+            "relative_mae_vs_persistence": 0.9894961714744568
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.3861865997314453,
+            "rmse_percent": 3.0169577598571777,
+            "direction_accuracy": 0.4915254237288136,
+            "relative_mae_vs_persistence": 1.0049999952316284
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.6906535625457764,
+            "rmse_percent": 3.3827965259552,
+            "direction_accuracy": 0.3864406779661017,
+            "relative_mae_vs_persistence": 1.0220715999603271
+          },
+          {
+            "day": 7,
+            "mae_percent": 2.925504446029663,
+            "rmse_percent": 3.6724019050598145,
+            "direction_accuracy": 0.3898305084745763,
+            "relative_mae_vs_persistence": 1.0234642028808594
+          }
+        ]
+      },
+      "JPM": {
+        "mae_percent": 1.882067322731018,
+        "rmse_percent": 2.432823896408081,
+        "direction_accuracy": 0.5375302663438256,
+        "persistence_mae_percent": 1.8961023092269897,
+        "relative_mae_vs_persistence": 0.9925979803791846,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.0377000570297241,
+            "rmse_percent": 1.3637090921401978,
+            "direction_accuracy": 0.5050847457627119,
+            "relative_mae_vs_persistence": 0.9987899661064148
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.4582041501998901,
+            "rmse_percent": 1.8741432428359985,
+            "direction_accuracy": 0.5254237288135594,
+            "relative_mae_vs_persistence": 0.9878185987472534
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.7414004802703857,
+            "rmse_percent": 2.185231924057007,
+            "direction_accuracy": 0.5389830508474577,
+            "relative_mae_vs_persistence": 0.9871319532394409
+          },
+          {
+            "day": 4,
+            "mae_percent": 1.9547104835510254,
+            "rmse_percent": 2.4279181957244873,
+            "direction_accuracy": 0.5389830508474577,
+            "relative_mae_vs_persistence": 0.9945359230041504
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.131195306777954,
+            "rmse_percent": 2.6509227752685547,
+            "direction_accuracy": 0.5322033898305085,
+            "relative_mae_vs_persistence": 0.9958259463310242
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.30214262008667,
+            "rmse_percent": 2.8978238105773926,
+            "direction_accuracy": 0.5525423728813559,
+            "relative_mae_vs_persistence": 0.9909477233886719
+          },
+          {
+            "day": 7,
+            "mae_percent": 2.5491178035736084,
+            "rmse_percent": 3.1565022468566895,
+            "direction_accuracy": 0.5694915254237288,
+            "relative_mae_vs_persistence": 0.9939166307449341
+          }
+        ]
+      },
+      "KO": {
+        "mae_percent": 1.626998782157898,
+        "rmse_percent": 2.167186975479126,
+        "direction_accuracy": 0.5525423728813559,
+        "persistence_mae_percent": 1.6516166925430298,
+        "relative_mae_vs_persistence": 0.9850946587690228,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 0.8499937057495117,
+            "rmse_percent": 1.1377891302108765,
+            "direction_accuracy": 0.5254237288135594,
+            "relative_mae_vs_persistence": 0.9968695044517517
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.1683056354522705,
+            "rmse_percent": 1.5568774938583374,
+            "direction_accuracy": 0.5457627118644067,
+            "relative_mae_vs_persistence": 0.9908289909362793
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.4361821413040161,
+            "rmse_percent": 1.8885033130645752,
+            "direction_accuracy": 0.5661016949152542,
+            "relative_mae_vs_persistence": 0.9817513227462769
+          },
+          {
+            "day": 4,
+            "mae_percent": 1.6618815660476685,
+            "rmse_percent": 2.2100768089294434,
+            "direction_accuracy": 0.5423728813559322,
+            "relative_mae_vs_persistence": 0.9923334121704102
+          },
+          {
+            "day": 5,
+            "mae_percent": 1.9107438325881958,
+            "rmse_percent": 2.4602112770080566,
+            "direction_accuracy": 0.5661016949152542,
+            "relative_mae_vs_persistence": 0.9838275909423828
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.117494821548462,
+            "rmse_percent": 2.638582229614258,
+            "direction_accuracy": 0.5457627118644067,
+            "relative_mae_vs_persistence": 0.9830508232116699
+          },
+          {
+            "day": 7,
+            "mae_percent": 2.244389295578003,
+            "rmse_percent": 2.7735931873321533,
+            "direction_accuracy": 0.576271186440678,
+            "relative_mae_vs_persistence": 0.9776152968406677
+          }
+        ]
+      },
+      "META": {
+        "mae_percent": 3.4955809116363525,
+        "rmse_percent": 4.792723178863525,
+        "direction_accuracy": 0.49191685912240185,
+        "persistence_mae_percent": 3.5224945545196533,
+        "relative_mae_vs_persistence": 0.9923594934025467,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.706216812133789,
+            "rmse_percent": 2.485060930252075,
+            "direction_accuracy": 0.5057736720554272,
+            "relative_mae_vs_persistence": 1.0005937814712524
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.510484457015991,
+            "rmse_percent": 3.4652693271636963,
+            "direction_accuracy": 0.48729792147806006,
+            "relative_mae_vs_persistence": 1.006068229675293
+          },
+          {
+            "day": 3,
+            "mae_percent": 3.138972282409668,
+            "rmse_percent": 4.208176136016846,
+            "direction_accuracy": 0.45958429561200925,
+            "relative_mae_vs_persistence": 0.9988012313842773
+          },
+          {
+            "day": 4,
+            "mae_percent": 3.670987606048584,
+            "rmse_percent": 4.810070037841797,
+            "direction_accuracy": 0.48267898383371827,
+            "relative_mae_vs_persistence": 0.9949524402618408
+          },
+          {
+            "day": 5,
+            "mae_percent": 4.078513145446777,
+            "rmse_percent": 5.2837395668029785,
+            "direction_accuracy": 0.5011547344110855,
+            "relative_mae_vs_persistence": 0.9896370768547058
+          },
+          {
+            "day": 6,
+            "mae_percent": 4.473212242126465,
+            "rmse_percent": 5.807862758636475,
+            "direction_accuracy": 0.49884526558891457,
+            "relative_mae_vs_persistence": 0.9862409830093384
+          },
+          {
+            "day": 7,
+            "mae_percent": 4.890677452087402,
+            "rmse_percent": 6.333488464355469,
+            "direction_accuracy": 0.5080831408775982,
+            "relative_mae_vs_persistence": 0.9844903945922852
+          }
+        ]
+      },
+      "MSFT": {
+        "mae_percent": 2.635115623474121,
+        "rmse_percent": 4.085673809051514,
+        "direction_accuracy": 0.5324975255691191,
+        "persistence_mae_percent": 2.634817361831665,
+        "relative_mae_vs_persistence": 1.0001132001203485,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.2344471216201782,
+            "rmse_percent": 1.8870793581008911,
+            "direction_accuracy": 0.5288683602771362,
+            "relative_mae_vs_persistence": 1.0018203258514404
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.879404067993164,
+            "rmse_percent": 2.757797956466675,
+            "direction_accuracy": 0.5011547344110855,
+            "relative_mae_vs_persistence": 1.0047792196273804
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.3424572944641113,
+            "rmse_percent": 3.474027156829834,
+            "direction_accuracy": 0.5311778290993071,
+            "relative_mae_vs_persistence": 1.001010537147522
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.727720022201538,
+            "rmse_percent": 4.086488723754883,
+            "direction_accuracy": 0.5773672055427251,
+            "relative_mae_vs_persistence": 0.9908696413040161
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.1168949604034424,
+            "rmse_percent": 4.59561824798584,
+            "direction_accuracy": 0.5519630484988453,
+            "relative_mae_vs_persistence": 0.9993432760238647
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.4283151626586914,
+            "rmse_percent": 5.065925121307373,
+            "direction_accuracy": 0.5173210161662818,
+            "relative_mae_vs_persistence": 1.0012072324752808
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.716571092605591,
+            "rmse_percent": 5.4891743659973145,
+            "direction_accuracy": 0.5196304849884527,
+            "relative_mae_vs_persistence": 1.0031284093856812
+          }
+        ]
+      },
+      "NEE": {
+        "mae_percent": 1.9643919467926025,
+        "rmse_percent": 2.612623691558838,
+        "direction_accuracy": 0.5360774818401937,
+        "persistence_mae_percent": 1.9893556833267212,
+        "relative_mae_vs_persistence": 0.9874513458084213,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.0069599151611328,
+            "rmse_percent": 1.4102511405944824,
+            "direction_accuracy": 0.5288135593220339,
+            "relative_mae_vs_persistence": 0.9953903555870056
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.4376319646835327,
+            "rmse_percent": 1.8752427101135254,
+            "direction_accuracy": 0.5186440677966102,
+            "relative_mae_vs_persistence": 0.9947900772094727
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.7708905935287476,
+            "rmse_percent": 2.2523138523101807,
+            "direction_accuracy": 0.5084745762711864,
+            "relative_mae_vs_persistence": 0.9959251880645752
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.0675573348999023,
+            "rmse_percent": 2.623291254043579,
+            "direction_accuracy": 0.5322033898305085,
+            "relative_mae_vs_persistence": 0.9907234907150269
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.2427432537078857,
+            "rmse_percent": 2.841975212097168,
+            "direction_accuracy": 0.5186440677966102,
+            "relative_mae_vs_persistence": 0.9873310327529907
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.468670129776001,
+            "rmse_percent": 3.154658317565918,
+            "direction_accuracy": 0.576271186440678,
+            "relative_mae_vs_persistence": 0.9809366464614868
+          },
+          {
+            "day": 7,
+            "mae_percent": 2.7562904357910156,
+            "rmse_percent": 3.5059964656829834,
+            "direction_accuracy": 0.5694915254237288,
+            "relative_mae_vs_persistence": 0.9789751768112183
+          }
+        ]
+      },
+      "NVDA": {
+        "mae_percent": 3.8199567794799805,
+        "rmse_percent": 5.132956504821777,
+        "direction_accuracy": 0.5542725173210161,
+        "persistence_mae_percent": 3.8933603763580322,
+        "relative_mae_vs_persistence": 0.9811464673746139,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 2.02524995803833,
+            "rmse_percent": 2.804610013961792,
+            "direction_accuracy": 0.5404157043879908,
+            "relative_mae_vs_persistence": 0.9912608861923218
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.842158794403076,
+            "rmse_percent": 3.7673051357269287,
+            "direction_accuracy": 0.5473441108545035,
+            "relative_mae_vs_persistence": 0.9852877855300903
+          },
+          {
+            "day": 3,
+            "mae_percent": 3.5477945804595947,
+            "rmse_percent": 4.738287925720215,
+            "direction_accuracy": 0.5496535796766744,
+            "relative_mae_vs_persistence": 0.9882121086120605
+          },
+          {
+            "day": 4,
+            "mae_percent": 4.135112762451172,
+            "rmse_percent": 5.336994171142578,
+            "direction_accuracy": 0.5542725173210161,
+            "relative_mae_vs_persistence": 0.9841731190681458
+          },
+          {
+            "day": 5,
+            "mae_percent": 4.488426208496094,
+            "rmse_percent": 5.756013870239258,
+            "direction_accuracy": 0.5727482678983834,
+            "relative_mae_vs_persistence": 0.9829533100128174
+          },
+          {
+            "day": 6,
+            "mae_percent": 4.749291896820068,
+            "rmse_percent": 6.097214698791504,
+            "direction_accuracy": 0.5542725173210161,
+            "relative_mae_vs_persistence": 0.9778276085853577
+          },
+          {
+            "day": 7,
+            "mae_percent": 4.951664447784424,
+            "rmse_percent": 6.413243293762207,
+            "direction_accuracy": 0.5612009237875288,
+            "relative_mae_vs_persistence": 0.968854546546936
+          }
+        ]
+      },
+      "QCOM": {
+        "mae_percent": 3.9357612133026123,
+        "rmse_percent": 5.9651689529418945,
+        "direction_accuracy": 0.511382382052128,
+        "persistence_mae_percent": 3.8507437705993652,
+        "relative_mae_vs_persistence": 1.0220781874276756,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.9227663278579712,
+            "rmse_percent": 2.961406946182251,
+            "direction_accuracy": 0.5750577367205543,
+            "relative_mae_vs_persistence": 0.9963040947914124
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.755676746368408,
+            "rmse_percent": 4.102847576141357,
+            "direction_accuracy": 0.49884526558891457,
+            "relative_mae_vs_persistence": 1.008852243423462
+          },
+          {
+            "day": 3,
+            "mae_percent": 3.4306228160858154,
+            "rmse_percent": 4.999271869659424,
+            "direction_accuracy": 0.5127020785219399,
+            "relative_mae_vs_persistence": 1.0109421014785767
+          },
+          {
+            "day": 4,
+            "mae_percent": 4.096024513244629,
+            "rmse_percent": 5.873068332672119,
+            "direction_accuracy": 0.48729792147806006,
+            "relative_mae_vs_persistence": 1.0164735317230225
+          },
+          {
+            "day": 5,
+            "mae_percent": 4.693696975708008,
+            "rmse_percent": 6.760293960571289,
+            "direction_accuracy": 0.5196304849884527,
+            "relative_mae_vs_persistence": 1.0338753461837769
+          },
+          {
+            "day": 6,
+            "mae_percent": 5.130983352661133,
+            "rmse_percent": 7.4049787521362305,
+            "direction_accuracy": 0.4896073903002309,
+            "relative_mae_vs_persistence": 1.0310174226760864
+          },
+          {
+            "day": 7,
+            "mae_percent": 5.520557880401611,
+            "rmse_percent": 7.966081142425537,
+            "direction_accuracy": 0.49653579676674364,
+            "relative_mae_vs_persistence": 1.031079888343811
+          }
+        ]
+      },
+      "RIO.L": {
+        "mae_percent": 2.6549253463745117,
+        "rmse_percent": 3.473454713821411,
+        "direction_accuracy": 0.5372775372775372,
+        "persistence_mae_percent": 2.6559386253356934,
+        "relative_mae_vs_persistence": 0.9996184855510155,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.3055654764175415,
+            "rmse_percent": 1.7164294719696045,
+            "direction_accuracy": 0.5218855218855218,
+            "relative_mae_vs_persistence": 0.997215211391449
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.8994635343551636,
+            "rmse_percent": 2.4591760635375977,
+            "direction_accuracy": 0.5858585858585859,
+            "relative_mae_vs_persistence": 0.9893715381622314
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.3517508506774902,
+            "rmse_percent": 3.0331578254699707,
+            "direction_accuracy": 0.5959595959595959,
+            "relative_mae_vs_persistence": 0.9880194067955017
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.7395668029785156,
+            "rmse_percent": 3.498230218887329,
+            "direction_accuracy": 0.6195286195286195,
+            "relative_mae_vs_persistence": 0.9833239316940308
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.1034512519836426,
+            "rmse_percent": 3.8737752437591553,
+            "direction_accuracy": 0.5757575757575758,
+            "relative_mae_vs_persistence": 0.9970444440841675
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.4589338302612305,
+            "rmse_percent": 4.268272876739502,
+            "direction_accuracy": 0.44107744107744107,
+            "relative_mae_vs_persistence": 1.0123262405395508
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.7257461547851562,
+            "rmse_percent": 4.560546398162842,
+            "direction_accuracy": 0.4208754208754209,
+            "relative_mae_vs_persistence": 1.0160963535308838
+          }
+        ]
+      },
+      "SHEL.L": {
+        "mae_percent": 2.0497562885284424,
+        "rmse_percent": 2.6976406574249268,
+        "direction_accuracy": 0.51996151996152,
+        "persistence_mae_percent": 2.0384504795074463,
+        "relative_mae_vs_persistence": 1.0055462760241927,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.0328255891799927,
+            "rmse_percent": 1.373362421989441,
+            "direction_accuracy": 0.48484848484848486,
+            "relative_mae_vs_persistence": 0.9962431192398071
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.4880350828170776,
+            "rmse_percent": 1.9010193347930908,
+            "direction_accuracy": 0.5016835016835017,
+            "relative_mae_vs_persistence": 0.9964960217475891
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.8309757709503174,
+            "rmse_percent": 2.318652391433716,
+            "direction_accuracy": 0.5218855218855218,
+            "relative_mae_vs_persistence": 0.9950063824653625
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.1296677589416504,
+            "rmse_percent": 2.6870601177215576,
+            "direction_accuracy": 0.5218855218855218,
+            "relative_mae_vs_persistence": 1.0010677576065063
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.3863582611083984,
+            "rmse_percent": 3.011610507965088,
+            "direction_accuracy": 0.5589225589225589,
+            "relative_mae_vs_persistence": 1.0022518634796143
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.6235549449920654,
+            "rmse_percent": 3.3256986141204834,
+            "direction_accuracy": 0.531986531986532,
+            "relative_mae_vs_persistence": 1.0158412456512451
+          },
+          {
+            "day": 7,
+            "mae_percent": 2.856876850128174,
+            "rmse_percent": 3.565717935562134,
+            "direction_accuracy": 0.5185185185185185,
+            "relative_mae_vs_persistence": 1.0174188613891602
+          }
+        ]
+      },
+      "TSLA": {
+        "mae_percent": 5.171889305114746,
+        "rmse_percent": 7.105112075805664,
+        "direction_accuracy": 0.5034642032332564,
+        "persistence_mae_percent": 5.055981636047363,
+        "relative_mae_vs_persistence": 1.022924859584339,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 2.6890597343444824,
+            "rmse_percent": 3.6362948417663574,
+            "direction_accuracy": 0.5196304849884527,
+            "relative_mae_vs_persistence": 1.0030627250671387
+          },
+          {
+            "day": 2,
+            "mae_percent": 3.8193066120147705,
+            "rmse_percent": 5.078739166259766,
+            "direction_accuracy": 0.5242494226327945,
+            "relative_mae_vs_persistence": 1.0077543258666992
+          },
+          {
+            "day": 3,
+            "mae_percent": 4.663534164428711,
+            "rmse_percent": 6.19810676574707,
+            "direction_accuracy": 0.5196304849884527,
+            "relative_mae_vs_persistence": 1.0105912685394287
+          },
+          {
+            "day": 4,
+            "mae_percent": 5.380537509918213,
+            "rmse_percent": 7.132147789001465,
+            "direction_accuracy": 0.49653579676674364,
+            "relative_mae_vs_persistence": 1.0126596689224243
+          },
+          {
+            "day": 5,
+            "mae_percent": 6.007521152496338,
+            "rmse_percent": 7.925959587097168,
+            "direction_accuracy": 0.49884526558891457,
+            "relative_mae_vs_persistence": 1.0287529230117798
+          },
+          {
+            "day": 6,
+            "mae_percent": 6.584336280822754,
+            "rmse_percent": 8.670852661132812,
+            "direction_accuracy": 0.48267898383371827,
+            "relative_mae_vs_persistence": 1.0416383743286133
+          },
+          {
+            "day": 7,
+            "mae_percent": 7.058929920196533,
+            "rmse_percent": 9.331317901611328,
+            "direction_accuracy": 0.48267898383371827,
+            "relative_mae_vs_persistence": 1.0331519842147827
+          }
+        ]
+      },
+      "ULVR.L": {
+        "mae_percent": 1.8593943119049072,
+        "rmse_percent": 2.566213607788086,
+        "direction_accuracy": 0.5045695045695046,
+        "persistence_mae_percent": 1.865064263343811,
+        "relative_mae_vs_persistence": 0.9969599163147663,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 0.9651358723640442,
+            "rmse_percent": 1.343470573425293,
+            "direction_accuracy": 0.4612794612794613,
+            "relative_mae_vs_persistence": 1.002116322517395
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.34687077999115,
+            "rmse_percent": 1.8659898042678833,
+            "direction_accuracy": 0.4478114478114478,
+            "relative_mae_vs_persistence": 1.012206792831421
+          },
+          {
+            "day": 3,
+            "mae_percent": 1.6842913627624512,
+            "rmse_percent": 2.275219678878784,
+            "direction_accuracy": 0.4882154882154882,
+            "relative_mae_vs_persistence": 0.9968968629837036
+          },
+          {
+            "day": 4,
+            "mae_percent": 1.9071513414382935,
+            "rmse_percent": 2.5769312381744385,
+            "direction_accuracy": 0.48148148148148145,
+            "relative_mae_vs_persistence": 0.9974754452705383
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.1775312423706055,
+            "rmse_percent": 2.8669087886810303,
+            "direction_accuracy": 0.5488215488215489,
+            "relative_mae_vs_persistence": 0.9921227693557739
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.355787754058838,
+            "rmse_percent": 3.0931568145751953,
+            "direction_accuracy": 0.5622895622895623,
+            "relative_mae_vs_persistence": 0.9913535118103027
+          },
+          {
+            "day": 7,
+            "mae_percent": 2.578991413116455,
+            "rmse_percent": 3.347738265991211,
+            "direction_accuracy": 0.5420875420875421,
+            "relative_mae_vs_persistence": 0.9961127042770386
+          }
+        ]
+      },
+      "WMT": {
+        "mae_percent": 2.3291666507720947,
+        "rmse_percent": 3.2404673099517822,
+        "direction_accuracy": 0.5189706367535467,
+        "persistence_mae_percent": 2.3363699913024902,
+        "relative_mae_vs_persistence": 0.9969168665249035,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.1255266666412354,
+            "rmse_percent": 1.5726306438446045,
+            "direction_accuracy": 0.5150115473441108,
+            "relative_mae_vs_persistence": 0.9991608262062073
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.6816843748092651,
+            "rmse_percent": 2.316636323928833,
+            "direction_accuracy": 0.5450346420323325,
+            "relative_mae_vs_persistence": 0.9978899955749512
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.0958025455474854,
+            "rmse_percent": 2.8734803199768066,
+            "direction_accuracy": 0.5288683602771362,
+            "relative_mae_vs_persistence": 0.9962642788887024
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.438014268875122,
+            "rmse_percent": 3.3013012409210205,
+            "direction_accuracy": 0.5450346420323325,
+            "relative_mae_vs_persistence": 0.9933376908302307
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.7403323650360107,
+            "rmse_percent": 3.6539957523345947,
+            "direction_accuracy": 0.5011547344110855,
+            "relative_mae_vs_persistence": 0.9986711144447327
+          },
+          {
+            "day": 6,
+            "mae_percent": 2.990943193435669,
+            "rmse_percent": 3.9351632595062256,
+            "direction_accuracy": 0.5057736720554272,
+            "relative_mae_vs_persistence": 0.9973998069763184
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.2318637371063232,
+            "rmse_percent": 4.2037787437438965,
+            "direction_accuracy": 0.49191685912240185,
+            "relative_mae_vs_persistence": 0.9968334436416626
+          }
+        ]
+      },
+      "XOM": {
+        "mae_percent": 2.4773683547973633,
+        "rmse_percent": 3.185464382171631,
+        "direction_accuracy": 0.5186440677966102,
+        "persistence_mae_percent": 2.4783473014831543,
+        "relative_mae_vs_persistence": 0.9996050002010594,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.20872962474823,
+            "rmse_percent": 1.5589169263839722,
+            "direction_accuracy": 0.5186440677966102,
+            "relative_mae_vs_persistence": 0.9977788925170898
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.7846683263778687,
+            "rmse_percent": 2.2148499488830566,
+            "direction_accuracy": 0.5186440677966102,
+            "relative_mae_vs_persistence": 0.9965999126434326
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.1786587238311768,
+            "rmse_percent": 2.6852869987487793,
+            "direction_accuracy": 0.5796610169491525,
+            "relative_mae_vs_persistence": 0.9896436929702759
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.5534117221832275,
+            "rmse_percent": 3.1139845848083496,
+            "direction_accuracy": 0.5050847457627119,
+            "relative_mae_vs_persistence": 0.9985212087631226
+          },
+          {
+            "day": 5,
+            "mae_percent": 2.9497923851013184,
+            "rmse_percent": 3.565124750137329,
+            "direction_accuracy": 0.5152542372881356,
+            "relative_mae_vs_persistence": 1.0008326768875122
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.239926815032959,
+            "rmse_percent": 3.968552827835083,
+            "direction_accuracy": 0.5016949152542373,
+            "relative_mae_vs_persistence": 1.0022938251495361
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.4263904094696045,
+            "rmse_percent": 4.281040191650391,
+            "direction_accuracy": 0.4915254237288136,
+            "relative_mae_vs_persistence": 1.0054694414138794
+          }
+        ]
+      }
+    }
+  },
+  "final_refit": {
+    "uses_all_resolved_labels_after_test_reporting": true,
+    "forecasts": {
+      "AAPL": {
+        "data_as_of": "2026-08-27",
+        "current_price": 314.5799865722656,
+        "forecast_prices": [
+          313.35626220703125,
+          312.728759765625,
+          312.7029113769531,
+          312.72564697265625,
+          313.1483154296875,
+          314.1054992675781,
+          315.0437316894531
+        ]
+      },
+      "AMD": {
+        "data_as_of": "2026-08-27",
+        "current_price": 476.6700134277344,
+        "forecast_prices": [
+          477.3450622558594,
+          478.4766540527344,
+          480.2367248535156,
+          481.4972839355469,
+          483.3442077636719,
+          485.2088928222656,
+          487.6553039550781
+        ]
+      },
+      "AMZN": {
+        "data_as_of": "2026-08-27",
+        "current_price": 256.260009765625,
+        "forecast_prices": [
+          258.5560607910156,
+          260.5214538574219,
+          262.15069580078125,
+          262.4761047363281,
+          262.2667236328125,
+          261.6416931152344,
+          260.86383056640625
+        ]
+      },
+      "AZN.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 12006.0,
+        "forecast_prices": [
+          12034.1533203125,
+          12064.38671875,
+          12078.8095703125,
+          12087.181640625,
+          12087.8408203125,
+          12102.693359375,
+          12113.208984375
+        ]
+      },
+      "BAC": {
+        "data_as_of": "2026-09-04",
+        "current_price": 62.68000030517578,
+        "forecast_prices": [
+          62.77516555786133,
+          62.75318145751953,
+          62.61592102050781,
+          62.443790435791016,
+          62.243167877197266,
+          62.07094192504883,
+          61.90948486328125
+        ]
+      },
+      "BARC.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 496.6499938964844,
+        "forecast_prices": [
+          497.7725830078125,
+          498.62164306640625,
+          498.8031005859375,
+          499.6576232910156,
+          499.9544677734375,
+          500.825927734375,
+          501.0506591796875
+        ]
+      },
+      "BATS.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 4125.0,
+        "forecast_prices": [
+          4147.6083984375,
+          4173.93505859375,
+          4201.546875,
+          4230.4189453125,
+          4256.64453125,
+          4288.06591796875,
+          4312.6630859375
+        ]
+      },
+      "BP.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 539.7000122070312,
+        "forecast_prices": [
+          539.7833251953125,
+          539.8930053710938,
+          540.199951171875,
+          539.67724609375,
+          540.36328125,
+          541.4492797851562,
+          542.5409545898438
+        ]
+      },
+      "CAT": {
+        "data_as_of": "2026-09-04",
+        "current_price": 813.9400024414062,
+        "forecast_prices": [
+          817.5897827148438,
+          822.65087890625,
+          826.7700805664062,
+          831.4343872070312,
+          835.7096557617188,
+          841.4528198242188,
+          847.1492309570312
+        ]
+      },
+      "COST": {
+        "data_as_of": "2026-08-27",
+        "current_price": 934.6599731445312,
+        "forecast_prices": [
+          939.3082275390625,
+          944.5867309570312,
+          950.2156982421875,
+          953.3229370117188,
+          955.7205200195312,
+          958.3267211914062,
+          959.7769775390625
+        ]
+      },
+      "DGE.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 1657.0,
+        "forecast_prices": [
+          1657.2694091796875,
+          1657.3018798828125,
+          1656.7550048828125,
+          1655.443603515625,
+          1654.7171630859375,
+          1654.8006591796875,
+          1657.9072265625
+        ]
+      },
+      "DIS": {
+        "data_as_of": "2026-09-04",
+        "current_price": 105.30999755859375,
+        "forecast_prices": [
+          105.38229370117188,
+          105.39339447021484,
+          105.3503189086914,
+          105.28002166748047,
+          105.19580078125,
+          105.2195816040039,
+          105.32167053222656
+        ]
+      },
+      "GE": {
+        "data_as_of": "2026-09-04",
+        "current_price": 337.1199951171875,
+        "forecast_prices": [
+          341.4239196777344,
+          345.1026306152344,
+          347.61328125,
+          349.1112060546875,
+          349.935302734375,
+          350.5999450683594,
+          351.1416931152344
+        ]
+      },
+      "GOOGL": {
+        "data_as_of": "2026-08-27",
+        "current_price": 340.6499938964844,
+        "forecast_prices": [
+          346.46759033203125,
+          350.5022277832031,
+          352.4614562988281,
+          351.46319580078125,
+          349.13043212890625,
+          346.17791748046875,
+          343.7005615234375
+        ]
+      },
+      "GSK.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 1846.5,
+        "forecast_prices": [
+          1847.880126953125,
+          1847.9525146484375,
+          1847.8583984375,
+          1847.129150390625,
+          1846.6041259765625,
+          1848.4495849609375,
+          1850.578369140625
+        ]
+      },
+      "HSBA.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 1580.199951171875,
+        "forecast_prices": [
+          1583.425537109375,
+          1585.9007568359375,
+          1588.3778076171875,
+          1589.5360107421875,
+          1592.28173828125,
+          1594.551025390625,
+          1597.708984375
+        ]
+      },
+      "JNJ": {
+        "data_as_of": "2026-09-04",
+        "current_price": 275.2300109863281,
+        "forecast_prices": [
+          275.4541320800781,
+          275.59521484375,
+          275.6418151855469,
+          275.74249267578125,
+          275.90924072265625,
+          276.42584228515625,
+          276.9196472167969
+        ]
+      },
+      "JPM": {
+        "data_as_of": "2026-09-04",
+        "current_price": 358.6400146484375,
+        "forecast_prices": [
+          359.7527160644531,
+          360.5266418457031,
+          360.8507385253906,
+          360.9403991699219,
+          360.9294128417969,
+          361.2451477050781,
+          361.4039306640625
+        ]
+      },
+      "KO": {
+        "data_as_of": "2026-09-04",
+        "current_price": 88.06999969482422,
+        "forecast_prices": [
+          88.14846801757812,
+          88.20681762695312,
+          88.17616271972656,
+          88.15418243408203,
+          88.11288452148438,
+          88.18677520751953,
+          88.27250671386719
+        ]
+      },
+      "META": {
+        "data_as_of": "2026-08-27",
+        "current_price": 571.0999755859375,
+        "forecast_prices": [
+          576.2449951171875,
+          580.0780029296875,
+          581.7991943359375,
+          581.4227294921875,
+          578.8568115234375,
+          575.4346313476562,
+          572.5547485351562
+        ]
+      },
+      "MSFT": {
+        "data_as_of": "2026-08-27",
+        "current_price": 505.05999755859375,
+        "forecast_prices": [
+          504.4741516113281,
+          504.0229797363281,
+          503.8943786621094,
+          503.32000732421875,
+          502.98553466796875,
+          502.7024841308594,
+          503.07037353515625
+        ]
+      },
+      "NEE": {
+        "data_as_of": "2026-09-04",
+        "current_price": 83.43000030517578,
+        "forecast_prices": [
+          83.51226043701172,
+          83.55903625488281,
+          83.56104278564453,
+          83.4864730834961,
+          83.47422790527344,
+          83.53572082519531,
+          83.5859603881836
+        ]
+      },
+      "NVDA": {
+        "data_as_of": "2026-08-27",
+        "current_price": 227.97999572753906,
+        "forecast_prices": [
+          225.015380859375,
+          223.9405517578125,
+          223.30921936035156,
+          223.5202178955078,
+          224.63320922851562,
+          225.27667236328125,
+          227.08396911621094
+        ]
+      },
+      "QCOM": {
+        "data_as_of": "2026-08-27",
+        "current_price": 164.77999877929688,
+        "forecast_prices": [
+          164.1756591796875,
+          163.9246826171875,
+          163.40359497070312,
+          163.173583984375,
+          162.843505859375,
+          162.54666137695312,
+          162.5284423828125
+        ]
+      },
+      "RIO.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 7641.0,
+        "forecast_prices": [
+          7642.7490234375,
+          7641.146484375,
+          7635.41455078125,
+          7628.77490234375,
+          7624.2939453125,
+          7626.8515625,
+          7631.7724609375
+        ]
+      },
+      "SHEL.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 3437.0,
+        "forecast_prices": [
+          3437.772216796875,
+          3438.19970703125,
+          3439.067138671875,
+          3434.771240234375,
+          3436.399658203125,
+          3438.8330078125,
+          3443.427734375
+        ]
+      },
+      "TSLA": {
+        "data_as_of": "2026-08-27",
+        "current_price": 354.80999755859375,
+        "forecast_prices": [
+          355.5423278808594,
+          357.48736572265625,
+          359.3769226074219,
+          360.468017578125,
+          361.7915954589844,
+          362.0165710449219,
+          362.4465026855469
+        ]
+      },
+      "ULVR.L": {
+        "data_as_of": "2026-09-04",
+        "current_price": 4763.0,
+        "forecast_prices": [
+          4764.85546875,
+          4764.88720703125,
+          4762.6806640625,
+          4755.734375,
+          4755.73681640625,
+          4754.9013671875,
+          4762.39208984375
+        ]
+      },
+      "WMT": {
+        "data_as_of": "2026-08-27",
+        "current_price": 102.62999725341797,
+        "forecast_prices": [
+          102.6192398071289,
+          102.53751373291016,
+          102.56163024902344,
+          102.34386444091797,
+          102.2624282836914,
+          102.1983871459961,
+          102.21996307373047
+        ]
+      },
+      "XOM": {
+        "data_as_of": "2026-09-04",
+        "current_price": 159.47000122070312,
+        "forecast_prices": [
+          160.0619659423828,
+          160.6331787109375,
+          161.04945373535156,
+          161.14340209960938,
+          161.3309783935547,
+          161.4673309326172,
+          161.6051025390625
+        ]
+      }
+    }
+  },
+  "training_seconds": 171.52903380000498,
+  "checkpoint": "model.pt",
+  "news_features_used": false,
+  "news_reason": "Price-only baseline (25 features); news features omitted.",
+  "news_coverage": null
+}
