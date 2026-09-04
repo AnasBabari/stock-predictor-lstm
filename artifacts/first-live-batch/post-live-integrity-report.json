@@ -1,0 +1,58 @@
+{
+  "experiment": "Forward Validation V1",
+  "origin_nyse_session": "2026-09-03",
+  "universe": "live_universe_v1",
+  "workflow_run_id": 33876887080,
+  "workflow_run_url": "https://github.com/AnasBabari/stock-predictor-lstm/actions/runs/33876887080",
+  "diagnostic_workflow_run_ids": [
+    33879799812,
+    33896331764
+  ],
+  "records_attempted": 60,
+  "records_recorded": 0,
+  "deployment": "4228e21d2ef8",
+  "provider": "Alpaca",
+  "status": "aborted_at_live_write",
+  "abort_reason": "http_401_token_value_mismatch",
+  "time_gate_violation": "production_advanced_to_2026-09-04",
+  "created_before_outcomes_were_known": false,
+  "acceptance_criteria_checks": {
+    "fresh_preview_60_of_60": true,
+    "post_requests_resolved_successfully_60_of_60": false,
+    "live_rows_60_exactly": false,
+    "pending_rows_60": false,
+    "scored_rows_0": true,
+    "tickers_15": true,
+    "rows_per_ticker_4": false,
+    "h1_count_15": false,
+    "h5_count_15": false,
+    "h10_count_15": false,
+    "h20_count_15": false,
+    "record_source_live_all_60": false,
+    "data_as_of_2026_09_03_all_60": false,
+    "provider_alpaca_all_60": true,
+    "commit_4228e21_all_60": true,
+    "fingerprint_conflicts_0": true,
+    "duplicate_logical_records_0": true,
+    "replay_records_0": true
+  },
+  "acceptance_criteria_summary": {
+    "total_checks": 18,
+    "passed": 8,
+    "failed": 10,
+    "batch_frozen": false
+  },
+  "auth_diagnostic": {
+    "render_expected_token_length": 64,
+    "github_secrets_candidate_token_length": 64,
+    "github_secret_updated_at": "2026-09-04T11:26:49Z",
+    "auth_failure_detail": "Collector authentication failed (token value mismatch).",
+    "root_cause": "Mismatch between FORECAST_COLLECTOR_TOKEN in GitHub Actions Secrets and Render Environment Variables"
+  },
+  "ledger_integrity": {
+    "verified_tickers": 15,
+    "ledger_rows_count": 0,
+    "database_mutations": 0,
+    "corruption_detected": false
+  }
+}

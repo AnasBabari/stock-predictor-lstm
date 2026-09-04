@@ -491,7 +491,11 @@ def test_causal_news_features_cutoff_and_integrity() -> None:
 
 
 def test_news_feature_mode_nesting_and_examples() -> None:
-    from volatility_forecasting.simple_pipeline import VolatilityConfig, build_examples
+    from volatility_forecasting.simple_pipeline import (
+        VolatilityConfig,
+        build_causal_news_features,
+        build_examples,
+    )
 
     frame = _frame(150)
     mkt = pd.DataFrame(
@@ -502,16 +506,43 @@ def test_news_feature_mode_nesting_and_examples() -> None:
     ex_mkt = build_examples(
         frame, VolatilityConfig(feature_mode="price_plus_ohlc_plus_market"), market_frame=mkt
     )
+    news = build_causal_news_features(
+        frame.index,
+        ticker="TEST",
+        news_events=[
+            {
+                "published_at": pd.Timestamp(frame.index[80])
+                .tz_localize("America/New_York")
+                .tz_convert("UTC"),
+                "sentiment_pos": 0.6,
+                "sentiment_neg": 0.1,
+                "sentiment_compound": 0.5,
+            }
+        ],
+    )
     ex_news = build_examples(
         frame,
         VolatilityConfig(feature_mode="price_plus_ohlc_plus_market_plus_news"),
         market_frame=mkt,
+        news_frame=news,
         ticker="TEST",
     )
 
     assert ex_news.sequences.shape[-1] == ex_mkt.sequences.shape[-1] + 10
     assert "news_headline_count_1d" in ex_news.feature_names
     assert "news_negative_news_intensity" in ex_news.feature_names
+
+
+def test_news_feature_mode_rejects_missing_historical_archive() -> None:
+    from volatility_forecasting.simple_pipeline import VolatilityConfig, build_examples
+
+    frame = _frame(150)
+    with pytest.raises(ValueError, match="real point-in-time historical news frame"):
+        build_examples(
+            frame,
+            VolatilityConfig(feature_mode="price_plus_ohlc_plus_market_plus_news"),
+            ticker="TEST",
+        )
 
 
 def test_exchange_calendar_fail_closed_on_non_trading_sessions() -> None:

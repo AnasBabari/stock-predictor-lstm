@@ -8,7 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from calendars import latest_completed_trading_session
+import pandas as pd
+
+from calendars import latest_completed_trading_session, resolve_calendar
 from market_data.alpaca import AlpacaProvider
 from market_data.base import (
     MarketDataProvider,
@@ -39,7 +41,11 @@ class MarketDataService:
         self._last_error: str | None = None
 
     def fetch_daily_bars(self, symbol: str, *, years: int) -> MarketDataResult:
-        required_session = latest_completed_trading_session().date().isoformat()
+        cal_name, _ = resolve_calendar(symbol)
+        if cal_name == "LSE":
+            required_session = latest_completed_trading_session(exchange="LSE").date().isoformat()
+        else:
+            required_session = latest_completed_trading_session().date().isoformat()
         failures: list[MarketDataProviderError] = []
         unknowns: list[MarketDataSymbolNotFound] = []
         for provider in self.providers:
@@ -57,13 +63,27 @@ class MarketDataService:
             except MarketDataProviderError as err:
                 failures.append(err)
                 continue
-            if result.data_as_of < required_session:
+            # Daily providers may expose today's still-forming bar.  The
+            # forecasting contract is end-of-session, so trim everything
+            # after the latest completed NYSE session before validation and
+            # caching.
+            completed = result.frame.loc[
+                result.frame.index <= pd.Timestamp(required_session)
+            ].copy()
+            completed_as_of = completed.index[-1].date().isoformat() if not completed.empty else ""
+            if completed_as_of != required_session:
                 failures.append(
                     MarketDataServiceError(
                         f"{provider.name} did not provide the latest completed session"
                     )
                 )
                 continue
+            result = MarketDataResult(
+                frame=completed,
+                provider=result.provider,
+                data_as_of=completed_as_of,
+                cache_status=result.cache_status,
+            )
             self.cache.save(symbol, result)
             self._record_success(result)
             return result

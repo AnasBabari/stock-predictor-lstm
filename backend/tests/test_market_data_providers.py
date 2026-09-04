@@ -170,6 +170,47 @@ def test_stale_provider_result_is_not_served(monkeypatch, tmp_path) -> None:
         )
 
 
+def test_in_progress_future_bar_is_trimmed_before_cache(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "market_data.service.latest_completed_trading_session",
+        lambda: pd.Timestamp("2026-08-31"),
+    )
+    provider = SimpleNamespace(
+        name="alpaca",
+        configured=True,
+        fetch_daily_bars=lambda *_args, **_kwargs: MarketDataResult(
+            _bars("2026-09-01"), "alpaca", "2026-09-01"
+        ),
+    )
+    cache = MarketDataCache(tmp_path)
+    result = MarketDataService([provider], cache=cache).fetch_daily_bars("MSFT", years=8)
+
+    assert result.data_as_of == "2026-08-31"
+    assert result.frame.index[-1] == pd.Timestamp("2026-08-31")
+    assert cache.load("alpaca", "MSFT", required_session="2026-08-31") is not None
+
+
+def test_future_dated_cache_entry_is_not_reused(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "market_data.service.latest_completed_trading_session",
+        lambda: pd.Timestamp("2026-08-31"),
+    )
+    cache = MarketDataCache(tmp_path)
+    cache.save("MSFT", MarketDataResult(_bars("2026-09-01"), "alpaca", "2026-09-01"))
+    calls = 0
+
+    def fetch(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return MarketDataResult(_bars("2026-08-31"), "alpaca", "2026-08-31")
+
+    provider = SimpleNamespace(name="alpaca", configured=True, fetch_daily_bars=fetch)
+    result = MarketDataService([provider], cache=cache).fetch_daily_bars("MSFT", years=8)
+
+    assert calls == 1
+    assert result.data_as_of == "2026-08-31"
+
+
 def test_latest_completed_session_handles_weekend_and_before_close() -> None:
     friday = latest_completed_trading_session(datetime(2026, 8, 29, 12, tzinfo=UTC))
     before_close = latest_completed_trading_session(datetime(2026, 8, 31, 18, tzinfo=UTC))

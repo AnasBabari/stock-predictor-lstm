@@ -1253,6 +1253,11 @@ def build_phase_4_news_report(
 ) -> tuple[dict[str, Any], str]:
     """Generate paired news ablation metrics, bootstrap CIs, and Markdown report."""
 
+    if not news_data.get("news_archive_summary"):
+        raise ValueError(
+            "A verified news_archive_summary is required; synthetic or undocumented news reports are prohibited."
+        )
+
     horizons = base_data.get("horizons", [1, 5, 10, 20])
     models = ["garch_11", "rolling_mean", "gradient_boosting", "elastic_net", "lstm"]
     eval_matrix: list[dict[str, Any]] = []

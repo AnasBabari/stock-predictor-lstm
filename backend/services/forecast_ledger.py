@@ -209,6 +209,8 @@ class ForecastRecord:
     data_provider: str
     forecast_fingerprint: str
     created_at: str
+    exchange_mic: str = "XNAS"
+    currency: str = "USD"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1295,6 +1297,16 @@ class ForecastLedger:
                 row["forecast_fingerprint"] if "forecast_fingerprint" in keys else ""
             ),
             created_at=row["created_at"],
+            exchange_mic=(
+                row["exchange_mic"]
+                if "exchange_mic" in keys
+                else ("XLON" if str(row["ticker"]).upper().endswith(".L") else "XNAS")
+            ),
+            currency=(
+                row["currency"]
+                if "currency" in keys
+                else ("GBp" if str(row["ticker"]).upper().endswith(".L") else "USD")
+            ),
         )
 
 

@@ -1,7 +1,20 @@
+from datetime import UTC, datetime
+
 import pandas as pd
 import pytest
 
-from calendars import future_trading_dates, resolve_calendar
+from calendars import future_trading_dates, latest_completed_trading_session, resolve_calendar
+
+
+def test_latest_completed_session_lse():
+    instant = datetime(2026, 9, 4, 18, 0, tzinfo=UTC)
+    session = latest_completed_trading_session(instant, exchange="LSE")
+    assert session == pd.Timestamp("2026-09-04")
+
+    # Early in the morning before LSE close (10:00 UTC)
+    morning = datetime(2026, 9, 4, 10, 0, tzinfo=UTC)
+    session_prev = latest_completed_trading_session(morning, exchange="LSE")
+    assert session_prev == pd.Timestamp("2026-09-03")
 
 
 def test_exchange_resolution():

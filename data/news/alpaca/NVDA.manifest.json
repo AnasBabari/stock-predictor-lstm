@@ -1,0 +1,10 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "sec_edgar,yahoo",
+  "archive": "NVDA.jsonl",
+  "article_count": 101,
+  "published_start": "2020-07-01T00:18:09Z",
+  "published_end": "2026-09-04T19:25:00Z",
+  "sha256": "252cdf313496d8ba6059bbc3ed652e2044dcc761ab3d8eb6d6e00ac97381eb24",
+  "generated_at": "2026-09-04T19:36:55.554233Z"
+}

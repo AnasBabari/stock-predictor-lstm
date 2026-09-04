@@ -1,0 +1,638 @@
+{
+  "batch_errors": [],
+  "batch_status": "dry_run_passed",
+  "deployed_code_commit": "4228e21d",
+  "expected_nyse_session": "2026-09-03",
+  "expected_record_count": 60,
+  "failed_count": 0,
+  "horizons": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "items": [
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "0896cf70a60bad1ba98d1358689331ff53173db85c2c7f7b404666a0991b7dd4",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "MSFT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "e85ec798f86c17b019e8401c7fcd6bb2611b0f11db881f3a0d8dcf3f157fb8e5",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "MSFT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "23bac72ca279e4f5f9fe036d8ef70f829d89a32b4021f71db0a24bc66bf6a6da",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "MSFT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "d3c5f71784de89ce026965b516dc23851ceaf6777fd86f6e2dbdadf5f0b7e77e",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "MSFT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "c2aeb869457ebd010584cfb9938c63d15c3116e96ead1c71f11dac04348b6d86",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "AAPL"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "bde1961343326786af013e177dbe12d7daf481689cec4de182d69489ea4fe5b5",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "AAPL"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "725c077eca1fa6915137879b6fdd17df0213a83c5fd9a4ed144baf5140eb7865",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "AAPL"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "d54573a6898d90662124b35429553361632e489a1611c5aee383b34e2d801021",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "AAPL"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "caa0acd99a4d71730e4f174081775a871d3dc7e157c27dc7dc6c9bd6e027fc45",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "NVDA"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "e68cfb388473eb6c1515fbef1d6be4efece8220758de1bda281beafe7ec5da2f",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NVDA"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "6a45355f0613b9d5ed683658fadd22dad3a8da7222de06cfb09ff22744dd1191",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NVDA"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "3839420fb394650d27008d8fcc140014b5d63dcf8c064b1541fb179b527585cb",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NVDA"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "327112f94094405b7f5a8ef959ddf9b34d3625bf167677341881425db996c9a0",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "GOOGL"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "0ac4ebedacac6f187166c7f920adf8984ad4f25ede47247c420c77474c50e164",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "GOOGL"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "de1e06c4a6e0a7b38ab202cb2c7b546a0dbe9e9f57d1c70bda259f6bf541e429",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "GOOGL"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "14a87b4c499e96ba468aee7342b56a00b8f54beb4bb2a36cd97190d6020182ac",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "GOOGL"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "3fafb503bac984d5267d952e1cf961d039a4c23a26a3305fbe3c10b5f8b6e9c0",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "AMZN"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "6996efec64002373f2659f429379d89358c52d4184859758bdf3a0fc3869156c",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "AMZN"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "83f65d15c2e4b235fbe97ed012eea773c0f6945048041d8faf8f10fde070e904",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "AMZN"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "a38ac83cd483011a526a17465b239779d8eda1d122025f9643d1e87d083f69e3",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "AMZN"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "2a37263b23264ef5b4ee5a378b52cdf630a49c7f1bb979304480668dc436658d",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "META"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "06c8a61420976e34c62bdc6900b8c9bbceb8ddd68c98629b300688e3d574695b",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "META"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "1c354f48f4d1d18c60f982475ae078cc4ee91e5d6d5302b19432c1230a1274c4",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "META"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "dd1b5f447e403786af945d553b2db26de6b89396f8087f5a9a06ca3ad1afae64",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "META"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "40bf89d7a3addfb1cf676d63593748b55aaa6742d0366c3d6e1d8796598d43a4",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "JPM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "874f90183040a34f2f8dd6de974201f3c10f53a4cd226d263c859bfef6533bc7",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "JPM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "75a9c60da2230f962ce969a54932738275f6dd2c16ff28f1e5a42d7f3adff1ba",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "JPM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "98c31aebbc890b3c5b945dca5ff4f8438459f9962e3f677ccdbff8d9c0298093",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "JPM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "af6c759402cc9af6e109cfad4e6f9f62477f0ccaebcef0303593ff430536a46b",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "XOM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "87468ff30a3489611b93b8c02457e84af51b0b5d748427612ef8d0c688c51c8c",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "XOM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "bb88352ef808cf929411906e323afd8eddd22e7d6bfd80d11efacbeb6d3aef2e",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "XOM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "1d322d6c5be7c096fc943bb448c97c9ece715723a9e90197b92a3e87f0299dce",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "XOM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "24bfcbfd3fc4581d0ed4938e698b81fc875d6d9df0cfd35c96c5e404d1b7dd33",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "JNJ"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "09473880039eff2710c6483d47821dbb61267bd39b3835a17598c24721f82abf",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "JNJ"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "07cf3125747a84bec0cdd56b97380510ab3e5f08a15ead1d2fa00d0c43f8eeb5",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "JNJ"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "92d8419a1082bab0e4ea0500dc3b54e04fb15fca95df683e6df5246dfb3b557f",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "JNJ"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "24cb36de6626951ce5383a1023d5a8d8726ff6b5c01df33ab38dd24e199a449b",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "WMT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "880c4523c549ea71be5a7bde92dc2bdf641f452f360d086efb7eb2ca6c971412",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "WMT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "5ed7d340958c304cca57c95e1375876ec13ed9bb08e7a073b10e2cb36107647b",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "WMT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "d170198ddc4d3d0dc1ebe9fcfd825dc653eb70d906648220787b3768cca9ca02",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "WMT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "d6d44b8be7a02e4b577f70961a932fbe6bf9b126bdd886976ffe2b2a183a9ebd",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "CAT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "b0cd21b8365e4a26e4600fbd528351276b61097e3e8757f4370a57a21808ce70",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "CAT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "bf9386002f337e88327625362c5295c9e7ba13c4025db1bd21589c19e372b884",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "CAT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "adc0c1ef9be2da6b67a5ebe4dc078593120a9982fe8d067a5551091a76653408",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "CAT"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "1dc8145944898c6401f72a9af436d81b8b4b2736906cafdf016c6cec4eb8a3f8",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "NEE"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "220fb43677e5c420ecc8e21ba988be0250ebaee07372d2c561acb1baca3797f8",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NEE"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "da8f1e5cb3f931fa83f171a55774bd858a04425926428a97c01b353ed4a7114f",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NEE"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "0b61a65e8dd0f7b50125b0baef95db46a3d0878c5120d94dccf3def10a457f47",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NEE"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "35ae1c71be02cfbdb464f4a4e167a019835d26815bb33edfe49a4a33b82a1031",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "PLD"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "b3051bb952788522cdd1cce4cae49bfa930b4513f72d4b2f3b626df03f2e5064",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "PLD"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "dcb10e2e8a3f5c30397d0f94eb0e8c288300961c254b76ba5584508011ec9069",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "PLD"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "c77a8f5b7df05339cd54d4e3c7aa7a4a86130fdb1fa2a4e28dcf7cbb18558da1",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "PLD"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "af942c78801e1fd119bff70fcead4e95fe74ed3db42126c4f4aa351340ebec96",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "KO"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "e1139d10d8b1bd213ea19c468da62d97c2abe874027d17ec65c27d74fcbea2ca",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "KO"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "d89868b6a6be03e010734a6962ded8b5e8919cfd6098bd4a4288092f9ad3ae7c",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "KO"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "4789988873bab0fcad26370f23f710532527959e5a9fb8b7d6dc5b651ab80bc0",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "KO"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "063a471ff9dd8c86b55b69b5d32685316c48d98dbfa4f1a9e2a8a1ac99422c98",
+      "horizon": 1,
+      "http_status": 200,
+      "model": "garch_11",
+      "status": "preview_passed",
+      "ticker": "NMM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "60a0ba71ecb1c62fff86ec7b8dac3805f045e8832b496ec0137709d4dce1b536",
+      "horizon": 5,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NMM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "048fbf3f8c8976374de8f8d5de3aa166fb545beb705acf2dea11b1efb98de9b9",
+      "horizon": 10,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NMM"
+    },
+    {
+      "data_as_of": "2026-09-03",
+      "errors": [],
+      "forecast_fingerprint": "a037a3f50e64bf9901875e9875f9ec75f96783080303634d97421fecbbf3340d",
+      "horizon": 20,
+      "http_status": 200,
+      "model": "rolling_mean",
+      "status": "preview_passed",
+      "ticker": "NMM"
+    }
+  ],
+  "live_start_date": "2026-09-02",
+  "run_timestamp": "2026-09-04T12:18:39.659520+00:00",
+  "succeeded_count": 60,
+  "ticker_count": 15,
+  "tickers": [
+    "MSFT",
+    "AAPL",
+    "NVDA",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "JPM",
+    "XOM",
+    "JNJ",
+    "WMT",
+    "CAT",
+    "NEE",
+    "PLD",
+    "KO",
+    "NMM"
+  ],
+  "universe_version": "live_universe_v1"
+}

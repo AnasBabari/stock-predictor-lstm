@@ -51,7 +51,10 @@ class MarketDataCache:
                 if payload.get("provider") != provider or payload.get("symbol") != symbol.upper():
                     return None
                 data_as_of = str(payload["data_as_of"])
-                if data_as_of < required_session:
+                # A cache entry from a later calendar date can contain an
+                # in-progress daily bar when it was created before the close.
+                # Only an exact completed-session match is safe to reuse.
+                if data_as_of != required_session:
                     return None
                 rows = payload["rows"]
                 frame = pd.DataFrame(
@@ -110,7 +113,7 @@ class MarketDataCache:
                     if path.stat().st_size > MAX_CACHE_FILE_BYTES:
                         continue
                     payload = json.loads(path.read_text(encoding="utf-8"))
-                    if str(payload.get("data_as_of", "")) >= required_session:
+                    if str(payload.get("data_as_of", "")) == required_session:
                         count += 1
                 except (OSError, ValueError, TypeError):
                     continue

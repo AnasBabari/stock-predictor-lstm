@@ -57,7 +57,7 @@ def deployment_identity() -> dict[str, Any]:
 @router.get("/")
 def root():
     return {
-        "name": "Stock Volatility Forecasting API",
+        "name": "Signal Seven Forecast API",
         "status": "online",
         "version": APP_VERSION,
         "docs": "/docs",
@@ -127,6 +127,16 @@ def models_discovery():
     """Discover active volatility forecasting models and capabilities."""
     return {
         "status": "online",
+        "simple_price_forecast": {
+            "status": "available",
+            "endpoint": "/api/v1/forecast",
+            "horizon": 7,
+            "supported_tickers": ["AAPL", "GOOGL", "MSFT", "NVDA", "TSLA"],
+            "learned_candidates": ["ridge", "random_forest"],
+            "evaluation": "chronological_70_15_15_with_7_session_purge",
+            "news_endpoint": "/api/v1/news",
+            "news_role": "context_only",
+        },
         "volatility_forecasting": {
             "status": "available",
             "endpoint": "/api/v1/volatility/forecast",

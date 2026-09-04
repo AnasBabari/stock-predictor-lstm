@@ -1,4 +1,4 @@
-"""Stock Volatility Forecasting API — FastAPI backend application.
+"""Signal Seven forecasting API — FastAPI backend application.
 
 Serves causal equity volatility forecasts, scenario cones, company metadata,
 and immutable forecast ledger track records.
@@ -24,6 +24,7 @@ from routes.common import limiter, validate_ticker
 from routes.health import deployment_identity as _deployment_identity
 from routes.health import router as health_router
 from routes.market import router as market_router
+from routes.simple_forecast import router as simple_forecast_router
 from routes.volatility import router as volatility_router
 
 __all__ = [
@@ -45,9 +46,9 @@ logger = logging.getLogger(__name__)
 
 # ── Application Setup ────────────────────────────────────────────────
 app = FastAPI(
-    title="Stock Volatility Forecasting API",
+    title="Signal Seven Forecast API",
     version=APP_VERSION,
-    description="Causal forward volatility forecasting platform with immutable track record ledger.",
+    description="Seven-session learned price estimates with chronological historical backtests.",
 )
 app.state.limiter = limiter
 
@@ -89,6 +90,7 @@ async def _security_headers(request: Request, call_next):
 # ── Router Registration ──────────────────────────────────────────────
 app.include_router(health_router)
 app.include_router(market_router)
+app.include_router(simple_forecast_router)
 app.include_router(volatility_router)
 
 

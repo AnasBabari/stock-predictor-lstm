@@ -17,19 +17,33 @@ SUFFIX_CALENDARS = {
 }
 
 
-def latest_completed_trading_session(now: datetime | pd.Timestamp | None = None) -> pd.Timestamp:
-    """Return the latest NYSE session whose regular close has passed."""
+def latest_completed_trading_session(
+    now: datetime | pd.Timestamp | None = None,
+    exchange: str = "NYSE",
+) -> pd.Timestamp:
+    """Return the latest session whose regular close has passed for the given exchange."""
     instant = pd.Timestamp(now if now is not None else datetime.now(UTC))
     instant = instant.tz_localize(UTC) if instant.tzinfo is None else instant.tz_convert(UTC)
-    ny_now = instant.tz_convert(ZoneInfo("America/New_York"))
-    calendar = mcal.get_calendar("NYSE")
+
+    upper_ex = exchange.upper()
+    if upper_ex in ("LSE", "XLON", ".L"):
+        cal_name = "LSE"
+        tz = ZoneInfo("Europe/London")
+        err_msg = "Could not determine the latest completed LSE session."
+    else:
+        cal_name = "NYSE"
+        tz = ZoneInfo("America/New_York")
+        err_msg = "Could not determine the latest completed NYSE session."
+
+    local_now = instant.tz_convert(tz)
+    calendar = mcal.get_calendar(cal_name)
     schedule = calendar.schedule(
-        start_date=(ny_now - timedelta(days=14)).date(),
-        end_date=ny_now.date(),
+        start_date=(local_now - timedelta(days=14)).date(),
+        end_date=local_now.date(),
     )
     completed = schedule.loc[schedule["market_close"] <= instant]
     if completed.empty:
-        raise ValueError("Could not determine the latest completed NYSE session.")
+        raise ValueError(err_msg)
     return pd.Timestamp(completed.index[-1]).tz_localize(None).normalize()
 
 

@@ -1,4 +1,4 @@
-name: Volatility Forecasting CI
+name: Signal Seven CI
 
 on:
   workflow_dispatch:

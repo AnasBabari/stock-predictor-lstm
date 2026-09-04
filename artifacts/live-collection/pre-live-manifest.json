@@ -1,0 +1,13 @@
+{
+  "phase": "pre_live_snapshot",
+  "live_record_count": 0,
+  "expected_live_record_count_after_batch": 60,
+  "approved_deployed_commit": "4228e21d2ef8",
+  "expected_session": "2026-09-03",
+  "universe_version": "live_universe_v1",
+  "model_policy_version": "empirical_volatility_benchmark_v3",
+  "model_version": "deployable_v5",
+  "feature_set_version": "deployable_feature_columns_v5",
+  "data_provider": "alpaca",
+  "timestamp_utc": "2026-09-04T12:18:33.587476+00:00"
+}

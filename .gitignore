@@ -51,3 +51,9 @@ Thumbs.db
 .uv-cache/
 .workbuddy-ai/
 diff.txt
+.phase8-dry-run/
+.phase8-dry-run-final/
+.pytest-gpu/
+data/test_cache/
+
+

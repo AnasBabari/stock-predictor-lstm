@@ -1,0 +1,10 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "sec_edgar,yahoo",
+  "archive": "TSLA.jsonl",
+  "article_count": 177,
+  "published_start": "2018-05-05T01:46:25Z",
+  "published_end": "2026-09-04T19:00:50Z",
+  "sha256": "1be87d80d1bed1e12172ed287a0c827d6686db5266aafa1382f1b9eafcd8053b",
+  "generated_at": "2026-09-04T19:36:56.280780Z"
+}

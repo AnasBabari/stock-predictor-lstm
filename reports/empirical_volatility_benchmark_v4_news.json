@@ -1,4 +1,6 @@
 {
+  "status": "invalidated_synthetic_news_proxy",
+  "warning": "This report did not use the claimed real historical news corpus and must not be used as model evidence.",
   "benchmark_version": "empirical-volatility-benchmark-v4-news",
   "date_completed": "2026-09-01T17:36:52Z",
   "base_feature_mode": "price_plus_ohlc_plus_market",

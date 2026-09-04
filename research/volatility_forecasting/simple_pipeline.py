@@ -400,41 +400,12 @@ def build_causal_news_features(
 
     out = pd.DataFrame(index=sessions)
 
-    if news_events is not None:
-        df_news = pd.DataFrame(news_events) if isinstance(news_events, list) else news_events.copy()
-    else:
-        rng = np.random.default_rng(seed + abs(hash(ticker)) % 100000)
-        records = []
-        for dt in sessions:
-            ts = pd.Timestamp(dt)
-            if ts.tz is not None:
-                ts = ts.tz_localize(None)
-            try:
-                close_utc_ts = get_session_close_utc(ts)
-            except NonTradingSessionError:
-                ts_et = ts.tz_localize("America/New_York").replace(hour=16, minute=0, second=0)
-                close_utc_ts = ts_et.tz_convert("UTC").tz_localize(None)
-            num_articles = int(rng.poisson(1.8))
-            for _ in range(num_articles):
-                is_pre_close = rng.random() < 0.75
-                if is_pre_close:
-                    offset_hours = float(rng.uniform(0.5, 7.5))
-                    pub_utc = close_utc_ts - pd.Timedelta(hours=offset_hours)
-                else:
-                    offset_hours = float(rng.uniform(0.5, 6.0))
-                    pub_utc = close_utc_ts + pd.Timedelta(hours=offset_hours)
-                neg = float(rng.beta(0.5, 3.0))
-                pos = float(rng.beta(0.8, 2.5))
-                records.append(
-                    {
-                        "ticker": ticker,
-                        "published_at": pub_utc,
-                        "sentiment_pos": pos,
-                        "sentiment_neg": neg,
-                        "sentiment_compound": float(pos - neg),
-                    }
-                )
-        df_news = pd.DataFrame(records)
+    del ticker, seed
+    if news_events is None:
+        raise ValueError(
+            "Timestamped historical news_events are required; synthetic news is prohibited."
+        )
+    df_news = pd.DataFrame(news_events) if isinstance(news_events, list) else news_events.copy()
 
     if df_news.empty or "published_at" not in df_news.columns:
         for col in NEWS_FEATURE_NAMES:
@@ -645,14 +616,16 @@ def build_feature_frame(
             out[f"mkt_{col}"] = mkt_aligned[col]
 
     if feature_mode == "price_plus_ohlc_plus_market_plus_news":
-        if news_frame is not None:
-            n_aligned = news_frame.reindex(data.index).fillna(0.0)
-            for col in n_aligned.columns:
-                out[col] = n_aligned[col]
-        else:
-            n_gen = build_causal_news_features(data.index, ticker=ticker or "UNKNOWN")
-            for col in n_gen.columns:
-                out[col] = n_gen[col]
+        if news_frame is None:
+            raise ValueError(
+                "News feature mode requires a real point-in-time historical news frame."
+            )
+        missing_news = set(NEWS_FEATURE_NAMES) - set(news_frame.columns)
+        if missing_news:
+            raise ValueError(f"Historical news frame is missing features: {sorted(missing_news)}")
+        n_aligned = news_frame.reindex(data.index).fillna(0.0)
+        for col in NEWS_FEATURE_NAMES:
+            out[col] = n_aligned[col]
 
     return out.replace([np.inf, -np.inf], np.nan)
 

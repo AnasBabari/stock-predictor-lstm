@@ -1,0 +1,10 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "sec_edgar,yahoo",
+  "archive": "MSFT.jsonl",
+  "article_count": 99,
+  "published_start": "2020-06-26T13:10:16Z",
+  "published_end": "2026-09-04T19:32:31Z",
+  "sha256": "e472b613563fb5f3e717f797b6ae7045fd41fa4a78f5774a3a45e9ebb8874b1b",
+  "generated_at": "2026-09-04T19:36:54.912242Z"
+}

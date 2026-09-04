@@ -1,0 +1,758 @@
+{
+  "batch_errors": [],
+  "batch_status": "partial",
+  "deployed_code_commit": "4228e21d",
+  "expected_nyse_session": "2026-09-03",
+  "expected_record_count": 60,
+  "failed_count": 60,
+  "horizons": [
+    1,
+    5,
+    10,
+    20
+  ],
+  "items": [
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "MSFT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "MSFT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "MSFT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "MSFT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "AAPL"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "AAPL"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "AAPL"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "AAPL"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NVDA"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NVDA"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NVDA"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NVDA"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "GOOGL"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "GOOGL"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "GOOGL"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "GOOGL"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "AMZN"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "AMZN"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "AMZN"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "AMZN"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "META"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "META"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "META"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "META"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "JPM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "JPM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "JPM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "JPM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "XOM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "XOM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "XOM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "XOM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "JNJ"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "JNJ"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "JNJ"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "JNJ"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "WMT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "WMT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "WMT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "WMT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "CAT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "CAT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "CAT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "CAT"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NEE"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NEE"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NEE"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NEE"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "PLD"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "PLD"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "PLD"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "PLD"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "KO"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "KO"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "KO"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "KO"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 1,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NMM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 5,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NMM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 10,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NMM"
+    },
+    {
+      "data_as_of": null,
+      "errors": [
+        "http_401_Collector authentication failed (token value mismatch)."
+      ],
+      "forecast_fingerprint": null,
+      "horizon": 20,
+      "http_status": 401,
+      "model": null,
+      "status": "failed",
+      "ticker": "NMM"
+    }
+  ],
+  "live_start_date": "2026-09-02",
+  "run_timestamp": "2026-09-04T13:14:11.180363+00:00",
+  "succeeded_count": 0,
+  "ticker_count": 15,
+  "tickers": [
+    "MSFT",
+    "AAPL",
+    "NVDA",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "JPM",
+    "XOM",
+    "JNJ",
+    "WMT",
+    "CAT",
+    "NEE",
+    "PLD",
+    "KO",
+    "NMM"
+  ],
+  "universe_version": "live_universe_v1"
+}
