@@ -323,7 +323,9 @@ def run_live_collection(
         elif response.status_code != 200:
             detail = response.payload.get("detail")
             errors.append(
-                f"http_{response.status_code}_{detail}" if detail else f"http_{response.status_code}"
+                f"http_{response.status_code}_{detail}"
+                if detail
+                else f"http_{response.status_code}"
             )
         elif returned_fingerprint != expected_fingerprint:
             errors.append("preflight_fingerprint_changed")
