@@ -13,6 +13,11 @@ on:
           - live
           - settle
           - export
+      expected_session:
+        description: Explicit completed NYSE session date (YYYY-MM-DD) for operator runs
+        required: false
+        default: ""
+        type: string
   schedule:
     # GitHub cron is UTC. These paired invocations cover 22:30 Europe/London
     # across BST/GMT; the exchange-aware collector accepts only the correct one.
@@ -54,6 +59,7 @@ jobs:
           FORECAST_COLLECTOR_TOKEN: ${{ secrets.FORECAST_COLLECTOR_TOKEN }}
           RENDER_PRODUCTION_BASE_URL: ${{ vars.RENDER_PRODUCTION_BASE_URL }}
           REQUESTED_OPERATION: ${{ inputs.operation }}
+          EXPECTED_SESSION: ${{ inputs.expected_session }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           mode="${REQUESTED_OPERATION:-live}"
@@ -62,10 +68,15 @@ jobs:
             mode="live"
             scheduled="--scheduled"
           fi
+          session_arg=""
+          if [ -n "$EXPECTED_SESSION" ]; then
+            session_arg="--expected-session $EXPECTED_SESSION"
+          fi
           python scripts/collect_live_forecasts.py \
             --base-url "$RENDER_PRODUCTION_BASE_URL" \
             --mode "$mode" \
             $scheduled \
+            $session_arg \
             --output-dir artifacts/live-collection
       - name: Upload operational manifest
         if: always()
