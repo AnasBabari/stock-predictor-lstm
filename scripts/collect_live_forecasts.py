@@ -243,6 +243,11 @@ def run_preflight(
                 "errors": errors,
             }
         )
+        status_label = "preview_passed" if not errors else f"preview_failed: {','.join(errors)}"
+        print(
+            f"[PREFLIGHT {index + 1}/{LIVE_EXPECTED_RECORD_COUNT}] {ticker} h={horizon} -> HTTP {response.status_code} ({status_label})",
+            flush=True,
+        )
         if interval_seconds and index + 1 < LIVE_EXPECTED_RECORD_COUNT:
             time.sleep(interval_seconds)
 
@@ -331,6 +336,11 @@ def run_live_collection(
                 "model": response.payload.get("forecast", {}).get("model"),
                 "errors": errors,
             }
+        )
+        status_label = "recorded" if not errors else f"failed: {','.join(errors)}"
+        print(
+            f"[LIVE WRITE {index + 1}/{LIVE_EXPECTED_RECORD_COUNT}] {ticker} h={horizon} -> HTTP {response.status_code} ({status_label})",
+            flush=True,
         )
         if interval_seconds and index + 1 < LIVE_EXPECTED_RECORD_COUNT:
             time.sleep(interval_seconds)
