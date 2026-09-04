@@ -64,7 +64,8 @@ class CollectorClient:
         token: str | None = None,
         attempts: int = 2,
     ) -> ApiResult:
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        clean_token = token.strip().strip("\"'") if token else None
+        headers = {"Authorization": f"Bearer {clean_token}"} if clean_token else {}
         last_error: Exception | None = None
         for attempt in range(attempts):
             try:
@@ -320,7 +321,10 @@ def run_live_collection(
         if response.status_code == 409:
             errors.append("immutable_fingerprint_conflict")
         elif response.status_code != 200:
-            errors.append(f"http_{response.status_code}")
+            detail = response.payload.get("detail")
+            errors.append(
+                f"http_{response.status_code}_{detail}" if detail else f"http_{response.status_code}"
+            )
         elif returned_fingerprint != expected_fingerprint:
             errors.append("preflight_fingerprint_changed")
         elif evidence.get("ledger_write") != "recorded_live":

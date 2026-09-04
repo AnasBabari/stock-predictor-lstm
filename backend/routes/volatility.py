@@ -72,10 +72,11 @@ def require_collector_auth(
     authorization: Annotated[str | None, Header()] = None,
 ) -> None:
     """Require the server-side collector bearer token without logging it."""
-    configured = os.getenv(COLLECTOR_TOKEN_ENV, "")
+    configured = os.getenv(COLLECTOR_TOKEN_ENV, "").strip().strip("\"'")
     if not configured:
         raise HTTPException(status_code=503, detail="Collector authentication is unavailable.")
     scheme, separator, candidate = (authorization or "").partition(" ")
+    candidate = candidate.strip().strip("\"'")
     authenticated = (
         separator == " "
         and scheme.lower() == "bearer"
@@ -83,9 +84,20 @@ def require_collector_auth(
         and secrets.compare_digest(candidate, configured)
     )
     if not authenticated:
+        mismatch_hint = (
+            f"token length mismatch (received {len(candidate)}, expected {len(configured)})"
+            if len(candidate) != len(configured)
+            else "token value mismatch"
+        )
+        logger.warning(
+            "Collector auth failed: scheme=%s, candidate_len=%d, configured_len=%d",
+            scheme,
+            len(candidate),
+            len(configured),
+        )
         raise HTTPException(
             status_code=401,
-            detail="Collector authentication failed.",
+            detail=f"Collector authentication failed ({mismatch_hint}).",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
