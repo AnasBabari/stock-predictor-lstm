@@ -108,9 +108,7 @@ def main() -> int:
     px = pd.read_parquet(REPO_ROOT / "data" / "macro" / "market_dailies.parquet")
     feats, feat_names = build_features(px)
     log_adj = np.log(px["SPY_ADJ"].to_numpy(dtype=float))
-    target = np.array(
-        [float(log_adj[i + HORIZON] - log_adj[i]) for i in range(len(px) - HORIZON)]
-    )
+    target = np.array([float(log_adj[i + HORIZON] - log_adj[i]) for i in range(len(px) - HORIZON)])
     # Align features to origins that admit a full 21-day forward window.
     feats = feats.iloc[: len(px) - HORIZON]
     origin_dates = feats.index
@@ -143,7 +141,11 @@ def main() -> int:
 
     majority = 1 if (target[train_idx] > 0).sum() >= (target[train_idx] < 0).sum() else -1
     scaler = StandardScaler().fit(x_all[fit_idx])
-    x_train, x_val, x_stop = scaler.transform(x_all[fit_idx]), scaler.transform(x_all[val_idx]), scaler.transform(x_all[estop_idx])
+    x_train, x_val, x_stop = (
+        scaler.transform(x_all[fit_idx]),
+        scaler.transform(x_all[val_idx]),
+        scaler.transform(x_all[estop_idx]),
+    )
     y_train, y_val = target[fit_idx], target[val_idx]
 
     ridge = Ridge(alpha=100.0, fit_intercept=True, solver="cholesky").fit(x_train, y_train)
@@ -180,14 +182,17 @@ def main() -> int:
         "ridge": pred_ridge,
         "xgboost": pred_xgb,
     }
-    summaries = {
-        name: summarize(y_val, p, majority, name) for name, p in preds.items()
-    }
+    summaries = {name: summarize(y_val, p, majority, name) for name, p in preds.items()}
     err = {name: pct_errors(y_val, p)[0] for name, p in preds.items()}
     hac = {}
     for ref, cand in [("persistence", "ridge"), ("persistence", "xgboost"), ("ridge", "xgboost")]:
         diff = np.abs(err[ref]) - np.abs(err[cand])
-        daily = pd.Series(diff, index=pd.to_datetime(origin_dates[val_idx])).groupby(level=0).mean().sort_index()
+        daily = (
+            pd.Series(diff, index=pd.to_datetime(origin_dates[val_idx]))
+            .groupby(level=0)
+            .mean()
+            .sort_index()
+        )
         hac[f"{ref}_vs_{cand}"] = {
             f"bandwidth_{L}": hac_mean(daily.to_numpy(), L) for L in (20, 40, 60)
         }
@@ -202,8 +207,16 @@ def main() -> int:
         "target": "ln(SPY_ADJ[t+21]/SPY_ADJ[t])",
         "macro_mode": "market_dailies_only",
         "monthly_revised_block": "excluded",
-        "rows": {"features": n, "train_fit": int(len(fit_idx)), "early_stop": int(len(estop_idx)), "validation": int(len(val_idx))},
-        "purge_check": {"max_train_origin_plus_21_lt_b70": bool(int(train_idx.max()) + HORIZON < b70), "test_scored": False},
+        "rows": {
+            "features": n,
+            "train_fit": int(len(fit_idx)),
+            "early_stop": int(len(estop_idx)),
+            "validation": int(len(val_idx)),
+        },
+        "purge_check": {
+            "max_train_origin_plus_21_lt_b70": bool(int(train_idx.max()) + HORIZON < b70),
+            "test_scored": False,
+        },
         "majority_direction_train": majority,
         "kmeans_k": KMEANS_K,
         "feature_names": all_names,

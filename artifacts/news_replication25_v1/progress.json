@@ -1,0 +1,102 @@
+[
+  {
+    "ticker": "ADBE",
+    "exit_code": 0
+  },
+  {
+    "ticker": "AMD",
+    "exit_code": 0
+  },
+  {
+    "ticker": "CSCO",
+    "exit_code": 0
+  },
+  {
+    "ticker": "IBM",
+    "exit_code": 0
+  },
+  {
+    "ticker": "JPM",
+    "exit_code": 0
+  },
+  {
+    "ticker": "BAC",
+    "exit_code": 0
+  },
+  {
+    "ticker": "GS",
+    "exit_code": 0
+  },
+  {
+    "ticker": "AXP",
+    "exit_code": 0
+  },
+  {
+    "ticker": "JNJ",
+    "exit_code": 0
+  },
+  {
+    "ticker": "MRK",
+    "exit_code": 0
+  },
+  {
+    "ticker": "ABT",
+    "exit_code": 0
+  },
+  {
+    "ticker": "GILD",
+    "exit_code": 0
+  },
+  {
+    "ticker": "CAT",
+    "exit_code": 0
+  },
+  {
+    "ticker": "DE",
+    "exit_code": 0
+  },
+  {
+    "ticker": "HON",
+    "exit_code": 0
+  },
+  {
+    "ticker": "LMT",
+    "exit_code": 0
+  },
+  {
+    "ticker": "CVX",
+    "exit_code": 0
+  },
+  {
+    "ticker": "COP",
+    "exit_code": 0
+  },
+  {
+    "ticker": "EOG",
+    "exit_code": 0
+  },
+  {
+    "ticker": "KO",
+    "exit_code": 0
+  },
+  {
+    "ticker": "COST",
+    "exit_code": 0
+  },
+  {
+    "ticker": "MCD",
+    "exit_code": 0
+  },
+  {
+    "ticker": "HD",
+    "exit_code": 0
+  },
+  {
+    "ticker": "DIS",
+    "exit_code": 0
+  },
+  {
+    "ticker": "AEP",
+    "exit_code": 0
+  }
+]

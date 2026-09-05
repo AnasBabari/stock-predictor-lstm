@@ -290,9 +290,7 @@ def build_global_price_dataset(
             diag = validate_news_archive(macro_events, data.index)
             news_coverage_summary[ticker] = diag
             if not diag["is_valid"]:
-                raise ValueError(
-                    f"Macro archive has insufficient events: {diag.get('reason')}"
-                )
+                raise ValueError(f"Macro archive has insufficient events: {diag.get('reason')}")
             macro_frame = build_macro_news_features(data.index, macro_events=macro_events)
             combined_features = pd.concat(
                 [feature_frame, macro_frame.loc[feature_frame.index]], axis=1

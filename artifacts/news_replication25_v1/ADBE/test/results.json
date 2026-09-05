@@ -1,0 +1,393 @@
+{
+  "metrics": [
+    {
+      "horizon": 5,
+      "arm": "rolling",
+      "train_rows": 1327,
+      "test_rows": 281,
+      "qlike": 0.35943997277238365,
+      "annualized_vol_mae": 0.10993417844250696,
+      "annualized_vol_rmse": 0.1401220761640727
+    },
+    {
+      "horizon": 5,
+      "arm": "frozen_rolling",
+      "train_rows": 1327,
+      "test_rows": 281,
+      "qlike": 0.35827978014213413,
+      "annualized_vol_mae": 0.10976679054301007,
+      "annualized_vol_rmse": 0.1399391786975827
+    },
+    {
+      "horizon": 5,
+      "arm": "A_ohlcv",
+      "train_rows": 1327,
+      "test_rows": 281,
+      "qlike": 0.5356696693656536,
+      "annualized_vol_mae": 0.1200794640432229,
+      "annualized_vol_rmse": 0.1588561534564507
+    },
+    {
+      "horizon": 5,
+      "arm": "B_activity",
+      "train_rows": 1327,
+      "test_rows": 281,
+      "qlike": 0.5189087107399606,
+      "annualized_vol_mae": 0.11961532619207653,
+      "annualized_vol_rmse": 0.15673070308865722
+    },
+    {
+      "horizon": 5,
+      "arm": "C_sentiment",
+      "train_rows": 1327,
+      "test_rows": 281,
+      "qlike": 0.4985594419039284,
+      "annualized_vol_mae": 0.11872821266430338,
+      "annualized_vol_rmse": 0.1546178455737952
+    },
+    {
+      "horizon": 10,
+      "arm": "rolling",
+      "train_rows": 1322,
+      "test_rows": 276,
+      "qlike": 0.16547098170113708,
+      "annualized_vol_mae": 0.07797857685420038,
+      "annualized_vol_rmse": 0.09601891153708056
+    },
+    {
+      "horizon": 10,
+      "arm": "frozen_rolling",
+      "train_rows": 1322,
+      "test_rows": 276,
+      "qlike": 0.16501685489295376,
+      "annualized_vol_mae": 0.07797258092443499,
+      "annualized_vol_rmse": 0.0958731666765972
+    },
+    {
+      "horizon": 10,
+      "arm": "A_ohlcv",
+      "train_rows": 1322,
+      "test_rows": 276,
+      "qlike": 0.2481305732986307,
+      "annualized_vol_mae": 0.0922351249326079,
+      "annualized_vol_rmse": 0.11760828087033762
+    },
+    {
+      "horizon": 10,
+      "arm": "B_activity",
+      "train_rows": 1322,
+      "test_rows": 276,
+      "qlike": 0.22631501184649108,
+      "annualized_vol_mae": 0.08855820179611458,
+      "annualized_vol_rmse": 0.11293537160133055
+    },
+    {
+      "horizon": 10,
+      "arm": "C_sentiment",
+      "train_rows": 1322,
+      "test_rows": 276,
+      "qlike": 0.21139753714337328,
+      "annualized_vol_mae": 0.08589164924985185,
+      "annualized_vol_rmse": 0.10896918982139943
+    },
+    {
+      "horizon": 20,
+      "arm": "rolling",
+      "train_rows": 1312,
+      "test_rows": 266,
+      "qlike": 0.0925277635427002,
+      "annualized_vol_mae": 0.057645703575501486,
+      "annualized_vol_rmse": 0.07206673254621135
+    },
+    {
+      "horizon": 20,
+      "arm": "frozen_rolling",
+      "train_rows": 1312,
+      "test_rows": 266,
+      "qlike": 0.0920942813517502,
+      "annualized_vol_mae": 0.05782409080260008,
+      "annualized_vol_rmse": 0.07210135716497616
+    },
+    {
+      "horizon": 20,
+      "arm": "A_ohlcv",
+      "train_rows": 1312,
+      "test_rows": 266,
+      "qlike": 0.1450465132192811,
+      "annualized_vol_mae": 0.07063098637725267,
+      "annualized_vol_rmse": 0.09269193827223954
+    },
+    {
+      "horizon": 20,
+      "arm": "B_activity",
+      "train_rows": 1312,
+      "test_rows": 266,
+      "qlike": 0.1285499034616624,
+      "annualized_vol_mae": 0.06789380000783363,
+      "annualized_vol_rmse": 0.08740721752357429
+    },
+    {
+      "horizon": 20,
+      "arm": "C_sentiment",
+      "train_rows": 1312,
+      "test_rows": 266,
+      "qlike": 0.13030614442252272,
+      "annualized_vol_mae": 0.06978056643367575,
+      "annualized_vol_rmse": 0.08754282187406884
+    }
+  ],
+  "estimator": "xgboost_cuda",
+  "paired_hac": [
+    {
+      "horizon": 5,
+      "arm": "B_activity",
+      "lag": 4,
+      "dates": 281,
+      "mean_loss_improvement": 0.016760958625692976,
+      "se": 0.01372400029492063,
+      "ci95": [
+        -0.010137587676167799,
+        0.04365950492755375
+      ],
+      "p_two_sided": 0.22197694691341163
+    },
+    {
+      "horizon": 5,
+      "arm": "B_activity",
+      "lag": 8,
+      "dates": 281,
+      "mean_loss_improvement": 0.016760958625692976,
+      "se": 0.014046600436302114,
+      "ci95": [
+        -0.010769872334683017,
+        0.04429178958606897
+      ],
+      "p_two_sided": 0.23277558498439865
+    },
+    {
+      "horizon": 5,
+      "arm": "B_activity",
+      "lag": 12,
+      "dates": 281,
+      "mean_loss_improvement": 0.016760958625692976,
+      "se": 0.014226664019221087,
+      "ci95": [
+        -0.011122790472131439,
+        0.04464470772351739
+      ],
+      "p_two_sided": 0.23874201149166607
+    },
+    {
+      "horizon": 5,
+      "arm": "C_sentiment",
+      "lag": 4,
+      "dates": 281,
+      "mean_loss_improvement": 0.037110227461725244,
+      "se": 0.021374445247759975,
+      "ci95": [
+        -0.0047829154134064675,
+        0.07900337033685695
+      ],
+      "p_two_sided": 0.0825291750399108
+    },
+    {
+      "horizon": 5,
+      "arm": "C_sentiment",
+      "lag": 8,
+      "dates": 281,
+      "mean_loss_improvement": 0.037110227461725244,
+      "se": 0.02284320419943702,
+      "ci95": [
+        -0.007661630060664205,
+        0.0818820849841147
+      ],
+      "p_two_sided": 0.10425567723956644
+    },
+    {
+      "horizon": 5,
+      "arm": "C_sentiment",
+      "lag": 12,
+      "dates": 281,
+      "mean_loss_improvement": 0.037110227461725244,
+      "se": 0.02353860801017821,
+      "ci95": [
+        -0.009024596484428805,
+        0.0832450514078793
+      ],
+      "p_two_sided": 0.11489485007496414
+    },
+    {
+      "horizon": 10,
+      "arm": "B_activity",
+      "lag": 9,
+      "dates": 276,
+      "mean_loss_improvement": 0.021815561452139646,
+      "se": 0.012471468177324774,
+      "ci95": [
+        -0.0026280670097536298,
+        0.046259189914032925
+      ],
+      "p_two_sided": 0.08024995177886295
+    },
+    {
+      "horizon": 10,
+      "arm": "B_activity",
+      "lag": 18,
+      "dates": 276,
+      "mean_loss_improvement": 0.021815561452139646,
+      "se": 0.012576682317622108,
+      "ci95": [
+        -0.0028342829354007434,
+        0.046465405839680035
+      ],
+      "p_two_sided": 0.08281099873498152
+    },
+    {
+      "horizon": 10,
+      "arm": "B_activity",
+      "lag": 27,
+      "dates": 276,
+      "mean_loss_improvement": 0.021815561452139646,
+      "se": 0.011530368227359205,
+      "ci95": [
+        -0.0007835450019687204,
+        0.04441466790624801
+      ],
+      "p_two_sided": 0.058489770209085454
+    },
+    {
+      "horizon": 10,
+      "arm": "C_sentiment",
+      "lag": 9,
+      "dates": 276,
+      "mean_loss_improvement": 0.03673303615525744,
+      "se": 0.01717850655834162,
+      "ci95": [
+        0.0030637819927236826,
+        0.0704022903177912
+      ],
+      "p_two_sided": 0.03249129027056275
+    },
+    {
+      "horizon": 10,
+      "arm": "C_sentiment",
+      "lag": 18,
+      "dates": 276,
+      "mean_loss_improvement": 0.03673303615525744,
+      "se": 0.017864532202371095,
+      "ci95": [
+        0.0017191964379550465,
+        0.07174687587255985
+      ],
+      "p_two_sided": 0.03976332297173017
+    },
+    {
+      "horizon": 10,
+      "arm": "C_sentiment",
+      "lag": 27,
+      "dates": 276,
+      "mean_loss_improvement": 0.03673303615525744,
+      "se": 0.017018870458029158,
+      "ci95": [
+        0.00337666299996852,
+        0.07008940931054636
+      ],
+      "p_two_sided": 0.030898999914691142
+    },
+    {
+      "horizon": 20,
+      "arm": "B_activity",
+      "lag": 19,
+      "dates": 266,
+      "mean_loss_improvement": 0.016496609757618727,
+      "se": 0.010689670118417462,
+      "ci95": [
+        -0.004454758681092935,
+        0.03744797819633039
+      ],
+      "p_two_sided": 0.12277520452332298
+    },
+    {
+      "horizon": 20,
+      "arm": "B_activity",
+      "lag": 38,
+      "dates": 266,
+      "mean_loss_improvement": 0.016496609757618727,
+      "se": 0.010376025481209417,
+      "ci95": [
+        -0.0038400264882210537,
+        0.03683324600345851
+      ],
+      "p_two_sided": 0.11186241361826033
+    },
+    {
+      "horizon": 20,
+      "arm": "B_activity",
+      "lag": 57,
+      "dates": 266,
+      "mean_loss_improvement": 0.016496609757618727,
+      "se": 0.009615421026010701,
+      "ci95": [
+        -0.002349269149550904,
+        0.035342488664788355
+      ],
+      "p_two_sided": 0.08622778449086599
+    },
+    {
+      "horizon": 20,
+      "arm": "C_sentiment",
+      "lag": 19,
+      "dates": 266,
+      "mean_loss_improvement": 0.01474036879675839,
+      "se": 0.020554901131698784,
+      "ci95": [
+        -0.025546497127151714,
+        0.0550272347206685
+      ],
+      "p_two_sided": 0.47329891258446843
+    },
+    {
+      "horizon": 20,
+      "arm": "C_sentiment",
+      "lag": 38,
+      "dates": 266,
+      "mean_loss_improvement": 0.01474036879675839,
+      "se": 0.020265589939985163,
+      "ci95": [
+        -0.02497945761106867,
+        0.054460195204585456
+      ],
+      "p_two_sided": 0.46700577483972283
+    },
+    {
+      "horizon": 20,
+      "arm": "C_sentiment",
+      "lag": 57,
+      "dates": 266,
+      "mean_loss_improvement": 0.01474036879675839,
+      "se": 0.018704535628207147,
+      "ci95": [
+        -0.02191984738207288,
+        0.051400584975589664
+      ],
+      "p_two_sided": 0.4306593453831895
+    }
+  ],
+  "test_scored": true,
+  "evaluation_partition": "test",
+  "split": {
+    "start": "2019-01-02 00:00:00",
+    "train_end": "2024-04-18 00:00:00",
+    "score_start": "2025-06-10 00:00:00",
+    "score_end": "2026-07-31 00:00:00",
+    "partition": "test"
+  },
+  "deployment": false,
+  "status": "exploratory_split_complete",
+  "limitations": [
+    "Selected surviving stocks only; not a point-in-time universe",
+    "Retrieved version availability relies on provider update semantics",
+    "Exploratory unadjusted HAC",
+    "SEC, GARCH, event, macro, FinBERT arms not included"
+  ]
+}

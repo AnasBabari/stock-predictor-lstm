@@ -521,7 +521,7 @@ def _predict_gpu_lstm(
             batch_tensor = torch.from_numpy(np.stack(valid_seqs)).float()
             out = lstm_model(batch_tensor, t_id)
         batch_out = (out.detach().numpy() * t_std + t_mean).astype(np.float64)
-        for idx, pred in zip(valid_indices, batch_out):
+        for idx, pred in zip(valid_indices, batch_out, strict=False):
             preds[idx] = pred
     return preds
 

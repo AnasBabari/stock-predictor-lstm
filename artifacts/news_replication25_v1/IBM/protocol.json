@@ -1,0 +1,73 @@
+{
+  "ticker": "IBM",
+  "ratios_before_purge": [
+    70,
+    15,
+    15
+  ],
+  "origins": 1910,
+  "start": "2019-01-02 00:00:00",
+  "train_end_exclusive": "2024-04-25 00:00:00",
+  "test_start": "2025-06-17 00:00:00",
+  "end_exclusive": "2026-08-08 00:00:00",
+  "news_hashes": {
+    "IBM_2019-01-01.jsonl": "70be4e0983cd22e1ec10272aab6742dba8f892a7350c386d63b85070ec774d29",
+    "IBM_2019-04-01.jsonl": "6923cbb86f5d0a825ad3de818b5c204f5d62e0dec0f5be00a8b782118bdff6b7",
+    "IBM_2019-07-01.jsonl": "900652f8b1f02c22b794526a20bac7dc639b90b80f8c614b0f436da7abb3cbb7",
+    "IBM_2019-10-01.jsonl": "47309e5ec1e658fe2e917eaaa82dc661d1ccda44269237989f91310c0553a04c",
+    "IBM_2020-01-01.jsonl": "b2000fe510c409c634c23df11356e7576ce4680f750694a7e12793b340f92f05",
+    "IBM_2020-04-01.jsonl": "88ea47468a5209ae4ec645a9fb8afb0aed85e9f8010d061950aa3e1d45201856",
+    "IBM_2020-07-01.jsonl": "ad76694930bda47387e720a1849af36cf9efe01ea274ab28ed046909e74575e5",
+    "IBM_2020-10-01.jsonl": "a7aa00049cd05c8c09aa62d207ded602909600efecec1e7d0a4b1c25a9fa5748",
+    "IBM_2021-01-01.jsonl": "f1d779ad3ec29ab8aca431dbc98e6e964b31ca83effc319fd643eefea6d138f3",
+    "IBM_2021-04-01.jsonl": "523201ce36f7bf23e8a93915368ed9c6f5570e1e2fb5ae5f32f0486ca09f40b0",
+    "IBM_2021-07-01.jsonl": "0614913116f8c3968d523f1a4f16d91305f3f0a9c161717c84b24f7e8cb69be8",
+    "IBM_2021-10-01.jsonl": "0f4385421c431e453909fe284710c3016a267ae6de1419889f8377665130bfbf",
+    "IBM_2022-01-01.jsonl": "f64fe631e503735d73e4b051dc292fbaf5309a7c56738e4749e7059b26ab0add",
+    "IBM_2022-04-01.jsonl": "d36e7397438172e131655699fe534fd97f05700709650856b780c4cf298a4213",
+    "IBM_2022-07-01.jsonl": "e58e0d656931a63fca9cb41f68feae831776425cce4c0807e33b5713afa81aad",
+    "IBM_2022-10-01.jsonl": "fc1feadb1bfd5c98569093cbf34aee73183e9eb127dad1d0198f985c5274f796",
+    "IBM_2023-01-01.jsonl": "184bb152dd182b5f1f8755c05e117088d8ff7b4eb0368a90028a5b5b8deaf91c",
+    "IBM_2023-04-01.jsonl": "b9343905edb809af2aaac1ee1eebab41ed791ded176652b54d92b4554c408f10",
+    "IBM_2023-07-01.jsonl": "18c600b82aa88c044f7981c2629d10e127dcf670a65d66a16c9b7b5624e27567",
+    "IBM_2023-10-01.jsonl": "9fc18711c6fb52ee5c730bf7618235e0af4e289f86745e09c0ae2c4f9b3769d2",
+    "IBM_2024-01-01.jsonl": "622d28e9924f317362959cdb60b27b7b2e014312929c0a5110ca45cdba6aa87d",
+    "IBM_2024-04-01.jsonl": "ed23313a7e270606e7571d0913257dcfa6851b968d8a02afe4df7a7b628b6cfa",
+    "IBM_2024-07-01.jsonl": "2badb3ee0fb055c5e4dd102889aebaed272d6aa713ee1c42736a463061b19be8",
+    "IBM_2024-10-01.jsonl": "e0b77883145fe51fa79d347b0bc32614a67e08d4b674487df84fbb32ca176c4e",
+    "IBM_2025-01-01.jsonl": "3c92cb36b781d0123a86c487af78e3eb1e0df453be180148216a72d6d690d8c0",
+    "IBM_2025-04-01.jsonl": "a558a42935a184f0e92337b2f7c7bc8b5af43d8600418dbdf06a05ac518fe5bc",
+    "IBM_2025-07-01.jsonl": "dd06b80df01d02fff04b3a23fce8e402297b73db43b6821416572552edde4360",
+    "IBM_2025-10-01.jsonl": "3251d37f2ebd21933344dba94123b2a4f093a2971a32f25f70600c1b85fccb8b",
+    "IBM_2026-01-01.jsonl": "37965231f57586263771edc82696c2254324210e694cb42ec54812172796bb82",
+    "IBM_2026-04-01.jsonl": "d2871aad3e327d553c340765e4287caa446d30dcd46b70db73a02e9c22793f3e",
+    "IBM_2026-07-01.jsonl": "6864d2a360bee3912014f8cd868a84326b13250a5571616f097f9a30d23ba1f8"
+  },
+  "ohlcv_sha256": "82c01756766709e0575225f4f0db72129c421ac145b5f5f24e865d3c2bf09845",
+  "diagnostics": {
+    "revision_policy": "revision-gate-6h-v1",
+    "flag_threshold_s": 900.0,
+    "discard_threshold_s": 21600.0,
+    "total": 2685,
+    "kept": 2675,
+    "discarded": 10,
+    "tier_counts": {
+      "1": 2629,
+      "2": 46,
+      "3": 10
+    },
+    "discard_rate": 0.0037243947858473,
+    "missing_updates": 0,
+    "duplicate_count": 1,
+    "unique_kept": 2674
+  },
+  "horizons": [
+    5,
+    10,
+    20
+  ],
+  "model": "XGBoost CUDA: 200 trees, depth 3, learning rate .03, lambda 10, min child weight 20, seed 42",
+  "selection": "Fixed settings, no validation tuning; both fits use training partition only",
+  "purge": "Label end strictly before each partition boundary; ratios change after purge",
+  "caveat": "Exploratory reused historical data, not an independently untouched certification test"
+}

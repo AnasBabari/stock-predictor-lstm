@@ -137,21 +137,20 @@ def main() -> int:
         "frobenius_all": float(np.linalg.norm(coef)),
         "frobenius_price": float(np.linalg.norm(price_n)),
         "frobenius_macro": float(np.linalg.norm(macro_n)),
-        "macro_share_of_norm_sq": float(
-            np.square(macro_n).sum() / np.square(coef).sum()
-        ),
-        "per_horizon_macro_norm": [
-            float(np.linalg.norm(macro_n[h])) for h in range(7)
-        ],
-        "per_horizon_price_norm": [
-            float(np.linalg.norm(price_n[h])) for h in range(7)
-        ],
+        "macro_share_of_norm_sq": float(np.square(macro_n).sum() / np.square(coef).sum()),
+        "per_horizon_macro_norm": [float(np.linalg.norm(macro_n[h])) for h in range(7)],
+        "per_horizon_price_norm": [float(np.linalg.norm(price_n[h])) for h in range(7)],
         "top_macro_weights": [
-            {"feature": MACRO_NEWS_FEATURE_NAMES[j], "horizon_day": int(h) + 1, "w": float(macro_n[h, j])}
+            {
+                "feature": MACRO_NEWS_FEATURE_NAMES[j],
+                "horizon_day": int(h) + 1,
+                "w": float(macro_n[h, j]),
+            }
             for h, j in zip(
                 *np.unravel_index(
                     np.argpartition(-np.abs(macro_n), 5, axis=None)[:5], macro_n.shape
-                )
+                ),
+                strict=False,
             )
         ],
     }

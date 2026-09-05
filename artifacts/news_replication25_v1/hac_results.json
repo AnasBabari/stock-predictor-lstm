@@ -1,0 +1,272 @@
+[
+  {
+    "horizon": 5,
+    "scope": "available_assets",
+    "lag_multiple": 1,
+    "lag": 4,
+    "dates": 287,
+    "mean_loss_improvement": -0.006602062783553671,
+    "se": 0.009181379682950068,
+    "ci95": [
+      -0.02459723629052309,
+      0.011393110723415745
+    ],
+    "p_two_sided": 0.47209724736196657,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 5,
+    "scope": "available_assets",
+    "lag_multiple": 2,
+    "lag": 8,
+    "dates": 287,
+    "mean_loss_improvement": -0.006602062783553671,
+    "se": 0.009961657289022834,
+    "ci95": [
+      -0.026126552296368802,
+      0.012922426729261458
+    ],
+    "p_two_sided": 0.5074923263559883,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 5,
+    "scope": "available_assets",
+    "lag_multiple": 3,
+    "lag": 12,
+    "dates": 287,
+    "mean_loss_improvement": -0.006602062783553671,
+    "se": 0.01018457261815088,
+    "ci95": [
+      -0.026563458313061655,
+      0.01335933274595431
+    ],
+    "p_two_sided": 0.5168287545434915,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 5,
+    "scope": "all_25_assets",
+    "lag_multiple": 1,
+    "lag": 4,
+    "dates": 276,
+    "mean_loss_improvement": -0.009416594621753448,
+    "se": 0.009301653473910848,
+    "ci95": [
+      -0.027647500427290087,
+      0.008814311183783192
+    ],
+    "p_two_sided": 0.31136735862162046,
+    "holm_p_three_horizons": 0.9341020758648614
+  },
+  {
+    "horizon": 5,
+    "scope": "all_25_assets",
+    "lag_multiple": 2,
+    "lag": 8,
+    "dates": 276,
+    "mean_loss_improvement": -0.009416594621753448,
+    "se": 0.010085654313701148,
+    "ci95": [
+      -0.02918411383712819,
+      0.010350924593621295
+    ],
+    "p_two_sided": 0.35047814753243234,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 5,
+    "scope": "all_25_assets",
+    "lag_multiple": 3,
+    "lag": 12,
+    "dates": 276,
+    "mean_loss_improvement": -0.009416594621753448,
+    "se": 0.010278322435142933,
+    "ci95": [
+      -0.029561736416123068,
+      0.010728547172616173
+    ],
+    "p_two_sided": 0.3595826379880829,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 10,
+    "scope": "available_assets",
+    "lag_multiple": 1,
+    "lag": 9,
+    "dates": 282,
+    "mean_loss_improvement": 0.0004100404163651453,
+    "se": 0.005154956210413627,
+    "ci95": [
+      -0.009693488097926365,
+      0.010513568930656657
+    ],
+    "p_two_sided": 0.9366007718476882,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 10,
+    "scope": "available_assets",
+    "lag_multiple": 2,
+    "lag": 18,
+    "dates": 282,
+    "mean_loss_improvement": 0.0004100404163651453,
+    "se": 0.005749949538824442,
+    "ci95": [
+      -0.010859653592653144,
+      0.011679734425383436
+    ],
+    "p_two_sided": 0.9431494428710003,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 10,
+    "scope": "available_assets",
+    "lag_multiple": 3,
+    "lag": 27,
+    "dates": 282,
+    "mean_loss_improvement": 0.0004100404163651453,
+    "se": 0.006098374728289247,
+    "ci95": [
+      -0.011542554415310687,
+      0.012362635248040979
+    ],
+    "p_two_sided": 0.9463925085399758,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 10,
+    "scope": "all_25_assets",
+    "lag_multiple": 1,
+    "lag": 9,
+    "dates": 271,
+    "mean_loss_improvement": 0.0004945916083638226,
+    "se": 0.005170820830923513,
+    "ci95": [
+      -0.00964003099075546,
+      0.010629214207483103
+    ],
+    "p_two_sided": 0.9237981542258675,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 10,
+    "scope": "all_25_assets",
+    "lag_multiple": 2,
+    "lag": 18,
+    "dates": 271,
+    "mean_loss_improvement": 0.0004945916083638226,
+    "se": 0.00558553689540336,
+    "ci95": [
+      -0.01045285954094613,
+      0.011442042757673774
+    ],
+    "p_two_sided": 0.9294406394377831,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 10,
+    "scope": "all_25_assets",
+    "lag_multiple": 3,
+    "lag": 27,
+    "dates": 271,
+    "mean_loss_improvement": 0.0004945916083638226,
+    "se": 0.005867378238891554,
+    "ci95": [
+      -0.011005258423537357,
+      0.011994441640265
+    ],
+    "p_two_sided": 0.9328217576313405,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 20,
+    "scope": "available_assets",
+    "lag_multiple": 1,
+    "lag": 19,
+    "dates": 272,
+    "mean_loss_improvement": -0.0011933485366105335,
+    "se": 0.0040310208641864305,
+    "ci95": [
+      -0.009094004251345244,
+      0.006707307178124177
+    ],
+    "p_two_sided": 0.7671985641822535,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 20,
+    "scope": "available_assets",
+    "lag_multiple": 2,
+    "lag": 38,
+    "dates": 272,
+    "mean_loss_improvement": -0.0011933485366105335,
+    "se": 0.0045073388191925415,
+    "ci95": [
+      -0.010027570288346967,
+      0.0076408732151259
+    ],
+    "p_two_sided": 0.7911968294076381,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 20,
+    "scope": "available_assets",
+    "lag_multiple": 3,
+    "lag": 57,
+    "dates": 272,
+    "mean_loss_improvement": -0.0011933485366105335,
+    "se": 0.004652024576878187,
+    "ci95": [
+      -0.010311149162486714,
+      0.007924452089265645
+    ],
+    "p_two_sided": 0.7975474817199855,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 20,
+    "scope": "all_25_assets",
+    "lag_multiple": 1,
+    "lag": 19,
+    "dates": 261,
+    "mean_loss_improvement": 0.0003375378253154281,
+    "se": 0.0029595155864273782,
+    "ci95": [
+      -0.005463006135767012,
+      0.006138081786397867
+    ],
+    "p_two_sided": 0.9091967989934784,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 20,
+    "scope": "all_25_assets",
+    "lag_multiple": 2,
+    "lag": 38,
+    "dates": 261,
+    "mean_loss_improvement": 0.0003375378253154281,
+    "se": 0.0031689187686904812,
+    "ci95": [
+      -0.005873428831250759,
+      0.006548504481881615
+    ],
+    "p_two_sided": 0.9151736440056903,
+    "holm_p_three_horizons": 1.0
+  },
+  {
+    "horizon": 20,
+    "scope": "all_25_assets",
+    "lag_multiple": 3,
+    "lag": 57,
+    "dates": 261,
+    "mean_loss_improvement": 0.0003375378253154281,
+    "se": 0.0032410085288172305,
+    "ci95": [
+      -0.006014722164753315,
+      0.006689797815384171
+    ],
+    "p_two_sided": 0.917053547539509,
+    "holm_p_three_horizons": 1.0
+  }
+]

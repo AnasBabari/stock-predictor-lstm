@@ -66,13 +66,21 @@ def test_scaler_is_robust_and_train_only(preprocessed):
     assert np.isfinite(train_median).all()
 
 
-def test_fetch_data_bad_ticker_raises():
+def test_fetch_data_bad_ticker_raises(monkeypatch):
     import pytest
 
-    from data_pipeline import fetch_data
+    import data_pipeline
+
+    def missing_symbol(ticker, **kwargs):
+        raise data_pipeline.MarketDataSymbolNotFound(ticker)
+
+    monkeypatch.setattr(data_pipeline.market_data_service, "fetch_daily_bars", missing_symbol)
+    monkeypatch.setattr(
+        data_pipeline, "market_circuit_breaker", data_pipeline.MarketCircuitBreaker()
+    )
 
     with pytest.raises(ValueError, match="(No market data|Not enough historical data)"):
-        fetch_data("ZZZZZZZZZ_FAKE")
+        data_pipeline.fetch_data("ZZZZZZZZZ_FAKE")
 
 
 def test_preprocess_insufficient_data():

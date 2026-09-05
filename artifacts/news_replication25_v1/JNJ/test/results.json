@@ -1,0 +1,393 @@
+{
+  "metrics": [
+    {
+      "horizon": 5,
+      "arm": "rolling",
+      "train_rows": 1332,
+      "test_rows": 282,
+      "qlike": 0.4424011707924449,
+      "annualized_vol_mae": 0.060500965373053,
+      "annualized_vol_rmse": 0.08200695316954987
+    },
+    {
+      "horizon": 5,
+      "arm": "frozen_rolling",
+      "train_rows": 1332,
+      "test_rows": 282,
+      "qlike": 0.43693742367865146,
+      "annualized_vol_mae": 0.05959092126949614,
+      "annualized_vol_rmse": 0.08123990650310589
+    },
+    {
+      "horizon": 5,
+      "arm": "A_ohlcv",
+      "train_rows": 1332,
+      "test_rows": 282,
+      "qlike": 0.618528752551684,
+      "annualized_vol_mae": 0.0595896852933747,
+      "annualized_vol_rmse": 0.08421767268009825
+    },
+    {
+      "horizon": 5,
+      "arm": "B_activity",
+      "train_rows": 1332,
+      "test_rows": 282,
+      "qlike": 0.6155507179405852,
+      "annualized_vol_mae": 0.05902220947885462,
+      "annualized_vol_rmse": 0.08382871308476449
+    },
+    {
+      "horizon": 5,
+      "arm": "C_sentiment",
+      "train_rows": 1332,
+      "test_rows": 282,
+      "qlike": 0.608497332729869,
+      "annualized_vol_mae": 0.05870812023403015,
+      "annualized_vol_rmse": 0.08343582148212757
+    },
+    {
+      "horizon": 10,
+      "arm": "rolling",
+      "train_rows": 1327,
+      "test_rows": 277,
+      "qlike": 0.30173348208701567,
+      "annualized_vol_mae": 0.052879101709871826,
+      "annualized_vol_rmse": 0.06959317602119373
+    },
+    {
+      "horizon": 10,
+      "arm": "frozen_rolling",
+      "train_rows": 1327,
+      "test_rows": 277,
+      "qlike": 0.2972946726140901,
+      "annualized_vol_mae": 0.0520293368780477,
+      "annualized_vol_rmse": 0.06879369354883566
+    },
+    {
+      "horizon": 10,
+      "arm": "A_ohlcv",
+      "train_rows": 1327,
+      "test_rows": 277,
+      "qlike": 0.3906663477484268,
+      "annualized_vol_mae": 0.05279109174869387,
+      "annualized_vol_rmse": 0.07207677562785565
+    },
+    {
+      "horizon": 10,
+      "arm": "B_activity",
+      "train_rows": 1327,
+      "test_rows": 277,
+      "qlike": 0.36970058392516425,
+      "annualized_vol_mae": 0.05257872470044855,
+      "annualized_vol_rmse": 0.07112090900015217
+    },
+    {
+      "horizon": 10,
+      "arm": "C_sentiment",
+      "train_rows": 1327,
+      "test_rows": 277,
+      "qlike": 0.3720226424478224,
+      "annualized_vol_mae": 0.051623253753472424,
+      "annualized_vol_rmse": 0.07061846882060006
+    },
+    {
+      "horizon": 20,
+      "arm": "rolling",
+      "train_rows": 1317,
+      "test_rows": 267,
+      "qlike": 0.20090526782449747,
+      "annualized_vol_mae": 0.04435436804740283,
+      "annualized_vol_rmse": 0.05665084967763466
+    },
+    {
+      "horizon": 20,
+      "arm": "frozen_rolling",
+      "train_rows": 1317,
+      "test_rows": 267,
+      "qlike": 0.19936806337905502,
+      "annualized_vol_mae": 0.043935216333841835,
+      "annualized_vol_rmse": 0.056013887434309725
+    },
+    {
+      "horizon": 20,
+      "arm": "A_ohlcv",
+      "train_rows": 1317,
+      "test_rows": 267,
+      "qlike": 0.2877594194904334,
+      "annualized_vol_mae": 0.0451831615282824,
+      "annualized_vol_rmse": 0.0627553200091123
+    },
+    {
+      "horizon": 20,
+      "arm": "B_activity",
+      "train_rows": 1317,
+      "test_rows": 267,
+      "qlike": 0.2542062141875507,
+      "annualized_vol_mae": 0.04446090800523221,
+      "annualized_vol_rmse": 0.060645860664396
+    },
+    {
+      "horizon": 20,
+      "arm": "C_sentiment",
+      "train_rows": 1317,
+      "test_rows": 267,
+      "qlike": 0.25799282566473414,
+      "annualized_vol_mae": 0.044799050963354986,
+      "annualized_vol_rmse": 0.06083159482614473
+    }
+  ],
+  "estimator": "xgboost_cuda",
+  "paired_hac": [
+    {
+      "horizon": 5,
+      "arm": "B_activity",
+      "lag": 4,
+      "dates": 282,
+      "mean_loss_improvement": 0.002978034611098744,
+      "se": 0.007972697395071376,
+      "ci95": [
+        -0.01264816514287703,
+        0.01860423436507452
+      ],
+      "p_two_sided": 0.7087546793301777
+    },
+    {
+      "horizon": 5,
+      "arm": "B_activity",
+      "lag": 8,
+      "dates": 282,
+      "mean_loss_improvement": 0.002978034611098744,
+      "se": 0.008839762356843204,
+      "ci95": [
+        -0.014347581240206365,
+        0.020303650462403854
+      ],
+      "p_two_sided": 0.7361992209810572
+    },
+    {
+      "horizon": 5,
+      "arm": "B_activity",
+      "lag": 12,
+      "dates": 282,
+      "mean_loss_improvement": 0.002978034611098744,
+      "se": 0.009265500513780162,
+      "ci95": [
+        -0.015182012694647239,
+        0.021138081916844728
+      ],
+      "p_two_sided": 0.7478988807002045
+    },
+    {
+      "horizon": 5,
+      "arm": "C_sentiment",
+      "lag": 4,
+      "dates": 282,
+      "mean_loss_improvement": 0.010031419821815116,
+      "se": 0.008016214174310848,
+      "ci95": [
+        -0.005680071252193199,
+        0.02574291089582343
+      ],
+      "p_two_sided": 0.21079178873015192
+    },
+    {
+      "horizon": 5,
+      "arm": "C_sentiment",
+      "lag": 8,
+      "dates": 282,
+      "mean_loss_improvement": 0.010031419821815116,
+      "se": 0.00815411194162142,
+      "ci95": [
+        -0.005950345909670401,
+        0.026013185553300632
+      ],
+      "p_two_sided": 0.21861159991750445
+    },
+    {
+      "horizon": 5,
+      "arm": "C_sentiment",
+      "lag": 12,
+      "dates": 282,
+      "mean_loss_improvement": 0.010031419821815116,
+      "se": 0.008421296639054485,
+      "ci95": [
+        -0.006474018293859424,
+        0.026536857937489656
+      ],
+      "p_two_sided": 0.2335764187574677
+    },
+    {
+      "horizon": 10,
+      "arm": "B_activity",
+      "lag": 9,
+      "dates": 277,
+      "mean_loss_improvement": 0.020965763823262464,
+      "se": 0.020919046582900717,
+      "ci95": [
+        -0.020034814070137498,
+        0.061966341716662425
+      ],
+      "p_two_sided": 0.3162309575147838
+    },
+    {
+      "horizon": 10,
+      "arm": "B_activity",
+      "lag": 18,
+      "dates": 277,
+      "mean_loss_improvement": 0.020965763823262464,
+      "se": 0.02262106271595078,
+      "ci95": [
+        -0.023370704392021664,
+        0.0653022320385466
+      ],
+      "p_two_sided": 0.354017462923762
+    },
+    {
+      "horizon": 10,
+      "arm": "B_activity",
+      "lag": 27,
+      "dates": 277,
+      "mean_loss_improvement": 0.020965763823262464,
+      "se": 0.022844029134744905,
+      "ci95": [
+        -0.023807710542620007,
+        0.06573923818914493
+      ],
+      "p_two_sided": 0.3587347251242903
+    },
+    {
+      "horizon": 10,
+      "arm": "C_sentiment",
+      "lag": 9,
+      "dates": 277,
+      "mean_loss_improvement": 0.018643705300604357,
+      "se": 0.016434022474474775,
+      "ci95": [
+        -0.013566386870487133,
+        0.05085379747169585
+      ],
+      "p_two_sided": 0.25660255751459704
+    },
+    {
+      "horizon": 10,
+      "arm": "C_sentiment",
+      "lag": 18,
+      "dates": 277,
+      "mean_loss_improvement": 0.018643705300604357,
+      "se": 0.01764597368980528,
+      "ci95": [
+        -0.01594176760355441,
+        0.053229178204763125
+      ],
+      "p_two_sided": 0.2907208449185663
+    },
+    {
+      "horizon": 10,
+      "arm": "C_sentiment",
+      "lag": 27,
+      "dates": 277,
+      "mean_loss_improvement": 0.018643705300604357,
+      "se": 0.01784050069903838,
+      "ci95": [
+        -0.016323033535671563,
+        0.05361044413688028
+      ],
+      "p_two_sided": 0.296013071669499
+    },
+    {
+      "horizon": 20,
+      "arm": "B_activity",
+      "lag": 19,
+      "dates": 267,
+      "mean_loss_improvement": 0.03355320530288267,
+      "se": 0.02382105427710279,
+      "ci95": [
+        -0.013135203154011323,
+        0.08024161375977668
+      ],
+      "p_two_sided": 0.15896753582072487
+    },
+    {
+      "horizon": 20,
+      "arm": "B_activity",
+      "lag": 38,
+      "dates": 267,
+      "mean_loss_improvement": 0.03355320530288267,
+      "se": 0.026636370021250088,
+      "ci95": [
+        -0.018653120617648455,
+        0.0857595312234138
+      ],
+      "p_two_sided": 0.20778614115387062
+    },
+    {
+      "horizon": 20,
+      "arm": "B_activity",
+      "lag": 57,
+      "dates": 267,
+      "mean_loss_improvement": 0.03355320530288267,
+      "se": 0.026922540457032754,
+      "ci95": [
+        -0.019214004365222595,
+        0.08632041497098794
+      ],
+      "p_two_sided": 0.21265914250036677
+    },
+    {
+      "horizon": 20,
+      "arm": "C_sentiment",
+      "lag": 19,
+      "dates": 267,
+      "mean_loss_improvement": 0.029766593825699256,
+      "se": 0.022784514488816514,
+      "ci95": [
+        -0.014890233977610922,
+        0.07442342162900943
+      ],
+      "p_two_sided": 0.1914030792311665
+    },
+    {
+      "horizon": 20,
+      "arm": "C_sentiment",
+      "lag": 38,
+      "dates": 267,
+      "mean_loss_improvement": 0.029766593825699256,
+      "se": 0.025046059854982938,
+      "ci95": [
+        -0.019322781444700437,
+        0.07885596909609895
+      ],
+      "p_two_sided": 0.23464667192288047
+    },
+    {
+      "horizon": 20,
+      "arm": "C_sentiment",
+      "lag": 57,
+      "dates": 267,
+      "mean_loss_improvement": 0.029766593825699256,
+      "se": 0.025274313101286555,
+      "ci95": [
+        -0.01977014958680987,
+        0.07930333723820839
+      ],
+      "p_two_sided": 0.23889989141952805
+    }
+  ],
+  "test_scored": true,
+  "evaluation_partition": "test",
+  "split": {
+    "start": "2019-01-02 00:00:00",
+    "train_end": "2024-04-25 00:00:00",
+    "score_start": "2025-06-17 00:00:00",
+    "score_end": "2026-08-08 00:00:00",
+    "partition": "test"
+  },
+  "deployment": false,
+  "status": "exploratory_split_complete",
+  "limitations": [
+    "Selected surviving stocks only; not a point-in-time universe",
+    "Retrieved version availability relies on provider update semantics",
+    "Exploratory unadjusted HAC",
+    "SEC, GARCH, event, macro, FinBERT arms not included"
+  ]
+}

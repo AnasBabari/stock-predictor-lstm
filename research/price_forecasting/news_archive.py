@@ -156,6 +156,10 @@ def _normalise_article(
         "ticker": ticker,
         "symbols": symbols,
         "headline": headline[:1000],
+        "summary": summary,
+        "raw_hash": hashlib.sha256(
+            json.dumps(article, sort_keys=True, default=str).encode()
+        ).hexdigest(),
         "source": source,
         "url": url,
         "published_at": timestamp.isoformat().replace("+00:00", "Z"),
@@ -290,7 +294,9 @@ def apply_revision_policy(
         annotated.update(gate)
         # Backfill t_available for callers that only read published_at.
         kept.append(annotated)
-    kept.sort(key=lambda r: (str(r.get("t_available", r.get("published_at", ""))), str(r.get("id", ""))))
+    kept.sort(
+        key=lambda r: (str(r.get("t_available", r.get("published_at", ""))), str(r.get("id", "")))
+    )
     total = sum(tier_counts.values())
     diagnostics = {
         "revision_policy": REVISION_POLICY_VERSION,
@@ -346,7 +352,7 @@ def collect_alpaca_news(
                         "Accept": "application/json",
                     },
                 )
-                if response.status_code != 429:
+                if response.status_code != 429 and response.status_code < 500:
                     break
                 time.sleep(min(2**attempt, 16))
             response.raise_for_status()
@@ -662,9 +668,7 @@ def validate_news_archive(
             flag_threshold_s=flag_threshold_s,
             discard_threshold_s=discard_threshold_s,
         )
-        active_times = [
-            str(r.get("t_available") or r["published_at"]) for r in kept
-        ]
+        active_times = [str(r.get("t_available") or r["published_at"]) for r in kept]
         tier_counts = gate_diagnostics["tier_counts"]
     else:
         active_times = [str(r["published_at"]) for r in raw_items]
@@ -770,8 +774,7 @@ def build_causal_news_features(
             discard_threshold_s=discard_threshold_s,
         ):
             df_news = df_news[
-                pd.to_numeric(df_news["revision_tier"], errors="coerce").fillna(3).astype(int)
-                != 3
+                pd.to_numeric(df_news["revision_tier"], errors="coerce").fillna(3).astype(int) != 3
             ]
             if df_news.empty:
                 for col in NEWS_FEATURE_NAMES:
@@ -789,13 +792,13 @@ def build_causal_news_features(
                 return out
             df_news = pd.DataFrame(gated_records)
         # Point-in-time join key: conservative availability, not creation time.
-        df_news["available_at"] = pd.to_datetime(
-            df_news["t_available"], utc=True
-        ).dt.tz_localize(None)
+        df_news["available_at"] = pd.to_datetime(df_news["t_available"], utc=True).dt.tz_localize(
+            None
+        )
     else:
-        df_news["available_at"] = pd.to_datetime(
-            df_news["published_at"], utc=True
-        ).dt.tz_localize(None)
+        df_news["available_at"] = pd.to_datetime(df_news["published_at"], utc=True).dt.tz_localize(
+            None
+        )
     df_news = df_news.sort_values("available_at").reset_index(drop=True)
 
     pub_times = df_news["available_at"].to_numpy(dtype="datetime64[ns]")
@@ -919,5 +922,5 @@ def build_macro_news_features(
         flag_threshold_s=flag_threshold_s,
         discard_threshold_s=discard_threshold_s,
     )
-    rename = dict(zip(NEWS_FEATURE_NAMES, MACRO_NEWS_FEATURE_NAMES))
+    rename = dict(zip(NEWS_FEATURE_NAMES, MACRO_NEWS_FEATURE_NAMES, strict=False))
     return frame.rename(columns=rename).loc[:, list(MACRO_NEWS_FEATURE_NAMES)]

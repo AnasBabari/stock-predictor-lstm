@@ -1,0 +1,37 @@
+{
+  "tickers": [
+    "ADBE",
+    "AMD",
+    "CSCO",
+    "IBM",
+    "JPM",
+    "BAC",
+    "GS",
+    "AXP",
+    "JNJ",
+    "MRK",
+    "ABT",
+    "GILD",
+    "CAT",
+    "DE",
+    "HON",
+    "LMT",
+    "CVX",
+    "COP",
+    "EOG",
+    "KO",
+    "COST",
+    "MCD",
+    "HD",
+    "DIS",
+    "AEP"
+  ],
+  "hashes": {
+    "docs/NEWS_REPLICATION_25.md": "5794b0db9561e7870967ce913cd4761e9e205aa3acb548a808679cdb2f8f7d54",
+    "scripts/run_news_replication25.py": "6d0532e7a6bbb9eccdd8414e9d91d83b38d3b6385028e47a45a9bab6789a165b",
+    "scripts/run_msft_news_701515.py": "7688de6e56f7a16675b651cbab6008a2726ea6f24ee842f2072e7bb533f63093",
+    "scripts/run_historical_news_volatility.py": "91f8b454a93e107d9c9d37f0649a0873ebbb106dec96da126a8dbd457cd2f797",
+    "research/price_forecasting/news_archive.py": "054fc0913f76da538d713cf423a4f9412ce45a8b364bf7fd44480ded1e83f4f3",
+    "research/price_forecasting/gpu_pipeline.py": "e773e2eac4398db66b8d9f1e18def4c156e1c7fd54b20e9430c7fe7f3546abb9"
+  }
+}

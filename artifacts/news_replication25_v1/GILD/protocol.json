@@ -1,0 +1,73 @@
+{
+  "ticker": "GILD",
+  "ratios_before_purge": [
+    70,
+    15,
+    15
+  ],
+  "origins": 1904,
+  "start": "2019-01-02 00:00:00",
+  "train_end_exclusive": "2024-04-18 00:00:00",
+  "test_start": "2025-06-10 00:00:00",
+  "end_exclusive": "2026-07-31 00:00:00",
+  "news_hashes": {
+    "GILD_2019-01-01.jsonl": "c4979cb0c15b6f220784f7c385cb65ca70f713977c5ca809709b4bf4eb19938e",
+    "GILD_2019-04-01.jsonl": "7542de1344a01de77ebdca0f52449c697efe43a28c08b09c73726e7442f49ad0",
+    "GILD_2019-07-01.jsonl": "bfeae45d36202296e988ecfb8b25c3c437226d8ddf92bf6db76986562405a4c7",
+    "GILD_2019-10-01.jsonl": "dd31aeada9f3e9839e4337a20e306d560c30541fa6df1862daf5beaac9e10b57",
+    "GILD_2020-01-01.jsonl": "939b0bf134eafa566a0cb19fbc3103bf34c110b636b4a3ff72ffcce42d6d84bf",
+    "GILD_2020-04-01.jsonl": "f9b5ab4bac42864a2f004755b36a386ef03a10cbbbb51f680943f6c93e8c4f34",
+    "GILD_2020-07-01.jsonl": "4c2d7266d2615b6d8e166c5cb306cf68d7bb045f674f24218558f8ccfd48df45",
+    "GILD_2020-10-01.jsonl": "5508ec78617add91f20eaf1fd13d03bd05f50d202080ac72e0b982c8b1fb1e1e",
+    "GILD_2021-01-01.jsonl": "883bd3c33f3a52e9cd95c5fe5f2900f91d6bc017e69c7ddb5b5b46c50b89f754",
+    "GILD_2021-04-01.jsonl": "64f2d046fd3bca6234021e0b91e0f8637b4a1d71f937d998e961a5c413542557",
+    "GILD_2021-07-01.jsonl": "da3374d0c6f1f8865ced3c62120df904964eaf84d5efc8f78748fd1e840d456b",
+    "GILD_2021-10-01.jsonl": "4fa23f30d7950c7f31ef8423c25b7cb9815cfe49fa29a036b874cb1d021cab6a",
+    "GILD_2022-01-01.jsonl": "3f6bb1d4a272b996b8465bcc8bb4e4ea600c5507359b260346dfc1754bdf6bf3",
+    "GILD_2022-04-01.jsonl": "b4322a7bc62fa0d375c20a4e57a798312183bb6da111b13e27ba77fc98ed5724",
+    "GILD_2022-07-01.jsonl": "546faf0c233c0637189f92d3ae1a3745ddf1b746a2e7fea8a330523dd36e90f3",
+    "GILD_2022-10-01.jsonl": "1f88565a9d4d8fde2412c767d6f19a1a97c4c9593b836d8f345ec78ddc04c981",
+    "GILD_2023-01-01.jsonl": "fe2feb30035187e1a0d1a8848dd5b961219e954657fc431a56eb8734caa78d19",
+    "GILD_2023-04-01.jsonl": "9b8fbba813d61f2e674ff3057a5b4133e9d5818767d1c0f24fe528b3eff9d724",
+    "GILD_2023-07-01.jsonl": "cc94724e12cee0f650fe4ef82b639f797e9ed6ff4571e1c90322610f20502afe",
+    "GILD_2023-10-01.jsonl": "aa71527d62d207b66e4ec9f19f0e7c49209386bfa9632934adf78d9cefb9c0d0",
+    "GILD_2024-01-01.jsonl": "b62bebb07ec6fcb202a42a07a98b27958f7eef60b61f96e00eb037248b5fa6d8",
+    "GILD_2024-04-01.jsonl": "a110ba4ed8f9d6bb2ce10b9056d75addab04f94a711658a5fd1e627b31f1ae61",
+    "GILD_2024-07-01.jsonl": "08e02c586d32845908d2fde88326c369d73bf068d9ac6a6a8db26a30316b359c",
+    "GILD_2024-10-01.jsonl": "ef271f2e678da902d957c830d754aa26735bc1f72a8acab24d11d31f32a7f060",
+    "GILD_2025-01-01.jsonl": "f5506aa338c49349764503c3f4229fca102de1bc733cc18fe7363a0219e6d159",
+    "GILD_2025-04-01.jsonl": "8c39f70224bad4380d8242ed224420654d9ebf20820a727957a911ff40512888",
+    "GILD_2025-07-01.jsonl": "50b880ba9e3f5f300c7c276096ec98a560184256ce41da38051c514c08dddb99",
+    "GILD_2025-10-01.jsonl": "4634fa149493cbb885d2f24a0b7153d2e751aca4fbe29647d8cd1d684530f565",
+    "GILD_2026-01-01.jsonl": "6bc2ed67127ce565deafa8367a3a6cc3f906c333342549ed4aae923d8c0d78a2",
+    "GILD_2026-04-01.jsonl": "0e1ec114bbd3468d0d68d00a13f74c70259d9c8dfe7a6921430f144dbcfb77c6",
+    "GILD_2026-07-01.jsonl": "dc394f63485da0ea3d8d6e7fa24d625ee4a80abf44bab12c0264b36c7ed1d7ab"
+  },
+  "ohlcv_sha256": "eedb5014b59780ad39865fdf784dfa76681d391ea65853d98548f1738dd96ee0",
+  "diagnostics": {
+    "revision_policy": "revision-gate-6h-v1",
+    "flag_threshold_s": 900.0,
+    "discard_threshold_s": 21600.0,
+    "total": 2613,
+    "kept": 2610,
+    "discarded": 3,
+    "tier_counts": {
+      "1": 2596,
+      "2": 14,
+      "3": 3
+    },
+    "discard_rate": 0.001148105625717566,
+    "missing_updates": 0,
+    "duplicate_count": 1,
+    "unique_kept": 2609
+  },
+  "horizons": [
+    5,
+    10,
+    20
+  ],
+  "model": "XGBoost CUDA: 200 trees, depth 3, learning rate .03, lambda 10, min child weight 20, seed 42",
+  "selection": "Fixed settings, no validation tuning; both fits use training partition only",
+  "purge": "Label end strictly before each partition boundary; ratios change after purge",
+  "caveat": "Exploratory reused historical data, not an independently untouched certification test"
+}

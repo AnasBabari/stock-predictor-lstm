@@ -60,9 +60,9 @@ def trailing_beta(asset_logret: pd.Series, bench_logret: pd.Series) -> pd.Series
     window = a.rolling(BETA_WINDOW, min_periods=BETA_WINDOW)
     cov = window.cov(m)
     var = m.rolling(BETA_WINDOW, min_periods=BETA_WINDOW).var()
-    n_nonzero = ((a.notna()) & (m.notna()) & (a != 0.0)).rolling(
-        BETA_WINDOW, min_periods=BETA_WINDOW
-    ).sum()
+    n_nonzero = (
+        ((a.notna()) & (m.notna()) & (a != 0.0)).rolling(BETA_WINDOW, min_periods=BETA_WINDOW).sum()
+    )
     beta = cov / var
     ok = n_nonzero.ge(MIN_BETA_SESSIONS) & var.gt(1e-12)
     return beta.where(ok)
@@ -211,10 +211,7 @@ def main():
     for scope in ("within-US", "within-UK", "pooled-ALL"):
         s, m = scope.split("-")
         subset = daily[daily.scope == s]
-        if m != "ALL":
-            subset = subset[subset.market == m]
-        else:
-            subset = subset[subset.market == "ALL"]
+        subset = subset[subset.market == m] if m != "ALL" else subset[subset.market == "ALL"]
         by_h = {}
         for h in HORIZONS:
             dated = subset[subset.horizon == h].groupby("date").mean(numeric_only=True)

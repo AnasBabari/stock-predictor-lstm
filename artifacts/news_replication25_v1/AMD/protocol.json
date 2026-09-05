@@ -1,0 +1,73 @@
+{
+  "ticker": "AMD",
+  "ratios_before_purge": [
+    70,
+    15,
+    15
+  ],
+  "origins": 1904,
+  "start": "2019-01-02 00:00:00",
+  "train_end_exclusive": "2024-04-18 00:00:00",
+  "test_start": "2025-06-10 00:00:00",
+  "end_exclusive": "2026-07-31 00:00:00",
+  "news_hashes": {
+    "AMD_2019-01-01.jsonl": "b515d660e37313f684038da78bd20ccf7f760c369ca771f834495e6055fac891",
+    "AMD_2019-04-01.jsonl": "b229be5dcee7c3cd5cf0fa72588f5638ad59f3225e01273d093fa6878c8ff64c",
+    "AMD_2019-07-01.jsonl": "192f47ff7682a165342f2fc2838f0bae5a83b19d7c1a1e58df0c7d86b149eb23",
+    "AMD_2019-10-01.jsonl": "d4d2cba45c95974332878ab84fdf78db22c713b2ce250656dcae96344c7f2a1f",
+    "AMD_2020-01-01.jsonl": "2f7b87e53dfe7e696e779463f4ff8f47605327c428055fa02bef08e99cb29903",
+    "AMD_2020-04-01.jsonl": "b6d4eac3f2985aaffa61b73ec3678acc44b500eb2afe6de4c84c8a3257abb32d",
+    "AMD_2020-07-01.jsonl": "14af95b0555ba22664203b0829296e968d6211f9376d473847571e1bd9956f79",
+    "AMD_2020-10-01.jsonl": "8ead5cff6ea85649b749d5347397b2531e9b2534bd5a90fce20c99b154a224e3",
+    "AMD_2021-01-01.jsonl": "dbe76dd993269832c6166388f671e2ec1b5b5d168f43d6137bc7ec3631ff03e1",
+    "AMD_2021-04-01.jsonl": "2cf1648d37bf9c34c4af941443b2edd30c0e6de1c481dba7997f293407cabe3a",
+    "AMD_2021-07-01.jsonl": "5abcb4a8a199d2cae34bc45f935a5b1ea9501291906488fa593bf2c5ea52814e",
+    "AMD_2021-10-01.jsonl": "8423406eb704876d4535dd7911aeedfe2345f99bfd9ef1e49f62773795113933",
+    "AMD_2022-01-01.jsonl": "0da293785c77ca7f64808ec88b3950fdc7534bf13f14f7985ac98815127fe61f",
+    "AMD_2022-04-01.jsonl": "cbb7796920d4b5f4008e3fa69495ad00b375f165bdc20c066872f9caaea0b9c0",
+    "AMD_2022-07-01.jsonl": "4650c7b85a446079e9b6101bf876586c9c337dc4c03cd3e1b737d7acad909747",
+    "AMD_2022-10-01.jsonl": "b7e89b753226f76cbc534108d1c249c0d116d5dfb8c80401c834096745a3bead",
+    "AMD_2023-01-01.jsonl": "c22692fc4f0fc8492d4b4815227d75a0db7e3d5f19b2a732c64aba59d6d46525",
+    "AMD_2023-04-01.jsonl": "328ffac274aa72d146873ac273319efbb139677a16f952ee01f1d945fe68871d",
+    "AMD_2023-07-01.jsonl": "6ed3d0197a4cfa1341adf4d7d3472739188ad337dca14979c0e20fd475928912",
+    "AMD_2023-10-01.jsonl": "a1a3ba94ccf7339d25fe5e10152e1c7162036b5d6f0c732f2d092d24f5879e93",
+    "AMD_2024-01-01.jsonl": "d60d305c0c1d9bf55ddc5da2c54a6a1429ad972ca0fe14b967d0f5806e56247b",
+    "AMD_2024-04-01.jsonl": "cb47707813ddabad2dfa3855fb162af3921de94dc8ec3358a3b69f46c9bb0b8c",
+    "AMD_2024-07-01.jsonl": "08be0bdcf8fc57d42a81365a200e42765d038d7d6df86b6db7c2a2525d1a7ede",
+    "AMD_2024-10-01.jsonl": "24af6ba91a22356eaa7a857bb4a4d9a8482d0743767c7861e20a1991ff365876",
+    "AMD_2025-01-01.jsonl": "e011d300f8323827413592843c6925a5ef564bedb7664cef400746391c0ce3ae",
+    "AMD_2025-04-01.jsonl": "28cda72e931b52945702d8e1e7f43a8b3482897b5206041b4c4b79eddaf4afcb",
+    "AMD_2025-07-01.jsonl": "c06a2ade2f6e0f5f94249b305766d7d42e27070bb19e31381f024d1931420736",
+    "AMD_2025-10-01.jsonl": "60f4c563240b324fadb7c1210b2c90cc343d5b10e47d792e06fd5a7309b6d4d5",
+    "AMD_2026-01-01.jsonl": "3b9d2c5f746f529327ac66be202b23fe29da8199320ea91bfa2b0d7f0a95148c",
+    "AMD_2026-04-01.jsonl": "c24af09e6fc0678f04a3e05675dcbc0c31f5880a92cb2b487061aabdc3d6e1e8",
+    "AMD_2026-07-01.jsonl": "e6e88c29e2fff9dc25a1ba164cf8da3f37327f47aba38149a9b2d0e8a5fcc43b"
+  },
+  "ohlcv_sha256": "6c0ab39e2d3c4e928897ea1979b0c831f77a6659094266652de8557b217444fb",
+  "diagnostics": {
+    "revision_policy": "revision-gate-6h-v1",
+    "flag_threshold_s": 900.0,
+    "discard_threshold_s": 21600.0,
+    "total": 8196,
+    "kept": 8141,
+    "discarded": 55,
+    "tier_counts": {
+      "1": 7973,
+      "2": 168,
+      "3": 55
+    },
+    "discard_rate": 0.006710590531966813,
+    "missing_updates": 0,
+    "duplicate_count": 4,
+    "unique_kept": 8137
+  },
+  "horizons": [
+    5,
+    10,
+    20
+  ],
+  "model": "XGBoost CUDA: 200 trees, depth 3, learning rate .03, lambda 10, min child weight 20, seed 42",
+  "selection": "Fixed settings, no validation tuning; both fits use training partition only",
+  "purge": "Label end strictly before each partition boundary; ratios change after purge",
+  "caveat": "Exploratory reused historical data, not an independently untouched certification test"
+}
