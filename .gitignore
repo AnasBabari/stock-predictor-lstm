@@ -41,6 +41,10 @@ Thumbs.db
 # Large files & local caches
 *.parquet
 *.jsonl
+# Exception: curated Alpaca headline archive backing the backend
+# cached-archive fallback (backend/tests/test_simple_forecast.py).
+!data/news/alpaca/*.jsonl
+data/options/samples/
 *.pt
 *.pth
 *.ckpt
