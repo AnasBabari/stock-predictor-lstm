@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -9,6 +10,7 @@ import pytest
 import torch
 from torch import nn
 
+from research.price_forecasting import gpu_pipeline as pipeline
 from research.price_forecasting.gpu_pipeline import (
     FEATURE_NAMES,
     PriceTrainingConfig,
@@ -277,3 +279,154 @@ def test_news_manifest_records_detected_providers(tmp_path: Path) -> None:
     manifest = merge_news_archive(path, records)
     assert manifest["provider"] == "sec_edgar,yahoo"
     assert manifest["article_count"] == 2
+
+
+def test_chunked_moments_match_original_and_ignore_nontraining_rows():
+    rng = np.random.default_rng(7)
+    values = rng.normal(size=(29, 20, 6)).astype(np.float32)
+    indices = np.arange(17)
+    expected_mean = values[indices].mean(axis=(0, 1), dtype=np.float64).astype(np.float32)
+    expected_std = values[indices].std(axis=(0, 1), dtype=np.float64).astype(np.float32)
+    values[17:] = np.nan
+    mean, std = pipeline._training_moments(values, indices, chunk_size=3)
+    np.testing.assert_array_equal(mean, expected_mean)
+    np.testing.assert_array_equal(std, expected_std)
+
+
+def test_fit_restores_best_epoch_and_keeps_schedule_prefix(monkeypatch) -> None:
+    dataset = SimpleNamespace(
+        sequences=np.arange(120, dtype=np.float32).reshape(6, 20, 1) / 100,
+        targets=np.arange(6, dtype=np.float32).reshape(6, 1) / 100,
+        ticker_indices=np.zeros(6, dtype=np.int64),
+        ticker_names=("MSFT",),
+    )
+    settings = PriceTrainingConfig(horizon=1, maximum_epochs=80, patience=2, batch_size=4)
+
+    class TinyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = nn.Linear(1, 1)
+
+        def forward(self, x, ids):
+            return self.linear(x[:, -1])
+
+    states = []
+    models = []
+    schedules = []
+    real_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR
+
+    def make_model(*args):
+        model = TinyModel()
+        models.append(model)
+        return model
+
+    class ControlledLoss:
+        def __call__(self, pred, target):
+            if torch.is_grad_enabled():
+                return ((pred - target) ** 2).mean()
+            states.append({k: v.clone() for k, v in models[0].state_dict().items()})
+            return torch.tensor(float(len(states)))
+
+    def scheduler(*args, **kwargs):
+        schedules.append(kwargs["T_max"])
+        return real_scheduler(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "_build_model", make_model)
+    monkeypatch.setattr(nn, "SmoothL1Loss", lambda **kwargs: ControlledLoss())
+    monkeypatch.setattr(torch.optim.lr_scheduler, "CosineAnnealingLR", scheduler)
+    model, _, best_epoch, loss, completed = pipeline._fit(
+        torch, nn, dataset, settings, np.arange(4), np.arange(4, 6), 80, "cpu"
+    )
+    assert (best_epoch, completed, loss) == (1, 3, 1.0)
+    for key, value in model.state_dict().items():
+        torch.testing.assert_close(value, states[0][key])
+    pipeline._fit(torch, nn, dataset, settings, np.arange(6), None, best_epoch, "cpu")
+    assert schedules == [80, 80]
+
+
+def test_validation_only_never_predicts_test_or_refits(tmp_path, monkeypatch) -> None:
+    dataset = build_global_price_dataset({"MSFT": _frame()}, PriceTrainingConfig())
+    model = nn.Linear(1, 1)
+    scalers = {"feature_mean": np.zeros(25), "feature_std": np.ones(25)}
+    fits = []
+
+    def fake_fit(*args, **kwargs):
+        fits.append(args[4].copy())
+        return model, scalers, 1, 0.4, 26
+
+    def predict(torch_arg, model_arg, data, scaling, indices, **kwargs):
+        np.testing.assert_array_equal(indices, dataset.split_validation)
+        return np.zeros_like(data.targets[indices])
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda index: "test-device")
+    monkeypatch.setattr(pipeline, "_fit", fake_fit)
+    monkeypatch.setattr(pipeline, "_predict", predict)
+    report = pipeline.train_cuda_price_model(dataset, tmp_path, validation_only=True)
+    assert len(fits) == 1
+    np.testing.assert_array_equal(fits[0], dataset.split_train)
+    assert report["selection"]["best_epoch"] == 1
+    assert report["selection"]["completed_epochs"] == 26
+    assert not report["test_evaluated"]
+    assert not report["deployment_refit_performed"]
+    assert not (tmp_path / "model.pt").exists()
+    saved = torch.load(tmp_path / "selection_model.pt", weights_only=True)
+    assert saved["artifact_role"] == "validation_selected_model"
+    assert saved["training_epochs"] == 1
+    for key, value in model.state_dict().items():
+        torch.testing.assert_close(saved["state_dict"][key], value)
+    with pytest.raises(FileExistsError, match="new output directory"):
+        pipeline.train_cuda_price_model(dataset, tmp_path, validation_only=True)
+
+
+def test_evaluation_and_refit_checkpoints_are_distinct(tmp_path, monkeypatch) -> None:
+    settings = PriceTrainingConfig()
+    dataset = build_global_price_dataset({"MSFT": _frame()}, settings)
+    fits = []
+
+    class ConstantModel(nn.Module):
+        def __init__(self, value):
+            super().__init__()
+            self.value = nn.Parameter(torch.full((7,), value))
+
+        def forward(self, x, ids):
+            return self.value.expand(len(x), -1)
+
+    def fake_fit(*args, **kwargs):
+        fits.append(args)
+        scalers = {
+            "feature_mean": np.zeros(25),
+            "feature_std": np.ones(25),
+            "target_mean": np.zeros(7),
+            "target_std": np.ones(7),
+        }
+        return ConstantModel(float(len(fits))), scalers, 1, 0.4, 26
+
+    def predict(torch_arg, model, data, scalers, indices, **kwargs):
+        assert len(fits) == 1  # Every score is computed before deployment refitting.
+        assert model.value[0].item() == 1.0
+        return np.zeros_like(data.targets[indices])
+
+    original_as_tensor = torch.as_tensor
+
+    def cpu_tensor(*args, **kwargs):
+        kwargs.pop("device", None)
+        return original_as_tensor(*args, **kwargs)
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda index: "test-device")
+    monkeypatch.setattr(torch, "as_tensor", cpu_tensor)
+    monkeypatch.setattr(pipeline, "_fit", fake_fit)
+    monkeypatch.setattr(pipeline, "_predict", predict)
+    report = pipeline.train_cuda_price_model(dataset, tmp_path, settings)
+    assert len(fits) == 2
+    assert fits[1][6] == 1  # Best epoch, not 26 completed epochs.
+    np.testing.assert_array_equal(fits[1][4], np.arange(len(dataset.sequences)))
+    selected = torch.load(tmp_path / "selection_model.pt", weights_only=True)
+    refitted = torch.load(tmp_path / "model.pt", weights_only=True)
+    assert selected["state_dict"]["value"][0] == 1
+    assert refitted["state_dict"]["value"][0] == 2
+    assert refitted["artifact_role"] == "all_data_deployment_refit"
+    assert report["untouched_test"]["evaluated_checkpoint"] == "selection_model.pt"
+    assert not report["untouched_test"]["evaluates_deployment_refit"]
+    assert report["final_refit"]["epochs"] == 1

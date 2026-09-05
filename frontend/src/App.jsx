@@ -2,36 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchSimpleForecast, fetchTickerNews, wakeForecastService } from './api/simpleForecastClient';
 import SimpleForecastChart, { midpointPrices } from './components/SimpleForecastChart';
 import ForecastLedgerTrackRecord from './components/ForecastLedgerTrackRecord';
-
-export const TICKERS = [
-  // NASDAQ (10)
-  'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'COST', 'QCOM',
-  // NYSE (10)
-  'JPM', 'XOM', 'WMT', 'JNJ', 'CAT', 'KO', 'NEE', 'DIS', 'BAC', 'GE',
-  // LSE (10)
-  'SHEL.L', 'AZN.L', 'HSBA.L', 'BP.L', 'ULVR.L', 'GSK.L', 'RIO.L', 'BATS.L', 'BARC.L', 'DGE.L',
-];
-
-export const EXCHANGES = [
-  {
-    id: 'NASDAQ',
-    name: 'NASDAQ',
-    mic: 'XNAS',
-    tickers: ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AMD', 'COST', 'QCOM'],
-  },
-  {
-    id: 'NYSE',
-    name: 'NYSE',
-    mic: 'XNYS',
-    tickers: ['JPM', 'XOM', 'WMT', 'JNJ', 'CAT', 'KO', 'NEE', 'DIS', 'BAC', 'GE'],
-  },
-  {
-    id: 'LSE',
-    name: 'LSE',
-    mic: 'XLON',
-    tickers: ['SHEL.L', 'AZN.L', 'HSBA.L', 'BP.L', 'ULVR.L', 'GSK.L', 'RIO.L', 'BATS.L', 'BARC.L', 'DGE.L'],
-  },
-];
+import { ALL_VALID_TICKERS, ALL_TICKERS_SET } from './universe';
 
 function formatMoney(value, currencySymbol = '$') {
   if (!Number.isFinite(Number(value))) return '—';
@@ -69,39 +40,38 @@ function BacktestPanel({ backtest }) {
     <section className="panel evidence-panel" aria-label="Historical Model Performance">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">Historical reality check</p>
-          <h2>How this model did before today</h2>
+          <p className="eyebrow">Past performance</p>
+          <h2>How close were past estimates?</h2>
         </div>
         <span className={`verdict ${beatBaseline ? 'positive' : 'caution'}`}>
-          {beatBaseline ? 'Beat no-change benchmark' : 'Did not beat no-change benchmark'}
+          {beatBaseline ? 'More accurate than assuming no price change' : 'No better than assuming no price change'}
         </span>
       </div>
       <div className="metrics-grid">
         <article>
           <span>Average error</span>
           <strong className="mono">{formatPercent(backtest.mae_percent, 2)}</strong>
-          <small className="kpi-subtext">Mean absolute % error</small>
+          <small className="kpi-subtext">Average size of the prediction mistakes</small>
         </article>
         <article>
-          <span>RMSE</span>
+          <span>Larger-error score</span>
           <strong className="mono">{formatPercent(backtest.rmse_percent, 2)}</strong>
-          <small className="kpi-subtext">Root mean squared error</small>
+          <small className="kpi-subtext">Gives bigger mistakes more weight; lower is better</small>
         </article>
         <article>
-          <span>Direction correct</span>
+          <span>Up or down correct</span>
           <strong className="mono">{formatPercent(directionAcc, 1)}</strong>
-          <small className="kpi-subtext">Sign hit rate vs baseline</small>
+          <small className="kpi-subtext">How often the price direction was right</small>
         </article>
         <article>
-          <span>Versus no-change</span>
+          <span>Compared with no price change</span>
           <strong className="mono">{Number.isFinite(ratio) ? `${ratio.toFixed(2)}×` : '—'}</strong>
-          <small className="kpi-subtext">{beatBaseline ? 'Outperformed persistence' : 'Underperformed persistence'}</small>
+          <small className="kpi-subtext">Below 1 means smaller average mistakes</small>
         </article>
       </div>
       <p className="method-note">
-        Trained, selected, and tested in time order using a 70/15/15 split. The test period
-        {` ${backtest.test_start} to ${backtest.test_end}`} was not used to choose the model
-        ({backtest.test_samples} forecast origins).
+        Tested on {backtest.test_samples} past forecasts from {backtest.test_start} to {backtest.test_end}.
+        These dates were kept separate when choosing the model. Past results do not guarantee future performance.
       </p>
     </section>
   );
@@ -138,31 +108,28 @@ function resolveSentimentBadge(item) {
   if (badge === 'Bullish' || label === 'positive' || label === 'bullish' || score > 0.15) {
     return {
       type: 'bullish',
-      label: 'Bullish',
-      scoreText: Number.isFinite(score) ? (score > 0 ? `+${score.toFixed(2)}` : score.toFixed(2)) : '',
+      label: 'Positive tone',
     };
   }
   if (badge === 'Bearish' || label === 'negative' || label === 'bearish' || score < -0.15) {
     return {
       type: 'bearish',
-      label: 'Bearish',
-      scoreText: Number.isFinite(score) ? score.toFixed(2) : '',
+      label: 'Negative tone',
     };
   }
   return {
     type: 'neutral',
-    label: 'Neutral',
-    scoreText: Number.isFinite(score) ? score.toFixed(2) : '',
+    label: 'Neutral tone',
   };
 }
 
 function formatProviderLabel(provider) {
   if (!provider || provider === 'none') return null;
   const p = String(provider).toLowerCase();
-  if (p === 'institutional_feed') return 'Institutional Wire';
-  if (p === 'alpaca') return 'Alpaca Feed';
+  if (p === 'institutional_feed') return 'News feed';
+  if (p === 'alpaca') return 'Alpaca';
   if (p === 'yahoo') return 'Yahoo Finance';
-  if (p === 'sec_edgar') return 'SEC EDGAR Wire';
+  if (p === 'sec_edgar') return 'Company filings';
   return provider.replace(/_/g, ' ');
 }
 
@@ -174,7 +141,7 @@ function NewsPanel({ news, ticker, loading }) {
     <section className="panel news-panel" aria-label="Live Market Headlines">
       <div className="panel-heading">
         <div>
-          <p className="eyebrow">Institutional Market Context</p>
+          <p className="eyebrow">In the news</p>
           <h2>Recent {ticker} headlines</h2>
         </div>
         <div className="heading-badges">
@@ -186,14 +153,14 @@ function NewsPanel({ news, ticker, loading }) {
           )}
           <span className="context-label">
             <span className="context-dot" aria-hidden="true" />
-            Not used by model yet
+            Not included in the forecast
           </span>
         </div>
       </div>
       {loading && !items.length ? (
         <div className="news-loading-state" role="status" aria-label="Loading headlines">
           <div className="news-skeleton-pulse" />
-          <span>Retrieving verified headlines and sentiment analysis…</span>
+          <span>Loading recent stories…</span>
         </div>
       ) : items.length ? (
         <div className="news-cards-grid">
@@ -209,11 +176,10 @@ function NewsPanel({ news, ticker, loading }) {
                     <span className={`sentiment-badge ${sentiment.type}`}>
                       <span className="sentiment-indicator-dot" />
                       {sentiment.label}
-                      {sentiment.scoreText ? ` · ${sentiment.scoreText}` : ''}
                     </span>
                     {item.after_market_close && (
                       <span className="after-hours-tag" title="Published after regular market close">
-                        After-Hours
+                        After market close
                       </span>
                     )}
                     {timestamp && (
@@ -246,7 +212,7 @@ function NewsPanel({ news, ticker, loading }) {
                       Read full story <span aria-hidden="true">↗</span>
                     </a>
                   ) : (
-                    <span className="news-wire-note">Market wire release</span>
+                    <span className="news-wire-note">News update</span>
                   )}
                 </div>
               </article>
@@ -254,11 +220,11 @@ function NewsPanel({ news, ticker, loading }) {
           })}
         </div>
       ) : (
-        <p className="empty-copy">No recent headlines are available from the market-data feed.</p>
+        <p className="empty-copy">No recent stories are available right now.</p>
       )}
       <p className="method-note">
-        News is shown as context only. We will add it to training after collecting matching
-        timestamped historical headlines and proving that it improves the same held-out test.
+        These stories help you follow the company, but do not affect this forecast.
+        Tone labels describe the wording of a story, not whether you should buy or sell.
       </p>
     </section>
   );
@@ -301,8 +267,12 @@ export default function App() {
       eventOrSymbol.preventDefault();
     }
     const symbol = (typeof eventOrSymbol === 'string' && eventOrSymbol.trim() ? eventOrSymbol : ticker).trim().toUpperCase();
-    if (!TICKERS.includes(symbol)) {
-      setError(`Choose one of ${TICKERS.join(', ')} for this benchmark.`);
+    if (!symbol || !/^[A-Z0-9.\-_]{1,15}$/.test(symbol)) {
+      setError('Please enter a valid stock ticker symbol (e.g. MSFT, SHEL.L, NVDA, ARM).');
+      return;
+    }
+    if (!ALL_TICKERS_SET.has(symbol)) {
+      setError(`Choose one of the ${ALL_VALID_TICKERS.length} supported LSE, NASDAQ, and NYSE tickers. This symbol is not supported yet.`);
       return;
     }
     requestController.current?.abort();
@@ -365,34 +335,13 @@ export default function App() {
           <span className="brand-icon">S7</span>
           <div className="brand-title-wrap">
             <b>Signal Seven</b>
-            <small>Quantitative Terminal</small>
+            <small>Stock forecasts made simple</small>
           </div>
         </a>
 
-        <div className="topbar-center" aria-label="Quick ticker switcher">
-          <span className="topbar-center-label">Universe</span>
-          {EXCHANGES.map((ex) => (
-            <div key={ex.id} className="exchange-group">
-              <span className="exchange-tag-mini">{ex.id}</span>
-              {ex.tickers.map((symbol) => (
-                <button
-                  key={`quick-${symbol}`}
-                  type="button"
-                  className={`fast-ticker-btn ${ticker === symbol ? 'active' : ''}`}
-                  onClick={() => runForecast(symbol)}
-                >
-                  {symbol}
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-
         <div className="topbar-right">
           <span className="market-badge">
-            {forecast?.exchange_mic
-              ? `${forecast.exchange_mic} · ${forecast.currency_symbol || '$'}`
-              : 'MULTI-EXCHANGE · CAUSAL'}
+            US & UK stocks
           </span>
           <ServiceBadge status={serviceStatus} attempt={wakeAttempt} />
         </div>
@@ -401,24 +350,23 @@ export default function App() {
       <main id="top">
         <section className="hero">
           <div className="hero-intro">
-            <p className="eyebrow">Multi-Exchange Machine Learning · Causal Market Evidence</p>
+            <p className="eyebrow">A clearer view of your stocks</p>
             <h1>Forecast the next<br /><em>7 trading days.</em></h1>
             <p className="hero-copy">
-              Quantitative multi-exchange forecasting across US (NASDAQ / NYSE) and UK (London Stock Exchange) equities.
-              Every estimate comes with the historical holdout test result that proves how the model actually performed before today.
+              Choose a stock to see its estimated price over the next seven market days,
+              catch up on the news, and see how close past estimates were.
             </p>
             <div className="trust-row">
-              <span>70/15/15 time split</span>
-              <span>Completed bars only</span>
-              <span>LSE & NYSE calendars</span>
-              <span>PostgreSQL forward ledger</span>
+              <span>US & UK stocks</span>
+              <span>Tested on past prices</span>
+              <span>Recent company news</span>
             </div>
           </div>
 
           <form className="forecast-form" onSubmit={runForecast}>
             <div className="form-heading">
               <strong>Create forecast</strong>
-              <span>Usually 5–15 seconds</span>
+              <span>First visit may take a little longer</span>
             </div>
             <label htmlFor="ticker">Stock ticker</label>
             <div className="input-row">
@@ -426,39 +374,23 @@ export default function App() {
                 id="ticker"
                 value={ticker}
                 onChange={(event) => setTicker(event.target.value.toUpperCase())}
-                placeholder="Enter a ticker (e.g. MSFT, SHEL.L)"
-                maxLength={12}
+                placeholder="Search a stock ticker, e.g. MSFT or SHEL.L"
+                maxLength={15}
                 autoComplete="off"
                 spellCheck="false"
               />
               <div className="horizon-lock">
-                <small>Horizon</small>
+                <small>Looking ahead</small>
                 <strong>7 trading days</strong>
               </div>
             </div>
-            <div className="ticker-row multi-exchange-tickers" aria-label="Supported tickers">
-              {EXCHANGES.map((ex) => (
-                <div key={`form-ex-${ex.id}`} className="form-exchange-group">
-                  <span className="form-exchange-tag">{ex.id}</span>
-                  {ex.tickers.map((symbol) => (
-                    <button
-                      key={symbol}
-                      type="button"
-                      className={ticker === symbol ? 'active' : ''}
-                      onClick={() => runForecast(symbol)}
-                    >
-                      {symbol}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
+
             <button className="submit-forecast" type="submit" disabled={loading}>
-              {loading ? 'Training on history…' : 'Run 7-day forecast'}
+              {loading ? 'Preparing your forecast…' : `Run 7-day forecast for ${ticker}`}
             </button>
           </form>
           {serviceStatus === 'offline' && (
-            <button className="retry-button" onClick={wake} type="button">Retry starting Render</button>
+            <button className="retry-button" onClick={wake} type="button">Try connecting again</button>
           )}
           {error && <div className="error-message" role="alert">{error}</div>}
         </section>
@@ -474,59 +406,55 @@ export default function App() {
                   <h2>Average seven-day price estimate</h2>
                 </div>
                 <div className="heading-badges">
-                  <span className="corridor-pill">
-                    80% Empirical Corridor
-                  </span>
-                  {forecast.exchange_mic && (
-                    <span className="exchange-pill">{forecast.exchange_mic}</span>
-                  )}
-                  <span className="model-pill">{forecast.model?.name?.replace('_', ' ')}</span>
+                  <span className="model-pill">Estimate, not a guarantee</span>
                 </div>
               </div>
               <div className="summary-grid">
                 <article>
-                  <span>Current Close</span>
+                  <span>Latest price</span>
                   <strong className="mono">{formatMoney(forecast.current_price, forecast.currency_symbol)}</strong>
-                  <small className="kpi-subtext">Latest trading close</small>
+                  <small className="kpi-subtext">At the last market close</small>
                 </article>
                 <article>
-                  <span>Target Estimate</span>
+                  <span>Estimated price on day 7</span>
                   <strong className="mono">{formatMoney(summary.finalPrice, forecast.currency_symbol)}</strong>
-                  <small className="kpi-subtext">Projected cone midpoint</small>
+                  <small className="kpi-subtext">Middle of the estimated price range</small>
                 </article>
                 <article>
-                  <span>Expected Move</span>
+                  <span>Estimated change</span>
                   <strong className={`mono ${summary.change >= 0 ? 'up' : 'down'}`}>
                     {summary.change >= 0 ? '+' : ''}{formatPercent(summary.change, 2)}
                   </strong>
-                  <small className="kpi-subtext">Cumulative return</small>
+                  <small className="kpi-subtext">Compared with the latest price</small>
                 </article>
                 <article>
-                  <span>Horizon</span>
+                  <span>Time ahead</span>
                   <strong className="mono horizon-kpi">
                     7 Trading Days
                   </strong>
-                  <small className="kpi-subtext">{forecast.provenance?.calendar || 'Trading sessions'}</small>
+                  <small className="kpi-subtext">Excludes weekends and market holidays</small>
                 </article>
               </div>
               <SimpleForecastChart forecast={forecast} />
               <div className="chart-legend-strip">
                 <div className="legend-pill">
                   <span className="legend-color-dot historical-dot" aria-hidden="true" />
-                  <span>Historical Close</span>
+                  <span>Past prices</span>
                 </div>
                 <div className="legend-pill">
                   <span className="legend-color-dot forecast-dot" aria-hidden="true" />
                   <span>Average 7-Day Estimate</span>
                 </div>
-                <div className="legend-pill">
-                  <span className="legend-color-dot corridor-dot" aria-hidden="true" />
-                  <span>80% Empirical Corridor</span>
-                </div>
               </div>
               <p className="chart-caption">
-                The blue line plots the midpoint between the model's lower and upper estimates for each day.
+                The blue line shows the middle of each day's estimated price range.
+                Actual prices can be higher or lower. This is not a guaranteed return.
               </p>
+              <details className="forecast-details">
+                <summary>How this estimate is made</summary>
+                <p>Each point averages the lower and upper price estimates. It is not a probability-weighted average.</p>
+                <p>Model: {forecast.model?.name?.replaceAll('_', ' ') || 'Not provided'}.</p>
+              </details>
             </section>
             <BacktestPanel backtest={forecast.backtest} />
             <NewsPanel news={news} ticker={forecast.ticker} loading={newsLoading} />
@@ -537,7 +465,6 @@ export default function App() {
 
       <footer>
         <span>Experimental estimates, not financial advice.</span>
-        <span>Completed daily bars only · no intraday leakage · PostgreSQL durable ledger</span>
       </footer>
     </div>
   );

@@ -274,7 +274,10 @@ def test_multi_exchange_lse_forecast_contract() -> None:
     assert len(res["predicted_prices"]) == 7
 
 
-def test_multi_exchange_news_cutoff_and_timing() -> None:
+def test_multi_exchange_news_cutoff_and_timing(monkeypatch) -> None:
+    from datetime import timedelta
+
+    from services import market_news
     from services.market_news import clear_news_cache, fetch_recent_news, get_exchange_market_close
 
     close_lse = get_exchange_market_close("SHEL.L")
@@ -283,10 +286,37 @@ def test_multi_exchange_news_cutoff_and_timing() -> None:
     close_nyse = get_exchange_market_close("AAPL")
     assert close_nyse is not None
 
+    def headlines(symbol):
+        assert symbol == "SHEL.L"
+        return [
+            {
+                "id": "before",
+                "headline": "Quarterly results",
+                "published_at": (close_lse - timedelta(minutes=1)).isoformat(),
+            },
+            {
+                "id": "after",
+                "headline": "Company update",
+                "published_at": (close_lse + timedelta(minutes=1)).isoformat(),
+            },
+        ]
+
+    def unexpected_provider(*args, **kwargs):
+        raise AssertionError("Offline test must not contact another provider")
+
+    monkeypatch.setattr(market_news, "_fetch_from_yahoo", headlines)
+    for name in ("_fetch_from_alpaca", "_fetch_from_sec_edgar", "_fetch_from_cache"):
+        monkeypatch.setattr(market_news, name, unexpected_provider)
+
     clear_news_cache()
     news = fetch_recent_news("SHEL.L")
     assert news["status"] == "available"
     assert "exchange_close_utc" in news
+    assert {item["id"]: item["after_market_close"] for item in news["items"]} == {
+        "before": False,
+        "after": True,
+    }
     for item in news["items"]:
         assert "after_market_close" in item
         assert item["session_timing"] in ("regular_hours", "after_hours")
+    clear_news_cache()

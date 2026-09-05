@@ -1,0 +1,11 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "alpaca",
+  "archive": "CCEP.jsonl",
+  "article_count": 1,
+  "published_start": "2023-03-17T16:15:44Z",
+  "published_end": "2023-03-17T16:15:44Z",
+  "sha256": "20439cd92a31dd0acb0c4a8c989c7142d4d0e66f0f4523a67e131241c7909067",
+  "hash_convention": "sha256_exact_utf8_lf_bytes_v1",
+  "generated_at": "2026-09-05T10:29:17.807541Z"
+}

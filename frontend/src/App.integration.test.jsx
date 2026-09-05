@@ -64,11 +64,38 @@ describe('simplified forecast app', () => {
     expect(screen.getByText('Average 7-day estimate')).toBeInTheDocument();
     expect(screen.getByText('$452.00')).toBeInTheDocument();
     expect(screen.queryByText(/empirical band/i)).not.toBeInTheDocument();
-    expect(screen.getByText('Beat no-change benchmark')).toBeInTheDocument();
-    expect(screen.getByText(/not used by model yet/i)).toBeInTheDocument();
+    expect(screen.getByText('More accurate than assuming no price change')).toBeInTheDocument();
+    expect(screen.getByText(/not included in the forecast/i)).toBeInTheDocument();
   });
 
-  it('rejects tickers outside the first five without calling the forecast API', async () => {
+  it('offers one ticker input without exchange tabs or ticker grids', () => {
+    render(<App />);
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Ticker selection matrix')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Quick ticker switcher')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'AAPL' })).not.toBeInTheDocument();
+    expect(screen.getByText('Stock forecasts made simple')).toBeInTheDocument();
+    expect(screen.queryByText(/A ticker is a stock's short code/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PostgreSQL|70\/15\/15|Quantitative Terminal|causal market/i)).not.toBeInTheDocument();
+  });
+
+  it.each(['nvda', 'jpm', 'shel.l'])('submits the typed ticker %s with Enter', async (symbol) => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText('Forecast service ready');
+    const input = screen.getByLabelText(/stock ticker/i);
+    await user.clear(input);
+    await user.type(input, `${symbol}{Enter}`);
+    await screen.findByText('Average seven-day price estimate');
+    expect(input).toHaveValue(symbol.toUpperCase());
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/v1/forecast?ticker=${symbol.toUpperCase()}`),
+      expect.anything(),
+    );
+  });
+
+  it('rejects unsupported tickers without calling the forecast API', async () => {
     const user = userEvent.setup();
     render(<App />);
     const input = screen.getByLabelText(/stock ticker/i);
@@ -134,8 +161,8 @@ describe('simplified forecast app', () => {
     expect(screen.getByText('Autonomous Sector Evaluates Regulatory Guidance')).toBeInTheDocument();
     expect(screen.getByText('Reuters')).toBeInTheDocument();
     expect(screen.getByText('Bloomberg')).toBeInTheDocument();
-    expect(screen.getByText(/Bullish · \+0\.45/i)).toBeInTheDocument();
-    expect(screen.getByText(/Bearish · -0\.32/i)).toBeInTheDocument();
+    expect(screen.getByText('Positive tone')).toBeInTheDocument();
+    expect(screen.getByText('Negative tone')).toBeInTheDocument();
     const externalLinks = screen.getAllByRole('link', { name: /read full story/i });
     expect(externalLinks.length).toBe(2);
     expect(externalLinks[0]).toHaveAttribute('href', 'https://example.com/cybercab-news');

@@ -1,0 +1,19 @@
+{
+  "tickers": [
+    "SPY",
+    "^VIX",
+    "^TNX",
+    "CL=F",
+    "DX-Y.NYB",
+    "HYG"
+  ],
+  "start": "2015-01-01",
+  "end": "2025-06-01",
+  "sessions": 2618,
+  "first_session": "2015-01-02",
+  "last_session": "2025-05-30",
+  "macro_mode": "market_dailies_only",
+  "monthly_revised_block": "excluded",
+  "revision_risk": "none_by_construction_session_settled_closes",
+  "source": "yfinance"
+}

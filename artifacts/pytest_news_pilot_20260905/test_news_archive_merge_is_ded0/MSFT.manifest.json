@@ -1,0 +1,11 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "alpaca",
+  "archive": "MSFT.jsonl",
+  "article_count": 2,
+  "published_start": "2025-01-01T12:00:00Z",
+  "published_end": "2025-01-02T12:00:00Z",
+  "sha256": "5556162bda1df9b6a1e529820fcd201bcff2cb9d719aa40879c526f0a162fa30",
+  "hash_convention": "sha256_exact_utf8_lf_bytes_v1",
+  "generated_at": "2026-09-05T10:08:47.480847Z"
+}

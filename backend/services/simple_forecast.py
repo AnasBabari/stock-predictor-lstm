@@ -9,8 +9,11 @@ replaces the learned path returned to the user.
 
 from __future__ import annotations
 
+import functools
+import json
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -240,7 +243,27 @@ TICKER_METADATA: dict[str, dict[str, str]] = {
     },
 }
 
-SUPPORTED_TICKERS: tuple[str, ...] = tuple(TICKER_METADATA.keys())
+
+def _load_manifest_tickers() -> tuple[str, ...]:
+    try:
+        manifest = (
+            Path(__file__).resolve().parents[2]
+            / "data"
+            / "tri_exchange"
+            / "manifest_broad_300.json"
+        )
+        if manifest.is_file():
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            return tuple(data.get("valid_tickers", ()))
+    except Exception:
+        pass
+    return ()
+
+
+_broad_tickers = _load_manifest_tickers()
+SUPPORTED_TICKERS: tuple[str, ...] = tuple(
+    dict.fromkeys(tuple(TICKER_METADATA.keys()) + _broad_tickers)
+)
 FORECAST_DAYS = 7
 FEATURE_VERSION = "simple-price-v1"
 MIN_HISTORY_ROWS = 500
@@ -419,6 +442,7 @@ def _clip_predictions(predicted: np.ndarray, reference_targets: np.ndarray) -> n
     return np.clip(np.asarray(predicted, dtype=np.float64), lower, upper)
 
 
+@functools.lru_cache(maxsize=1)
 def _load_gpu_lstm_model() -> tuple[Any, dict[str, Any], list[str]] | None:
     try:
         from pathlib import Path
@@ -427,6 +451,9 @@ def _load_gpu_lstm_model() -> tuple[Any, dict[str, Any], list[str]] | None:
         from research.price_forecasting.gpu_pipeline import PriceTrainingConfig, _build_model
 
         candidates = [
+            Path.cwd() / "artifacts" / "tri_exchange_gpu_v2" / "model.pt",
+            Path(__file__).resolve().parents[2] / "artifacts" / "tri_exchange_gpu_v2" / "model.pt",
+            Path(__file__).resolve().parents[1] / "artifacts" / "tri_exchange_gpu_v2" / "model.pt",
             Path.cwd() / "artifacts" / "tri_exchange_gpu_v1" / "model.pt",
             Path(__file__).resolve().parents[2] / "artifacts" / "tri_exchange_gpu_v1" / "model.pt",
             Path(__file__).resolve().parents[1] / "artifacts" / "tri_exchange_gpu_v1" / "model.pt",
@@ -450,14 +477,53 @@ def _load_gpu_lstm_model() -> tuple[Any, dict[str, Any], list[str]] | None:
         embed_dim = int(
             ckpt.get("embed_dim") or ckpt["state_dict"]["ticker_embedding.weight"].shape[1]
         )
+        hidden_size = int(
+            ckpt.get("config", {}).get("hidden_size") or ckpt["state_dict"]["norm.weight"].shape[0]
+        )
+        layers = int(ckpt.get("config", {}).get("layers") or 2)
+        model_config = PriceTrainingConfig(
+            hidden_size=hidden_size, layers=layers, embed_dim=embed_dim
+        )
         model = _build_model(
-            torch, torch.nn, 25, len(ticker_names), PriceTrainingConfig(), embed_dim=embed_dim
+            torch, torch.nn, 25, len(ticker_names), model_config, embed_dim=embed_dim
         )
         model.load_state_dict(ckpt["state_dict"])
         model.eval()
         return model, ckpt["scalers"], ticker_names
     except Exception:
         return None
+
+
+def _predict_gpu_lstm(
+    lstm_model: Any,
+    feat_all: np.ndarray,
+    origins: np.ndarray,
+    f_mean: np.ndarray,
+    f_std: np.ndarray,
+    t_mean: np.ndarray,
+    t_std: np.ndarray,
+    ticker_idx: int,
+    fallback_preds: np.ndarray,
+) -> np.ndarray:
+    import torch
+
+    valid_indices = []
+    valid_seqs = []
+    for i, orig in enumerate(origins):
+        if orig >= 59:
+            valid_indices.append(i)
+            valid_seqs.append((feat_all[orig - 59 : orig + 1] - f_mean) / f_std)
+
+    preds = np.array(fallback_preds, dtype=np.float64, copy=True)
+    if valid_seqs:
+        t_id = torch.full((len(valid_seqs),), ticker_idx, dtype=torch.long)
+        with torch.no_grad():
+            batch_tensor = torch.from_numpy(np.stack(valid_seqs)).float()
+            out = lstm_model(batch_tensor, t_id)
+        batch_out = (out.detach().numpy() * t_std + t_mean).astype(np.float64)
+        for idx, pred in zip(valid_indices, batch_out):
+            preds[idx] = pred
+    return preds
 
 
 def train_and_forecast(
@@ -497,29 +563,29 @@ def train_and_forecast(
         lstm_model, scalers, gpu_tickers = gpu_lstm_info
         if symbol in gpu_tickers:
             use_gpu_lstm = True
-            import torch
-
             f_mean = np.array(scalers["feature_mean"], dtype=np.float32)
             f_std = np.array(scalers["feature_std"], dtype=np.float32)
             f_std[f_std < 1e-8] = 1.0
             t_mean = np.array(scalers["target_mean"], dtype=np.float32)
             t_std = np.array(scalers["target_std"], dtype=np.float32)
-            t_id = torch.tensor([gpu_tickers.index(symbol)], dtype=torch.long)
+            t_idx = gpu_tickers.index(symbol)
 
-            val_pred_list = []
             val_origins = np.where(validation_mask)[0]
             feat_all = dataset.features.iloc[: dataset.labelled_count].to_numpy(dtype=np.float32)
-            for i, orig in enumerate(val_origins):
-                if orig >= 59:
-                    seq = (feat_all[orig - 59 : orig + 1] - f_mean) / f_std
-                    with torch.no_grad():
-                        out = lstm_model(torch.tensor(seq).unsqueeze(0).float(), t_id)
-                    val_pred_list.append(
-                        (out.detach().numpy()[0] * t_std + t_mean).astype(np.float64)
-                    )
-                else:
-                    val_pred_list.append(validation_predictions["ridge"][i])
-            val_pred_arr = _clip_predictions(np.array(val_pred_list), targets[train_mask])
+            val_pred_arr = _clip_predictions(
+                _predict_gpu_lstm(
+                    lstm_model,
+                    feat_all,
+                    val_origins,
+                    f_mean,
+                    f_std,
+                    t_mean,
+                    t_std,
+                    t_idx,
+                    validation_predictions["ridge"],
+                ),
+                targets[train_mask],
+            )
             validation_predictions["gpu_lstm"] = val_pred_arr
             validation_scores["gpu_lstm"] = float(
                 mean_absolute_error(targets[validation_mask], val_pred_arr)
@@ -537,13 +603,6 @@ def train_and_forecast(
         lstm_model, scalers, gpu_tickers = gpu_lstm_info
         import torch
 
-        f_mean = np.array(scalers["feature_mean"], dtype=np.float32)
-        f_std = np.array(scalers["feature_std"], dtype=np.float32)
-        f_std[f_std < 1e-8] = 1.0
-        t_mean = np.array(scalers["target_mean"], dtype=np.float32)
-        t_std = np.array(scalers["target_std"], dtype=np.float32)
-        t_id = torch.tensor([gpu_tickers.index(symbol)], dtype=torch.long)
-
         val_pred_arr = validation_predictions["gpu_lstm"]
         validation_residuals = targets[validation_mask] - val_pred_arr
         residual_low = np.quantile(validation_residuals, 0.10, axis=0)
@@ -553,6 +612,7 @@ def train_and_forecast(
         latest_seq = dataset.features.iloc[-60:].to_numpy(dtype=np.float32)
         if len(latest_seq) == 60:
             norm_seq = (latest_seq - f_mean) / f_std
+            t_id = torch.tensor([t_idx], dtype=torch.long)
             with torch.no_grad():
                 out = lstm_model(torch.tensor(norm_seq).unsqueeze(0).float(), t_id)
             forecast_returns = (out.detach().numpy()[0] * t_std + t_mean).astype(np.float64)
@@ -575,17 +635,20 @@ def train_and_forecast(
         )
 
         test_origins = np.where(test_mask)[0]
-        test_pred_list = []
-        feat_all = dataset.features.iloc[: dataset.labelled_count].to_numpy(dtype=np.float32)
-        for i, orig in enumerate(test_origins):
-            if orig >= 59:
-                seq = (feat_all[orig - 59 : orig + 1] - f_mean) / f_std
-                with torch.no_grad():
-                    out = lstm_model(torch.tensor(seq).unsqueeze(0).float(), t_id)
-                test_pred_list.append((out.detach().numpy()[0] * t_std + t_mean).astype(np.float64))
-            else:
-                test_pred_list.append(test_pred_ridge[i])
-        test_pred = _clip_predictions(np.array(test_pred_list), targets[dev_mask])
+        test_pred = _clip_predictions(
+            _predict_gpu_lstm(
+                lstm_model,
+                feat_all,
+                test_origins,
+                f_mean,
+                f_std,
+                t_mean,
+                t_std,
+                t_idx,
+                test_pred_ridge,
+            ),
+            targets[dev_mask],
+        )
         metrics = _metrics(targets[test_mask], test_pred)
         model_meta = {
             "name": "gpu_lstm",
@@ -688,3 +751,4 @@ def train_and_forecast(
 def clear_forecast_cache() -> None:
     with _cache_lock:
         _cache.clear()
+    _load_gpu_lstm_model.cache_clear()

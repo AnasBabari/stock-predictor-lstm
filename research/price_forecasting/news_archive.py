@@ -26,6 +26,13 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 NEWS_SCHEMA_VERSION = "alpaca-headline-archive-v1"
 _sentiment = SentimentIntensityAnalyzer()
 
+# Revision-lookahead gating policy for daily close-to-close pipeline.
+# Tier 1 (<=15min): ingest, I_delayed=0. Tier 2 (15min,6h]: ingest, I_delayed=1.
+# Tier 3 (>6h): discard from training/validation (retroactive syndication edits).
+REVISION_FLAG_THRESHOLD_S = 900.0
+REVISION_DISCARD_THRESHOLD_S = 6 * 3600.0
+REVISION_POLICY_VERSION = "revision-gate-6h-v1"
+
 NEWS_FEATURE_NAMES: tuple[str, ...] = (
     "news_headline_count_1d",
     "news_headline_count_3d",
@@ -37,6 +44,23 @@ NEWS_FEATURE_NAMES: tuple[str, ...] = (
     "news_absolute_sentiment_intensity",
     "news_hours_since_latest_article",
     "news_volume_zscore",
+)
+
+# Systematic macro block (e.g. SPY): identical rolling semantics to the
+# ticker block, evaluated over the same 16:00 ET NYSE session boundaries.
+# Separate names keep ticker and macro signals as complementary features
+# instead of substituting macro values into ticker columns.
+MACRO_NEWS_FEATURE_NAMES: tuple[str, ...] = (
+    "macro_headline_count_1d",
+    "macro_headline_count_3d",
+    "macro_headline_count_7d",
+    "macro_negative_sentiment_mean",
+    "macro_positive_sentiment_mean",
+    "macro_sentiment_dispersion",
+    "macro_negative_news_intensity",
+    "macro_absolute_sentiment_intensity",
+    "macro_hours_since_latest_article",
+    "macro_volume_zscore",
 )
 
 CIK_MAPPING: dict[str, str] = {
@@ -107,7 +131,7 @@ def _normalise_article(
             "sec_edgar"
             if "acceptanceDateTime" in article or "accessionNumber" in article
             else "yahoo"
-            if "content" in article or "publisher" in article
+            if isinstance(article.get("content"), dict) or "publisher" in article
             else default_provider
         )
     )
@@ -136,11 +160,149 @@ def _normalise_article(
         "url": url,
         "published_at": timestamp.isoformat().replace("+00:00", "Z"),
         "collected_at": collected_at,
+        "provider_updated_at": article.get("updated_at"),
+        "availability_basis": "retrieved_version_publication_time_unverified",
         "sentiment_pos": float(scores["pos"]),
         "sentiment_neg": float(scores["neg"]),
         "sentiment_neu": float(scores["neu"]),
         "sentiment_compound": float(scores["compound"]),
+        **_revision_gate_fields(
+            timestamp.isoformat().replace("+00:00", "Z"),
+            article.get("updated_at"),
+        ),
     }
+
+
+def _parse_optional_timestamp(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return None
+
+
+def _revision_gate_fields(
+    published_at: str,
+    provider_updated_at: Any,
+    *,
+    flag_threshold_s: float = REVISION_FLAG_THRESHOLD_S,
+    discard_threshold_s: float = REVISION_DISCARD_THRESHOLD_S,
+) -> dict[str, Any]:
+    """Derive conservative availability fields for one record.
+
+    t_available = max(published_at, provider_updated_at); unparsable or
+    missing updates fall back to published_at with zero delay. Negative
+    clock-skew deltas are clamped to zero.
+    """
+    published = _parse_optional_timestamp(published_at)
+    updated = _parse_optional_timestamp(provider_updated_at)
+    if published is None:
+        raise ValueError("published_at is required for revision gating")
+    if updated is None or updated <= published:
+        delay_s = 0.0
+        available = published
+    else:
+        delay_s = float((updated - published).total_seconds())
+        available = updated
+    if delay_s > discard_threshold_s:
+        tier = 3
+    elif delay_s > flag_threshold_s:
+        tier = 2
+    else:
+        tier = 1
+    return {
+        "revision_delay_s": float(delay_s),
+        "t_available": available.isoformat().replace("+00:00", "Z"),
+        "is_delayed_ingest": 1 if tier == 2 else 0,
+        "revision_tier": tier,
+        "revision_policy": REVISION_POLICY_VERSION,
+    }
+
+
+def _is_pre_gated(
+    df_news: pd.DataFrame,
+    *,
+    flag_threshold_s: float,
+    discard_threshold_s: float,
+) -> bool:
+    """Detect records already annotated by apply_revision_policy under defaults.
+
+    Lets broadcast workloads (e.g. one SPY macro stream joined to hundreds of
+    tickers) gate once and reuse, instead of re-deriving per-ticker delays.
+    Only trusted when the caller uses the default thresholds and every record
+    carries the current revision policy version.
+    """
+    if (
+        flag_threshold_s != REVISION_FLAG_THRESHOLD_S
+        or discard_threshold_s != REVISION_DISCARD_THRESHOLD_S
+    ):
+        return False
+    required = {"t_available", "revision_tier", "revision_policy"}
+    if not required.issubset(df_news.columns):
+        return False
+    try:
+        policies = pd.Series(df_news["revision_policy"]).unique()
+    except Exception:
+        return False
+    return len(policies) == 1 and str(policies[0]) == REVISION_POLICY_VERSION
+
+
+def apply_revision_policy(
+    records: list[dict[str, Any]] | pd.DataFrame,
+    *,
+    flag_threshold_s: float = REVISION_FLAG_THRESHOLD_S,
+    discard_threshold_s: float = REVISION_DISCARD_THRESHOLD_S,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Split records into Tier 1+2 ingest set and Tier 3 discards.
+
+    Returns (kept, diagnostics). Kept records are annotated with
+    t_available / revision_delay_s / is_delayed_ingest / revision_tier and
+    sorted by (t_available, id) so downstream joins implement
+    session(t_available) = min{s in S | s >= t_available}.
+    """
+    items: list[dict[str, Any]]
+    if isinstance(records, pd.DataFrame):
+        items = records.to_dict(orient="records")
+    else:
+        items = list(records or [])
+    kept: list[dict[str, Any]] = []
+    tier_counts = {1: 0, 2: 0, 3: 0}
+    for item in items:
+        if not isinstance(item, dict) or not item.get("published_at"):
+            continue
+        try:
+            gate = _revision_gate_fields(
+                str(item["published_at"]),
+                item.get("provider_updated_at"),
+                flag_threshold_s=flag_threshold_s,
+                discard_threshold_s=discard_threshold_s,
+            )
+        except ValueError:
+            continue
+        tier_counts[int(gate["revision_tier"])] += 1
+        if int(gate["revision_tier"]) == 3:
+            continue
+        annotated = dict(item)
+        annotated.update(gate)
+        # Backfill t_available for callers that only read published_at.
+        kept.append(annotated)
+    kept.sort(key=lambda r: (str(r.get("t_available", r.get("published_at", ""))), str(r.get("id", ""))))
+    total = sum(tier_counts.values())
+    diagnostics = {
+        "revision_policy": REVISION_POLICY_VERSION,
+        "flag_threshold_s": flag_threshold_s,
+        "discard_threshold_s": discard_threshold_s,
+        "total": total,
+        "kept": len(kept),
+        "discarded": tier_counts[3],
+        "tier_counts": tier_counts,
+        "discard_rate": (tier_counts[3] / total) if total else 0.0,
+    }
+    return kept, diagnostics
 
 
 def collect_alpaca_news(
@@ -198,6 +360,15 @@ def collect_alpaca_news(
                     raw, symbol, collected_at, default_provider="alpaca"
                 )
                 if normalised is not None:
+                    normalised["provider"] = "alpaca"
+                    publication = pd.Timestamp(normalised["published_at"])
+                    start_time, end_time = pd.Timestamp(start), pd.Timestamp(end)
+                    if start_time.tzinfo is None:
+                        start_time = start_time.tz_localize("UTC")
+                    if end_time.tzinfo is None:
+                        end_time = end_time.tz_localize("UTC")
+                    if not start_time <= publication < end_time:
+                        continue
                     records[normalised["id"]] = normalised
             next_token = payload.get("next_page_token")
             if not next_token:
@@ -392,22 +563,25 @@ def load_news_archive(path: str | Path) -> list[dict[str, Any]]:
 def merge_news_archive(path: str | Path, records: list[dict[str, Any]]) -> dict[str, Any]:
     """Atomically merge deduplicated records and write a checksummed manifest."""
     archive_path = Path(path)
-    existing: dict[str, dict[str, Any]] = {}
+    existing: dict[tuple[str, str], dict[str, Any]] = {}
     if archive_path.is_file():
         for line in archive_path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             item = json.loads(line)
-            existing[str(item["id"])] = item
+            existing[(str(item.get("provider", "unknown")), str(item["id"]))] = item
     for item in records:
-        existing[str(item["id"])] = item
+        key = (str(item.get("provider", "unknown")), str(item["id"]))
+        if key in existing and existing[key] != item:
+            raise ValueError("Conflicting news record: preserve revisions in a separate archive")
+        existing[key] = item
     ordered = sorted(existing.values(), key=lambda item: (item["published_at"], item["id"]))
     payload = "".join(
         json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n" for item in ordered
     )
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = archive_path.with_suffix(archive_path.suffix + ".tmp")
-    temporary.write_text(payload, encoding="utf-8")
+    temporary.write_bytes(payload.encode("utf-8"))
     temporary.replace(archive_path)
     providers = sorted(
         {
@@ -425,6 +599,7 @@ def merge_news_archive(path: str | Path, records: list[dict[str, Any]]) -> dict[
         "published_start": ordered[0]["published_at"] if ordered else None,
         "published_end": ordered[-1]["published_at"] if ordered else None,
         "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        "hash_convention": "sha256_exact_utf8_lf_bytes_v1",
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
     manifest_path = archive_path.with_suffix(".manifest.json")
@@ -463,19 +638,39 @@ def validate_news_archive(
     records: list[dict[str, Any]],
     sessions: pd.DatetimeIndex,
     min_article_count: int = 1,
+    *,
+    enforce_revision_gate: bool = True,
+    flag_threshold_s: float = REVISION_FLAG_THRESHOLD_S,
+    discard_threshold_s: float = REVISION_DISCARD_THRESHOLD_S,
 ) -> dict[str, Any]:
-    """Compute point-in-time coverage diagnostics for an evaluated news corpus."""
+    """Compute point-in-time coverage diagnostics for an evaluated news corpus.
+
+    When enforce_revision_gate is True (default), coverage uses conservative
+    t_available = max(published_at, provider_updated_at) and excludes Tier 3
+    retroactive revisions (delay > discard_threshold_s). This implements
+    session(t_available) = min{s in S | s >= t_available}.
+    """
     sessions = pd.DatetimeIndex(sessions)
     if sessions.tz is not None:
         sessions = sessions.tz_convert(None)
 
-    pub_dates = [
-        item["published_at"]
-        for item in records
-        if isinstance(item, dict) and "published_at" in item and item["published_at"]
-    ]
-    if not pub_dates:
-        return {
+    raw_items = [r for r in (records or []) if isinstance(r, dict) and r.get("published_at")]
+    gate_diagnostics: dict[str, Any] | None = None
+    if enforce_revision_gate:
+        kept, gate_diagnostics = apply_revision_policy(
+            raw_items,
+            flag_threshold_s=flag_threshold_s,
+            discard_threshold_s=discard_threshold_s,
+        )
+        active_times = [
+            str(r.get("t_available") or r["published_at"]) for r in kept
+        ]
+        tier_counts = gate_diagnostics["tier_counts"]
+    else:
+        active_times = [str(r["published_at"]) for r in raw_items]
+        tier_counts = None
+    if not active_times:
+        empty: dict[str, Any] = {
             "article_count": 0,
             "published_start": None,
             "published_end": None,
@@ -485,9 +680,12 @@ def validate_news_archive(
             "is_valid": False,
             "reason": "News record list is empty",
         }
+        if gate_diagnostics is not None:
+            empty["revision_gate"] = gate_diagnostics
+        return empty
 
     cutoff_timestamps = _resolve_session_closes(sessions)
-    pub_dt = pd.to_datetime(pub_dates, utc=True).tz_localize(None).sort_values()
+    pub_dt = pd.to_datetime(active_times, utc=True).tz_localize(None).sort_values()
     pub_times = pub_dt.to_numpy(dtype="datetime64[ns]")
 
     has_1d: list[bool] = []
@@ -509,34 +707,47 @@ def validate_news_archive(
     cov_3d = float(np.mean(has_3d)) if has_3d else 0.0
     cov_7d = float(np.mean(has_7d)) if has_7d else 0.0
 
-    is_valid = len(pub_dates) >= min_article_count
+    is_valid = len(active_times) >= min_article_count
     reason = (
         "Valid timestamped corpus"
         if is_valid
-        else f"Article count ({len(pub_dates)}) below minimum requirement ({min_article_count})"
+        else f"Article count ({len(active_times)}) below minimum requirement ({min_article_count})"
     )
 
-    return {
-        "article_count": len(pub_dates),
-        "published_start": min(pub_dates),
-        "published_end": max(pub_dates),
+    result: dict[str, Any] = {
+        "article_count": len(active_times),
+        "published_start": min(active_times),
+        "published_end": max(active_times),
         "coverage_1d": cov_1d,
         "coverage_3d": cov_3d,
         "coverage_7d": cov_7d,
         "is_valid": is_valid,
         "reason": reason,
     }
+    if gate_diagnostics is not None:
+        result["revision_gate"] = gate_diagnostics
+        result["tier_counts"] = tier_counts
+    return result
 
 
 def build_causal_news_features(
     sessions: pd.DatetimeIndex,
     ticker: str,
     news_events: list[dict[str, Any]] | pd.DataFrame,
+    *,
+    enforce_revision_gate: bool = True,
+    flag_threshold_s: float = REVISION_FLAG_THRESHOLD_S,
+    discard_threshold_s: float = REVISION_DISCARD_THRESHOLD_S,
 ) -> pd.DataFrame:
     """Extract causal point-in-time news features with strict exchange market close cutoff.
 
     Cutoff at trading session t is resolved from the NYSE exchange calendar.
-    Only articles with published_at <= cutoff participate in session t.
+    Only articles with t_available <= cutoff participate in session t, where
+    t_available = max(published_at, provider_updated_at). Tier 3 records
+    (delay > discard_threshold_s, default 6h) are discarded; Tier 2 records
+    carry is_delayed_ingest=1 at record level. A 15:30 ET publish with a
+    16:30 ET update therefore shifts to the next session rather than leaking
+    backward. NEWS_FEATURE_NAMES is unchanged for checkpoint compatibility.
     """
     sessions = pd.DatetimeIndex(sessions)
     if sessions.tz is not None:
@@ -552,10 +763,42 @@ def build_causal_news_features(
             out[col] = 168.0 if col == "news_hours_since_latest_article" else 0.0
         return out
 
-    df_news["published_at"] = pd.to_datetime(df_news["published_at"], utc=True).dt.tz_localize(None)
-    df_news = df_news.sort_values("published_at").reset_index(drop=True)
+    if enforce_revision_gate:
+        if _is_pre_gated(
+            df_news,
+            flag_threshold_s=flag_threshold_s,
+            discard_threshold_s=discard_threshold_s,
+        ):
+            df_news = df_news[
+                pd.to_numeric(df_news["revision_tier"], errors="coerce").fillna(3).astype(int)
+                != 3
+            ]
+            if df_news.empty:
+                for col in NEWS_FEATURE_NAMES:
+                    out[col] = 168.0 if col == "news_hours_since_latest_article" else 0.0
+                return out
+        else:
+            gated_records, _gate_diag = apply_revision_policy(
+                df_news.to_dict(orient="records"),
+                flag_threshold_s=flag_threshold_s,
+                discard_threshold_s=discard_threshold_s,
+            )
+            if not gated_records:
+                for col in NEWS_FEATURE_NAMES:
+                    out[col] = 168.0 if col == "news_hours_since_latest_article" else 0.0
+                return out
+            df_news = pd.DataFrame(gated_records)
+        # Point-in-time join key: conservative availability, not creation time.
+        df_news["available_at"] = pd.to_datetime(
+            df_news["t_available"], utc=True
+        ).dt.tz_localize(None)
+    else:
+        df_news["available_at"] = pd.to_datetime(
+            df_news["published_at"], utc=True
+        ).dt.tz_localize(None)
+    df_news = df_news.sort_values("available_at").reset_index(drop=True)
 
-    pub_times = df_news["published_at"].to_numpy(dtype="datetime64[ns]")
+    pub_times = df_news["available_at"].to_numpy(dtype="datetime64[ns]")
     neg_scores = (
         df_news["sentiment_neg"].to_numpy(dtype=float)
         if "sentiment_neg" in df_news
@@ -649,3 +892,32 @@ def build_causal_news_features(
     out["news_volume_zscore"] = ((c1_series - roll_mean) / np.maximum(roll_std, 1.0)).to_numpy()
 
     return out
+
+
+def build_macro_news_features(
+    sessions: pd.DatetimeIndex,
+    macro_events: list[dict[str, Any]] | pd.DataFrame,
+    *,
+    enforce_revision_gate: bool = True,
+    flag_threshold_s: float = REVISION_FLAG_THRESHOLD_S,
+    discard_threshold_s: float = REVISION_DISCARD_THRESHOLD_S,
+) -> pd.DataFrame:
+    """Build the systematic macro block (e.g. SPY) for one session index.
+
+    Identical rolling semantics and 6-hour revision gating to the ticker
+    block, evaluated over the same 16:00 ET NYSE session boundaries, with
+    output columns under MACRO_NEWS_FEATURE_NAMES. Accepts pre-gated
+    records (see _is_pre_gated) so one macro stream can be broadcast to
+    hundreds of tickers after a single gating pass. US-session semantics
+    only; do not join same-date macro output to UK closes without a lag.
+    """
+    frame = build_causal_news_features(
+        sessions,
+        ticker="MACRO",
+        news_events=macro_events,
+        enforce_revision_gate=enforce_revision_gate,
+        flag_threshold_s=flag_threshold_s,
+        discard_threshold_s=discard_threshold_s,
+    )
+    rename = dict(zip(NEWS_FEATURE_NAMES, MACRO_NEWS_FEATURE_NAMES))
+    return frame.rename(columns=rename).loc[:, list(MACRO_NEWS_FEATURE_NAMES)]

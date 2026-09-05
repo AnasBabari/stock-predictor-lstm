@@ -1,0 +1,8 @@
+{
+  "ticker": "^FTSE",
+  "sessions": 2949,
+  "first": "2015-01-02",
+  "last": "2026-09-04",
+  "currency": "GBp_points",
+  "revision_risk": "none_by_construction"
+}

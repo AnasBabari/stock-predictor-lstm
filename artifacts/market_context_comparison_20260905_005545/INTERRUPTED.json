@@ -1,0 +1,10 @@
+{
+  "status": "interrupted_during_context_preprocessing",
+  "reason": "Full-array scaling allocated approximately 18.8 GB and caused heavy paging; replaced with bounded-chunk moments and per-batch scaling.",
+  "baseline_export_complete": true,
+  "baseline_hac_complete": true,
+  "context_ridge_complete": true,
+  "context_lstm_complete": false,
+  "test_scored": false,
+  "deployment": false
+}

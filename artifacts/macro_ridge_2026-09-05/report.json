@@ -1,0 +1,332 @@
+{
+  "protocol": "matched_ridge_macro_v1",
+  "alpha": 100.0,
+  "fit_intercept": true,
+  "feature_counts": {
+    "price_only": 25,
+    "price_plus_macro": 35
+  },
+  "rows": {
+    "train": 297375,
+    "validation": 67635
+  },
+  "macro_gate": {
+    "revision_policy": "revision-gate-6h-v1",
+    "flag_threshold_s": 900.0,
+    "discard_threshold_s": 21600.0,
+    "total": 66432,
+    "kept": 66249,
+    "discarded": 183,
+    "tier_counts": {
+      "1": 65493,
+      "2": 756,
+      "3": 183
+    },
+    "discard_rate": 0.0027546965317919074
+  },
+  "arms": {
+    "price_only": {
+      "slice_B_full_validation": {
+        "label": "B",
+        "origins": 67635,
+        "mae_percent": 2.7822055910992654,
+        "rmse_percent": 4.257532262641011,
+        "persistence_mae_percent": 2.790750889975697,
+        "relative_mae_vs_persistence": 0.996937992958409,
+        "direction_accuracy": 0.5259745060144262,
+        "majority_direction_accuracy": 0.5395093411061475,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.3721600328317929,
+            "rmse_percent": 2.1368925447389024,
+            "direction_accuracy": 0.50791749833666,
+            "relative_mae_vs_persistence": 1.0023180151598337
+          },
+          {
+            "day": 2,
+            "mae_percent": 1.992202710161596,
+            "rmse_percent": 3.0042450574778696,
+            "direction_accuracy": 0.5157093220965476,
+            "relative_mae_vs_persistence": 0.9995520154910638
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.4873774797585018,
+            "rmse_percent": 3.702631331811957,
+            "direction_accuracy": 0.5235898573223923,
+            "relative_mae_vs_persistence": 0.997842505502836
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.904743517099237,
+            "rmse_percent": 4.274523052460938,
+            "direction_accuracy": 0.5271678864493236,
+            "relative_mae_vs_persistence": 0.9974097512568089
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.261342417808857,
+            "rmse_percent": 4.764208157988687,
+            "direction_accuracy": 0.5348562134989281,
+            "relative_mae_vs_persistence": 0.9959847595110425
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.5826554521253953,
+            "rmse_percent": 5.2080665332277185,
+            "direction_accuracy": 0.5329784874695054,
+            "relative_mae_vs_persistence": 0.9959564812775005
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.8749575279094772,
+            "rmse_percent": 5.611738248203902,
+            "direction_accuracy": 0.5396022769276262,
+            "relative_mae_vs_persistence": 0.9944865883093232
+          }
+        ]
+      },
+      "slice_A_march2023": {
+        "label": "A",
+        "origins": 1840,
+        "mae_percent": 2.7425548497221195,
+        "rmse_percent": 3.9107755204981163,
+        "persistence_mae_percent": 2.7895797639725637,
+        "relative_mae_vs_persistence": 0.9831426529336887,
+        "direction_accuracy": 0.5861024844720497,
+        "majority_direction_accuracy": 0.6052795031055901,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.5299168033741444,
+            "rmse_percent": 2.1346726098603375,
+            "direction_accuracy": 0.5423913043478261,
+            "relative_mae_vs_persistence": 0.9918697869213817
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.103887946779377,
+            "rmse_percent": 2.9253973711191863,
+            "direction_accuracy": 0.5717391304347826,
+            "relative_mae_vs_persistence": 0.9891224708534788
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.5640429586350812,
+            "rmse_percent": 3.537757669397624,
+            "direction_accuracy": 0.5597826086956522,
+            "relative_mae_vs_persistence": 0.9894032175725564
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.938377405982626,
+            "rmse_percent": 4.035384246077762,
+            "direction_accuracy": 0.5739130434782609,
+            "relative_mae_vs_persistence": 0.9885057919809369
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.18266005424858,
+            "rmse_percent": 4.403546198418489,
+            "direction_accuracy": 0.6173913043478261,
+            "relative_mae_vs_persistence": 0.9800348560428024
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.3561385655073597,
+            "rmse_percent": 4.666298645915794,
+            "direction_accuracy": 0.6103260869565217,
+            "relative_mae_vs_persistence": 0.9788546328581994
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.522860213527666,
+            "rmse_percent": 4.89681138665728,
+            "direction_accuracy": 0.6271739130434782,
+            "relative_mae_vs_persistence": 0.9738673873700192
+          }
+        ]
+      }
+    },
+    "price_plus_macro": {
+      "slice_B_full_validation": {
+        "label": "B",
+        "origins": 67635,
+        "mae_percent": 2.821843017489418,
+        "rmse_percent": 4.295170595290796,
+        "persistence_mae_percent": 2.790750889975697,
+        "relative_mae_vs_persistence": 1.0111411332431721,
+        "direction_accuracy": 0.5053152953352554,
+        "majority_direction_accuracy": 0.5395093411061475,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.3763073061068951,
+            "rmse_percent": 2.1413788404475467,
+            "direction_accuracy": 0.5075330819841798,
+            "relative_mae_vs_persistence": 1.0053474626134569
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.000488377476584,
+            "rmse_percent": 3.0117332955131944,
+            "direction_accuracy": 0.5098100096104088,
+            "relative_mae_vs_persistence": 1.0037092006119057
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.50309879627542,
+            "rmse_percent": 3.714223981509123,
+            "direction_accuracy": 0.5102535669401936,
+            "relative_mae_vs_persistence": 1.0041493077436314
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.9391524986393467,
+            "rmse_percent": 4.299663725218688,
+            "direction_accuracy": 0.5007022991054927,
+            "relative_mae_vs_persistence": 1.0092248576566998
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.306722107539883,
+            "rmse_percent": 4.798079335931627,
+            "direction_accuracy": 0.5043986101870334,
+            "relative_mae_vs_persistence": 1.0098433102466648
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.656477116691609,
+            "rmse_percent": 5.269060389426579,
+            "direction_accuracy": 0.49993346640053227,
+            "relative_mae_vs_persistence": 1.016478456182957
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.970654919696188,
+            "rmse_percent": 5.693528052169271,
+            "direction_accuracy": 0.5045760331189473,
+            "relative_mae_vs_persistence": 1.019046798836175
+          }
+        ]
+      },
+      "slice_A_march2023": {
+        "label": "A",
+        "origins": 1840,
+        "mae_percent": 2.78192092697222,
+        "rmse_percent": 3.948827187819954,
+        "persistence_mae_percent": 2.7895797639725637,
+        "relative_mae_vs_persistence": 0.9972544835966844,
+        "direction_accuracy": 0.5233695652173913,
+        "majority_direction_accuracy": 0.6052795031055901,
+        "per_horizon": [
+          {
+            "day": 1,
+            "mae_percent": 1.5307429342117593,
+            "rmse_percent": 2.133483444197889,
+            "direction_accuracy": 0.5581521739130435,
+            "relative_mae_vs_persistence": 0.9924053808935945
+          },
+          {
+            "day": 2,
+            "mae_percent": 2.1203077801507186,
+            "rmse_percent": 2.941008913827604,
+            "direction_accuracy": 0.5233695652173913,
+            "relative_mae_vs_persistence": 0.9968420959314807
+          },
+          {
+            "day": 3,
+            "mae_percent": 2.593842639453541,
+            "rmse_percent": 3.549075873108947,
+            "direction_accuracy": 0.5005434782608695,
+            "relative_mae_vs_persistence": 1.0009022059124846
+          },
+          {
+            "day": 4,
+            "mae_percent": 2.956866486806623,
+            "rmse_percent": 4.0480357300818675,
+            "direction_accuracy": 0.5266304347826087,
+            "relative_mae_vs_persistence": 0.9947257429803261
+          },
+          {
+            "day": 5,
+            "mae_percent": 3.22802455851496,
+            "rmse_percent": 4.444681197086426,
+            "direction_accuracy": 0.5315217391304348,
+            "relative_mae_vs_persistence": 0.9940039242594365
+          },
+          {
+            "day": 6,
+            "mae_percent": 3.436896975219735,
+            "rmse_percent": 4.737429761453825,
+            "direction_accuracy": 0.5065217391304347,
+            "relative_mae_vs_persistence": 1.0024087090520912
+          },
+          {
+            "day": 7,
+            "mae_percent": 3.606765114448203,
+            "rmse_percent": 4.976987398360264,
+            "direction_accuracy": 0.5168478260869566,
+            "relative_mae_vs_persistence": 0.9970622465737002
+          }
+        ]
+      }
+    }
+  },
+  "beta_diagnostics": {
+    "coef_shape": [
+      7,
+      35
+    ],
+    "frobenius_all": 0.029608238806326,
+    "frobenius_price": 0.01934038206952452,
+    "frobenius_macro": 0.022418684765553108,
+    "macro_share_of_norm_sq": 0.573317384277776,
+    "per_horizon_macro_norm": [
+      0.004055676180621636,
+      0.004298374293092395,
+      0.004632926481532852,
+      0.006098318324115731,
+      0.007708208095896091,
+      0.01194522372476551,
+      0.014384525008556626
+    ],
+    "per_horizon_price_norm": [
+      0.003782670550894366,
+      0.003680036550297356,
+      0.006235006661240628,
+      0.007769246505925258,
+      0.007315835368202223,
+      0.01016458289505746,
+      0.009493282950927863
+    ],
+    "top_macro_weights": [
+      {
+        "feature": "macro_negative_news_intensity",
+        "horizon_day": 7,
+        "w": -0.010312679223716259
+      },
+      {
+        "feature": "macro_negative_news_intensity",
+        "horizon_day": 6,
+        "w": -0.009095330722630024
+      },
+      {
+        "feature": "macro_headline_count_3d",
+        "horizon_day": 7,
+        "w": 0.00782210472971201
+      },
+      {
+        "feature": "macro_headline_count_3d",
+        "horizon_day": 6,
+        "w": 0.005688520614057779
+      },
+      {
+        "feature": "macro_negative_news_intensity",
+        "horizon_day": 5,
+        "w": -0.005610150750726461
+      }
+    ]
+  }
+}

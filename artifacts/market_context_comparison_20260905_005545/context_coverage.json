@@ -1,0 +1,1432 @@
+{
+  "AAPL": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ABNB": {
+    "rows": 2936,
+    "flagged_rows": 1522,
+    "max_stale_sessions": 1516
+  },
+  "ABT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ADBE": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ADI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AEP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AIG": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ALGN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ALL": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AMAT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AMD": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AMZN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ANET": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AON": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "APP": {
+    "rows": 2936,
+    "flagged_rows": 1607,
+    "max_stale_sessions": 1601
+  },
+  "ARM": {
+    "rows": 2936,
+    "flagged_rows": 2215,
+    "max_stale_sessions": 2209
+  },
+  "ASML": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AVGO": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AXON": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AXP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AZN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BA": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BABA": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BAC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BAM": {
+    "rows": 2936,
+    "flagged_rows": 2019,
+    "max_stale_sessions": 2013
+  },
+  "BAX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BDX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BIIB": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BKNG": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BKR": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BLK": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BMY": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "BSX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "C": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CARR": {
+    "rows": 2936,
+    "flagged_rows": 1337,
+    "max_stale_sessions": 1331
+  },
+  "CAT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CB": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CCEP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CDNS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CDW": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CEG": {
+    "rows": 2936,
+    "flagged_rows": 1800,
+    "max_stale_sessions": 1794
+  },
+  "CHTR": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CMCSA": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CMI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "COP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "COST": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CPRT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CRWD": {
+    "rows": 2936,
+    "flagged_rows": 1143,
+    "max_stale_sessions": 1137
+  },
+  "CSCO": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CSX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CTAS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CTSH": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CVS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "CVX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "DASH": {
+    "rows": 2936,
+    "flagged_rows": 1521,
+    "max_stale_sessions": 1515
+  },
+  "DDOG": {
+    "rows": 2936,
+    "flagged_rows": 1212,
+    "max_stale_sessions": 1206
+  },
+  "DE": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "DEO": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "DIS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "DLTR": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "DVN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "DXCM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ELV": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "EMR": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "EOG": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ET": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ETN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "EW": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "EXC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "FANG": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "FAST": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "FDX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "FTNT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "GD": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "GE": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "GEHC": {
+    "rows": 2936,
+    "flagged_rows": 2029,
+    "max_stale_sessions": 2023
+  },
+  "GFS": {
+    "rows": 2936,
+    "flagged_rows": 1744,
+    "max_stale_sessions": 1738
+  },
+  "GILD": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "GOOGL": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "GS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "HD": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "HMC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "HON": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "HUM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "IBM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "IDXX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ILMN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "INTC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "INTU": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ISRG": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ITW": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "JCI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "JNJ": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "JPM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "KDP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "KHC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "KLAC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "KMI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "KO": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "LHX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "LIN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "LLY": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "LMT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "LOW": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "LRCX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "LULU": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MA": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MAR": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MCD": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MCHP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MDB": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MDLZ": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MDT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MELI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MET": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "META": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MNST": {
+    "rows": 2936,
+    "flagged_rows": 954,
+    "max_stale_sessions": 945
+  },
+  "MPC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MRK": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MRNA": {
+    "rows": 2936,
+    "flagged_rows": 1016,
+    "max_stale_sessions": 1010
+  },
+  "MRVL": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MSFT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MSI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "MSTR": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NEE": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NFLX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NKE": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NOC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NSC": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NVDA": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NVO": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NVS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "NXPI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ODFL": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ON": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ORCL": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ORLY": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "OTIS": {
+    "rows": 2936,
+    "flagged_rows": 1337,
+    "max_stale_sessions": 1331
+  },
+  "OXY": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PANW": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PAYX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PCAR": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PDD": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PEP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PFE": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PG": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PGR": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PH": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PLTR": {
+    "rows": 2936,
+    "flagged_rows": 1472,
+    "max_stale_sessions": 1466
+  },
+  "PM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PRU": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PSX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "PYPL": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "QCOM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "REGN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ROP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ROST": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "RSG": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "RTX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "SAP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "SBUX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "SCHW": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "SLB": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "SMCI": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "SNPS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "SONY": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "SYK": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TEAM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TMO": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TRV": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TSLA": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TSM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TTD": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TTWO": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "TXN": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "UNH": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "UNP": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "UPS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "V": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "VLO": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "VRSK": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "VRTX": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "WBD": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "WDAY": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "WM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "WMB": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "WMT": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "XEL": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "XOM": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ZS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "ZTS": {
+    "rows": 2936,
+    "flagged_rows": 951,
+    "max_stale_sessions": 945
+  },
+  "AAL.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "ABF.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "ADM.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "ANTO.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "AUTO.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "AV.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "AZN.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "BA.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "BARC.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "BATS.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "BEZ.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "BKG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "BLND.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "BME.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "BOY.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "BP.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "CPG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "CRDA.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "DCC.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "DGE.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "EDV.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "EMG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "ENT.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "EXPN.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "EZJ.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "FDM.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "FRAS.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "GAW.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "GFTU.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "GLEN.L": {
+    "rows": 2022,
+    "flagged_rows": 32,
+    "max_stale_sessions": 20
+  },
+  "GNS.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "GSK.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "HIK.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "HLMA.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "HLN.L": {
+    "rows": 2022,
+    "flagged_rows": 997,
+    "max_stale_sessions": 997
+  },
+  "HSBA.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "IGG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "IHG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "IMB.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "IMI.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "INF.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "ITRK.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "ITV.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "JD.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "JMAT.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "KGF.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "LAND.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "LGEN.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "LLOY.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "LSEG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "MKS.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "MNDI.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "MONY.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "NG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "NWG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "NXT.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "OCDO.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "PRU.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "PSN.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "PSON.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "REL.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "RIO.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "RMV.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "RR.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "RS1.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SBRY.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SDR.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SGE.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SGRO.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SHEL.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SMIN.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SMT.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SN.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "SPX.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SSE.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "STAN.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "STJ.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "SVT.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "TRN.L": {
+    "rows": 2022,
+    "flagged_rows": 221,
+    "max_stale_sessions": 221
+  },
+  "TSCO.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "TW.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "ULVR.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "UTG.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "UU.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "VOD.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "VTY.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "WEIR.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "WISE.L": {
+    "rows": 2022,
+    "flagged_rows": 742,
+    "max_stale_sessions": 738
+  },
+  "WIZZ.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  },
+  "WPP.L": {
+    "rows": 2022,
+    "flagged_rows": 24,
+    "max_stale_sessions": 20
+  },
+  "WTB.L": {
+    "rows": 2022,
+    "flagged_rows": 20,
+    "max_stale_sessions": 20
+  }
+}

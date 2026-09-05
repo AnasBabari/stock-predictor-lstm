@@ -1,0 +1,11 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "alpaca",
+  "archive": "DDOG.jsonl",
+  "article_count": 14,
+  "published_start": "2023-03-02T13:57:45Z",
+  "published_end": "2023-03-31T18:00:36Z",
+  "sha256": "a59613ef653a477bb3185e3791debf5ac986011a782580f93a7e253208e1601f",
+  "hash_convention": "sha256_exact_utf8_lf_bytes_v1",
+  "generated_at": "2026-09-05T10:29:20.475916Z"
+}

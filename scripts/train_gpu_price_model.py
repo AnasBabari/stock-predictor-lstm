@@ -27,9 +27,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--universe",
-        choices=["tri_exchange", "five_ticker", "custom"],
-        default="tri_exchange",
-        help="Target universe: tri_exchange (30 LSE/NASDAQ/NYSE), five_ticker (US), or custom",
+        choices=["broad_300", "tri_exchange", "five_ticker", "custom", "all"],
+        default="broad_300",
+        help="Target universe: broad_300 (286+ LSE/NASDAQ/NYSE), tri_exchange (30), five_ticker (US), or custom",
     )
     parser.add_argument("--tickers", default=None, help="Comma-separated ticker list override")
     parser.add_argument(
@@ -41,11 +41,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=REPO_ROOT / "artifacts" / "tri_exchange_gpu_v1",
+        default=REPO_ROOT / "artifacts" / "tri_exchange_gpu_v2",
         help="Target directory to save model checkpoint and report",
     )
-    parser.add_argument("--epochs", type=int, default=60)
-    parser.add_argument("--patience", type=int, default=12)
+    parser.add_argument("--hidden-size", type=int, default=128, help="LSTM hidden units")
+    parser.add_argument("--layers", type=int, default=3, help="Number of stacked LSTM layers")
+    parser.add_argument("--embed-dim", type=int, default=16, help="Asset embedding dimension")
+    parser.add_argument("--batch-size", type=int, default=256, help="Training batch size")
+    parser.add_argument("--epochs", type=int, default=80, help="Maximum epochs")
+    parser.add_argument("--patience", type=int, default=25, help="Early stopping patience")
+    parser.add_argument(
+        "--validation-only",
+        action="store_true",
+        help="Evaluate validation only; skip test evaluation and deployment refit",
+    )
     parser.add_argument(
         "--feature-mode",
         choices=["price_only", "price_plus_news", "compare_ablation"],
@@ -232,6 +241,13 @@ def main() -> int:
     if args.tickers:
         tickers = tuple(value.strip().upper() for value in args.tickers.split(",") if value.strip())
         cache_dir = args.cache_dir or (REPO_ROOT / "data" / "tri_exchange" / "cache")
+    elif args.universe in ("broad_300", "all"):
+        cache_dir = args.cache_dir or (REPO_ROOT / "data" / "tri_exchange" / "cache")
+        manifest_file = REPO_ROOT / "data" / "tri_exchange" / "manifest_broad_300.json"
+        if manifest_file.is_file():
+            tickers = tuple(json.loads(manifest_file.read_text(encoding="utf-8"))["valid_tickers"])
+        else:
+            tickers = tuple(sorted(p.stem for p in cache_dir.glob("*.parquet")))
     elif args.universe == "tri_exchange":
         tickers = TRI_EXCHANGE_TICKERS
         cache_dir = args.cache_dir or (REPO_ROOT / "data" / "tri_exchange" / "cache")
@@ -259,10 +275,16 @@ def main() -> int:
             frames[ticker] = norm
 
     if args.feature_mode == "compare_ablation":
+        if args.validation_only:
+            raise ValueError("Use separate price_only and price_plus_news validation-only runs")
         run_ablation(frames, args)
         return 0
 
     config = PriceTrainingConfig(
+        hidden_size=args.hidden_size,
+        layers=args.layers,
+        embed_dim=args.embed_dim,
+        batch_size=args.batch_size,
         maximum_epochs=args.epochs,
         patience=args.patience,
         feature_mode=args.feature_mode,
@@ -279,7 +301,9 @@ def main() -> int:
         f"features={len(dataset.feature_names)} mode={dataset.feature_mode}",
         flush=True,
     )
-    report = train_cuda_price_model(dataset, args.output_dir, config)
+    report = train_cuda_price_model(
+        dataset, args.output_dir, config, validation_only=args.validation_only
+    )
     print(
         json.dumps(
             {
@@ -288,7 +312,9 @@ def main() -> int:
                 "epochs": report["selection"]["epochs"],
                 "feature_mode": report["feature_mode"],
                 "feature_count": report["feature_count"],
-                "test": report["untouched_test"]["pooled"],
+                "completed_epochs": report["selection"]["completed_epochs"],
+                "validation": report["selection"]["metrics"],
+                "test": report.get("untouched_test", {}).get("pooled"),
                 "output_dir": str(args.output_dir),
             },
             indent=2,

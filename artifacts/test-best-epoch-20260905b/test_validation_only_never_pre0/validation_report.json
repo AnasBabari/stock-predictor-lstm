@@ -1,0 +1,91 @@
+{
+  "status": "validation_only_candidate",
+  "selection": {
+    "epochs": 1,
+    "best_epoch": 1,
+    "completed_epochs": 26,
+    "best_validation_scaled_huber": 0.4,
+    "metrics": {
+      "mae_percent": 0.3291795551776886,
+      "rmse_percent": 0.4347595274448395,
+      "direction_accuracy": 0.0,
+      "persistence_mae_percent": 0.3291795551776886,
+      "relative_mae_vs_persistence": 1.0,
+      "per_horizon": [
+        {
+          "day": 1,
+          "mae_percent": 0.08218371868133545,
+          "rmse_percent": 0.09777237474918365,
+          "direction_accuracy": 0.0,
+          "relative_mae_vs_persistence": 1.0
+        },
+        {
+          "day": 2,
+          "mae_percent": 0.1645313948392868,
+          "rmse_percent": 0.1955416202545166,
+          "direction_accuracy": 0.0,
+          "relative_mae_vs_persistence": 1.0
+        },
+        {
+          "day": 3,
+          "mae_percent": 0.24699416756629944,
+          "rmse_percent": 0.29313892126083374,
+          "direction_accuracy": 0.0,
+          "relative_mae_vs_persistence": 1.0
+        },
+        {
+          "day": 4,
+          "mae_percent": 0.3295106291770935,
+          "rmse_percent": 0.39038312435150146,
+          "direction_accuracy": 0.0,
+          "relative_mae_vs_persistence": 1.0
+        },
+        {
+          "day": 5,
+          "mae_percent": 0.4120182394981384,
+          "rmse_percent": 0.48708704113960266,
+          "direction_accuracy": 0.0,
+          "relative_mae_vs_persistence": 1.0
+        },
+        {
+          "day": 6,
+          "mae_percent": 0.49384307861328125,
+          "rmse_percent": 0.5830535888671875,
+          "direction_accuracy": 0.0,
+          "relative_mae_vs_persistence": 1.0
+        },
+        {
+          "day": 7,
+          "mae_percent": 0.5751755237579346,
+          "rmse_percent": 0.6780709028244019,
+          "direction_accuracy": 0.0,
+          "relative_mae_vs_persistence": 1.0
+        }
+      ]
+    },
+    "checkpoint": "selection_model.pt"
+  },
+  "config": {
+    "lookback": 60,
+    "horizon": 7,
+    "hidden_size": 128,
+    "layers": 3,
+    "dropout": 0.2,
+    "batch_size": 256,
+    "maximum_epochs": 80,
+    "patience": 25,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "seed": 42,
+    "use_attention": true,
+    "direction_weight": 0.05,
+    "feature_mode": "price_only",
+    "embed_dim": 16
+  },
+  "device": "test-device",
+  "feature_mode": "price_only",
+  "feature_count": 25,
+  "test_evaluated": false,
+  "deployment_refit_performed": false,
+  "training_seconds": 0.009512599994195625
+}

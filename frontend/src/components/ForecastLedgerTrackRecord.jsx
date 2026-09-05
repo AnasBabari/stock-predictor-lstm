@@ -59,7 +59,7 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
     <section
       className="panel-card forecast-ledger-card"
       id="forecastLedgerSection"
-      aria-label="Volatility Forecast Ledger"
+      aria-label="Past price-movement forecasts"
     >
       <div className="panel-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -78,10 +78,10 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
                 clipRule="evenodd"
               />
             </svg>
-            Forecast Ledger & Track Record
+            Past price-movement forecasts
           </h3>
           <span className="badge badge-neutral">
-            {ticker} {horizon ? `${horizon} ${Number(horizon) === 1 ? 'session' : 'sessions'}` : 'Multi-Horizon'}
+            {ticker} {horizon ? `${horizon} ${Number(horizon) === 1 ? 'market day' : 'market days'}` : 'All time periods'}
           </span>
         </div>
         <div className="ledger-tab-group">
@@ -104,51 +104,52 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
             onClick={() => setActiveTab('historical_replay')}
             type="button"
           >
-            Replay ({replayTrack.total_forecasts ?? 0})
+            Historical tests ({replayTrack.total_forecasts ?? 0})
           </button>
         </div>
       </div>
 
+      <p className="method-note">This history measures the size of price swings, not future share prices. It is separate from the seven-day price estimate above.</p>
       {loading ? (
-        <div className="ledger-loading-state">Loading forecast track record...</div>
+        <div className="ledger-loading-state">Loading past forecasts…</div>
       ) : error ? (
-        <div className="ledger-error-state">Unable to load forecast ledger: {error}</div>
+        <div className="ledger-error-state">Past forecasts are unavailable right now. Please try again later.</div>
       ) : (
         <>
           <div className="ledger-kpi-grid">
             <div className="ledger-kpi-box">
               <span className="kpi-label">
-                {activeTab === 'historical_replay' ? 'Replay Settlements' : 'Live Settlements'}
+                {activeTab === 'historical_replay' ? 'Historical tests checked' : 'Live forecasts checked'}
               </span>
               <span className="kpi-value">{displayTrack.scored_forecasts ?? 0}</span>
               <span className="kpi-subtext">
                 {activeTab === 'historical_replay'
-                  ? 'Historical replay basis'
-                  : 'Genuine forward forecasts'}
+                  ? 'Tests using past data'
+                  : 'Recorded before the results were known'}
               </span>
             </div>
             <div className="ledger-kpi-box">
-              <span className="kpi-label">Mean MAE</span>
+              <span className="kpi-label">Average error</span>
               <span className="kpi-value mono">
                 {displayTrack.mean_mae != null ? `${(displayTrack.mean_mae * 100).toFixed(2)}%` : '—'}
               </span>
-              <span className="kpi-subtext">Volatility absolute error</span>
+              <span className="kpi-subtext">Mistakes in estimated price swings</span>
             </div>
             <div className="ledger-kpi-box">
-              <span className="kpi-label">Mean QLIKE</span>
+              <span className="kpi-label">Error score</span>
               <span className="kpi-value mono text-teal">
                 {displayTrack.mean_qlike != null ? displayTrack.mean_qlike.toFixed(4) : '—'}
               </span>
-              <span className="kpi-subtext">Variance penalty metric</span>
+              <span className="kpi-subtext">Lower is better</span>
             </div>
             <div className="ledger-kpi-box">
-              <span className="kpi-label">Direction Hit Rate</span>
+              <span className="kpi-label">Bigger or smaller swings correct</span>
               <span className="kpi-value mono">
                 {displayTrack.direction_accuracy_pct != null
                   ? `${displayTrack.direction_accuracy_pct.toFixed(1)}%`
                   : '—'}
               </span>
-              <span className="kpi-subtext">Vol expansion / contraction</span>
+              <span className="kpi-subtext">Not the direction of the stock price</span>
             </div>
           </div>
 
@@ -172,24 +173,24 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
                     />
                   </svg>
                 </div>
-                <strong className="ledger-empty-heading">Awaiting Live Forward Settlements</strong>
+                <strong className="ledger-empty-heading">No results to show yet</strong>
                 <p className="empty-state">No forecasts recorded in this view yet.</p>
                 <span className="ledger-empty-detail">
-                  Forward predictions are cryptographically hashed and recorded upon completed session close, then verified and scored once future realized volatility matures.
+                  Saved forecasts are checked once enough market days have passed. Historical tests are kept separate from forecasts made before the outcome was known.
                 </span>
               </div>
             ) : (
               <table className="ledger-table" aria-label="Historical forecast entries">
                 <thead>
                   <tr>
-                    <th>Origin Date</th>
-                    <th>Horizon</th>
+                    <th>Forecast date</th>
+                    <th>Trading days ahead</th>
                     <th>Model</th>
                     <th>Source</th>
-                    <th>Predicted Vol</th>
-                    <th>Realized Vol</th>
-                    <th>Error (Δ)</th>
-                    <th>QLIKE</th>
+                    <th>Estimated price swings</th>
+                    <th>Actual price swings</th>
+                    <th>Difference</th>
+                    <th>Error score</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -222,7 +223,7 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
                         }
                       >
                         <td className="mono">{entry.forecast_date}</td>
-                        <td>{entry.horizon} {Number(entry.horizon) === 1 ? 'session' : 'sessions'}</td>
+                        <td>{entry.horizon} {Number(entry.horizon) === 1 ? 'market day' : 'market days'}</td>
                         <td>
                           <span className="model-chip">{entry.model_name.replace('_', ' ')}</span>
                         </td>
@@ -232,7 +233,7 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
                               isLive ? 'source-chip--live' : 'source-chip--replay'
                             }`}
                           >
-                            {isLive ? 'Live' : 'Replay'}
+                            {isLive ? 'Live' : 'Historical test'}
                           </span>
                         </td>
                         <td className="mono font-medium">{predVol}</td>
@@ -255,7 +256,7 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
                               isScored ? 'status-scored' : 'status-pending'
                             }`}
                           >
-                            {isScored ? 'Scored' : 'Pending'}
+                            {isScored ? 'Checked' : 'Waiting for results'}
                           </span>
                         </td>
                       </tr>

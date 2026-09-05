@@ -1,0 +1,11 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "yahoo",
+  "archive": "GOOGL.jsonl",
+  "article_count": 211,
+  "published_start": "2020-10-07T04:23:26Z",
+  "published_end": "2023-03-31T21:00:32Z",
+  "sha256": "8f62101e53d4b5d241bbd83dc9241060721c99b68b63256df9baff55a2e66653",
+  "hash_convention": "sha256_exact_utf8_lf_bytes_v1",
+  "generated_at": "2026-09-05T10:08:02.456339Z"
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "alpaca",
+  "archive": "SONY.jsonl",
+  "article_count": 32,
+  "published_start": "2023-03-02T15:10:37Z",
+  "published_end": "2023-03-31T05:36:38Z",
+  "sha256": "2e91a144d54aebf5bf953a19a0504e77fbf2a5d0633851ce8b057b921df9cd73",
+  "hash_convention": "sha256_exact_utf8_lf_bytes_v1",
+  "generated_at": "2026-09-05T10:29:21.664099Z"
+}

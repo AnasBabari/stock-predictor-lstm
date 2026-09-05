@@ -20,9 +20,12 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
+from .baselines import evaluate_predictions, training_majority
 from .news_archive import (
+    MACRO_NEWS_FEATURE_NAMES,
     NEWS_FEATURE_NAMES,
     build_causal_news_features,
+    build_macro_news_features,
     load_news_archive,
     validate_news_archive,
 )
@@ -97,23 +100,24 @@ FEATURE_NAMES = (
 class PriceTrainingConfig:
     lookback: int = 60
     horizon: int = 7
-    hidden_size: int = 64
-    layers: int = 2
-    dropout: float = 0.15
-    batch_size: int = 128
-    maximum_epochs: int = 60
-    patience: int = 12
+    hidden_size: int = 128
+    layers: int = 3
+    dropout: float = 0.20
+    batch_size: int = 256
+    maximum_epochs: int = 80
+    patience: int = 25
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
     seed: int = 42
     use_attention: bool = True
     direction_weight: float = 0.05
     feature_mode: str = "price_only"
+    embed_dim: int = 16
 
     def __post_init__(self) -> None:
         if self.lookback < 20 or self.horizon < 1:
             raise ValueError("lookback and horizon are invalid")
-        if self.hidden_size < 8 or self.layers < 1 or self.batch_size < 1:
+        if self.hidden_size < 8 or self.layers < 1 or self.batch_size < 1 or self.embed_dim < 1:
             raise ValueError("model dimensions must be positive")
         if not 0 <= self.dropout < 1 or self.maximum_epochs < 1 or self.patience < 1:
             raise ValueError("training limits are invalid")
@@ -198,8 +202,9 @@ def build_global_price_dataset(
     frames: dict[str, pd.DataFrame],
     config: PriceTrainingConfig | None = None,
     *,
-    feature_mode: Literal["price_only", "price_plus_news"] = "price_only",
+    feature_mode: Literal["price_only", "price_plus_news", "price_plus_macro"] = "price_only",
     news_archives: dict[str, list[dict[str, Any]]] | Path | str | None = None,
+    macro_events: list[dict[str, Any]] | None = None,
 ) -> GlobalPriceDataset:
     """Pool per-ticker sequence datasets with chronological 70/15/15 splits."""
     settings = config or PriceTrainingConfig(feature_mode=feature_mode)
@@ -237,6 +242,19 @@ def build_global_price_dataset(
                     )
                 parsed_archives[ticker] = list(news_archives[ticker])
 
+    if resolved_mode == "price_plus_macro":
+        effective_feature_names = FEATURE_NAMES + MACRO_NEWS_FEATURE_NAMES
+        if macro_events is None or not macro_events:
+            raise ValueError(
+                "Macro news events missing; synthetic news or silent zero-fill is prohibited in macro feature mode."
+            )
+        for ticker in tickers:
+            if str(ticker).strip().upper().endswith(".L"):
+                raise ValueError(
+                    f"price_plus_macro is US-only; {ticker} needs a lagged-macro convention "
+                    "(same-date SPY at 16:00 ET postdates the 16:30 London close)."
+                )
+
     sequences: list[np.ndarray] = []
     targets: list[np.ndarray] = []
     ticker_indices: list[int] = []
@@ -265,6 +283,19 @@ def build_global_price_dataset(
             news_frame = build_causal_news_features(data.index, ticker=ticker, news_events=events)
             combined_features = pd.concat(
                 [feature_frame, news_frame.loc[feature_frame.index]], axis=1
+            )
+            feature_frame = combined_features.loc[:, list(effective_feature_names)].dropna()
+
+        if resolved_mode == "price_plus_macro":
+            diag = validate_news_archive(macro_events, data.index)
+            news_coverage_summary[ticker] = diag
+            if not diag["is_valid"]:
+                raise ValueError(
+                    f"Macro archive has insufficient events: {diag.get('reason')}"
+                )
+            macro_frame = build_macro_news_features(data.index, macro_events=macro_events)
+            combined_features = pd.concat(
+                [feature_frame, macro_frame.loc[feature_frame.index]], axis=1
             )
             feature_frame = combined_features.loc[:, list(effective_feature_names)].dropna()
 
@@ -372,14 +403,16 @@ def _build_model(
     feature_count: int,
     ticker_count: int,
     settings: PriceTrainingConfig,
-    embed_dim: int = 8,
+    embed_dim: int | None = None,
 ) -> Any:
+    resolved_embed_dim = embed_dim if embed_dim is not None else getattr(settings, "embed_dim", 16)
+
     class PooledPriceLSTM(nn.Module):
         def __init__(self) -> None:
             super().__init__()
-            self.ticker_embedding = nn.Embedding(ticker_count, embed_dim)
+            self.ticker_embedding = nn.Embedding(ticker_count, resolved_embed_dim)
             self.encoder = nn.LSTM(
-                feature_count + embed_dim,
+                feature_count + resolved_embed_dim,
                 settings.hidden_size,
                 num_layers=settings.layers,
                 dropout=settings.dropout if settings.layers > 1 else 0.0,
@@ -387,17 +420,18 @@ def _build_model(
             )
             self.norm = nn.LayerNorm(settings.hidden_size)
             if settings.use_attention:
-                self.attn_dense = nn.Linear(settings.hidden_size, 16)
-                self.attn_out = nn.Linear(16, 1)
+                self.attn_dense = nn.Linear(settings.hidden_size, 32)
+                self.attn_out = nn.Linear(32, 1)
             else:
                 self.attn_dense = None
                 self.attn_out = None
 
+            head_dim = max(32, settings.hidden_size // 2)
             self.head = nn.Sequential(
-                nn.Linear(settings.hidden_size, 32),
+                nn.Linear(settings.hidden_size, head_dim),
                 nn.GELU(),
                 nn.Dropout(settings.dropout),
-                nn.Linear(32, settings.horizon),
+                nn.Linear(head_dim, settings.horizon),
             )
             # Direct skip / residual connection mapping recent input features to forecast horizons
             self.skip = nn.Linear(feature_count, settings.horizon, bias=False)
@@ -419,6 +453,26 @@ def _build_model(
     return PooledPriceLSTM()
 
 
+def _training_moments(values, indices, chunk_size=1024):
+    """Two-pass float64 moments without materializing the full training slice."""
+    total = np.zeros(values.shape[-1], dtype=np.float64)
+    count = 0
+    for start in range(0, len(indices), chunk_size):
+        chunk = values[indices[start : start + chunk_size]].reshape(-1, values.shape[-1])
+        total += chunk.sum(axis=0, dtype=np.float64)
+        count += len(chunk)
+    if not count:
+        raise ValueError("Empty training partition")
+    mean = total / count
+    squared = np.zeros_like(total)
+    for start in range(0, len(indices), chunk_size):
+        chunk = values[indices[start : start + chunk_size]].reshape(-1, values.shape[-1])
+        squared += np.square(chunk.astype(np.float64) - mean).sum(axis=0)
+    std = np.sqrt(squared / count).astype(np.float32)
+    std[std < 1e-8] = 1.0
+    return mean.astype(np.float32), std
+
+
 def _fit(
     torch: Any,
     nn: Any,
@@ -428,17 +482,16 @@ def _fit(
     validation_indices: np.ndarray | None,
     epochs: int,
     device_name: str = "cuda",
-) -> tuple[Any, dict[str, np.ndarray], int, float]:
+) -> tuple[Any, dict[str, np.ndarray], int, float, int]:
     feature_count = dataset.sequences.shape[-1]
-    flattened = dataset.sequences[train_indices].reshape(-1, feature_count).astype(np.float64)
-    feature_mean = flattened.mean(axis=0)
-    feature_std = flattened.std(axis=0)
-    feature_std[feature_std < 1e-8] = 1.0
-    target_mean = dataset.targets[train_indices].mean(axis=0, dtype=np.float64)
-    target_std = dataset.targets[train_indices].std(axis=0, dtype=np.float64)
-    target_std[target_std < 1e-8] = 1.0
-    scaled_x = ((dataset.sequences - feature_mean) / feature_std).astype(np.float32)
-    scaled_y = ((dataset.targets - target_mean) / target_std).astype(np.float32)
+    feature_mean, feature_std = _training_moments(dataset.sequences, train_indices)
+    target_mean, target_std = _training_moments(dataset.targets, train_indices)
+
+    def scaled_batch(indices):
+        return (
+            (dataset.sequences[indices] - feature_mean) / feature_std,
+            (dataset.targets[indices] - target_mean) / target_std,
+        )
 
     device = torch.device(device_name)
     model = _build_model(torch, nn, feature_count, len(dataset.ticker_names), settings).to(device)
@@ -446,40 +499,36 @@ def _fit(
         model.parameters(), lr=settings.learning_rate, weight_decay=settings.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, epochs), eta_min=1e-5
+        optimizer, T_max=settings.maximum_epochs, eta_min=1e-5
     )
     loss_fn = nn.SmoothL1Loss(beta=0.5)
     best_state: dict[str, Any] | None = None
     best_loss = math.inf
+    best_epoch = 0
     stale = 0
     completed = 0
 
-    x = torch.as_tensor(scaled_x, device=device)
-    y = torch.as_tensor(scaled_y, device=device)
     target_mean_tensor = torch.as_tensor(target_mean, device=device, dtype=torch.float32)
     target_std_tensor = torch.as_tensor(target_std, device=device, dtype=torch.float32)
-    ticker_ids = torch.as_tensor(dataset.ticker_indices, dtype=torch.long, device=device)
-    train_tensor = torch.as_tensor(train_indices, dtype=torch.long, device=device)
-    validation_tensor = (
-        torch.as_tensor(validation_indices, dtype=torch.long, device=device)
-        if validation_indices is not None
-        else None
-    )
+    ticker_ids_all = dataset.ticker_indices
 
     for epoch in range(epochs):
         model.train()
         generator = torch.Generator(device="cpu").manual_seed(settings.seed + epoch)
         order = train_indices[torch.randperm(len(train_indices), generator=generator).numpy()]
         for start in range(0, len(order), settings.batch_size):
-            batch = torch.as_tensor(
-                order[start : start + settings.batch_size], dtype=torch.long, device=device
-            )
+            batch = order[start : start + settings.batch_size]
+            x, y = scaled_batch(batch)
+            batch_x = torch.as_tensor(x, device=device)
+            batch_y = torch.as_tensor(y, device=device)
+            batch_ids = torch.as_tensor(ticker_ids_all[batch], dtype=torch.long, device=device)
+
             optimizer.zero_grad(set_to_none=True)
-            pred = model(x[batch], ticker_ids[batch])
-            loss_huber = loss_fn(pred, y[batch])
+            pred = model(batch_x, batch_ids)
+            loss_huber = loss_fn(pred, batch_y)
             if settings.direction_weight > 0:
                 unscaled_pred = pred * target_std_tensor + target_mean_tensor
-                unscaled_target = y[batch] * target_std_tensor + target_mean_tensor
+                unscaled_target = batch_y * target_std_tensor + target_mean_tensor
                 # Penalize predictions whose sign disagrees with the actual future return sign
                 direction_penalty = torch.mean(
                     torch.relu(-torch.sign(unscaled_target) * (unscaled_pred / target_std_tensor))
@@ -492,15 +541,23 @@ def _fit(
             optimizer.step()
         scheduler.step()
         completed = epoch + 1
-        if validation_tensor is None:
+        if validation_indices is None or len(validation_indices) == 0:
+            print(
+                f"refit_epoch={completed:02d}/{epochs:02d} lr={scheduler.get_last_lr()[0]:.6f}",
+                flush=True,
+            )
             continue
         model.eval()
         with torch.no_grad():
-            validation_loss = float(
-                loss_fn(
-                    model(x[validation_tensor], ticker_ids[validation_tensor]), y[validation_tensor]
-                ).item()
-            )
+            val_losses = []
+            for v_start in range(0, len(validation_indices), 1024):
+                v_batch = validation_indices[v_start : v_start + 1024]
+                x, y = scaled_batch(v_batch)
+                v_x = torch.as_tensor(x, device=device)
+                v_y = torch.as_tensor(y, device=device)
+                v_ids = torch.as_tensor(ticker_ids_all[v_batch], dtype=torch.long, device=device)
+                val_losses.append(loss_fn(model(v_x, v_ids), v_y).item() * len(v_batch))
+            validation_loss = float(sum(val_losses) / len(validation_indices))
         print(
             f"epoch={completed:02d} lr={scheduler.get_last_lr()[0]:.6f} "
             f"validation_loss={validation_loss:.6f}",
@@ -508,11 +565,16 @@ def _fit(
         )
         if validation_loss < best_loss - 1e-5:
             best_loss = validation_loss
+            best_epoch = completed
             best_state = copy.deepcopy(model.state_dict())
             stale = 0
         else:
             stale += 1
             if stale >= settings.patience:
+                print(
+                    f"Early stopping at epoch {completed} (patience={settings.patience})",
+                    flush=True,
+                )
                 break
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -522,8 +584,8 @@ def _fit(
         "target_mean": target_mean.astype(np.float32),
         "target_std": target_std.astype(np.float32),
     }
-    del optimizer, train_tensor
-    return model, scalers, completed, best_loss
+    del optimizer
+    return model, scalers, best_epoch or completed, best_loss, completed
 
 
 def _predict(
@@ -535,31 +597,61 @@ def _predict(
     device_name: str = "cuda",
 ) -> np.ndarray:
     device = torch.device(device_name)
-    scaled = (
-        (dataset.sequences[indices] - scalers["feature_mean"]) / scalers["feature_std"]
-    ).astype(np.float32)
-    ticker_ids = dataset.ticker_indices[indices]
     predictions: list[np.ndarray] = []
     model.eval()
     with torch.no_grad():
-        for start in range(0, len(indices), 512):
-            stop = min(start + 512, len(indices))
+        for start in range(0, len(indices), 1024):
+            stop = min(start + 1024, len(indices))
+            chunk_idx = indices[start:stop]
+            scaled = (
+                (dataset.sequences[chunk_idx] - scalers["feature_mean"]) / scalers["feature_std"]
+            ).astype(np.float32)
+            ticker_ids = dataset.ticker_indices[chunk_idx]
             raw = model(
-                torch.as_tensor(scaled[start:stop], device=device),
-                torch.as_tensor(ticker_ids[start:stop], dtype=torch.long, device=device),
+                torch.as_tensor(scaled, device=device),
+                torch.as_tensor(ticker_ids, dtype=torch.long, device=device),
             )
             predictions.append(raw.cpu().numpy())
     standard = np.concatenate(predictions)
     return standard * scalers["target_std"] + scalers["target_mean"]
 
 
+def _save_checkpoint(torch, model, scalers, dataset, settings, path, role, epochs):
+    torch.save(
+        {
+            "model_version": MODEL_VERSION,
+            "training_procedure_version": "best-epoch-refit-v1",
+            "artifact_role": role,
+            "training_epochs": epochs,
+            "state_dict": {key: value.detach().cpu() for key, value in model.state_dict().items()},
+            "config": asdict(settings),
+            "feature_names": list(dataset.feature_names),
+            "feature_mode": dataset.feature_mode,
+            "ticker_names": list(dataset.ticker_names),
+            "scalers": {key: value.tolist() for key, value in scalers.items()},
+            "embed_dim": settings.embed_dim,
+        },
+        path,
+    )
+
+
 def train_cuda_price_model(
     dataset: GlobalPriceDataset,
     output_dir: str | Path,
     config: PriceTrainingConfig | None = None,
+    *,
+    validation_only: bool = False,
 ) -> dict[str, Any]:
     """Train, test, refit, save, and return a CUDA price-model report."""
     settings = config or PriceTrainingConfig()
+    output = Path(output_dir)
+    if any(
+        (output / name).exists()
+        for name in ("model.pt", "selection_model.pt", "report.json", "validation_report.json")
+    ):
+        raise FileExistsError(
+            "Use a new output directory; existing experiment artifacts will not be overwritten"
+        )
     try:
         import torch
         from torch import nn
@@ -575,15 +667,17 @@ def train_cuda_price_model(
     torch.backends.cudnn.benchmark = False
 
     started = time.perf_counter()
-    selection_model, selection_scalers, selected_epochs, best_validation_loss = _fit(
-        torch,
-        nn,
-        dataset,
-        settings,
-        dataset.split_train,
-        dataset.split_validation,
-        settings.maximum_epochs,
-        device_name="cuda",
+    selection_model, selection_scalers, selected_epochs, best_validation_loss, completed_epochs = (
+        _fit(
+            torch,
+            nn,
+            dataset,
+            settings,
+            dataset.split_train,
+            dataset.split_validation,
+            settings.maximum_epochs,
+            device_name="cuda",
+        )
     )
     validation_prediction = _predict(
         torch,
@@ -593,10 +687,54 @@ def train_cuda_price_model(
         dataset.split_validation,
         device_name="cuda",
     )
+    validation_evidence = evaluate_predictions(
+        dataset.targets[dataset.split_validation],
+        validation_prediction,
+        training_majority(dataset.targets[dataset.split_train]),
+        np.asarray(dataset.ticker_names)[dataset.ticker_indices[dataset.split_validation]],
+    )
+    validation_metrics = validation_evidence["pooled"]
+    output.mkdir(parents=True, exist_ok=True)
+    _save_checkpoint(
+        torch,
+        selection_model,
+        selection_scalers,
+        dataset,
+        settings,
+        output / "selection_model.pt",
+        "validation_selected_model",
+        selected_epochs,
+    )
+    selection = {
+        "epochs": selected_epochs,
+        "best_epoch": selected_epochs,
+        "completed_epochs": completed_epochs,
+        "best_validation_scaled_huber": best_validation_loss,
+        "metrics": validation_metrics,
+        "validation_evidence": validation_evidence,
+        "checkpoint": "selection_model.pt",
+    }
+    if validation_only:
+        report = {
+            "status": "validation_only_candidate",
+            "selection": selection,
+            "config": asdict(settings),
+            "device": str(torch.cuda.get_device_name(0)),
+            "feature_mode": dataset.feature_mode,
+            "feature_count": len(dataset.feature_names),
+            "test_evaluated": False,
+            "deployment_refit_performed": False,
+            "training_seconds": time.perf_counter() - started,
+        }
+        (output / "validation_report.json").write_text(
+            json.dumps(report, indent=2), encoding="utf-8"
+        )
+        del selection_model
+        torch.cuda.empty_cache()
+        return report
     test_prediction = _predict(
         torch, selection_model, dataset, selection_scalers, dataset.split_test, device_name="cuda"
     )
-    validation_metrics = _metrics(dataset.targets[dataset.split_validation], validation_prediction)
     pooled_test_metrics = _metrics(dataset.targets[dataset.split_test], test_prediction)
     per_ticker: dict[str, Any] = {}
     for ticker_index, ticker in enumerate(dataset.ticker_names):
@@ -605,7 +743,10 @@ def train_cuda_price_model(
             dataset.targets[dataset.split_test][mask], test_prediction[mask]
         )
 
-    final_model, final_scalers, _, _ = _fit(
+    # Reinitialize with the same seed and the same schedule prefix as selection.
+    torch.manual_seed(settings.seed)
+    torch.cuda.manual_seed_all(settings.seed)
+    final_model, final_scalers, _, _, _ = _fit(
         torch,
         nn,
         dataset,
@@ -645,23 +786,16 @@ def train_cuda_price_model(
                 "forecast_prices": [float(value) for value in prices],
             }
 
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output / "model.pt"
-    torch.save(
-        {
-            "model_version": MODEL_VERSION,
-            "state_dict": {
-                key: value.detach().cpu() for key, value in final_model.state_dict().items()
-            },
-            "config": asdict(settings),
-            "feature_names": list(dataset.feature_names),
-            "feature_mode": dataset.feature_mode,
-            "ticker_names": list(dataset.ticker_names),
-            "scalers": {key: value.tolist() for key, value in final_scalers.items()},
-            "embed_dim": 8,
-        },
+    _save_checkpoint(
+        torch,
+        final_model,
+        final_scalers,
+        dataset,
+        settings,
         checkpoint_path,
+        "all_data_deployment_refit",
+        selected_epochs,
     )
     news_used = dataset.feature_mode == "price_plus_news"
     report = {
@@ -678,17 +812,18 @@ def train_cuda_price_model(
             "validation": int(len(dataset.split_validation)),
             "test": int(len(dataset.split_test)),
         },
-        "selection": {
-            "epochs": selected_epochs,
-            "best_validation_scaled_huber": best_validation_loss,
-            "metrics": validation_metrics,
-        },
+        "selection": selection,
         "untouched_test": {
+            "evaluated_checkpoint": "selection_model.pt",
+            "evaluates_deployment_refit": False,
             "metric_source": "chronological_15_percent_test_after_validation_selection",
             "pooled": pooled_test_metrics,
             "per_ticker": per_ticker,
         },
         "final_refit": {
+            "epochs": selected_epochs,
+            "checkpoint": "model.pt",
+            "scheduler_t_max": settings.maximum_epochs,
             "uses_all_resolved_labels_after_test_reporting": True,
             "forecasts": forecasts,
         },
@@ -698,7 +833,7 @@ def train_cuda_price_model(
         "news_reason": (
             "Timestamped Alpaca, Yahoo, and SEC EDGAR causal news features integrated (35 features)."
             if news_used
-            else "Price-only baseline (25 features); news features omitted."
+            else f"{dataset.feature_mode} ({len(dataset.feature_names)} features); news features omitted."
         ),
         "news_coverage": dataset.news_coverage if news_used else None,
     }

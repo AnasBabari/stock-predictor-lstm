@@ -1,0 +1,11 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "alpaca",
+  "archive": "NVDA.jsonl",
+  "article_count": 185,
+  "published_start": "2023-03-01T05:55:36Z",
+  "published_end": "2023-03-31T20:30:27Z",
+  "sha256": "6c9aa5b3951a027c006981e22e9b0059dfa7054ac8718a565076e4c96f8f683a",
+  "hash_convention": "sha256_exact_utf8_lf_bytes_v1",
+  "generated_at": "2026-09-05T10:09:34.109325Z"
+}

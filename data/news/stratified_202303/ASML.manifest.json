@@ -1,0 +1,11 @@
+{
+  "schema_version": "alpaca-headline-archive-v1",
+  "provider": "alpaca",
+  "archive": "ASML.jsonl",
+  "article_count": 19,
+  "published_start": "2023-03-01T16:33:18Z",
+  "published_end": "2023-03-31T15:30:24Z",
+  "sha256": "10100512482a0e3663e05686d822fbb330b47af9e9f8728df8b7bfc8bf26172d",
+  "hash_convention": "sha256_exact_utf8_lf_bytes_v1",
+  "generated_at": "2026-09-05T10:29:17.266453Z"
+}

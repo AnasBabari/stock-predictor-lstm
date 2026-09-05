@@ -98,14 +98,14 @@ describe('ForecastLedgerTrackRecord', () => {
   it('renders track record metrics and forecast entries without verified wording', async () => {
     render(<ForecastLedgerTrackRecord ticker="AAPL" horizon={5} />);
 
-    expect(screen.getByText(/Loading forecast track record/i)).toBeInTheDocument();
+    expect(screen.getByText(/Loading past forecasts/i)).toBeInTheDocument();
     expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText('Forecast Ledger & Track Record')).toBeInTheDocument();
+      expect(screen.getByText('Past price-movement forecasts')).toBeInTheDocument();
     });
-    expect(screen.getByText('AAPL 5 sessions')).toBeInTheDocument();
-    expect(screen.getAllByText('5 sessions').length).toBeGreaterThan(0);
+    expect(screen.getByText('AAPL 5 market days')).toBeInTheDocument();
+    expect(screen.getAllByText('5 market days').length).toBeGreaterThan(0);
 
     // Headline live settlements KPI shows 1 scored live forecast
     expect(screen.getByText('1')).toBeInTheDocument();
@@ -114,10 +114,10 @@ describe('ForecastLedgerTrackRecord', () => {
 
     // Source chips
     expect(screen.getAllByText('Live').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Replay').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Historical test').length).toBeGreaterThan(0);
 
     // Filter by replay tab
-    const replayTab = screen.getByRole('button', { name: /Replay \(25\)/i });
+    const replayTab = screen.getByRole('button', { name: /Historical tests \(25\)/i });
     fireEvent.click(replayTab);
 
     // Under replay tab, replay metrics are shown
