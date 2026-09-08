@@ -1,0 +1,24 @@
+{
+  "hypothesis": "rolling-origin regime replication: G3 vs G0",
+  "folds": [
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024
+  ],
+  "fold_rule": "calendar-year validation, expanding train from 2015, purge on both ends",
+  "arm_matrix": {
+    "G0": "rolling champion",
+    "G3": "frozen GPU correction"
+  },
+  "target_horizons": [
+    5,
+    10,
+    20
+  ],
+  "primary_metric": "QLIKE",
+  "feature_schema": "vol-gpu-panel-v1",
+  "promotion_rule": "pooled \u0394>0 AND majority of folds positive AND no catastrophic fold AND secondaries supportive; no per-fold p<.05 required"
+}
