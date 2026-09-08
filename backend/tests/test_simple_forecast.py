@@ -41,6 +41,88 @@ def test_chronological_split_purges_every_crossing_target() -> None:
     assert not np.any(validation & test)
 
 
+def test_forecast_cache_identity_tracks_bars_and_version(monkeypatch):
+    from services import simple_forecast as sf
+
+    frame = _frame(700)
+    original = sf._forecast_cache_key("MSFT", frame, "ridge")
+    revised = frame.copy()
+    revised.iloc[-1, revised.columns.get_loc("Close")] += 1
+    assert sf._forecast_cache_key("MSFT", revised, "ridge") != original
+    assert sf._forecast_cache_key("MSFT", frame.iloc[:-1], "ridge") != original
+    monkeypatch.setattr(sf, "MODEL_CACHE_VERSION", "test-new-version")
+    assert sf._forecast_cache_key("MSFT", frame, "ridge") != original
+
+
+def test_simultaneous_forecasts_train_once_and_results_are_isolated(monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from services import simple_forecast as sf
+
+    monkeypatch.setattr(sf.settings, "forecast_model_cache_dir", str(tmp_path))
+    monkeypatch.setattr(sf, "_load_gpu_lstm_model", lambda: None)
+    with sf._cache_lock:
+        sf._cache.clear()
+    original = sf.build_dataset
+    calls = []
+
+    def build(frame):
+        calls.append(1)
+        return original(frame)
+
+    monkeypatch.setattr(sf, "build_dataset", build)
+    frame = _frame(700)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: sf.train_and_forecast("MSFT", frame, "ridge"), range(2)))
+    assert len(calls) == 1
+    assert results[0] == results[1]
+    results[0]["predicted_prices"][0] = -1
+    assert sf.train_and_forecast("MSFT", frame, "ridge")["predicted_prices"][0] > 0
+
+
+def test_history_then_forecast_reuses_daily_bars(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import data_pipeline
+    from market_data.base import MarketDataResult
+    from market_data.cache import MarketDataCache
+    from market_data.service import MarketDataService
+    from routes import market, simple_forecast
+
+    frame = _frame(700)
+    calls = []
+
+    def fetch(symbol, *, years):
+        calls.append((symbol, years))
+        return MarketDataResult(frame, "fixture", str(frame.index[-1].date()), "miss")
+
+    service = MarketDataService(
+        [SimpleNamespace(name="fixture", configured=True, fetch_daily_bars=fetch)],
+        cache=MarketDataCache(tmp_path),
+    )
+    monkeypatch.setattr(
+        "market_data.service.latest_completed_trading_session", lambda **kwargs: frame.index[-1]
+    )
+    monkeypatch.setattr(data_pipeline, "market_data_service", service)
+    monkeypatch.setattr(
+        data_pipeline, "market_circuit_breaker", data_pipeline.MarketCircuitBreaker()
+    )
+    monkeypatch.setattr(market, "_fetch_history_intraday", lambda symbol: None)
+    monkeypatch.setattr(
+        simple_forecast,
+        "train_and_forecast",
+        lambda symbol, bars: {
+            "ticker": symbol,
+            "predicted_prices": [float(bars.Close.iloc[-1])] * 7,
+        },
+    )
+    history = CLIENT.get("/api/v1/history?ticker=MSFT")
+    assert history.status_code == 200
+    forecast = CLIENT.get("/api/v1/forecast?ticker=MSFT")
+    assert forecast.status_code == 200
+    assert calls == [("MSFT", data_pipeline.HISTORICAL_YEARS)]
+
+
 def test_forecast_route_supports_only_the_frozen_five_tickers() -> None:
     response = CLIENT.get("/api/v1/forecast?ticker=NMM&days=7")
     assert response.status_code == 400
@@ -186,6 +268,47 @@ def test_train_and_forecast_calibrated_cones_and_learned_models() -> None:
     assert "mae_percent" in res["backtest"]
     assert "rmse_percent" in res["backtest"]
     assert "direction_accuracy" in res["backtest"]
+
+
+def test_cold_process_artifact_inference_is_exact(monkeypatch, tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from services import simple_forecast as sf
+
+    directory = tmp_path / "models"
+    monkeypatch.setattr(sf.settings, "forecast_model_cache_dir", str(directory))
+    sf.clear_forecast_cache()
+    frame = _frame(700)
+    frame.to_parquet(tmp_path / "frame.parquet")
+    first = sf.train_and_forecast("AAPL", frame, "ridge")
+    assert list(directory.glob("*.artifact.json"))
+    code = """
+import json, sys, pandas as pd
+from config import settings
+from services import simple_forecast as sf
+settings.forecast_model_cache_dir = sys.argv[1]
+def forbidden(*args, **kwargs):
+    raise AssertionError('Cold artifact load must not rebuild/train')
+sf.build_dataset = forbidden
+result = sf.train_and_forecast('AAPL', pd.read_parquet(sys.argv[2]), 'ridge')
+print(json.dumps(result, sort_keys=True))
+"""
+    root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(root / "backend"), str(root)])}
+    run = subprocess.run(
+        [sys.executable, "-c", code, str(directory), str(tmp_path / "frame.parquet")],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=True,
+    )
+    assert json.dumps(first, sort_keys=True) == run.stdout.strip()
 
 
 def test_financial_sentiment_lexicon_scoring() -> None:

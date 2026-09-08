@@ -9,9 +9,13 @@ replaces the learned path returned to the user.
 
 from __future__ import annotations
 
+import copy
 import functools
+import hashlib
 import json
+import logging
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +30,10 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import RobustScaler
 
 from calendars import future_trading_dates
+from config import settings
+from services import forecast_artifacts
+
+logger = logging.getLogger(__name__)
 
 TICKER_METADATA: dict[str, dict[str, str]] = {
     # NASDAQ (10)
@@ -292,6 +300,123 @@ def get_ticker_meta(symbol: str) -> dict[str, str]:
 
 _cache: TTLCache = TTLCache(maxsize=max(len(SUPPORTED_TICKERS) * 4, 32), ttl=6 * 60 * 60)
 _cache_lock = threading.RLock()
+_training_locks = [threading.RLock() for _ in range(32)]
+MODEL_CACHE_VERSION = "learned-artifact-v3"
+_gpu_signature = None
+
+
+def _checkpoint_signature() -> str:
+    entries = []
+    for root in (
+        Path.cwd(),
+        Path(__file__).resolve().parents[2],
+        Path(__file__).resolve().parents[1],
+    ):
+        for relative in (
+            "tri_exchange_gpu_v2/model.pt",
+            "tri_exchange_gpu_v1/model.pt",
+            "simple_price_gpu_v2/baseline_price_only/model.pt",
+        ):
+            path = root / "artifacts" / relative
+            try:
+                stat = path.stat()
+                entries.append(
+                    (str(path), stat.st_size, hashlib.sha256(path.read_bytes()).hexdigest())
+                )
+            except OSError:
+                continue
+    return hashlib.sha256(repr(entries).encode()).hexdigest()
+
+
+def _forecast_cache_key(symbol: str, frame: pd.DataFrame, model: str) -> str:
+    data_hash = hashlib.sha256(
+        pd.util.hash_pandas_object(frame, index=True).values.tobytes()
+    ).hexdigest()
+    configs = {
+        name: repr(candidate.get_params(deep=True))
+        for name, candidate in _candidate_models().items()
+    }
+    config_hash = hashlib.sha256(json.dumps(configs, sort_keys=True).encode()).hexdigest()
+    implementation_hash = hashlib.sha256(
+        Path(__file__).read_bytes() + Path(forecast_artifacts.__file__).read_bytes()
+    ).hexdigest()
+    runtime = json.dumps(forecast_artifacts.runtime_identity(), sort_keys=True)
+    return f"{symbol}:{frame.index[-1]}:{model}:{FEATURE_VERSION}:{MODEL_CACHE_VERSION}:{data_hash}:{config_hash}:{_checkpoint_signature()}:{implementation_hash}:{runtime}"
+
+
+def _infer_artifact(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload["feature_version"] != FEATURE_VERSION:
+        raise ValueError("Artifact feature version mismatch")
+    inputs = np.asarray(payload["inputs"])
+    columns = payload["feature_columns"]
+    if inputs.shape[-1] != len(columns) or not np.isfinite(inputs).all():
+        raise ValueError("Artifact input shape mismatch")
+    if payload["kind"] == "sklearn":
+        if inputs.shape != (1, len(columns)) or payload["model"].n_features_in_ != len(columns):
+            raise ValueError("Artifact model shape mismatch")
+        predicted = payload["model"].predict(inputs)
+    elif payload["kind"] == "checkpoint":
+        import torch
+
+        loaded = _load_gpu_lstm_model()
+        if loaded is None or inputs.shape != (60, len(columns)):
+            raise ValueError("Checkpoint is unavailable or incompatible")
+        model, _scalers, tickers = loaded
+        index = tickers.index(payload["result"]["ticker"])
+        with torch.no_grad():
+            out = model(
+                torch.tensor(inputs).unsqueeze(0).float(), torch.tensor([index], dtype=torch.long)
+            )
+        predicted = (
+            out.detach().numpy()[0] * payload["target_std"] + payload["target_mean"]
+        ).astype(np.float64)
+    else:
+        raise ValueError("Unknown artifact kind")
+    returns = np.clip(
+        np.asarray(predicted, dtype=np.float64), payload["clip_low"], payload["clip_high"]
+    ).reshape(-1)
+    if returns.shape != (FORECAST_DAYS,) or not np.isfinite(returns).all():
+        raise ValueError("Invalid artifact inference")
+    result = copy.deepcopy(payload["result"])
+    price = result["current_price"]
+    predicted_prices = price * np.exp(returns)
+    low = price * np.exp(returns + payload["residual_low"])
+    high = price * np.exp(returns + payload["residual_high"])
+    for name, values in (
+        ("predicted_prices", predicted_prices),
+        ("lower_prices", np.minimum(low, high)),
+        ("upper_prices", np.maximum(low, high)),
+    ):
+        if not np.isfinite(values).all() or (values <= 0).any():
+            raise ValueError("Invalid artifact prices")
+        # A failed equivalence check invalidates the artifact; never silently change values.
+        if not np.array_equal(values, np.asarray(result[name])):
+            raise ValueError("Artifact inference differs from the saved forecast")
+        result[name] = [float(value) for value in values]
+    return result
+
+
+def _load_fitted_forecast(cache_key: str) -> dict[str, Any] | None:
+    path = _disk_cache_path(cache_key)
+    if path is None:
+        return None
+    payload = forecast_artifacts.load(path.with_suffix(".artifact.json"), cache_key)
+    if payload is None:
+        return None
+    try:
+        return _infer_artifact(payload)
+    except Exception:
+        logger.warning("Ignoring invalid fitted forecast artifact")
+        return None
+
+
+def _disk_cache_path(cache_key: str) -> Path | None:
+    """Resolve the durable artifact path, or None when disk caching is off."""
+    raw = str(getattr(settings, "forecast_model_cache_dir", "") or "").strip()
+    if not raw:
+        return None
+    digest = hashlib.sha256(cache_key.encode("utf-8")).hexdigest()
+    return Path(raw) / f"{digest}.json"
 
 
 @dataclass(frozen=True)
@@ -529,6 +654,25 @@ def _predict_gpu_lstm(
 def train_and_forecast(
     ticker: str, frame: pd.DataFrame, model_name: str = "auto"
 ) -> dict[str, Any]:
+    # Bounded striped locks prevent same-key stampedes without an unbounded lock registry.
+    # This coordinates threads in one worker; disk cache also reuses completed work after restart.
+    symbol = ticker.strip().upper()
+    slot = int(hashlib.sha256(symbol.encode()).hexdigest(), 16) % len(_training_locks)
+    with _training_locks[slot]:
+        global _gpu_signature
+        signature = _checkpoint_signature()
+        with _cache_lock:
+            if signature != _gpu_signature:
+                clear_loader = getattr(_load_gpu_lstm_model, "cache_clear", None)
+                if clear_loader:
+                    clear_loader()
+                _gpu_signature = signature
+        return _train_and_forecast_locked(ticker, frame, model_name)
+
+
+def _train_and_forecast_locked(
+    ticker: str, frame: pd.DataFrame, model_name: str = "auto"
+) -> dict[str, Any]:
     """Select, evaluate, refit, and forecast one supported ticker."""
     symbol = ticker.strip().upper()
     if symbol not in SUPPORTED_TICKERS:
@@ -536,14 +680,36 @@ def train_and_forecast(
     normalized_model = model_name.strip().lower()
     frame = frame.loc[~frame.index.duplicated(keep="last")].sort_index()
     data_as_of = pd.Timestamp(frame.index[-1]).date().isoformat()
-    cache_key = f"{symbol}:{data_as_of}:{normalized_model}:{FEATURE_VERSION}"
+    cache_key = _forecast_cache_key(symbol, frame, normalized_model)
+    started = time.perf_counter()
     with _cache_lock:
         cached = _cache.get(cache_key)
         if cached is not None:
-            return dict(cached)
+            logger.info(
+                "forecast_timing symbol=%s data_as_of=%s model=%s outcome=memory_hit total_ms=%.1f",
+                symbol,
+                data_as_of,
+                normalized_model,
+                (time.perf_counter() - started) * 1000.0,
+            )
+            return copy.deepcopy(cached)
+    disk_cached = _load_fitted_forecast(cache_key)
+    if disk_cached is not None:
+        with _cache_lock:
+            _cache[cache_key] = disk_cached
+        logger.info(
+            "forecast_timing symbol=%s data_as_of=%s model=%s outcome=artifact_hit total_ms=%.1f",
+            symbol,
+            data_as_of,
+            normalized_model,
+            (time.perf_counter() - started) * 1000.0,
+        )
+        return copy.deepcopy(disk_cached)
 
+    t_features = time.perf_counter()
     dataset = build_dataset(frame)
     train_mask, validation_mask, test_mask = chronological_masks(dataset, len(frame))
+    features_ms = (time.perf_counter() - t_features) * 1000.0
     labelled_features = dataset.features.iloc[: dataset.labelled_count].to_numpy(dtype=np.float64)
     targets = dataset.targets
     candidates = _candidate_models()
@@ -597,6 +763,7 @@ def train_and_forecast(
         selected_name = normalized_model
     else:
         selected_name = min(validation_scores, key=validation_scores.get)
+    select_ms = (time.perf_counter() - started) * 1000.0 - features_ms
 
     if selected_name == "gpu_lstm" and use_gpu_lstm:
         assert gpu_lstm_info is not None
@@ -612,6 +779,14 @@ def train_and_forecast(
         latest_seq = dataset.features.iloc[-60:].to_numpy(dtype=np.float32)
         if len(latest_seq) == 60:
             norm_seq = (latest_seq - f_mean) / f_std
+            fitted = {
+                "kind": "checkpoint",
+                "inputs": norm_seq,
+                "target_mean": t_mean,
+                "target_std": t_std,
+                "scalers": scalers,
+                "checkpoint_hash": _checkpoint_signature(),
+            }
             t_id = torch.tensor([t_idx], dtype=torch.long)
             with torch.no_grad():
                 out = lstm_model(torch.tensor(norm_seq).unsqueeze(0).float(), t_id)
@@ -622,6 +797,11 @@ def train_and_forecast(
         else:
             prod_model = _candidate_models()["ridge"]
             prod_model.fit(labelled_features, targets)
+            fitted = {
+                "kind": "sklearn",
+                "model": prod_model,
+                "inputs": dataset.features.iloc[[-1]].to_numpy(dtype=np.float64),
+            }
             forecast_returns = _clip_predictions(
                 prod_model.predict(dataset.features.iloc[[-1]].to_numpy(dtype=np.float64)), targets
             ).reshape(-1)
@@ -675,6 +855,7 @@ def train_and_forecast(
         production_model = _candidate_models()[selected_name]
         production_model.fit(labelled_features, targets)
         latest_features = dataset.features.iloc[[-1]].to_numpy(dtype=np.float64)
+        fitted = {"kind": "sklearn", "model": production_model, "inputs": latest_features}
         forecast_returns = _clip_predictions(
             production_model.predict(latest_features), targets
         ).reshape(-1)
@@ -743,9 +924,43 @@ def train_and_forecast(
         for key in ("predicted_prices", "lower_prices", "upper_prices")
     ):
         raise ValueError("Forecast produced non-finite output.")
+    total_ms = (time.perf_counter() - started) * 1000.0
+    logger.info(
+        "forecast_timing symbol=%s data_as_of=%s model=%s outcome=train "
+        "features_ms=%.0f select_ms=%.0f infer_ms=%.0f total_ms=%.0f selected=%s",
+        symbol,
+        data_as_of,
+        normalized_model,
+        features_ms,
+        select_ms,
+        total_ms - features_ms - select_ms,
+        total_ms,
+        selected_name,
+    )
     with _cache_lock:
         _cache[cache_key] = result
-    return dict(result)
+    artifact_path = _disk_cache_path(cache_key)
+    if artifact_path is not None:
+        fitted.update(
+            {
+                "feature_version": FEATURE_VERSION,
+                "feature_columns": list(dataset.features.columns),
+                "clip_low": np.quantile(targets, 0.01, axis=0),
+                "clip_high": np.quantile(targets, 0.99, axis=0),
+                "residual_low": residual_low,
+                "residual_high": residual_high,
+                "result": result,
+                "training_rows": len(targets),
+                "data_as_of": data_as_of,
+                "cache_fingerprint": cache_key,
+            }
+        )
+        try:
+            _infer_artifact(fitted)
+            forecast_artifacts.save(artifact_path.with_suffix(".artifact.json"), cache_key, fitted)
+        except Exception:
+            logger.warning("Fitted forecast could not be persisted; serving the fresh result")
+    return copy.deepcopy(result)
 
 
 def clear_forecast_cache() -> None:

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from config import settings
 from data_pipeline import (
@@ -45,10 +47,25 @@ def forecast(
             status_code=400, detail="This first benchmark uses a fixed 7-day horizon."
         )
     try:
+        route_started = time.perf_counter()
+        t_data = time.perf_counter()
         frame = _download_ohlcv(symbol)
+        data_ms = (time.perf_counter() - t_data) * 1000.0
+        t_train = time.perf_counter()
         if model == "auto":
-            return train_and_forecast(symbol, frame)
-        return train_and_forecast(symbol, frame, model_name=model)
+            result = train_and_forecast(symbol, frame)
+        else:
+            result = train_and_forecast(symbol, frame, model_name=model)
+        train_ms = (time.perf_counter() - t_train) * 1000.0
+        total_ms = (time.perf_counter() - route_started) * 1000.0
+        response = JSONResponse(content=result)
+        # Machine-readable totals; per-stage breakdown (features/select/
+        # infer, cache hit vs train) is logged server-side by
+        # train_and_forecast. No body fields change.
+        response.headers["Server-Timing"] = (
+            f"data;dur={data_ms:.0f}, train_or_cache;dur={train_ms:.0f}, total;dur={total_ms:.0f}"
+        )
+        return response
     except UnknownTickerError as err:
         raise HTTPException(status_code=404, detail="No market data is available.") from err
     except MarketTransportError as err:

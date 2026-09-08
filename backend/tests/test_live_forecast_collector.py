@@ -8,6 +8,7 @@ from typing import Any
 
 from scripts.collect_live_forecasts import (
     ApiResult,
+    _collector_token,
     _readiness_errors,
     collection_session,
     export_live_ledger,
@@ -293,3 +294,39 @@ def test_preflight_aborts_on_malformed_500_readiness_without_preview_writes() ->
     assert manifest["abort_reason"] == "initial_readiness_failed"
     assert manifest["batch_errors"] == ["unexpected_readiness_status_500"]
     assert not any(path == "/api/v1/volatility/forecast" for _method, path, _params in client.calls)
+
+
+def test_collector_token_gate_rejects_blank_secrets(monkeypatch) -> None:
+    monkeypatch.delenv("FORECAST_COLLECTOR_TOKEN", raising=False)
+    assert _collector_token() is None
+    monkeypatch.setenv("FORECAST_COLLECTOR_TOKEN", "   ")
+    assert _collector_token() is None
+    monkeypatch.setenv("FORECAST_COLLECTOR_TOKEN", '  "live-secret-value"  ')
+    assert _collector_token() == "live-secret-value"
+
+
+def test_export_401_reports_remediation_hint_without_leaking_token(tmp_path: Path) -> None:
+    class UnauthorizedClient(FakeClient):
+        def request(
+            self,
+            method: str,
+            path: str,
+            *,
+            params: dict[str, Any] | None = None,
+            token: str | None = None,
+            attempts: int = 2,
+        ) -> ApiResult:
+            self.calls.append((method, path, params or {}))
+            return ApiResult(
+                401, {"detail": "Collector authentication failed (token value mismatch)."}
+            )
+
+    result = export_live_ledger(
+        UnauthorizedClient(), token="live-secret-value", output_dir=tmp_path
+    )
+    assert result["operation"] == "export"
+    assert result["status"] == "failed"
+    assert result["http_status"] == 401
+    assert "hint" in result
+    assert "live-secret-value" not in result["hint"]
+    assert not (tmp_path / "live-ledger.json").exists()
