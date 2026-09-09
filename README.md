@@ -2,47 +2,99 @@
 
 [![CI](https://github.com/AnasBabari/stock-predictor-lstm/actions/workflows/ci.yml/badge.svg)](https://github.com/AnasBabari/stock-predictor-lstm/actions)
 
-Signal Seven is a deliberately small stock-forecasting experiment. A user selects a liquid US/UK equity and receives a learned estimate for the next seven trading sessions, together with an uncertainty range and an honest historical backtest. The frontend is a static Vercel app; the backend is a FastAPI service on Render that serves only completed-session data.
+Signal Seven brings historical stock prices, learned forecasts, volatility estimates, and recent
+financial news into one interface. Search for a supported US or UK stock, explore its history,
+and view an estimate for the next seven trading sessions.
 
-**Current supported universe:** 286 stocks across LSE/NASDAQ/NYSE (195 US, 91 UK) for volatility research; the original 5-ticker price benchmark (`AAPL · GOOGL · MSFT · NVDA · TSLA`) remains frozen for provenance.
+A separate volatility outlook estimates **how much prices could fluctuate—not whether they
+will rise or fall**.
 
-## What shipped in the study branch (`study/gpu-panel-volatility-v1`, now merged to `main`)
+The frontend is a React app hosted on Vercel; the backend is a FastAPI service on Render.
+Opening the app wakes the backend automatically. There is no second link to open.
 
-**Volatility research is now the promoted path.** Four price-direction hypotheses were frozen as *null* (see `artifacts/STUDY_SUMMARY.md` and `v1.0-ohlcv-negative-study` tag), then the volatility-structure ladder produced one genuine winner:
+## What you can do
 
-- **G3 — global GPU XGBoost rolling-volatility correction** (`Vhat = B·exp(δ)`, QLIKE objective, `base_margin=log(rolling)`). Validated on 286 stocks / ~466k origins and **6 calendar-year rolling folds (2019–2024)** with HAC inference, then **burned once on the untouched test set** (`91k/90k/88k` origins, ΔQLIKE +0.239/+0.238/+0.237, `p<1e-11`). Packaged as 3×237KB ONNX (opset 15, parity ≤1.43e-05) in `backend/volatility_models/`.
+- Search supported NASDAQ, NYSE, and London-listed stocks, with exchange-aware currencies.
+- Explore prices with zoom, pan, a crosshair, and time ranges based on available history.
+- View a seven-session learned price estimate, visually separated from actual prices.
+- Inspect a 5-, 10-, or 20-session volatility outlook and its model/fallback disclosure.
+- Read recent financial headlines as separate market context.
+- Inspect historical evaluation results and the source/date of the underlying data.
 
-**Production integration:**
-
-- `GET /api/v1/history?ticker=MSFT` — single round-trip daily closes (downsampled to 1500) + 5-min intraday (best-effort, 120s TTL). **Warms the shared market-data cache** so the forecast that follows is a cache hit. Provider routing: US → shared cache, `.L` → Yahoo direct. Downsampling, tight error mapping (404/503/422), no large binaries in git.
-- `GET /api/v1/volatility/forecast?ticker=MSFT&horizon=5&model=gpu_g3` — ONNX inference, `gpu_promoted` evidence, explicit `fallback_used` → `rolling_mean`, risk framing (`_trailing_risk_context`), `Server-Timing` header.
-- **Trading212-style `PriceChart`** — 5D default (previous week), `24H/5D/1M/6M/1Y/5Y/MAX` availability-gated (e.g. 2024 IPO hides `5Y`), scroll-zoom / drag-pan / double-click reset, crosshair, last-price tag, forecast-region shading, **dashed estimate with a visible break from actuals**, `historical_provenance: 'synthetic'` guard (never draws fabricated history).
-- **Volatility Outlook card** — `Enhanced volatility forecast` (no `G3`/`XGBoost`/`HAR` in user copy), risk pill, 7-day combined outlook, `How this forecast works` disclosure, advanced diagnostics.
+The research universe has expanded from the original five-stock benchmark to **286 stocks:
+195 US and 91 UK**. Research coverage is not a promise that every ticker will always have
+usable live data or a successful forecast.
 
 ## How it works
 
-**Price path (per-request, 7 sessions):**
-1. Download adjusted, completed daily OHLCV bars (8y, `yfinance` → `Alpaca` fallback, 6h forecast cache + on-disk artifact cache).
-2. Build stationary return/volatility/trend/range/volume features.
-3. Chronological 70/15/15 split with 7-session purge; Ridge vs Random Forest vs `gpu_lstm` compete on validation MAE; winner refitted and scored once on the untouched test block; deployment fits on all resolved targets. `Server-Timing: data, train_or_cache, total`.
+### Seven-session price forecasts
 
-**Volatility path (promoted, no request-time training):**
-1. `GET /history` warms the OHLCV cache; `GET /volatility/forecast?model=gpu_g3` loads the frozen ONNX, builds the 22-column G3 feature block (range estimators, asymmetry, HAR components, vol-of-vol), adds `log(rolling)` outside the graph, `exp(clip)` → always-positive variance.
-2. On any G3 load/inference failure, degrades **explicitly** to `rolling_mean` (`model_status: baseline`, `fallback_used` set).
+1. The backend retrieves adjusted daily open, high, low, close, and volume data, using completed
+   market sessions for forecasting.
+2. It builds historical return, volatility, trend, range, and volume features.
+3. Data is split chronologically into 70% training, 15% validation, and 15% test partitions.
+   Seven-session targets crossing a partition boundary are purged.
+4. Ridge and Random Forest candidates compete on validation error. An available compatible
+   pretrained LSTM checkpoint can also participate.
+5. For locally fitted models, the selected configuration is evaluated on the later test
+   partition. A production model is then fitted using all resolved historical targets.
+6. Predicted cumulative log returns are converted into seven future price estimates.
 
-The no-change forecast is shown only as a historical comparison. It never replaces the learned forecast.
+The learned endpoint remains `/api/v1/forecast`. A no-change forecast is an evaluation baseline,
+not a hardcoded replacement for the learned price path.
+
+### Volatility forecasts
+
+The separate volatility endpoint includes **G3**, a GPU-trained XGBoost model that learns a
+correction to rolling volatility. Training happens offline; the backend serves exported ONNX
+models without request-time G3 training or a production GPU.
+
+The recorded study used a 286-stock panel, six calendar-year evaluation folds, and a separately
+scored historical test partition. G3 was selected for integration on that evidence. Detailed
+results and limitations are preserved in the [research provenance record](artifacts/PROVENANCE_FINAL.md).
+
+If G3 cannot be loaded or used, the volatility endpoint explicitly reports a fallback to
+rolling volatility. This is separate from the learned price endpoint's behavior.
+
+### Reusing expensive work
+
+For US stocks, chart history warms the same daily market-data cache used by the price forecast.
+Repeated requests can reuse a forecast for unchanged data rather than repeat training.
+Same-worker requests are coordinated to avoid duplicate training.
+
+With `FORECAST_MODEL_CACHE_DIR` configured, fitted model/preprocessor artifacts can survive a
+process restart and be loaded for inference. Changes to data, model configuration, implementation,
+runtime versions, or checkpoints invalidate reuse. Invalid artifacts fall through to training.
+
+**A local disk cache is not durable storage across Render instance replacement or redeploys.**
+UK chart history currently follows a separate Yahoo path. See the
+[artifact cache design and security notes](docs/FORECAST_ARTIFACT_CACHE.md).
 
 ## Honest limitations
 
-- This is an experiment, not financial advice.
-- Seven prices and 5/10/20-session volatilities are estimates, not certainties.
-- The residual band is validation-calibrated; not a guaranteed confidence band. The `expected range` around the current price is a 1σ Gaussian reference, not a direction forecast.
-- Recent Alpaca headlines are context only — not fed into the price model in this branch. The 72.5% headline revision rate is handled by a 6-hour gate; SPY macro proved independent (`r=0.003`) and null.
-- Results on large caps do not transfer automatically to penny stocks (e.g. `IGC` ~$0.30).
+- This is an experiment, not financial advice or a guarantee of profitable trading.
+- Price forecasts and volatility forecasts answer different questions. A volatility scenario
+  range does not establish a directional price forecast.
+- Price uncertainty bands come from validation residuals; they are not guaranteed confidence
+  intervals. Gaussian volatility scenarios also depend on modelling assumptions.
+- Historical evaluation is not a live track record. A pretrained checkpoint's training history
+  must be audited before treating its displayed historical metrics as out-of-sample evidence.
+- Recent news is context only in the public price forecast. A positive MSFT news pilot did not
+  generalize convincingly across the fixed 25-stock replication; the
+  [negative result is preserved](artifacts/news_replication25_v1/STUDY_SUMMARY.md).
+- G3's historical volatility results do not demonstrate that the price predictor beats its
+  baseline, or that either model will retain its performance in future markets.
+- Surviving-stock selection, provider coverage, and historical news revisions limit the research.
+  Results do not automatically transfer to penny stocks, illiquid securities, or unseen markets.
 
 ## One-link startup
 
-The React app calls `/health` on open. A sleeping Render free instance boots in background; the UI shows `Starting forecast service…` and enables the same flow once online. First paint also calls `GET /history` for `MSFT` to warm the cache. Users never open Render manually.
+The app calls `/health` when the page opens and requests chart history for the selected stock.
+A sleeping Render service starts in the background while the interface displays its loading
+state. Daily history also warms the US forecast data cache.
+
+Cold starts and the first model fit can still take time. Repeated requests can reuse cached work;
+the interface keeps unavailable data and degraded results explicit. Intraday history is best-effort.
 
 ## API
 
@@ -54,48 +106,86 @@ GET /api/v1/volatility/forecast?ticker=MSFT&horizon=5&model=gpu_g3
 GET /api/v1/news?ticker=MSFT
 ```
 
-Forecast responses include: latest 90 closes, 7 future dates, 7 price estimates, validation-calibrated band, model selection, untouched-test MAE/RMSE/direction, and `data_provider`/`data_as_of`/`market_data_cache` provenance. Volatility responses include `model_status: gpu_promoted|baseline`, `fallback_used`, `risk_level`, and `forecast_fingerprint`.
+Price responses include recent historical closes, seven future trading dates, predicted prices
+and uncertainty paths, model selection/evaluation details, and market-data provenance. Volatility
+responses identify the model used and any fallback. Forecast routes expose server-side timing
+information through `Server-Timing` headers.
 
 ## Local development
 
+Use Python 3.11 and Node.js 22.12 or later within the Node 22 series. Run the backend and frontend
+in separate terminals.
+
 ### Backend
+
+From the repository root:
+
 ```powershell
+python -m venv backend/.venv
+backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt -r backend/requirements-dev.txt
 cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt -r requirements-dev.txt
-# ONNX Runtime is required for G3 tests (installed via requirements.txt)
-python -m uvicorn api:app --reload --port 8000
+.venv/Scripts/python.exe -m uvicorn api:app --reload --port 8000
 ```
-Local defaults to Yahoo; production uses Alpaca via `MARKET_DATA_PROVIDER=alpaca` and `ALPACA_API_KEY_ID/SECRET` (server-only, never in the bundle).
+
+Local development defaults to Yahoo. Production can select Alpaca with server-only variables:
+
+```text
+MARKET_DATA_PROVIDER=alpaca
+ALPACA_API_KEY_ID=<your-key>
+ALPACA_API_SECRET_KEY=<your-secret>
+```
+
+ONNX Runtime is included in backend requirements for G3 inference. PyTorch is a separate
+dependency for LSTM use and research tests. Never put provider credentials in a `VITE_*`
+variable or commit them to the repository.
 
 ### Frontend
+
+From the repository root, in the second terminal:
+
 ```powershell
 cd frontend
-npm install
+npm ci
+$env:VITE_API_URL = "http://127.0.0.1:8000"
 npm run dev
 ```
-`VITE_API_URL` → Render URL for production; Vite proxies `/api` locally.
+
+Open `http://localhost:5500`. Setting the URL explicitly keeps local requests on your local
+backend; the development proxy otherwise defaults to the hosted Render service.
+
+For production, set `VITE_API_URL` to the backend's public URL **before building** the frontend.
 
 ## Verification
 
+From the repository root:
+
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest -c backend/pyproject.toml backend/tests research/tests -q
-backend\.venv\Scripts\ruff.exe check .
-backend\.venv\Scripts\ruff.exe format --check .
+backend/.venv/Scripts/python.exe -m pip install "torch==2.11.0" --index-url https://download.pytorch.org/whl/cpu
+backend/.venv/Scripts/python.exe -m pytest -c backend/pyproject.toml backend/tests research/tests -q -ra
+backend/.venv/Scripts/ruff.exe check .
+backend/.venv/Scripts/ruff.exe format --check .
 
 cd frontend
 npm run test:run
 npm run build
 ```
 
-Focused tests cover chronological purging, ticker validation, learned response shape, cache-warming invariant (`history` → `forecast` = 1 upstream fetch), ONNX parity, `gpu_promoted` status mapping, client hardening (`window` → `setTimeout`, `historical_provenance` guard), and the `G3` fallback/explicit-risk contract.
+Use a separate CUDA-enabled research environment for GPU training; the command above is for
+CPU test execution. Tests cover temporal purging, completed-session data, provider errors,
+history-to-forecast cache reuse, artifact equivalence, chart behavior, and G3 inference/fallbacks.
+The [CI workflow](.github/workflows/ci.yml) is the source of truth for runner dependencies.
 
-## Provenance
+## Research and next steps
 
-- `v1.0-ohlcv-negative-study` tag + `artifacts/STUDY_SUMMARY.md`: 4 frozen nulls.
-- `study/gpu-panel-volatility-v1` → `main` (merge `98abacc`): `vol_structure_*`, `gpu_vol_panel_v1`, `gpu_rolling_origin_v1` (6 folds + one-shot `test_report.json` with refusals), `backend/volatility_models/*.onnx` (parity ≤1.43e-05), `artifacts/PROVENANCE*.md`.
-- No secrets in repo or env (`.env` placeholders only); `FORECAST_COLLECTOR_TOKEN` handling hardened with `AUTH_MISMATCH_HINT`; large `*.parquet`/`*.jsonl`/`*.ubj` ignored except curated `data/news/alpaca/*.jsonl`.
+- [OHLCV study summary](artifacts/STUDY_SUMMARY.md): preserved negative price-signal experiments.
+- [25-stock news replication](artifacts/news_replication25_v1/STUDY_SUMMARY.md): the MSFT pilot
+  did not establish a general news advantage.
+- [GPU volatility provenance](artifacts/PROVENANCE_FINAL.md): G3 evaluation and integration record.
+- [Artifact cache design](docs/FORECAST_ARTIFACT_CACHE.md): reuse guarantees and operational limits.
+
+Remaining engineering work includes shared durable artifact storage, cross-worker training
+coordination, more complete latency telemetry, and unifying the UK/US cache interface. New
+research must remain separate from scored studies; adding a feature is not evidence that it helps.
 
 ## License
 
