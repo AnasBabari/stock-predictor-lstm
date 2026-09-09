@@ -14,6 +14,13 @@ from services.g3_volatility import (
     panel_rolling_base,
 )
 
+try:
+    import onnxruntime  # noqa: F401
+
+    HAS_ONNX = True
+except ImportError:
+    HAS_ONNX = False
+
 
 def _ohlc_frame(n: int = 400, seed: int = 41) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
@@ -166,6 +173,7 @@ def test_g3_inference_applies_base_margin_exactly_once(monkeypatch):
         )
 
 
+@pytest.mark.skipif(not HAS_ONNX, reason="onnxruntime not installed")
 def test_packaged_g3_artifacts_load_and_infer(tmp_path):
     """Committed ONNX artifacts must load and produce finite positive variance."""
     import services.g3_volatility as g3
@@ -204,6 +212,7 @@ def _snapshot(horizon=5):
     )
 
 
+@pytest.mark.skipif(not HAS_ONNX, reason="onnxruntime not installed")
 def test_g3_serving_path_returns_promoted_cone(monkeypatch):
     import data_pipeline
     from services.live_volatility import build_live_volatility_forecast
@@ -220,6 +229,7 @@ def test_g3_serving_path_returns_promoted_cone(monkeypatch):
     assert body["evidence"]["test_evidence_qlike_vs_rolling"]["p_two_sided"] < 1e-9
 
 
+@pytest.mark.skipif(not HAS_ONNX, reason="onnxruntime not installed")
 def test_g3_failure_falls_back_to_baseline_explicitly(monkeypatch, tmp_path):
     import services.g3_volatility as g3
     from services.live_volatility import build_live_volatility_forecast
@@ -247,6 +257,7 @@ def test_auto_policy_still_routes_to_baselines():
     assert _candidate_name("gpu_g3", 5) == "gpu_g3"
 
 
+@pytest.mark.skipif(not HAS_ONNX, reason="onnxruntime not installed")
 def test_g3_risk_framing_against_trailing_volatility(monkeypatch):
     import data_pipeline
     from services.live_volatility import _trailing_risk_context, build_live_volatility_forecast
