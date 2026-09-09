@@ -38,6 +38,24 @@ from services.live_collection import (  # noqa: E402
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 COLLECTOR_TOKEN_ENV = "FORECAST_COLLECTOR_TOKEN"
 
+_UNAUTHORIZED_HINT = (
+    "Collector auth was rejected: confirm FORECAST_COLLECTOR_TOKEN equals the "
+    "server-configured value exactly. Leading/trailing whitespace and one pair "
+    "of surrounding quotes are stripped before comparison; never paste the "
+    "token value into this report."
+)
+
+
+def _collector_token() -> str | None:
+    """Read and normalize the collector bearer token from the environment.
+
+    Returns ``None`` for blank/unset secrets so callers can abort before
+    sending an empty Authorization header. Mirrors the server-side
+    normalization in ``routes/volatility.require_collector_auth``.
+    """
+    raw = os.getenv(COLLECTOR_TOKEN_ENV, "").strip().strip("\"'")
+    return raw or None
+
 
 @dataclass(frozen=True)
 class ApiResult:
@@ -399,7 +417,14 @@ def write_manifest(manifest: dict[str, Any], output_dir: Path) -> Path:
 def export_live_ledger(client: CollectorClient, *, token: str, output_dir: Path) -> dict[str, Any]:
     response = client.request("GET", "/api/v1/volatility/export-ledger", token=token, attempts=2)
     if response.status_code != 200:
-        return {"operation": "export", "status": "failed", "http_status": response.status_code}
+        result: dict[str, Any] = {
+            "operation": "export",
+            "status": "failed",
+            "http_status": response.status_code,
+        }
+        if response.status_code == 401:
+            result["hint"] = _UNAUTHORIZED_HINT
+        return result
     entries = response.payload.get("entries")
     if not isinstance(entries, list):
         return {"operation": "export", "status": "failed", "error": "invalid_entries"}

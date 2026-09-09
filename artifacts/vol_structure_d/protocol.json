@@ -1,0 +1,159 @@
+{
+  "hypothesis": "frozen A-F matrix; this run executes A,D,C,B1-yang_zhang",
+  "arms_requested": [
+    "D"
+  ],
+  "arms_executed": [
+    "A",
+    "D",
+    "C",
+    "B1-yang_zhang"
+  ],
+  "arm_matrix": {
+    "A": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d close-to-close variance"
+    },
+    "B1-parkinson": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d mean Parkinson variance"
+    },
+    "B1-garman_klass": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d mean Garman-Klass variance"
+    },
+    "B1-rogers_satchell": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d mean Rogers-Satchell variance"
+    },
+    "B1-yang_zhang": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d mean Yang-Zhang variance"
+    },
+    "B2": {
+      "kind": "ridge",
+      "multistep_method": "direct_per_horizon",
+      "description": "Ridge on four trailing-20d mean range variances"
+    },
+    "C": {
+      "kind": "standalone",
+      "multistep_method": "recursive_har",
+      "description": "production recursive HAR cumulative forecasts"
+    },
+    "D": {
+      "kind": "ridge",
+      "multistep_method": "direct_per_horizon",
+      "description": "Ridge on HAR log components + range block"
+    },
+    "E": {
+      "kind": "ridge",
+      "multistep_method": "direct_per_horizon",
+      "description": "Ridge on D features + sign-conditioned variation block"
+    },
+    "F-gjr": {
+      "kind": "standalone",
+      "multistep_method": "gaussian_closed_form",
+      "description": "Gaussian GJR-GARCH cumulative paths, refit every 20 sessions"
+    },
+    "F-egarch": {
+      "kind": "standalone",
+      "multistep_method": "expected_recursion_approx",
+      "description": "Gaussian EGARCH cumulative paths, refit every 20 sessions"
+    }
+  },
+  "comparison_rule": "pairwise vs Arm A on inner-joined scored origins; forecasts floored at zero at scoring (no-op for A)",
+  "target": "forward cumulative realized variance (sum of squared log returns)",
+  "target_horizons": [
+    5,
+    10,
+    20
+  ],
+  "primary_metric": "QLIKE",
+  "feature_schema": "vol-structure-v1",
+  "b2_training_windows": {
+    "D_h5": [
+      "2015-03-04 00:00:00",
+      "2023-03-03 00:00:00"
+    ],
+    "D_h10": [
+      "2015-03-04 00:00:00",
+      "2023-02-24 00:00:00"
+    ],
+    "D_h20": [
+      "2015-03-04 00:00:00",
+      "2023-02-10 00:00:00"
+    ]
+  },
+  "d_fitted": {
+    "5": {
+      "intercept": 0.002725491086802804,
+      "standardized_coef": {
+        "range_park_20": 0.028727644269846784,
+        "range_gk_20": 0.004827331552260989,
+        "range_rs_20": -0.03351699206082998,
+        "range_yz_20": -1.0270356866740867e-05,
+        "har_log_daily": 0.00015453719957693492,
+        "har_log_weekly": 0.0009657871254398851,
+        "har_log_monthly": 0.000862163442120853
+      }
+    },
+    "10": {
+      "intercept": 0.005458022822929255,
+      "standardized_coef": {
+        "range_park_20": 0.05027405853300042,
+        "range_gk_20": 0.007576185485029273,
+        "range_rs_20": -0.05779476027120128,
+        "range_yz_20": -1.7814252697249027e-05,
+        "har_log_daily": 0.0003214706321235131,
+        "har_log_weekly": 0.0017890580803345073,
+        "har_log_monthly": 0.0016765381988319821
+      }
+    },
+    "20": {
+      "intercept": 0.01093974957752352,
+      "standardized_coef": {
+        "range_park_20": 0.0837457670550626,
+        "range_gk_20": 0.011177652393092008,
+        "range_rs_20": -0.0948566791862949,
+        "range_yz_20": -3.3821934504862565e-05,
+        "har_log_daily": 0.0005302314993745002,
+        "har_log_weekly": 0.0027775887087608383,
+        "har_log_monthly": 0.0033530694457341607
+      }
+    }
+  },
+  "production_observation": "Production raw HAR parity confirmed; validation study indicates substantial cumulative-variance underforecasting under recursive log-median multi-step forecasting. No production change made within this study.",
+  "coverage_detail": {
+    "A": {
+      "scored_origins": 1899220,
+      "scored_tickers": 286,
+      "first_valid_origin_min": "2015-02-02 00:00:00",
+      "first_valid_origin_median": "2018-10-02 00:00:00"
+    },
+    "D": {
+      "scored_origins": 1881202,
+      "scored_tickers": 286,
+      "first_valid_origin_min": "2015-03-04 00:00:00",
+      "first_valid_origin_median": "2018-10-31 00:00:00"
+    },
+    "C": {
+      "scored_origins": 1864900,
+      "scored_tickers": 286,
+      "first_valid_origin_min": "2015-03-31 00:00:00",
+      "first_valid_origin_median": "2018-11-27 00:00:00"
+    },
+    "B1-yang_zhang": {
+      "scored_origins": 1881202,
+      "scored_tickers": 286,
+      "first_valid_origin_min": "2015-03-04 00:00:00",
+      "first_valid_origin_median": "2018-10-31 00:00:00"
+    }
+  },
+  "tickers": 286,
+  "origins_total": 7526524
+}

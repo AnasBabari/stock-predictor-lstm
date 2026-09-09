@@ -38,11 +38,59 @@ function installFetch() {
     if (String(url).includes('/api/v1/forecast')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve(forecast) });
     }
+    if (String(url).includes('/api/v1/volatility/forecast')) {
+      const match = String(url).match(/horizon=(\d+)/);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(volatilityBody(Number(match?.[1] || 5))) });
+    }
     if (String(url).includes('/api/v1/news')) {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'available', items: [] }) });
     }
     return Promise.reject(new Error(`Unexpected fetch ${url}`));
   });
+}
+
+function volatilityBody(horizon) {
+  const dates = Array.from({ length: 60 }, (_, index) => {
+    const day = new Date(Date.UTC(2026, 5, 1) + index * 86400000);
+    return day.toISOString().slice(0, 10);
+  });
+  const future = Array.from({ length: horizon }, (_, index) => {
+    const day = new Date(Date.UTC(2026, 8, 4) + index * 86400000);
+    return day.toISOString().slice(0, 10);
+  });
+  const prices = Array.from({ length: 60 }, (_, index) => 440 + index * 0.2);
+  const quantiles = {};
+  for (const [key, offset] of [['p05', -12], ['p10', -8], ['p25', -4], ['p50', 0], ['p75', 4], ['p90', 8], ['p95', 12]]) {
+    quantiles[key] = Array(horizon).fill(450 + offset);
+  }
+  return {
+    ticker: 'MSFT',
+    as_of: '2026-09-03',
+    horizon,
+    current_price: 450,
+    historical_dates: dates,
+    historical_prices: prices,
+    forecast: {
+      future_dates: future,
+      price_quantiles: quantiles,
+      model: 'gpu_g3',
+      requested_model: 'gpu_g3',
+      expected_annualized_volatility: { 5: 0.214, 10: 0.231, 20: 0.208 }[horizon] ?? 0.214,
+    },
+    evidence: {
+      model_status: 'gpu_promoted',
+      model_family: 'global_gpu_xgboost',
+      model_name: 'gpu_g3',
+      requested_model: 'gpu_g3',
+      baseline: false,
+      model_version: 'g3-gpu-xgb-v1',
+      metric_source: 'held_out_test_panel',
+      risk_level: 'Elevated',
+      risk_ratio_vs_trailing_60d: 1.32,
+      trailing_annualized_volatility_60d: 0.162,
+      data_as_of: '2026-09-03',
+    },
+  };
 }
 
 describe('simplified forecast app', () => {
@@ -62,7 +110,8 @@ describe('simplified forecast app', () => {
 
     expect(await screen.findByText('Average seven-day price estimate')).toBeInTheDocument();
     expect(screen.getByText('Average 7-day estimate')).toBeInTheDocument();
-    expect(screen.getByText('$452.00')).toBeInTheDocument();
+    // Latest price appears twice by design: the KPI panel and the combined outlook.
+    expect(screen.getAllByText('$452.00')).toHaveLength(2);
     expect(screen.queryByText(/empirical band/i)).not.toBeInTheDocument();
     expect(screen.getByText('More accurate than assuming no price change')).toBeInTheDocument();
     expect(screen.getByText(/not included in the forecast/i)).toBeInTheDocument();
@@ -78,6 +127,19 @@ describe('simplified forecast app', () => {
     expect(screen.getByText('Stock forecasts made simple')).toBeInTheDocument();
     expect(screen.queryByText(/A ticker is a stock's short code/)).not.toBeInTheDocument();
     expect(screen.queryByText(/PostgreSQL|70\/15\/15|Quantitative Terminal|causal market/i)).not.toBeInTheDocument();
+  });
+
+  it('renders the volatility outlook card without model codenames', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText('Forecast service ready');
+    await user.click(screen.getByRole('button', { name: /run 7-day forecast/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Volatility Outlook' })).toBeInTheDocument();
+    expect(screen.getByText('21.4% annualised')).toBeInTheDocument();
+    expect(screen.getByText(/held-out test panel/)).toBeInTheDocument();
+    const card = screen.getByLabelText('MSFT volatility outlook');
+    expect(card.textContent).not.toMatch(/G3|XGBoost|HAR|QLIKE/i);
   });
 
   it.each(['nvda', 'jpm', 'shel.l'])('submits the typed ticker %s with Enter', async (symbol) => {

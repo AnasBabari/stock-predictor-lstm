@@ -1,0 +1,73 @@
+{
+  "hypothesis": "frozen A-F matrix; this run executes arm A only",
+  "arms_requested": [
+    "A"
+  ],
+  "arm_matrix": {
+    "A": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d close-to-close variance"
+    },
+    "B1-parkinson": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d mean Parkinson variance"
+    },
+    "B1-garman_klass": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d mean Garman-Klass variance"
+    },
+    "B1-rogers_satchell": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d mean Rogers-Satchell variance"
+    },
+    "B1-yang_zhang": {
+      "kind": "standalone",
+      "multistep_method": "constant_volatility_extrapolation",
+      "description": "H * trailing-20d mean Yang-Zhang variance"
+    },
+    "B2": {
+      "kind": "ridge",
+      "multistep_method": "direct_per_horizon",
+      "description": "Ridge on four trailing-20d mean range variances"
+    },
+    "C": {
+      "kind": "standalone",
+      "multistep_method": "recursive_har",
+      "description": "production recursive HAR cumulative forecasts"
+    },
+    "D": {
+      "kind": "ridge",
+      "multistep_method": "direct_per_horizon",
+      "description": "Ridge on HAR log components + range block"
+    },
+    "E": {
+      "kind": "ridge",
+      "multistep_method": "direct_per_horizon",
+      "description": "Ridge on D features + sign-conditioned variation block"
+    },
+    "F-gjr": {
+      "kind": "standalone",
+      "multistep_method": "gaussian_closed_form",
+      "description": "Gaussian GJR-GARCH cumulative paths, refit every 20 sessions"
+    },
+    "F-egarch": {
+      "kind": "standalone",
+      "multistep_method": "expected_recursion_approx",
+      "description": "Gaussian EGARCH cumulative paths, refit every 20 sessions"
+    }
+  },
+  "target": "forward cumulative realized variance (sum of squared log returns)",
+  "target_horizons": [
+    5,
+    10,
+    20
+  ],
+  "primary_metric": "QLIKE",
+  "feature_schema": "vol-structure-v1",
+  "tickers": 286,
+  "origins_total": 1899220
+}
