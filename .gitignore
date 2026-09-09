@@ -52,6 +52,7 @@ data/options/samples/
 *.keras
 *.joblib
 *.pkl
+*.ubj
 .uv-cache/
 .workbuddy-ai/
 diff.txt
