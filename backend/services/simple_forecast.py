@@ -306,7 +306,11 @@ _gpu_signature = None
 
 
 def _checkpoint_signature() -> str:
-    entries = []
+    # Scan is order- and cwd-independent: the same physical checkpoint must
+    # produce the same signature whether the process was started from the
+    # repo root, backend/, or anywhere else, otherwise the durable-artifact
+    # cache key (and any cold-process reload) silently diverges.
+    found: dict[str, tuple[int, str]] = {}
     for root in (
         Path.cwd(),
         Path(__file__).resolve().parents[2],
@@ -317,14 +321,16 @@ def _checkpoint_signature() -> str:
             "tri_exchange_gpu_v1/model.pt",
             "simple_price_gpu_v2/baseline_price_only/model.pt",
         ):
-            path = root / "artifacts" / relative
+            path = (root / "artifacts" / relative).resolve()
             try:
                 stat = path.stat()
-                entries.append(
-                    (str(path), stat.st_size, hashlib.sha256(path.read_bytes()).hexdigest())
-                )
             except OSError:
                 continue
+            found[str(path)] = (
+                stat.st_size,
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+    entries = sorted(found.items())
     return hashlib.sha256(repr(entries).encode()).hexdigest()
 
 

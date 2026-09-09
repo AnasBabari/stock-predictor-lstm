@@ -99,7 +99,9 @@ def to_onnx(model, n_features: int):
     from onnxmltools.convert.common.data_types import FloatTensorType
 
     return convert_xgboost(
-        model, "g3_volatility", [("input", FloatTensorType([None, n_features]))],
+        model,
+        "g3_volatility",
+        [("input", FloatTensorType([None, n_features]))],
         target_opset=TARGET_OPSET,
     )
 
@@ -156,4 +158,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

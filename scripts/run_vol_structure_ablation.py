@@ -199,9 +199,7 @@ def run_arm_d(frames: dict[str, pd.DataFrame]):
     fitted = {}
     for horizon in panel.TARGET_HORIZONS:
         sub = pooled[pooled.horizon == horizon].reset_index(drop=True)
-        finite = sub[list(D_COLUMNS) + ["realized"]].apply(
-            lambda col: np.isfinite(col.to_numpy())
-        )
+        finite = sub[list(D_COLUMNS) + ["realized"]].apply(lambda col: np.isfinite(col.to_numpy()))
         usable = finite.all(axis=1).to_numpy()
         train, _, _, _ = panel.partitions(
             sub.origin_date.to_numpy(), sub.target_end_date.to_numpy()
@@ -222,8 +220,15 @@ def run_arm_d(frames: dict[str, pd.DataFrame]):
             str(sub.loc[train_idx, "origin_date"].min()),
             str(sub.loc[train_idx, "origin_date"].max()),
         )
-        fitted[horizon] = {"intercept": float(model.intercept_[0]) if np.ndim(model.intercept_) else float(model.intercept_),
-                           "standardized_coef": {name: float(w) for name, w in zip(D_COLUMNS, np.asarray(model.coef_).reshape(-1))}}
+        fitted[horizon] = {
+            "intercept": float(model.intercept_[0])
+            if np.ndim(model.intercept_)
+            else float(model.intercept_),
+            "standardized_coef": {
+                name: float(w)
+                for name, w in zip(D_COLUMNS, np.asarray(model.coef_).reshape(-1), strict=True)
+            },
+        }
         predictions.append(
             pd.DataFrame(
                 {
@@ -478,19 +483,20 @@ def main() -> int:
             )
             keys = set(
                 zip(
-                    base_h.loc[validation, "ticker"], base_h.loc[validation, "origin_date"],
+                    base_h.loc[validation, "ticker"],
+                    base_h.loc[validation, "origin_date"],
                     strict=True,
                 )
             )
             sub = d_rows[d_rows.horizon == horizon]
-            sub = sub[
-                [(t, d) in keys for t, d in zip(sub.ticker, sub.origin_date, strict=True)]
-            ]
+            sub = sub[[(t, d) in keys for t, d in zip(sub.ticker, sub.origin_date, strict=True)]]
             raw = sub.forecast.to_numpy(dtype=float)
             diagnostics_d[horizon] = {
                 "intercept": fitted_d[horizon]["intercept"],
                 "standardized_coef": fitted_d[horizon]["standardized_coef"],
-                "pred_real_ratio": float(np.mean(raw) / np.mean(sub.realized.to_numpy(dtype=float))),
+                "pred_real_ratio": float(
+                    np.mean(raw) / np.mean(sub.realized.to_numpy(dtype=float))
+                ),
                 "pred_quantiles": {
                     q: float(np.quantile(raw, float(q)))
                     for q in ("0.01", "0.05", "0.5", "0.95", "0.99")

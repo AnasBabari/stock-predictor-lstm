@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchSimpleForecast, fetchTickerNews, wakeForecastService } from './api/simpleForecastClient';
+import { fetchPriceHistory } from './api/priceHistoryClient';
+import PriceChart from './components/PriceChart';
+import VolatilityOutlook from './components/VolatilityOutlook';
 import SimpleForecastChart, { midpointPrices } from './components/SimpleForecastChart';
 import ForecastLedgerTrackRecord from './components/ForecastLedgerTrackRecord';
 import { ALL_VALID_TICKERS, ALL_TICKERS_SET } from './universe';
@@ -232,6 +235,7 @@ function NewsPanel({ news, ticker, loading }) {
 
 export default function App() {
   const [ticker, setTicker] = useState('MSFT');
+  const [chartTicker, setChartTicker] = useState(null);
   const [serviceStatus, setServiceStatus] = useState('checking');
   const [wakeAttempt, setWakeAttempt] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -239,8 +243,10 @@ export default function App() {
   const [news, setNews] = useState(null);
   const [newsLoading, setNewsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [perf, setPerf] = useState(null);
   const wakeController = useRef(null);
   const requestController = useRef(null);
+  const perfT0 = useRef(0);
 
   const wake = useCallback(async () => {
     wakeController.current?.abort();
@@ -262,6 +268,31 @@ export default function App() {
 
   useEffect(() => () => requestController.current?.abort(), []);
 
+  const nowMs = useCallback(() => (typeof performance !== 'undefined' ? performance.now() : Date.now()), []);
+
+  const handleHistorySettled = useCallback((report) => {
+    const chartMs = Math.round(nowMs() - (perfT0.current || nowMs()));
+    const cacheLabel = !report?.ok
+      ? 'history failed'
+      : report.fromCache
+        ? 'browser cache'
+        : report.degraded
+          ? 'forecast payload'
+          : report.marketDataCache === 'hit'
+            ? 'cache hit'
+            : 'cold fetch';
+    setPerf((prev) => ({ ...(prev || {}), chartMs, fetchMs: report?.fetchMs ?? null, cacheLabel, degraded: Boolean(report?.degraded) }));
+  }, [nowMs]);
+
+  // Warm the backend on first paint: the history request wakes a sleeping
+  // Render instance and fills the shared market-data cache, so the first
+  // real forecast resolves against warm data instead of a cold 8-year fetch.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchPriceHistory('MSFT', { signal: controller.signal }).catch(() => {});
+    return () => controller.abort();
+  }, []);
+
   const runForecast = useCallback(async (eventOrSymbol) => {
     if (eventOrSymbol && typeof eventOrSymbol.preventDefault === 'function') {
       eventOrSymbol.preventDefault();
@@ -275,6 +306,11 @@ export default function App() {
       setError(`Choose one of the ${ALL_VALID_TICKERS.length} supported LSE, NASDAQ, and NYSE tickers. This symbol is not supported yet.`);
       return;
     }
+    // Mount the dynamic chart immediately: its history request warms the
+    // backend cache in parallel with the wake/forecast sequence below.
+    setChartTicker(symbol);
+    perfT0.current = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    setPerf(null);
     requestController.current?.abort();
     const controller = new AbortController();
     requestController.current = controller;
@@ -295,6 +331,8 @@ export default function App() {
 
       if (forecastResult.status === 'fulfilled') {
         setForecast(forecastResult.value);
+        const forecastMs = Math.round(nowMs() - (perfT0.current || nowMs()));
+        setPerf((prev) => ({ ...(prev || {}), forecastMs }));
       } else {
         throw forecastResult.reason;
       }
@@ -312,7 +350,7 @@ export default function App() {
       setLoading(false);
       setNewsLoading(false);
     }
-  }, [serviceStatus, ticker]);
+  }, [nowMs, serviceStatus, ticker]);
 
   const summary = useMemo(() => {
     if (!forecast?.lower_prices?.length || !forecast?.upper_prices?.length) return null;
@@ -395,6 +433,46 @@ export default function App() {
           {error && <div className="error-message" role="alert">{error}</div>}
         </section>
 
+        {chartTicker && (
+          <div className="results">
+            <PriceChart
+              ticker={chartTicker}
+              currencySymbol={
+                forecast?.ticker === chartTicker && forecast?.currency_symbol
+                  ? forecast.currency_symbol
+                  : (chartTicker.endsWith('.L') ? 'p' : '$')
+              }
+              forecast={forecast?.ticker === chartTicker ? forecast : null}
+              onHistorySettled={handleHistorySettled}
+            />
+            {perf?.chartMs != null && (
+              <p className="timing-note" role="status">
+                Chart {(perf.chartMs / 1000).toFixed(1)}s
+                {perf.forecastMs != null ? ` · Forecast ${(perf.forecastMs / 1000).toFixed(1)}s` : ' · Forecast…'}
+                {perf.cacheLabel ? ` · market data: ${perf.cacheLabel}` : ''}
+              </p>
+            )}
+            {forecast?.ticker === chartTicker && (
+              <>
+                <div className="chart-legend-strip">
+                  <div className="legend-pill">
+                    <span className="legend-color-dot historical-dot" aria-hidden="true" />
+                    <span>Past prices</span>
+                  </div>
+                  <div className="legend-pill">
+                    <span className="legend-color-dot forecast-dot" aria-hidden="true" />
+                    <span>Average 7-Day Estimate</span>
+                  </div>
+                </div>
+                <p className="chart-caption">
+                  The blue line shows the middle of each day's estimated price range.
+                  Actual prices can be higher or lower. This is not a guaranteed return.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
         {forecast && summary && (
           <div className="results">
             <section className="panel forecast-panel">
@@ -435,27 +513,26 @@ export default function App() {
                   <small className="kpi-subtext">Excludes weekends and market holidays</small>
                 </article>
               </div>
-              <SimpleForecastChart forecast={forecast} />
-              <div className="chart-legend-strip">
-                <div className="legend-pill">
-                  <span className="legend-color-dot historical-dot" aria-hidden="true" />
-                  <span>Past prices</span>
-                </div>
-                <div className="legend-pill">
-                  <span className="legend-color-dot forecast-dot" aria-hidden="true" />
-                  <span>Average 7-Day Estimate</span>
-                </div>
-              </div>
-              <p className="chart-caption">
-                The blue line shows the middle of each day's estimated price range.
-                Actual prices can be higher or lower. This is not a guaranteed return.
+              <p className="method-note">
+                Model: {forecast.model?.name?.replaceAll('_', ' ') || 'Not provided'}. The model is re-fitted on completed daily bars each time this page runs; past performance never proves future results.
               </p>
-              <details className="forecast-details">
-                <summary>How this estimate is made</summary>
-                <p>Each point averages the lower and upper price estimates. It is not a probability-weighted average.</p>
-                <p>Model: {forecast.model?.name?.replaceAll('_', ' ') || 'Not provided'}.</p>
-              </details>
             </section>
+            {chartTicker && (
+              <VolatilityOutlook
+                ticker={chartTicker}
+                currencySymbol={
+                  forecast?.ticker === chartTicker && forecast?.currency_symbol
+                    ? forecast.currency_symbol
+                    : (chartTicker.endsWith('.L') ? 'p' : '$')
+                }
+                currentPrice={forecast?.ticker === chartTicker ? forecast?.current_price : null}
+                priceEstimate={
+                  forecast?.ticker === chartTicker && summary
+                    ? { price: summary.finalPrice, changePct: summary.change }
+                    : null
+                }
+              />
+            )}
             <BacktestPanel backtest={forecast.backtest} />
             <NewsPanel news={news} ticker={forecast.ticker} loading={newsLoading} />
             <ForecastLedgerTrackRecord ticker={forecast.ticker} />

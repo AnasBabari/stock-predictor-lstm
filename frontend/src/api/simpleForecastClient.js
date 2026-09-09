@@ -6,7 +6,7 @@ const API_BASE = getApiBase();
 
 async function getJson(path, { signal, timeoutMs = 120_000 } = {}) {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
   try {
@@ -20,7 +20,7 @@ async function getJson(path, { signal, timeoutMs = 120_000 } = {}) {
     }
     return payload;
   } finally {
-    window.clearTimeout(timer);
+    clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
   }
 }
@@ -38,9 +38,9 @@ export async function wakeForecastService({ signal, onAttempt } = {}) {
       lastError = error;
     }
     await new Promise((resolve, reject) => {
-      const delay = window.setTimeout(resolve, Math.min(3_000 + attempt * 750, 10_000));
+      const delay = setTimeout(resolve, Math.min(3_000 + attempt * 750, 10_000));
       signal?.addEventListener('abort', () => {
-        window.clearTimeout(delay);
+        clearTimeout(delay);
         reject(new DOMException('Aborted', 'AbortError'));
       }, { once: true });
     });
@@ -328,11 +328,12 @@ export async function fetchSimpleForecast(ticker, { signal } = {}) {
       let histPrices = Array.isArray(volRes?.historical_prices) && volRes.historical_prices.length > 0
         ? volRes.historical_prices
         : null;
-
+      let historyProvenance = 'live';
       if (!histDates || !histPrices) {
         const generated = generateBenchmarkHistory(currentPrice, asOf, 30);
         histDates = generated.dates;
         histPrices = generated.prices;
+        historyProvenance = 'synthetic';
       }
 
       return {
@@ -347,6 +348,7 @@ export async function fetchSimpleForecast(ticker, { signal } = {}) {
         current_price: currentPrice,
         historical_dates: histDates,
         historical_prices: histPrices,
+        historical_provenance: historyProvenance,
         future_dates: futureDates,
         predicted_prices: predPrices,
         lower_prices: lowerPrices,

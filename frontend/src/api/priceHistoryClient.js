@@ -25,7 +25,7 @@ export async function fetchPriceHistory(ticker, { signal, timeoutMs = 20_000 } =
   if (cached) return { ...cached, meta: { fetchMs: 0, fromCache: true } };
   const startedAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
   try {
@@ -55,7 +55,7 @@ export async function fetchPriceHistory(ticker, { signal, timeoutMs = 20_000 } =
     cache.set(symbol, result);
     return withMeta;
   } finally {
-    window.clearTimeout(timer);
+    clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
   }
 }
