@@ -1777,3 +1777,213 @@ footer {
     text-align: center;
   }
 }
+
+/* ── Trading212-style price chart ────────────────────────────────────
+   PriceChart.jsx renders these classes but the stylesheet never shipped
+   them, so the chart header fell back to unstyled inline text and the
+   loading state collapsed into the wrapper. */
+
+.t212-chart-section {
+  margin-top: 20px;
+  padding: 20px 22px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.t212-chart-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.t212-price-block {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.t212-ticker {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.t212-price {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.t212-change {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+}
+
+.t212-change.up {
+  color: var(--emerald);
+  background: var(--emerald-glow);
+}
+
+.t212-change.down {
+  color: var(--crimson);
+  background: var(--crimson-glow);
+}
+
+.t212-range-name {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Placeholder shown while the first bars load, so the header never
+   displays a fabricated "$0.00 (+0.00%)". */
+.t212-price-skeleton {
+  display: inline-block;
+  width: 168px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.05) 25%,
+    rgba(255, 255, 255, 0.11) 37%,
+    rgba(255, 255, 255, 0.05) 63%
+  );
+  background-size: 400% 100%;
+  animation: t212-shimmer 1.4s ease-in-out infinite;
+}
+
+.t212-range-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.range-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.range-pill:hover {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.range-pill.active {
+  color: var(--cyan);
+  border-color: var(--border-accent);
+  background: var(--cyan-glow);
+}
+
+.range-pill.reset-pill {
+  color: var(--amber);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.t212-chart-wrap {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.t212-chart-error {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.t212-chart-error p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.empty-copy {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.t212-chart-hint {
+  margin: 10px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+/* Skeleton chart: fills the reserved height so loading reads as
+   intentional rather than as a large blank region. */
+.t212-chart-skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  height: 100%;
+  padding: 24px;
+}
+
+.t212-skeleton-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  width: min(100%, 520px);
+  height: 58%;
+}
+
+.t212-skeleton-bars i {
+  flex: 1;
+  border-radius: 3px 3px 0 0;
+  background: linear-gradient(
+    180deg,
+    rgba(56, 189, 248, 0.20),
+    rgba(56, 189, 248, 0.05)
+  );
+  animation: t212-shimmer 1.6s ease-in-out infinite;
+}
+
+.t212-skeleton-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+@keyframes t212-shimmer {
+  0% { background-position: 100% 0; opacity: 0.55; }
+  50% { opacity: 1; }
+  100% { background-position: 0 0; opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t212-price-skeleton,
+  .t212-skeleton-bars i {
+    animation: none;
+  }
+}

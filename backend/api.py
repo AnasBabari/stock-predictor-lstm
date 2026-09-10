@@ -7,6 +7,7 @@ and immutable forecast ledger track records.
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 import yfinance as yf  # type: ignore[import-untyped]
 from fastapi import FastAPI, Request
@@ -44,11 +45,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # ── Application Setup ────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Start background warm-up without blocking readiness.
+
+    The learned-forecast path costs ~9s on its first request in a fresh process
+    (PyTorch import plus model fitting). Warming it in a daemon thread moves
+    that cost off the request path; ``/health`` stays responsive because the
+    thread never blocks startup.
+    """
+    from services.forecast_warmup import start_forecast_warmup
+
+    start_forecast_warmup()
+    yield
+
+
 app = FastAPI(
     title="Signal Seven Forecast API",
     version=APP_VERSION,
     description="Seven-session learned price estimates with chronological historical backtests.",
+    lifespan=lifespan,
 )
 app.state.limiter = limiter
 

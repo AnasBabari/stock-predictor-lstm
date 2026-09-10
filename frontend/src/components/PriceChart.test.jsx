@@ -192,4 +192,24 @@ describe('PriceChart', () => {
     expect(screen.queryByRole('tab', { name: 'MAX' })).toBeNull();
     expect(screen.queryByTestId('mock-chart')).toBeNull();
   });
+
+  it('never shows placeholder zeros while history is loading', () => {
+    usePriceHistory.mockReturnValue({ history: null, loading: true, error: '', meta: null, retry: vi.fn() });
+    const { container } = render(<PriceChart ticker="MSFT" currencySymbol="$" />);
+    // The ticker stays visible, but an unknown price must read as unknown
+    // rather than as a real "$0.00 (+0.00%)".
+    expect(screen.getByText('MSFT')).toBeInTheDocument();
+    expect(screen.queryByText(/\$0\.00/)).toBeNull();
+    expect(screen.queryByText(/\(0\.00%\)/)).toBeNull();
+    expect(container.querySelector('.t212-price-skeleton')).not.toBeNull();
+  });
+
+  it('renders a skeleton chart instead of a blank loading region', () => {
+    usePriceHistory.mockReturnValue({ history: null, loading: true, error: '', meta: null, retry: vi.fn() });
+    const { container } = render(<PriceChart ticker="MSFT" currencySymbol="$" />);
+    expect(screen.getByText('Loading price history…')).toBeInTheDocument();
+    expect(container.querySelector('.t212-chart-skeleton')).not.toBeNull();
+    expect(container.querySelectorAll('.t212-skeleton-bars i').length).toBeGreaterThan(0);
+    expect(screen.queryByTestId('mock-chart')).toBeNull();
+  });
 });

@@ -122,6 +122,14 @@ class Settings(BaseSettings):
     # this only removes repeat training within one instance lifetime or
     # where the directory is genuinely persistent (local dev, Docker, paid).
     forecast_model_cache_dir: str | None = None
+    # Warm the learned-forecast path in a background thread at startup. The
+    # first request in a fresh process otherwise pays a one-time PyTorch import
+    # plus model fitting (~9s measured), and the artifact cache key includes the
+    # last data date, so that cost returns every trading day. Set
+    # forecast_warmup_max_tickers=0 to disable.
+    forecast_warmup_enabled: bool = True
+    forecast_warmup_max_tickers: int = Field(default=8, ge=0, le=64)
+    forecast_warmup_tickers: list[str] = Field(default_factory=list)
     server_bundle_retention_days: int = Field(default=30, ge=1, le=3650)
     server_forecast_private_key_path: str | None = None
     server_forecast_public_key_path: str | None = None

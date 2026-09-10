@@ -285,6 +285,10 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
     return { ...change, last: points.prices.filter(Number.isFinite).at(-1) };
   }, [points]);
 
+  // True only when there is a real last price to show. Guards the header
+  // against rendering "$0.00 (+0.00%)" before history arrives.
+  const hasData = points.labels.length > 0 && Number.isFinite(stats.last);
+
   const colors = useMemo(() => {
     const up = stats.up;
     if (isDark) {
@@ -555,11 +559,23 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
       <div className="t212-chart-head">
         <div className="t212-price-block">
           <span className="t212-ticker">{ticker}</span>
-          <strong className="t212-price mono">{formatMoneyLocal(stats.last, currencySymbol)}</strong>
-          <span className={`t212-change ${changeClass}`}>
-            {sign}{formatMoneyLocal(stats.change, currencySymbol)} ({sign}{stats.changePct.toFixed(2)}%)
-          </span>
-          <span className="t212-range-name">{activeRange === 'MAX' ? 'All time' : activeRange}</span>
+          {/* Never render placeholder zeros: an unknown price must read as
+              unknown, not as "$0.00 (+0.00%)". */}
+          {hasData ? (
+            <>
+              <strong className="t212-price mono">
+                {formatMoneyLocal(stats.last, currencySymbol)}
+              </strong>
+              <span className={`t212-change ${changeClass}`}>
+                {sign}{formatMoneyLocal(stats.change, currencySymbol)} ({sign}{stats.changePct.toFixed(2)}%)
+              </span>
+              <span className="t212-range-name">
+                {activeRange === 'MAX' ? 'All time' : activeRange}
+              </span>
+            </>
+          ) : (
+            <span className="t212-price-skeleton" aria-hidden="true" />
+          )}
         </div>
         <div className="t212-range-tabs" role="tablist" aria-label="Chart time range">
           {CHART_RANGES.filter((range) => available.includes(range.id)).map((range) => (
@@ -586,7 +602,16 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
         ref={wrapRef}
         style={{ height: 'clamp(340px, 48vh, 520px)', position: 'relative', cursor: 'crosshair', touchAction: 'none' }}
       >
-        {showLoading && <div className="loading-text" role="status">Loading price history…</div>}
+        {showLoading && (
+          <div className="t212-chart-skeleton" role="status" aria-live="polite">
+            <span className="t212-skeleton-bars" aria-hidden="true">
+              {Array.from({ length: 24 }, (_, index) => (
+                <i key={index} style={{ height: `${28 + ((index * 37) % 62)}%` }} />
+              ))}
+            </span>
+            <span className="t212-skeleton-label">Loading price history…</span>
+          </div>
+        )}
         {showError && (
           <div className="t212-chart-error" role="alert">
             <p>{error}</p>
