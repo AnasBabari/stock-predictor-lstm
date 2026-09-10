@@ -130,6 +130,10 @@ class Settings(BaseSettings):
     forecast_warmup_enabled: bool = True
     forecast_warmup_max_tickers: int = Field(default=8, ge=0, le=64)
     forecast_warmup_tickers: list[str] = Field(default_factory=list)
+    # Also pre-build the volatility snapshot. The serving UI requests horizons
+    # 5/10/20 for one ticker and they share a single snapshot costing ~2-4s,
+    # so warming it removes that wait from the first visit.
+    forecast_warmup_volatility: bool = True
     server_bundle_retention_days: int = Field(default=30, ge=1, le=3650)
     server_forecast_private_key_path: str | None = None
     server_forecast_public_key_path: str | None = None

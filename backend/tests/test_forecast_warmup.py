@@ -54,6 +54,7 @@ def test_start_launches_one_daemon_thread_and_is_idempotent(monkeypatch):
     monkeypatch.setattr(
         forecast_warmup, "_warm_one", lambda ticker: (warmed.append(ticker), 0.0)[1]
     )
+    monkeypatch.setattr(forecast_warmup, "_warm_volatility", lambda _ticker: 0.0)
 
     assert forecast_warmup.start_forecast_warmup() is True
     # Second call must not spawn a duplicate thread.
@@ -78,9 +79,43 @@ def test_warm_loop_survives_a_failing_ticker(monkeypatch):
         return 0.0
 
     monkeypatch.setattr(forecast_warmup, "_warm_one", flaky)
+    monkeypatch.setattr(forecast_warmup, "_warm_volatility", lambda _ticker: 0.0)
     # Must not raise.
     forecast_warmup._warm_loop(("AAPL", "MSFT", "NVDA"))
     assert seen == ["AAPL", "MSFT", "NVDA"]
+
+
+def test_warm_loop_also_prepares_volatility(monkeypatch):
+    """The volatility snapshot costs ~2-4s and is shared by horizons 5/10/20,
+    so the first visitor should not pay it."""
+    warmed: list[str] = []
+    monkeypatch.setattr(forecast_warmup, "_warm_one", lambda _ticker: 0.0)
+    monkeypatch.setattr(
+        forecast_warmup, "_warm_volatility", lambda ticker: (warmed.append(ticker), 0.0)[1]
+    )
+    forecast_warmup._warm_loop(("AAPL", "MSFT"))
+    assert warmed == ["AAPL", "MSFT"]
+
+
+def test_volatility_warmup_can_be_disabled(monkeypatch):
+    monkeypatch.setattr(forecast_warmup, "_warm_one", lambda _ticker: 0.0)
+    monkeypatch.setattr(forecast_warmup, "_warm_volatility", lambda _ticker: 0.0)
+    monkeypatch.setattr("config.settings.forecast_warmup_volatility", False, raising=False)
+    # Must not raise; the volatility step is simply skipped.
+    forecast_warmup._warm_loop(("AAPL",))
+
+
+def test_volatility_warmup_failure_does_not_stop_the_loop(monkeypatch):
+    seen: list[str] = []
+    monkeypatch.setattr(forecast_warmup, "_warm_one", lambda _ticker: 0.0)
+
+    def flaky(ticker: str) -> float:
+        seen.append(ticker)
+        raise RuntimeError("snapshot unavailable")
+
+    monkeypatch.setattr(forecast_warmup, "_warm_volatility", flaky)
+    forecast_warmup._warm_loop(("AAPL", "MSFT"))
+    assert seen == ["AAPL", "MSFT"]
 
 
 def test_default_tickers_are_bounded_and_real():

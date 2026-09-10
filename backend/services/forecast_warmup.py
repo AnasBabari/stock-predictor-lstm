@@ -68,6 +68,21 @@ def _warm_one(ticker: str) -> float:
     return time.perf_counter() - started
 
 
+def _warm_volatility(ticker: str) -> float:
+    """Build and cache the volatility snapshot for one ticker.
+
+    The serving UI asks for horizons 5/10/20, which share one snapshot. That
+    snapshot costs ~2-4s to derive, so the first visitor would otherwise wait
+    for it. Building it here moves that cost off the request path; the cache is
+    keyed on frame content, so a later data refresh still rebuilds.
+    """
+    from services.volatility_snapshot import build_volatility_inference_snapshot
+
+    started = time.perf_counter()
+    build_volatility_inference_snapshot(ticker)
+    return time.perf_counter() - started
+
+
 def _warm_loop(tickers: Iterable[str]) -> None:
     # Eager, guarded import: this is the single largest fixed cost, and doing it
     # here means no user request ever pays it. Guarded because torch is an
@@ -77,12 +92,23 @@ def _warm_loop(tickers: Iterable[str]) -> None:
     except Exception as err:  # pragma: no cover - environment dependent
         logger.info("forecast_warmup: torch unavailable (%s); continuing", err)
 
+    from config import settings
+
+    warm_volatility = bool(getattr(settings, "forecast_warmup_volatility", True))
+
     for ticker in tickers:
         try:
             elapsed = _warm_one(ticker)
             logger.info("forecast_warmup: warmed %s in %.2fs", ticker, elapsed)
         except Exception as err:  # noqa: BLE001 - warm-up must never crash the app
             logger.info("forecast_warmup: skipped %s (%s)", ticker, err)
+        if not warm_volatility:
+            continue
+        try:
+            elapsed = _warm_volatility(ticker)
+            logger.info("forecast_warmup: warmed volatility %s in %.2fs", ticker, elapsed)
+        except Exception as err:  # noqa: BLE001 - warm-up must never crash the app
+            logger.info("forecast_warmup: skipped volatility %s (%s)", ticker, err)
     logger.info("forecast_warmup: complete")
 
 
