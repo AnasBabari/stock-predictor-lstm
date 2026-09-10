@@ -1,0 +1,105 @@
+{
+  "schema": "g3-panel-v1-freeze",
+  "created_at": "2026-09-07T15:34:55.900076+00:00",
+  "model_family": "G3",
+  "definition": "forecast(h) = base(h) * exp(delta); base(h) = h * trailing-20d variance",
+  "feature_schema": "vol-gpu-panel-v1",
+  "features": [
+    "rv_5",
+    "rv_10",
+    "rv_20",
+    "rv_60",
+    "yz_now",
+    "yz_chg_5",
+    "yz_chg_20",
+    "yz_roll_ratio",
+    "range_park_20",
+    "range_gk_20",
+    "range_rs_20",
+    "range_yz_20",
+    "ret_1d",
+    "ret_5d",
+    "ret_20d",
+    "downside_sq",
+    "upside_sq",
+    "neg_indicator",
+    "har_log_daily",
+    "har_log_weekly",
+    "har_log_monthly",
+    "vol_of_vol_20"
+  ],
+  "n_features": 22,
+  "xgboost_params": {
+    "max_depth": 3,
+    "eta": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 1,
+    "seed": 42,
+    "device": "cuda"
+  },
+  "n_rounds": 500,
+  "objective": "qlike(log-variance)",
+  "train_device": "cuda",
+  "study_train_device": "cuda",
+  "horizons": [
+    5,
+    10,
+    20
+  ],
+  "models": {
+    "5": {
+      "path": "artifacts\\g3_panel_v1\\model_h5.ubj",
+      "sha256": "85f1cda89abec121beb2501bce8050b16db78de006bcffb2bd694bbd34e34aa9",
+      "train_rows": 278765,
+      "validation_start": "2022-05-09T00:00:00.000000000",
+      "reserve_start": "2023-11-16T00:00:00.000000000"
+    },
+    "10": {
+      "path": "artifacts\\g3_panel_v1\\model_h10.ubj",
+      "sha256": "abf720cf0f8d70a3eb51534d8568c69cb3847236c2626ff31307831aed681e9d",
+      "train_rows": 277355,
+      "validation_start": "2022-05-09T00:00:00.000000000",
+      "reserve_start": "2023-11-16T00:00:00.000000000"
+    },
+    "20": {
+      "path": "artifacts\\g3_panel_v1\\model_h20.ubj",
+      "sha256": "583f0367b3410cd9e2bfc3facfa79b9dfadf24368b15f2e536d3e73fda3a4148",
+      "train_rows": 274539,
+      "validation_start": "2022-05-09T00:00:00.000000000",
+      "reserve_start": "2023-11-16T00:00:00.000000000"
+    }
+  },
+  "verification": {
+    "5": {
+      "reference": "C:\\Users\\Babar\\stock-predictor-lstm\\artifacts\\gpu_vol_panel_v1\\predictions.parquet",
+      "compared": 466015,
+      "max_abs_deviation": 0.0,
+      "max_rel_deviation": 0.0,
+      "mean_rel_deviation": 0.0,
+      "within_tolerance": true,
+      "tolerance": 1e-06
+    },
+    "10": {
+      "reference": "C:\\Users\\Babar\\stock-predictor-lstm\\artifacts\\gpu_vol_panel_v1\\predictions.parquet",
+      "compared": 466015,
+      "max_abs_deviation": 0.0,
+      "max_rel_deviation": 0.0,
+      "mean_rel_deviation": 0.0,
+      "within_tolerance": true,
+      "tolerance": 1e-06
+    },
+    "20": {
+      "reference": "C:\\Users\\Babar\\stock-predictor-lstm\\artifacts\\gpu_vol_panel_v1\\predictions.parquet",
+      "compared": 466015,
+      "max_abs_deviation": 0.0,
+      "max_rel_deviation": 0.0,
+      "mean_rel_deviation": 0.0,
+      "within_tolerance": true,
+      "tolerance": 1e-06
+    }
+  },
+  "faithful": true,
+  "reference_predictions": "C:\\Users\\Babar\\stock-predictor-lstm\\artifacts\\gpu_vol_panel_v1\\predictions.parquet",
+  "study_code_sha256": "927be6c4987c1e8e79b3987f8ec491c865b4047b57121d9dbda446df1793d654"
+}
