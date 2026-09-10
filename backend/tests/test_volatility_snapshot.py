@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from services import volatility_snapshot
 from services.volatility_snapshot import DEPLOYABLE_FEATURE_COLUMNS_V5
+
+
+@pytest.fixture(autouse=True)
+def _clear_snapshot_cache():
+    """The snapshot cache is process-global, and these tests reuse tickers and
+    frame shapes. Clear it so each test exercises the real build path."""
+    volatility_snapshot.clear_snapshot_cache()
+    yield
+    volatility_snapshot.clear_snapshot_cache()
 
 
 def _market_frame(rows: int = 520) -> pd.DataFrame:
@@ -118,3 +128,68 @@ def test_snapshot_har_baseline_uses_close_to_close_proxy(monkeypatch) -> None:
     volatility_snapshot.build_volatility_inference_snapshot("MSFT")
 
     np.testing.assert_allclose(captured["rv"], proxy_frame["RV_C2C"].to_numpy())
+
+
+def _counting_build(monkeypatch, frame: pd.DataFrame) -> list[int]:
+    """Stub the expensive derivation and count how often it actually runs."""
+    calls = [0]
+    real = volatility_snapshot.causal_log_har_forecasts
+
+    def counting(rv_daily, horizons):
+        calls[0] += 1
+        return real(rv_daily, horizons)
+
+    monkeypatch.setattr(volatility_snapshot, "_download_ohlcv", lambda _ticker: frame.copy())
+    monkeypatch.setattr(volatility_snapshot, "causal_log_har_forecasts", counting)
+    return calls
+
+
+def test_snapshot_cache_reuses_identical_inputs(monkeypatch) -> None:
+    """Serving one ticker across horizons 5/10/20 must derive the snapshot
+    once, not three times. The derivation is the ~3.9s GIL-bound step, so
+    repeating it serialised the whole request batch."""
+    frame = _market_frame(520)
+    calls = _counting_build(monkeypatch, frame)
+
+    first = volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+    second = volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+    third = volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+
+    assert first is second is third
+    # causal_log_har_forecasts runs twice per build (horizons and path), so
+    # three builds would be six calls.
+    assert calls[0] == 2
+
+
+def test_snapshot_cache_rebuilds_when_observations_change(monkeypatch) -> None:
+    """A new session must never be served from an older snapshot."""
+    frame = _market_frame(520)
+    calls = _counting_build(monkeypatch, frame)
+
+    volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+    assert calls[0] == 2
+
+    changed = _market_frame(521)
+    monkeypatch.setattr(volatility_snapshot, "_download_ohlcv", lambda _ticker: changed.copy())
+    volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+
+    # A different frame is a different cache key, so the build runs again.
+    assert calls[0] == 4
+
+
+def test_snapshot_cache_distinguishes_provider_metadata(monkeypatch) -> None:
+    """The same bars from a different provider or snapshot date are not the
+    same evidence, so they must not share a cache entry."""
+    frame = _market_frame(520)
+    frame.attrs["data_provider"] = "alpaca"
+    frame.attrs["data_as_of"] = "2025-12-29"
+    calls = _counting_build(monkeypatch, frame)
+
+    volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+    assert calls[0] == 2
+
+    restamped = frame.copy()
+    restamped.attrs["data_as_of"] = "2025-12-30"
+    monkeypatch.setattr(volatility_snapshot, "_download_ohlcv", lambda _ticker: restamped.copy())
+    volatility_snapshot.build_volatility_inference_snapshot("MSFT")
+    assert calls[0] == 4

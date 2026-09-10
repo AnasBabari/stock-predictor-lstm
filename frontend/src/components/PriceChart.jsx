@@ -32,7 +32,13 @@ function formatMoneyLocal(value, currencySymbol) {
   if (!Number.isFinite(value)) return '—';
   const symbol = currencySymbol === 'p' || currencySymbol === 'GBp' ? 'p' : (currencySymbol || '$');
   const decimals = symbol === 'p' ? 1 : 2;
-  return `${symbol}${Number(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  const numeric = Number(value);
+  // Sign belongs outside the currency symbol: "-$5.17", not "$-5.17".
+  const magnitude = Math.abs(numeric).toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  return `${numeric < 0 ? '-' : ''}${symbol}${magnitude}`;
 }
 
 function formatAxisLabel(label, isIntraday) {

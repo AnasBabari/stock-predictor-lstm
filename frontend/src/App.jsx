@@ -271,7 +271,12 @@ export default function App() {
   const nowMs = useCallback(() => (typeof performance !== 'undefined' ? performance.now() : Date.now()), []);
 
   const handleHistorySettled = useCallback((report) => {
-    const chartMs = Math.round(nowMs() - (perfT0.current || nowMs()));
+    // Prefer the history request's own duration. Measuring from the click
+    // would also fold in the forecast request, which runs in parallel, and
+    // would report a chart time several times larger than reality.
+    const chartMs = Number.isFinite(report?.fetchMs)
+      ? Math.round(report.fetchMs)
+      : Math.round(nowMs() - (perfT0.current || nowMs()));
     const cacheLabel = !report?.ok
       ? 'history failed'
       : report.fromCache
@@ -324,16 +329,27 @@ export default function App() {
         await wakeForecastService({ signal: controller.signal, onAttempt: setWakeAttempt });
         setServiceStatus('online');
       }
+      // Time the forecast request on its own. Measuring after
+      // Promise.allSettled would also await the news fetch and report the
+      // slower of the two as the "forecast" duration, which overstates it.
+      const forecastT0 = nowMs();
+      // Publish the forecast and its duration the moment it lands. Waiting
+      // for allSettled would hold both behind the news request, so the user
+      // would stare at "Forecast…" long after the forecast had arrived.
+      const forecastPromise = fetchSimpleForecast(symbol, {
+        signal: controller.signal,
+      }).then((value) => {
+        setForecast(value);
+        setPerf((prev) => ({ ...(prev || {}), forecastMs: Math.round(nowMs() - forecastT0) }));
+        return value;
+      });
+
       const [forecastResult, newsResult] = await Promise.allSettled([
-        fetchSimpleForecast(symbol, { signal: controller.signal }),
+        forecastPromise,
         fetchTickerNews(symbol, { signal: controller.signal }),
       ]);
 
-      if (forecastResult.status === 'fulfilled') {
-        setForecast(forecastResult.value);
-        const forecastMs = Math.round(nowMs() - (perfT0.current || nowMs()));
-        setPerf((prev) => ({ ...(prev || {}), forecastMs }));
-      } else {
+      if (forecastResult.status !== 'fulfilled') {
         throw forecastResult.reason;
       }
 

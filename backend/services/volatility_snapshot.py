@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import numpy as np
@@ -438,12 +440,91 @@ def _baseline_variance_paths(
     return paths
 
 
+# Building a snapshot costs ~3.9s, dominated by causal_log_har_forecasts
+# (~82k _log_har_row calls with per-row numpy means). That work is pure-Python
+# and therefore GIL-bound, so concurrent requests serialise instead of
+# overlapping. The serving UI requests horizons 5, 10 and 20 for one ticker,
+# and each request would otherwise rebuild an identical snapshot — three times
+# the work, all serialised behind whichever arrived first.
+#
+# The cache is keyed on the *content* of the downloaded frame, not the ticker:
+# a new session must never be served from an older snapshot. Downloading is
+# cheap (the market-data service caches it upstream); the expensive part is the
+# derivation, which is exactly what is being reused.
+#
+# The snapshot is a frozen dataclass and no caller assigns to its attributes,
+# so it is safe to share one instance across requests.
+_SNAPSHOT_CACHE_MAX = 64
+_snapshot_cache: OrderedDict[str, VolatilityInferenceSnapshot] = OrderedDict()
+_snapshot_cache_lock = threading.Lock()
+# Striped build locks: two requests for the same inputs share one build; two
+# requests for different inputs still proceed in parallel.
+_SNAPSHOT_BUILD_LOCKS = tuple(threading.Lock() for _ in range(32))
+
+
+def _snapshot_build_lock(key: str) -> threading.Lock:
+    slot = int(hashlib.sha256(key.encode()).hexdigest(), 16) % len(_SNAPSHOT_BUILD_LOCKS)
+    return _SNAPSHOT_BUILD_LOCKS[slot]
+
+
+def _frame_fingerprint(symbol: str, raw: pd.DataFrame) -> str:
+    """Content identity of the observations a snapshot is derived from."""
+    digest = hashlib.sha256(symbol.encode("utf-8"))
+    digest.update(pd.util.hash_pandas_object(raw, index=True).values.tobytes())
+    for attribute in ("data_as_of", "data_provider", "market_data_cache"):
+        digest.update(str(raw.attrs.get(attribute, "")).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def clear_snapshot_cache() -> None:
+    """Drop cached snapshots. Used by tests and after a data refresh."""
+    with _snapshot_cache_lock:
+        _snapshot_cache.clear()
+
+
+def _cached_snapshot(key: str) -> VolatilityInferenceSnapshot | None:
+    with _snapshot_cache_lock:
+        snapshot = _snapshot_cache.get(key)
+        if snapshot is not None:
+            _snapshot_cache.move_to_end(key)
+        return snapshot
+
+
+def _store_snapshot(key: str, snapshot: VolatilityInferenceSnapshot) -> None:
+    with _snapshot_cache_lock:
+        _snapshot_cache[key] = snapshot
+        _snapshot_cache.move_to_end(key)
+        while len(_snapshot_cache) > _SNAPSHOT_CACHE_MAX:
+            _snapshot_cache.popitem(last=False)
+
+
 def build_volatility_inference_snapshot(ticker: str) -> VolatilityInferenceSnapshot:
-    """Build the latest model input using observations available through the origin."""
+    """Return the latest model input, reusing an identical recent build."""
     symbol = ticker.upper().strip()
     if not symbol:
         raise ValueError("volatility ticker is required")
     raw = _download_ohlcv(symbol)
+    key = _frame_fingerprint(symbol, raw)
+
+    cached = _cached_snapshot(key)
+    if cached is not None:
+        return cached
+
+    with _snapshot_build_lock(key):
+        # Re-check under the build lock: a concurrent request may have just
+        # finished the same work while we waited.
+        cached = _cached_snapshot(key)
+        if cached is not None:
+            return cached
+        snapshot = _build_volatility_inference_snapshot(symbol, raw)
+        _store_snapshot(key, snapshot)
+        return snapshot
+
+
+def _build_volatility_inference_snapshot(
+    symbol: str, raw: pd.DataFrame
+) -> VolatilityInferenceSnapshot:
+    """Build the latest model input using observations available through the origin."""
     data_provider = str(raw.attrs.get("data_provider", "unknown"))
     market_data_cache = str(raw.attrs.get("market_data_cache", "unknown"))
     features = build_features_v5(raw)

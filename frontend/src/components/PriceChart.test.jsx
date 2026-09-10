@@ -204,6 +204,19 @@ describe('PriceChart', () => {
     expect(container.querySelector('.t212-price-skeleton')).not.toBeNull();
   });
 
+  it('puts the sign outside the currency symbol for a falling period', () => {
+    const falling = {
+      ticker: 'MSFT',
+      daily: Array.from({ length: 300 }, (_, i) => ({ d: `2024-01-${String((i % 28) + 1).padStart(2, '0')}`, c: 400 - i })),
+      intraday: null,
+    };
+    usePriceHistory.mockReturnValue({ history: falling, loading: false, error: '', retry: vi.fn() });
+    render(<PriceChart ticker="MSFT" currencySymbol="$" />);
+    // "-$1.00" reads correctly; "$-1.00" does not.
+    expect(screen.getByText(/\(-\d+\.\d{2}%\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/\$-/)).toBeNull();
+  });
+
   it('renders a skeleton chart instead of a blank loading region', () => {
     usePriceHistory.mockReturnValue({ history: null, loading: true, error: '', meta: null, retry: vi.fn() });
     const { container } = render(<PriceChart ticker="MSFT" currencySymbol="$" />);
