@@ -148,19 +148,20 @@ def fit_egarch(close: pd.Series | np.ndarray) -> dict[str, float]:
         log_variance = np.empty(len(returns), dtype=np.float64)
         log_variance[0] = log_sample
         for index in range(1, len(returns)):
-            shock = returns[index - 1] / max(np.sqrt(np.exp(log_variance[index - 1])), 1e-8)
+            prev_log = float(np.clip(log_variance[index - 1], -50.0, 50.0))
+            denom = max(float(np.sqrt(np.exp(prev_log))), 1e-8)
+            shock = returns[index - 1] / denom
             if not np.isfinite(shock):
                 return _PENALTY
             log_variance[index] = (
-                omega
-                + alpha * (abs(shock) - _SQRT_2_OVER_PI)
-                + gamma * shock
-                + beta * log_variance[index - 1]
+                omega + alpha * (abs(shock) - _SQRT_2_OVER_PI) + gamma * shock + beta * prev_log
             )
-        if not np.isfinite(log_variance).all():
-            return _PENALTY
-        variance = np.exp(log_variance)
-        return float(0.5 * np.sum(np.log(variance) + returns**2 / variance))
+            if not np.isfinite(log_variance[index]) or abs(log_variance[index]) > 50.0:
+                return _PENALTY
+        clamped_log = np.clip(log_variance, -50.0, 50.0)
+        variance = np.exp(clamped_log)
+        nll = float(0.5 * np.sum(clamped_log + returns**2 / variance))
+        return nll if np.isfinite(nll) else _PENALTY
 
     initial = np.array([(1.0 - 0.9) * log_sample, 0.10, -0.05, 0.90], dtype=np.float64)
     result = minimize(
@@ -208,21 +209,21 @@ def egarch_cumulative_variance_path(
     log_variance = np.empty(len(returns), dtype=np.float64)
     log_variance[0] = log_sample
     for index in range(1, len(returns)):
-        shock = returns[index - 1] / max(np.sqrt(np.exp(log_variance[index - 1])), 1e-8)
+        prev_log = float(np.clip(log_variance[index - 1], -50.0, 50.0))
+        denom = max(float(np.sqrt(np.exp(prev_log))), 1e-8)
+        shock = returns[index - 1] / denom
         log_variance[index] = (
-            omega
-            + alpha * (abs(shock) - _SQRT_2_OVER_PI)
-            + gamma * shock
-            + beta * log_variance[index - 1]
+            omega + alpha * (abs(shock) - _SQRT_2_OVER_PI) + gamma * shock + beta * prev_log
         )
     if not np.isfinite(log_variance).all():
         raise ValueError("EGARCH produced a non-finite variance filter")
+    last_prev_log = float(np.clip(log_variance[-1], -50.0, 50.0))
+    last_denom = max(float(np.sqrt(np.exp(last_prev_log))), 1e-8)
     next_log = (
         omega
-        + alpha
-        * (abs(returns[-1] / max(np.sqrt(np.exp(log_variance[-1])), 1e-8)) - _SQRT_2_OVER_PI)
-        + gamma * (returns[-1] / max(np.sqrt(np.exp(log_variance[-1])), 1e-8))
-        + beta * log_variance[-1]
+        + alpha * (abs(returns[-1] / last_denom) - _SQRT_2_OVER_PI)
+        + gamma * (returns[-1] / last_denom)
+        + beta * last_prev_log
     )
     steps = np.arange(1, maximum_horizon + 1, dtype=np.float64)
     if abs(beta) >= 0.9999:

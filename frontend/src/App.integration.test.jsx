@@ -5,7 +5,9 @@ import userEvent from '@testing-library/user-event';
 import App from './App';
 
 vi.mock('./components/LazyLineChart', () => ({
-  default: ({ data }) => <div data-testid="line-chart">{data.datasets.at(-1).label}</div>,
+  default: React.forwardRef(function MockLineChart({ data }, ref) {
+    return <div ref={ref} data-testid="line-chart">{data.datasets.at(-1).label}</div>;
+  }),
 }));
 
 function volatilityBody(horizon) {
@@ -106,8 +108,9 @@ describe('Signal Seven Volatility App', () => {
     expect(screen.getByText('Expected 5D Volatility Cone (p05–p95)')).toBeInTheDocument();
   });
 
-  it('offers one ticker input without exchange tabs or complex grids', () => {
+  it('offers one ticker input without exchange tabs or complex grids', async () => {
     render(<App />);
+    expect(await screen.findByText('Volatility engine ready')).toBeInTheDocument();
     expect(screen.getAllByRole('textbox')).toHaveLength(1);
     expect(screen.queryByRole('tablist', { name: 'Ticker selection matrix' })).not.toBeInTheDocument();
     expect(screen.getByText('286 supported US & UK tickers')).toBeInTheDocument();
@@ -127,6 +130,7 @@ describe('Signal Seven Volatility App', () => {
   it('rejects unsupported tickers', async () => {
     const user = userEvent.setup();
     render(<App />);
+    await screen.findByText('Volatility engine ready');
     const input = screen.getByLabelText(/stock ticker/i);
     await user.clear(input);
     await user.type(input, 'INVALIDXYZ{Enter}');
