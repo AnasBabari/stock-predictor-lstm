@@ -51,9 +51,7 @@ def _gjr_conditional(
     return conditional
 
 
-def fit_gjr_garch(close: pd.Series | np.ndarray) -> dict[str, float]:
-    """Fit Gaussian GJR-GARCH(1,1); gamma >= 0 captures the leverage effect."""
-    returns = _clean_returns(close)
+def _fit_gjr_from_returns(returns: np.ndarray) -> dict[str, float]:
     sample_var = max(float(np.var(returns, ddof=1)), 1e-8)
 
     def negative_log_likelihood(params: np.ndarray) -> float:
@@ -101,6 +99,12 @@ def fit_gjr_garch(close: pd.Series | np.ndarray) -> dict[str, float]:
     }
 
 
+def fit_gjr_garch(close: pd.Series | np.ndarray) -> dict[str, float]:
+    """Fit Gaussian GJR-GARCH(1,1); gamma >= 0 captures the leverage effect."""
+    returns = _clean_returns(close)
+    return _fit_gjr_from_returns(returns)
+
+
 def gjr_cumulative_variance_path(
     close: pd.Series | np.ndarray, maximum_horizon: int = 20
 ) -> np.ndarray:
@@ -109,7 +113,7 @@ def gjr_cumulative_variance_path(
     if maximum_horizon < 1:
         raise ValueError("maximum_horizon must be positive")
     returns = _clean_returns(close)
-    fit = fit_gjr_garch(returns)
+    fit = _fit_gjr_from_returns(returns)
     omega, alpha, gamma, beta = fit["omega"], fit["alpha"], fit["gamma"], fit["beta"]
     conditional = _gjr_conditional(returns, omega, alpha, gamma, beta)
     if conditional is None:  # pragma: no cover - guarded by fit bounds
@@ -135,9 +139,7 @@ def gjr_cumulative_variance_path(
     return cumulative_path
 
 
-def fit_egarch(close: pd.Series | np.ndarray) -> dict[str, float]:
-    """Fit Gaussian EGARCH(1,1). A negative gamma is the leverage effect."""
-    returns = _clean_returns(close)
+def _fit_egarch_from_returns(returns: np.ndarray) -> dict[str, float]:
     sample_var = max(float(np.var(returns, ddof=1)), 1e-8)
     log_sample = float(np.log(sample_var))
 
@@ -191,6 +193,12 @@ def fit_egarch(close: pd.Series | np.ndarray) -> dict[str, float]:
     }
 
 
+def fit_egarch(close: pd.Series | np.ndarray) -> dict[str, float]:
+    """Fit Gaussian EGARCH(1,1). A negative gamma is the leverage effect."""
+    returns = _clean_returns(close)
+    return _fit_egarch_from_returns(returns)
+
+
 def egarch_cumulative_variance_path(
     close: pd.Series | np.ndarray, maximum_horizon: int = 20
 ) -> np.ndarray:
@@ -203,7 +211,7 @@ def egarch_cumulative_variance_path(
     if maximum_horizon < 1:
         raise ValueError("maximum_horizon must be positive")
     returns = _clean_returns(close)
-    fit = fit_egarch(returns)
+    fit = _fit_egarch_from_returns(returns)
     omega, alpha, gamma, beta = fit["omega"], fit["alpha"], fit["gamma"], fit["beta"]
     log_sample = float(np.log(max(float(np.var(returns, ddof=1)), 1e-8)))
     log_variance = np.empty(len(returns), dtype=np.float64)
@@ -225,13 +233,13 @@ def egarch_cumulative_variance_path(
         + gamma * (returns[-1] / last_denom)
         + beta * last_prev_log
     )
-    steps = np.arange(1, maximum_horizon + 1, dtype=np.float64)
+    steps = np.arange(maximum_horizon, dtype=np.float64)
     if abs(beta) >= 0.9999:
         expected_log = np.full(maximum_horizon, next_log, dtype=np.float64)
     else:
         unconditional = omega / (1.0 - beta)
         expected_log = unconditional + (next_log - unconditional) * beta**steps
-    daily_path = np.maximum(np.exp(expected_log), _EPS)
+    daily_path = np.maximum(np.exp(np.clip(expected_log, -50.0, 50.0)), _EPS)
     cumulative_path = np.cumsum(daily_path)
     if not np.isfinite(cumulative_path).all() or np.any(np.diff(cumulative_path) < -1e-12):
         raise ValueError("EGARCH produced an invalid cumulative variance path")

@@ -55,6 +55,8 @@ def test_gjr_path_is_finite_monotone_cumulative():
     assert len(path) == 20
     assert np.isfinite(path).all() and (path > 0).all()
     assert (np.diff(path) >= -1e-12).all()
+    # Path variance must align with daily return variance scale (~1.44e-4 for std=0.012), not > 1.0
+    assert path[0] < 0.001
 
 
 def test_egarch_fit_and_path_are_stable():
@@ -66,6 +68,8 @@ def test_egarch_fit_and_path_are_stable():
     assert len(path) == 20
     assert np.isfinite(path).all() and (path > 0).all()
     assert (np.diff(path) >= -1e-12).all()
+    # Path variance must align with daily return variance scale, not > 1.0
+    assert path[0] < 0.001
 
 
 def test_short_or_invalid_input_raises():
@@ -75,3 +79,18 @@ def test_short_or_invalid_input_raises():
         fit_egarch(_gbm_closes(n=30))
     with pytest.raises(ValueError, match="positive"):
         gjr_cumulative_variance_path(_gbm_closes(), maximum_horizon=0)
+    with pytest.raises(ValueError, match="positive"):
+        egarch_cumulative_variance_path(_gbm_closes(), maximum_horizon=0)
+
+
+def test_asymmetric_paths_support_minimum_valid_length():
+    closes = _gbm_closes(n=65)
+    gjr_path = gjr_cumulative_variance_path(closes, maximum_horizon=5)
+    assert len(gjr_path) == 5
+    assert np.isfinite(gjr_path).all() and (gjr_path > 0).all()
+    assert gjr_path[0] < 0.001
+
+    egarch_path = egarch_cumulative_variance_path(closes, maximum_horizon=5)
+    assert len(egarch_path) == 5
+    assert np.isfinite(egarch_path).all() and (egarch_path > 0).all()
+    assert egarch_path[0] < 0.001
