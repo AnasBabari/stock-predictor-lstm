@@ -20,11 +20,21 @@ _SQRT_2_OVER_PI = float(np.sqrt(2.0 / np.pi))
 
 
 def _clean_returns(close: pd.Series | np.ndarray, *, minimum: int = 60) -> np.ndarray:
-    prices = np.asarray(
-        close["Close"].to_numpy(dtype=float)
-        if isinstance(close, pd.DataFrame)
-        else pd.Series(close, dtype=float).to_numpy(dtype=float)
-    ).reshape(-1)
+    if isinstance(close, pd.DataFrame):
+        for candidate in ("Close", "close"):
+            if candidate in close.columns:
+                series = close[candidate]
+                break
+        else:
+            if len(close.columns) == 1:
+                series = close.iloc[:, 0]
+            else:
+                raise ValueError("DataFrame must contain a 'Close' or 'close' column")
+        prices = np.asarray(series.to_numpy(dtype=float)).reshape(-1)
+    elif isinstance(close, pd.Series):
+        prices = np.asarray(close.to_numpy(dtype=float)).reshape(-1)
+    else:
+        prices = np.asarray(close, dtype=float).reshape(-1)
     finite = prices[np.isfinite(prices) & (prices > 0.0)]
     returns = np.diff(np.log(finite))
     returns = returns[np.isfinite(returns)][-252:]
@@ -66,7 +76,8 @@ def _fit_gjr_from_returns(returns: np.ndarray) -> dict[str, float]:
         # Positive NLL: +0.5 * sum(lnc + r^2/c). (A leading minus sign here
         # would minimize the log-likelihood and pin every parameter at a
         # degenerate bound; the test DGPs guard this orientation.)
-        return float(0.5 * np.sum(np.log(conditional) + returns**2 / conditional))
+        nll = float(0.5 * np.sum(np.log(conditional) + returns**2 / conditional))
+        return nll if np.isfinite(nll) else _PENALTY
 
     initial = np.array([0.05 * sample_var, 0.06, 0.05, 0.85], dtype=np.float64)
     result = minimize(
@@ -220,8 +231,10 @@ def egarch_cumulative_variance_path(
         prev_log = float(np.clip(log_variance[index - 1], -50.0, 50.0))
         denom = max(float(np.sqrt(np.exp(prev_log))), 1e-8)
         shock = returns[index - 1] / denom
-        log_variance[index] = (
-            omega + alpha * (abs(shock) - _SQRT_2_OVER_PI) + gamma * shock + beta * prev_log
+        log_variance[index] = np.clip(
+            omega + alpha * (abs(shock) - _SQRT_2_OVER_PI) + gamma * shock + beta * prev_log,
+            -50.0,
+            50.0,
         )
     if not np.isfinite(log_variance).all():
         raise ValueError("EGARCH produced a non-finite variance filter")
@@ -237,7 +250,7 @@ def egarch_cumulative_variance_path(
     if abs(beta) >= 0.9999:
         expected_log = np.full(maximum_horizon, next_log, dtype=np.float64)
     else:
-        unconditional = omega / (1.0 - beta)
+        unconditional = omega / max(1.0 - beta, 1e-5)
         expected_log = unconditional + (next_log - unconditional) * beta**steps
     daily_path = np.maximum(np.exp(np.clip(expected_log, -50.0, 50.0)), _EPS)
     cumulative_path = np.cumsum(daily_path)

@@ -94,3 +94,32 @@ def test_asymmetric_paths_support_minimum_valid_length():
     assert len(egarch_path) == 5
     assert np.isfinite(egarch_path).all() and (egarch_path > 0).all()
     assert egarch_path[0] < 0.001
+
+
+def test_asymmetric_garch_input_formats():
+    series = _gbm_closes(n=70)
+
+    # Lowercase close column DataFrame
+    df_lower = pd.DataFrame({"close": series.to_numpy()})
+    fit_lower = fit_gjr_garch(df_lower)
+    assert np.isfinite(fit_lower["omega"])
+
+    # Single-column DataFrame without Close label
+    df_single = pd.DataFrame({"price": series.to_numpy()})
+    fit_single = fit_egarch(df_single)
+    assert np.isfinite(fit_single["omega"])
+
+    # 2D numpy array of shape (N, 1)
+    arr_2d = series.to_numpy().reshape(-1, 1)
+    path_2d = gjr_cumulative_variance_path(arr_2d, maximum_horizon=3)
+    assert len(path_2d) == 3
+
+    # Python list of floats
+    list_input = list(series.to_numpy())
+    path_list = egarch_cumulative_variance_path(list_input, maximum_horizon=3)
+    assert len(path_list) == 3
+
+    # Multi-column DataFrame missing Close column raises ValueError
+    df_invalid = pd.DataFrame({"open": series.to_numpy(), "volume": series.to_numpy()})
+    with pytest.raises(ValueError, match="DataFrame must contain a 'Close' or 'close' column"):
+        fit_gjr_garch(df_invalid)
