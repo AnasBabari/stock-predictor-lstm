@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import ForecastLedgerTrackRecord from './ForecastLedgerTrackRecord';
 
@@ -102,8 +102,9 @@ describe('ForecastLedgerTrackRecord', () => {
     expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText('Past price-movement forecasts')).toBeInTheDocument();
+      expect(screen.queryByText(/Loading past forecasts/i)).not.toBeInTheDocument();
     });
+    expect(screen.getByText('Past price-movement forecasts')).toBeInTheDocument();
     expect(screen.getByText('AAPL 5 market days')).toBeInTheDocument();
     expect(screen.getAllByText('5 market days').length).toBeGreaterThan(0);
 

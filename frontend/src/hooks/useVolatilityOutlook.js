@@ -44,7 +44,7 @@ export function useVolatilityOutlook(ticker) {
     setError('');
     Promise.all(OUTLOOK_HORIZONS.map(async (horizon) => {
       try {
-        const result = await fetchVolatilityForecast(symbol, horizon, controller.signal, { model: 'gpu_g3' });
+        const result = await fetchVolatilityForecast(symbol, horizon, controller.signal, { model: 'auto' });
         return [horizon, result];
       } catch (err) {
         if (err?.name === 'AbortError') throw err;

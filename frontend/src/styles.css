@@ -1777,3 +1777,367 @@ footer {
     text-align: center;
   }
 }
+
+/* ==========================================================================
+   TradingView & Trading 212 Institutional Chart & Volatility Corridor Styles
+   ========================================================================== */
+
+.t212-chart-section {
+  background: #131722;
+  border: 1px solid #2a2e39;
+  border-radius: var(--radius-lg, 16px);
+  padding: 22px 24px 26px;
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.65);
+  margin-top: 24px;
+  position: relative;
+  overflow: hidden;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+[data-theme='light'] .t212-chart-section {
+  background: #ffffff;
+  border-color: #e0e3eb;
+  box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.08);
+}
+
+.t212-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 12px;
+}
+
+[data-theme='light'] .t212-chart-head {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+.t212-price-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.t212-ticker {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: #38bdf8;
+  padding: 4px 10px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+}
+
+[data-theme='light'] .t212-ticker {
+  color: #0284c7;
+  background: rgba(2, 132, 199, 0.10);
+  border-color: rgba(2, 132, 199, 0.25);
+}
+
+.t212-price {
+  font-size: 28px;
+  font-weight: 800;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary, #ffffff);
+  letter-spacing: -0.02em;
+}
+
+.t212-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  padding: 4px 11px;
+  border-radius: 9999px;
+}
+
+.t212-change.up {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+}
+
+.t212-change.down {
+  color: #f43f5e;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.28);
+}
+
+.t212-range-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #94a3b8);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+[data-theme='light'] .t212-range-name {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.t212-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.t212-range-tabs,
+.t212-horizon-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #1e222d;
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid #2a2e39;
+}
+
+[data-theme='light'] .t212-range-tabs,
+[data-theme='light'] .t212-horizon-tabs {
+  background: #f1f3f6;
+  border-color: #d1d4dc;
+}
+
+.range-pill,
+.horizon-pill {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  padding: 5px 11px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.16s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.range-pill:hover,
+.horizon-pill:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme='light'] .range-pill:hover,
+[data-theme='light'] .horizon-pill:hover {
+  color: #0f172a;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.range-pill.active,
+.horizon-pill.active {
+  color: #ffffff;
+  background: #2962ff;
+  box-shadow: 0 2px 8px rgba(41, 98, 255, 0.35);
+}
+
+.horizon-pill.active {
+  background: #0284c7;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.35);
+}
+
+.range-pill.reset-pill {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.range-pill.reset-pill:hover {
+  background: rgba(245, 158, 11, 0.24);
+}
+
+.horizon-label {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, #787b86);
+  padding-left: 6px;
+  padding-right: 2px;
+}
+
+/* ==========================================================================
+   TradingView Dynamic OHLC / Hover Strip
+   ========================================================================== */
+
+.t212-ohlc-bar {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin-bottom: 12px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--text-secondary, #b2b5be);
+  background: rgba(30, 34, 45, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 6px 14px;
+  overflow-x: auto;
+}
+
+[data-theme='light'] .t212-ohlc-bar {
+  background: rgba(241, 243, 246, 0.7);
+  border-color: rgba(0, 0, 0, 0.08);
+  color: #475569;
+}
+
+.t212-ohlc-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.t212-ohlc-tag {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted, #94a3b8);
+}
+
+.t212-ohlc-tag.forecast-badge {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.t212-ohlc-tag.idle-pulse {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.t212-ohlc-item .label {
+  color: var(--text-muted, #787b86);
+  margin-right: 4px;
+  font-weight: 500;
+}
+
+.t212-ohlc-item .val {
+  color: var(--text-primary, #ffffff);
+  font-weight: 700;
+}
+
+[data-theme='light'] .t212-ohlc-item .val {
+  color: #0f172a;
+}
+
+.t212-ohlc-item .val.cyan {
+  color: #38bdf8;
+}
+
+[data-theme='light'] .t212-ohlc-item .val.cyan {
+  color: #0284c7;
+}
+
+.t212-ohlc-item .val.highlight {
+  color: #f59e0b;
+}
+
+.t212-ohlc-item .val.up {
+  color: #10b981;
+}
+
+.t212-ohlc-item .val.down {
+  color: #f43f5e;
+}
+
+/* ==========================================================================
+   Quick Forecast Metrics Strip
+   ========================================================================== */
+
+.chart-quick-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: rgba(30, 34, 45, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+[data-theme='light'] .chart-quick-stats {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.chart-stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chart-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: var(--text-muted, #787b86);
+}
+
+.chart-stat-value {
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary, #ffffff);
+}
+
+[data-theme='light'] .chart-stat-value {
+  color: #0f172a;
+}
+
+.chart-stat-value.highlight {
+  color: #38bdf8;
+}
+
+[data-theme='light'] .chart-stat-value.highlight {
+  color: #0284c7;
+}
+
+/* Canvas Wrapper */
+.t212-chart-wrap {
+  position: relative;
+  width: 100%;
+  cursor: crosshair;
+  touch-action: none;
+  background: transparent;
+}
+
+.t212-chart-hint {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted, #787b86);
+}
+
+.t212-chart-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: #f43f5e;
+}
+
+
