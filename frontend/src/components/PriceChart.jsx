@@ -43,12 +43,6 @@ function formatAxisLabel(label, isIntraday) {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-function padForecast(values, leadNulls) {
-  // Deliberately no anchor point: the estimate must NOT join the historical
-  // close seamlessly. The visible break plus the dashed style and shaded
-  // future region mark this as a model estimate, not a future price.
-  return [...Array(Math.max(0, leadNulls)).fill(null), ...(values || [])];
-}
 
 // Vertical crosshair through the hovered point, Trading212 style.
 const crosshairPlugin = {
@@ -106,60 +100,43 @@ const lastPricePlugin = {
   },
 };
 
-function forecastDatasets(forecast, historyLength, colors) {
+function volatilityConeDatasets(g3outlook, historyLength, colors) {
   const sets = [];
-  if (!forecast || !Array.isArray(forecast.future_dates) || forecast.future_dates.length === 0) {
+  const five = g3outlook?.byHorizon?.[5];
+  const bandUpper = five?.volatility_cone?.p95;
+  const bandLower = five?.volatility_cone?.p05;
+  const bandDates = five?.future_dates;
+  if (!Array.isArray(bandDates) || !Array.isArray(bandUpper) || !Array.isArray(bandLower) || bandDates.length === 0) {
     return { sets, futureLabels: [] };
   }
-  const futureLabels = forecast.future_dates;
-  // Estimates align to future labels only: index historyLength..end. The
-  // last history index stays null in these datasets, leaving a visible
-  // break between actuals and estimates.
   const lead = Math.max(0, historyLength);
-  if (Array.isArray(forecast.predicted_prices) && forecast.predicted_prices.length > 0) {
-    sets.push({
-      label: 'Average 7-day estimate',
-      data: padForecast(forecast.predicted_prices, lead),
-      borderColor: colors.estimate,
-      backgroundColor: 'transparent',
-      borderWidth: 2.5,
-      borderDash: [6, 4],
-      pointRadius: 3,
-      pointBackgroundColor: colors.estimate,
-      pointBorderWidth: 0,
-      pointHoverRadius: 6,
-      tension: 0.3,
-      spanGaps: false,
-    });
-  }
-  const band = forecast.historical_error_band;
-  if (band && Array.isArray(band.upper_prices) && Array.isArray(band.lower_prices)) {
-    sets.push({
-      label: 'Estimate range (upper)',
-      data: padForecast(band.upper_prices, lead),
+  const head = Array(lead).fill(null);
+  sets.push(
+    {
+      label: 'Expected volatility range (upper)',
+      data: [...head, ...bandUpper],
       borderColor: 'transparent',
       backgroundColor: colors.bandFill,
       pointRadius: 0,
       fill: '+1',
       tension: 0.3,
       spanGaps: false,
-    });
-    sets.push({
-      label: 'Estimate range (lower)',
-      data: padForecast(band.lower_prices, lead),
+    },
+    {
+      label: 'Expected volatility range (lower)',
+      data: [...head, ...bandLower],
       borderColor: 'transparent',
       backgroundColor: 'transparent',
       pointRadius: 0,
       fill: false,
       tension: 0.3,
       spanGaps: false,
-    });
-  }
-  return { sets, futureLabels };
+    }
+  );
+  return { sets, futureLabels: bandDates };
 }
 
-// Shaded estimate region past the last actual: the future is a scenario,
-// not a continuation of the price line.
+// Shaded expected volatility cone past the last actual close price.
 const forecastRegionPlugin = {
   id: 't212ForecastRegion',
   beforeDraw: (chart) => {
@@ -182,16 +159,14 @@ const forecastRegionPlugin = {
     ctx.fillStyle = chart.config.options?.isDark ? '#38bdf8' : '#0284c7';
     ctx.font = '600 10px Inter, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText('ESTIMATE', xPos + 6, chartArea.top + 14);
+    ctx.fillText('5D VOLATILITY CONE', xPos + 6, chartArea.top + 14);
     ctx.restore();
   },
 };
 
-export default function PriceChart({ ticker, currencySymbol = '$', forecast = null, onHistorySettled = null }) {
+export default function PriceChart({ ticker, currencySymbol = '$', onHistorySettled = null }) {
   const isDark = useAppTheme();
   const { history, loading, error, meta, retry } = usePriceHistory(ticker);
-  // G3 expected-range band shares the outlook module cache with the
-  // VolatilityOutlook card, so no second network fetch happens.
   const { outlook: g3outlook } = useVolatilityOutlook(ticker);
   const [rangeId, setRangeId] = useState(null);
   const [view, setView] = useState(null);
@@ -200,38 +175,11 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
   const dragRef = useRef(null);
   const reportedRef = useRef(null);
 
-  const forecastForTicker = forecast && forecast.ticker === String(ticker || '').toUpperCase() ? forecast : null;
+  const effectiveHistory = history;
+  const showLoading = loading;
+  const showError = !loading && error;
 
-  // Degraded mode: when the history endpoint is unreachable, fall back to
-  // the short history embedded in the forecast payload (exactly what the
-  // previous chart rendered). Synthetic placeholders are refused: a chart
-  // must never draw manufactured prices. No intraday legs, so 24H hides.
-  const fallbackHistory = useMemo(() => {
-    if (forecastForTicker?.historical_provenance === 'synthetic') return null;
-    const dates = forecastForTicker?.historical_dates;
-    const prices = forecastForTicker?.historical_prices;
-    if (!Array.isArray(dates) || !Array.isArray(prices)) return null;
-    const count = Math.min(dates.length, prices.length);
-    const daily = [];
-    for (let i = 0; i < count; i += 1) {
-      const close = Number(prices[i]);
-      if (dates[i] && Number.isFinite(close)) daily.push({ d: String(dates[i]), c: close });
-    }
-    if (daily.length < 2) return null;
-    return {
-      ticker: forecastForTicker.ticker,
-      daily,
-      intraday: null,
-      degraded: true,
-    };
-  }, [forecastForTicker]);
-
-  const effectiveHistory = history || fallbackHistory;
-  const showLoading = loading && !fallbackHistory;
-  const showError = !loading && error && !fallbackHistory;
-
-  // One settlement report per ticker: chart paint (endpoint or degraded) or
-  // terminal failure. Powers the user-visible timing footnote in App.
+  // One settlement report per ticker: chart paint or failure.
   useEffect(() => {
     if (!onHistorySettled) return;
     const key = String(ticker || '').toUpperCase();
@@ -239,7 +187,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
       reportedRef.current = `${key}:ok`;
       onHistorySettled({
         ok: true,
-        degraded: !history && Boolean(fallbackHistory),
+        degraded: false,
         fetchMs: meta?.fetchMs ?? null,
         fromCache: Boolean(meta?.fromCache),
         marketDataCache: history?.marketDataCache ?? null,
@@ -248,7 +196,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
       reportedRef.current = `${key}:error`;
       onHistorySettled({ ok: false, degraded: false, fetchMs: null, fromCache: false, marketDataCache: null });
     }
-  }, [effectiveHistory, showError, history, fallbackHistory, meta, ticker, onHistorySettled]);
+  }, [effectiveHistory, showError, history, meta, ticker, onHistorySettled]);
 
   const hasIntraday = Array.isArray(effectiveHistory?.intraday) && effectiveHistory.intraday.length >= 5;
   const dailyCount = Array.isArray(effectiveHistory?.daily) ? effectiveHistory.daily.length : 0;
@@ -275,7 +223,8 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
 
   const activeRange = rangeId || defaultRangeId(available);
 
-  const totalLabels = points.labels.length + (forecastForTicker?.future_dates?.length || 0);
+  const futureCount = g3outlook?.byHorizon?.[5]?.future_dates?.length || 0;
+  const totalLabels = points.labels.length + futureCount;
   const fullView = totalLabels > 0 ? { start: 0, end: totalLabels - 1 } : null;
   const effectiveView = view || fullView;
   const isZoomed = Boolean(view && fullView && (view.start > 0 || view.end < fullView.end));
@@ -318,56 +267,15 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
   const chartData = useMemo(() => {
     const labels = [...points.labels.map((label) => formatAxisLabel(label, points.isIntraday))];
     const historyPadded = [...points.prices];
-    const { sets: forecastSets, futureLabels } = forecastForTicker
-      ? forecastDatasets(forecastForTicker, points.prices.length, colors)
-      : { sets: [], futureLabels: [] };
+    const { sets: coneSets, futureLabels } = volatilityConeDatasets(g3outlook, points.prices.length, colors);
     futureLabels.forEach((_, index) => {
       historyPadded.push(null);
       labels.push(`+${index + 1}d`);
     });
-    // Certified-volatility expected range (G3, 5-session): aligned strictly
-    // by date against the estimate path; skipped silently on any mismatch.
-    const bandSets = [];
-    const five = g3outlook?.byHorizon?.[5];
-    const bandUpper = five?.volatility_cone?.p95;
-    const bandLower = five?.volatility_cone?.p05;
-    const bandDates = five?.future_dates;
-    const estimateDates = forecastForTicker?.future_dates;
-    if (
-      Array.isArray(bandDates) && Array.isArray(bandUpper) && Array.isArray(bandLower)
-      && Array.isArray(estimateDates) && bandDates.length > 0
-      && bandUpper.length === bandDates.length && bandLower.length === bandDates.length
-      && estimateDates.slice(0, bandDates.length).join('|') === bandDates.join('|')
-    ) {
-      const head = Array(points.prices.length).fill(null);
-      const tail = Array(Math.max(0, labels.length - points.prices.length - bandDates.length)).fill(null);
-      bandSets.push(
-        {
-          label: 'Expected volatility range (upper)',
-          data: [...head, ...bandUpper, ...tail],
-          borderColor: 'transparent',
-          backgroundColor: colors.bandFill,
-          pointRadius: 0,
-          fill: '+1',
-          tension: 0.3,
-          spanGaps: false,
-        },
-        {
-          label: 'Expected volatility range (lower)',
-          data: [...head, ...bandLower, ...tail],
-          borderColor: 'transparent',
-          backgroundColor: 'transparent',
-          pointRadius: 0,
-          fill: false,
-          tension: 0.3,
-          spanGaps: false,
-        },
-      );
-    }
+
     return {
       labels,
-      // Index of the last actual; everything right of it is estimate.
-      forecastSplitIndex: forecastSets.length > 0 ? points.prices.length - 1 : null,
+      forecastSplitIndex: coneSets.length > 0 ? points.prices.length - 1 : null,
       datasets: [
         {
           label: 'Price',
@@ -389,11 +297,10 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
           fill: true,
           spanGaps: false,
         },
-        ...forecastSets,
-        ...bandSets,
+        ...coneSets,
       ],
     };
-  }, [points, forecastForTicker, colors, g3outlook]);
+  }, [points, colors, g3outlook]);
 
   const yBounds = useMemo(() => {
     if (!effectiveView || chartData.labels.length === 0) return {};
@@ -492,13 +399,11 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { display: false },
-      t212LastPrice: forecastForTicker
-        ? undefined
-        : {
-          value: stats.last,
-          color: stats.up ? (isDark ? '#00f5a0' : '#10b981') : (isDark ? '#ff5c5c' : '#ef4444'),
-          label: formatMoneyLocal(stats.last, currencySymbol),
-        },
+      t212LastPrice: {
+        value: stats.last,
+        color: stats.up ? (isDark ? '#00f5a0' : '#10b981') : (isDark ? '#ff5c5c' : '#ef4444'),
+        label: formatMoneyLocal(stats.last, currencySymbol),
+      },
       tooltip: {
         backgroundColor: colors.tooltipBg,
         titleColor: colors.tooltipTitle,
@@ -540,7 +445,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
         grid: { color: colors.grid },
       },
     },
-  }), [isDark, colors, chartData, effectiveView, yBounds, stats.last, stats.up, currencySymbol, forecastForTicker]);
+  }), [isDark, colors, chartData, effectiveView, yBounds, stats.last, stats.up, currencySymbol]);
 
   const selectRange = useCallback((id) => {
     setRangeId(id);

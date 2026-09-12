@@ -1,4 +1,5 @@
 import React from 'react';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
@@ -6,48 +7,6 @@ import App from './App';
 vi.mock('./components/LazyLineChart', () => ({
   default: ({ data }) => <div data-testid="line-chart">{data.datasets.at(-1).label}</div>,
 }));
-
-const forecast = {
-  ticker: 'MSFT',
-  forecast_days: 7,
-  data_as_of: '2026-09-03',
-  current_price: 450,
-  historical_dates: ['2026-09-02', '2026-09-03'],
-  historical_prices: [448, 450],
-  future_dates: ['2026-09-04', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11', '2026-09-14', '2026-09-15'],
-  predicted_prices: [451, 452, 451, 453, 454, 455, 456],
-  lower_prices: [440, 439, 438, 437, 436, 435, 434],
-  upper_prices: [460, 462, 463, 465, 467, 469, 470],
-  model: { name: 'ridge', kind: 'learned_historical_model' },
-  backtest: {
-    mae_percent: 1.2,
-    rmse_percent: 1.8,
-    direction_accuracy: 0.56,
-    relative_mae_vs_persistence: 0.92,
-    test_start: '2025-08-01',
-    test_end: '2026-08-20',
-    test_samples: 250,
-  },
-};
-
-function installFetch() {
-  global.fetch = vi.fn((url) => {
-    if (String(url).endsWith('/health')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'ok' }) });
-    }
-    if (String(url).includes('/api/v1/forecast')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(forecast) });
-    }
-    if (String(url).includes('/api/v1/volatility/forecast')) {
-      const match = String(url).match(/horizon=(\d+)/);
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(volatilityBody(Number(match?.[1] || 5))) });
-    }
-    if (String(url).includes('/api/v1/news')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'available', items: [] }) });
-    }
-    return Promise.reject(new Error(`Unexpected fetch ${url}`));
-  });
-}
 
 function volatilityBody(horizon) {
   const dates = Array.from({ length: 60 }, (_, index) => {
@@ -93,245 +52,84 @@ function volatilityBody(horizon) {
   };
 }
 
-describe('simplified forecast app', () => {
-  beforeEach(() => installFetch());
+function installFetch() {
+  global.fetch = vi.fn((url) => {
+    const urlStr = String(url);
+    if (urlStr.endsWith('/health')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'ok' }) });
+    }
+    if (urlStr.includes('/api/v1/history')) {
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            ticker: 'MSFT',
+            daily: [
+              { d: '2026-09-01', c: 448 },
+              { d: '2026-09-02', c: 450 },
+            ],
+            intraday: null,
+          }),
+      });
+    }
+    if (urlStr.includes('/api/v1/volatility/forecast')) {
+      const match = urlStr.match(/horizon=(\d+)/);
+      const horizon = Number(match?.[1] || 5);
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(volatilityBody(horizon)),
+      });
+    }
+    return Promise.reject(new Error(`Unexpected fetch ${url}`));
+  });
+}
+
+describe('Signal Seven Volatility App', () => {
+  beforeEach(() => {
+    installFetch();
+  });
 
   it('wakes the backend automatically from the single frontend page', async () => {
     render(<App />);
-    expect(await screen.findByText('Forecast service ready')).toBeInTheDocument();
+    expect(await screen.findByText('Volatility engine ready')).toBeInTheDocument();
     expect(global.fetch).toHaveBeenCalledWith(expect.stringMatching(/\/health$/), expect.anything());
   });
 
-  it('shows a learned seven-day result and chronological evidence', async () => {
-    const user = userEvent.setup();
+  it('renders the single-screen volatility outlook and price chart', async () => {
     render(<App />);
-    await screen.findByText('Forecast service ready');
-    await user.click(screen.getByRole('button', { name: /run 7-day forecast/i }));
-
-    expect(await screen.findByText('Average seven-day price estimate')).toBeInTheDocument();
-    expect(screen.getByText('Average 7-day estimate')).toBeInTheDocument();
-    // Latest price appears twice by design: the KPI panel and the combined outlook.
-    expect(screen.getAllByText('$452.00')).toHaveLength(2);
-    expect(screen.queryByText(/empirical band/i)).not.toBeInTheDocument();
-    expect(screen.getByText('More accurate than assuming no price change')).toBeInTheDocument();
-    expect(screen.getByText(/not included in the forecast/i)).toBeInTheDocument();
-  });
-
-  it('offers one ticker input without exchange tabs or ticker grids', () => {
-    render(<App />);
-    expect(screen.getAllByRole('textbox')).toHaveLength(1);
-    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Ticker selection matrix')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Quick ticker switcher')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'AAPL' })).not.toBeInTheDocument();
-    expect(screen.getByText('Stock forecasts made simple')).toBeInTheDocument();
-    expect(screen.queryByText(/A ticker is a stock's short code/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/PostgreSQL|70\/15\/15|Quantitative Terminal|causal market/i)).not.toBeInTheDocument();
-  });
-
-  it('renders the volatility outlook card without model codenames', async () => {
-    const user = userEvent.setup();
-    render(<App />);
-    await screen.findByText('Forecast service ready');
-    await user.click(screen.getByRole('button', { name: /run 7-day forecast/i }));
-
+    expect(await screen.findByText('Volatility engine ready')).toBeInTheDocument();
+    expect(screen.getByText('Equity Volatility Engine')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Forecast Stock/i })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Volatility Outlook' })).toBeInTheDocument();
     expect(screen.getByText('21.4% annualised')).toBeInTheDocument();
-    expect(screen.getByText(/held-out test panel/)).toBeInTheDocument();
-    const card = screen.getByLabelText('MSFT volatility outlook');
-    expect(card.textContent).not.toMatch(/G3|XGBoost|HAR|QLIKE/i);
+    expect(screen.getByText('Historical Prices')).toBeInTheDocument();
+    expect(screen.getByText('Expected 5D Volatility Cone (p05–p95)')).toBeInTheDocument();
   });
 
-  it.each(['nvda', 'jpm', 'shel.l'])('submits the typed ticker %s with Enter', async (symbol) => {
+  it('offers one ticker input without exchange tabs or complex grids', () => {
+    render(<App />);
+    expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(screen.queryByRole('tablist', { name: 'Ticker selection matrix' })).not.toBeInTheDocument();
+    expect(screen.getByText('286 supported US & UK tickers')).toBeInTheDocument();
+  });
+
+  it.each(['nvda', 'jpm', 'shel.l'])('submits the typed ticker %s', async (symbol) => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByText('Forecast service ready');
+    await screen.findByText('Volatility engine ready');
     const input = screen.getByLabelText(/stock ticker/i);
     await user.clear(input);
     await user.type(input, `${symbol}{Enter}`);
-    await screen.findByText('Average seven-day price estimate');
     expect(input).toHaveValue(symbol.toUpperCase());
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining(`/api/v1/forecast?ticker=${symbol.toUpperCase()}`),
-      expect.anything(),
-    );
+    expect(await screen.findByRole('heading', { name: 'Volatility Outlook' })).toBeInTheDocument();
   });
 
-  it('rejects unsupported tickers without calling the forecast API', async () => {
+  it('rejects unsupported tickers', async () => {
     const user = userEvent.setup();
     render(<App />);
     const input = screen.getByLabelText(/stock ticker/i);
     await user.clear(input);
-    await user.type(input, 'NMM');
-    await user.click(screen.getByRole('button', { name: /run 7-day forecast/i }));
-
+    await user.type(input, 'INVALIDXYZ{Enter}');
     expect(screen.getByRole('alert')).toHaveTextContent(/choose one of/i);
-    expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/v1/forecast'), expect.anything());
-  });
-
-  it('renders institutional news cards with sentiment badges, source tags, and links', async () => {
-    const mockNews = {
-      status: 'available',
-      provider: 'yahoo',
-      items: [
-        {
-          id: 'news-1',
-          title: 'Tesla Cybercab Expansion Underway in Austin',
-          headline: 'Tesla Cybercab Expansion Underway in Austin',
-          summary: 'Operations begin as federal regulators monitor commercial deployment.',
-          source: 'Reuters',
-          published_at: '2026-09-04T18:00:00Z',
-          url: 'https://example.com/cybercab-news',
-          sentiment: 0.45,
-          sentiment_label: 'positive',
-          sentiment_badge: 'Bullish',
-        },
-        {
-          id: 'news-2',
-          title: 'Autonomous Sector Evaluates Regulatory Guidance',
-          headline: 'Autonomous Sector Evaluates Regulatory Guidance',
-          summary: 'Market participants digest safety reporting requirements.',
-          source: 'Bloomberg',
-          published_at: '2026-09-04T17:30:00Z',
-          url: 'https://example.com/regulatory-guidance',
-          sentiment: -0.32,
-          sentiment_label: 'negative',
-          sentiment_badge: 'Bearish',
-        },
-      ],
-    };
-
-    global.fetch = vi.fn((url) => {
-      if (String(url).endsWith('/health')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'ok' }) });
-      }
-      if (String(url).includes('/api/v1/forecast')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(forecast) });
-      }
-      if (String(url).includes('/api/v1/news')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(mockNews) });
-      }
-      return Promise.reject(new Error(`Unexpected fetch ${url}`));
-    });
-
-    const user = userEvent.setup();
-    render(<App />);
-    await screen.findByText('Forecast service ready');
-    await user.click(screen.getByRole('button', { name: /run 7-day forecast/i }));
-
-    expect(await screen.findByText('Tesla Cybercab Expansion Underway in Austin')).toBeInTheDocument();
-    expect(screen.getByText('Autonomous Sector Evaluates Regulatory Guidance')).toBeInTheDocument();
-    expect(screen.getByText('Reuters')).toBeInTheDocument();
-    expect(screen.getByText('Bloomberg')).toBeInTheDocument();
-    expect(screen.getByText('Positive tone')).toBeInTheDocument();
-    expect(screen.getByText('Negative tone')).toBeInTheDocument();
-    const externalLinks = screen.getAllByRole('link', { name: /read full story/i });
-    expect(externalLinks.length).toBe(2);
-    expect(externalLinks[0]).toHaveAttribute('href', 'https://example.com/cybercab-news');
-  });
-
-  it('serves learned model with non-flat path and calibrated cone when forecast 404s', async () => {
-    global.fetch = vi.fn((url) => {
-      if (String(url).endsWith('/health')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'ok' }) });
-      }
-      if (String(url).includes('/api/v1/forecast')) {
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ detail: 'Endpoint not found' }),
-        });
-      }
-      if (String(url).includes('/api/v1/volatility/forecast')) {
-        return Promise.resolve({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              ticker: 'TSLA',
-              current_price: 350.0,
-              as_of: '2026-09-04',
-              historical_dates: ['2026-09-02', '2026-09-03'],
-              historical_prices: [348.0, 350.0],
-              forecast: {
-                model: 'rolling_mean',
-                price_quantiles: {
-                  p50: [350.0, 350.0, 350.0, 350.0, 350.0],
-                  p05: [330.0, 325.0, 320.0, 315.0, 310.0],
-                  p95: [370.0, 375.0, 380.0, 385.0, 390.0],
-                },
-                future_dates: ['2026-09-07', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'],
-              },
-            }),
-        });
-      }
-      if (String(url).includes('/api/v1/news')) {
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ detail: 'News not found' }),
-        });
-      }
-      return Promise.reject(new Error(`Unexpected fetch ${url}`));
-    });
-
-    const user = userEvent.setup();
-    render(<App />);
-    await screen.findByText('Forecast service ready');
-    const input = screen.getByLabelText(/stock ticker/i);
-    await user.clear(input);
-    await user.type(input, 'TSLA');
-    await user.click(screen.getByRole('button', { name: /run 7-day forecast/i }));
-
-    expect(await screen.findByText('Average seven-day price estimate')).toBeInTheDocument();
-    // Model pill must NOT display "ROLLING MEAN"; it should display learned model (GPU LSTM)
-    expect(screen.queryByText(/^rolling mean$/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/gpu lstm/i)).toBeInTheDocument();
-    // Fallback news must be populated from institutional feed
-    expect(screen.getByText(/recent tsla headlines/i)).toBeInTheDocument();
-    expect(screen.queryByText(/no recent headlines are available/i)).not.toBeInTheDocument();
-  });
-
-  it('remains resilient with learned fallback even when both forecast and volatility return 503 or fail', async () => {
-    global.fetch = vi.fn((url) => {
-      if (String(url).endsWith('/health')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ status: 'ok' }) });
-      }
-      if (String(url).includes('/api/v1/forecast')) {
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          json: () => Promise.resolve({ detail: 'Not found' }),
-        });
-      }
-      if (String(url).includes('/api/v1/volatility/forecast')) {
-        return Promise.resolve({
-          ok: false,
-          status: 503,
-          json: () => Promise.resolve({ detail: 'Market data provider rate limited' }),
-        });
-      }
-      if (String(url).includes('/api/v1/news')) {
-        return Promise.resolve({
-          ok: false,
-          status: 500,
-          json: () => Promise.resolve({ detail: 'Internal server error' }),
-        });
-      }
-      return Promise.reject(new Error(`Unexpected fetch ${url}`));
-    });
-
-    const user = userEvent.setup();
-    render(<App />);
-    await screen.findByText('Forecast service ready');
-    const input = screen.getByLabelText(/stock ticker/i);
-    await user.clear(input);
-    await user.type(input, 'TSLA');
-    await user.click(screen.getByRole('button', { name: /run 7-day forecast/i }));
-
-    expect(await screen.findByText('Average seven-day price estimate')).toBeInTheDocument();
-    expect(screen.getByText(/gpu lstm/i)).toBeInTheDocument();
-    expect(screen.getByText('$353.78')).toBeInTheDocument();
-    expect(screen.getByText(/recent tsla headlines/i)).toBeInTheDocument();
-    expect(screen.queryByText(/no recent headlines are available/i)).not.toBeInTheDocument();
   });
 });

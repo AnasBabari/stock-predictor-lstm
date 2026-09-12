@@ -36,14 +36,8 @@ function RiskPill({ level }) {
   return <span className={`risk-pill risk-${key}`}>{label}</span>;
 }
 
-function money(value, currencySymbol) {
-  if (!Number.isFinite(Number(value))) return '—';
-  const symbol = currencySymbol === 'p' || currencySymbol === 'GBp' ? 'p' : (currencySymbol || '$');
-  const decimals = symbol === 'p' ? 1 : 2;
-  return `${symbol}${Number(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
-}
 
-export default function VolatilityOutlook({ ticker, currencySymbol = '$', currentPrice = null, priceEstimate = null }) {
+export default function VolatilityOutlook({ ticker }) {
   const { outlook, loading, error, retry } = useVolatilityOutlook(ticker);
   const symbol = String(ticker || '').toUpperCase();
   if (!symbol) return null;
@@ -53,17 +47,6 @@ export default function VolatilityOutlook({ ticker, currencySymbol = '$', curren
     : [];
   const first = rows[0]?.entry || null;
   const asOf = first?.evidence?.data_as_of || first?.asOf || null;
-
-  const combined = (() => {
-    const five = outlook?.byHorizon?.[5];
-    const annual = five ? annualisedFromResponse(five) : null;
-    if (!priceEstimate || !Number.isFinite(Number(priceEstimate.price)) || !annual || !Number.isFinite(Number(currentPrice))) {
-      return null;
-    }
-    const band = expectedRange(currentPrice, annual, 5);
-    if (!band) return null;
-    return { ...band, annual, changePct: Number(priceEstimate.changePct) };
-  })();
 
   return (
     <section className="panel outlook-panel" aria-label={`${symbol} volatility outlook`}>
@@ -102,35 +85,6 @@ export default function VolatilityOutlook({ ticker, currencySymbol = '$', curren
             </tbody>
           </table>
 
-          {combined && (
-            <div className="combined-outlook" aria-label="Combined seven-day outlook">
-              <h3>7-Day Outlook</h3>
-              <dl>
-                <div>
-                  <dt>Estimated price</dt>
-                  <dd className="mono">{money(priceEstimate.price, currencySymbol)}</dd>
-                </div>
-                <div>
-                  <dt>Model direction</dt>
-                  <dd className={`mono ${combined.changePct >= 0 ? 'up' : 'down'}`}>
-                    {combined.changePct >= 0 ? '+' : ''}{combined.changePct.toFixed(1)}%
-                  </dd>
-                </div>
-                <div>
-                  <dt>Expected volatility</dt>
-                  <dd><RiskPill level={first?.evidence?.risk_level} /></dd>
-                </div>
-                <div>
-                  <dt>Expected range</dt>
-                  <dd className="mono">{money(combined.low, currencySymbol)}–{money(combined.high, currencySymbol)}</dd>
-                </div>
-              </dl>
-              <p className="method-note">
-                Range shows where the current price would typically move over five sessions;
-                it is not a prediction that the estimate itself will be reached.
-              </p>
-            </div>
-          )}
 
           <p className="method-note">
             <strong>Model:</strong> Enhanced volatility forecast. Uses recent price behaviour,

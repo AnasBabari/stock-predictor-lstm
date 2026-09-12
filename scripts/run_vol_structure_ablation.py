@@ -23,9 +23,9 @@ if str(REPO_ROOT) not in sys.path:
 if str(REPO_ROOT / "backend") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "backend"))
 
-from research.price_forecasting.gpu_pipeline import _normalise_ohlcv  # noqa: E402
-from research.price_forecasting.paired_validation import hac_mean  # noqa: E402
 from research.volatility_structure import panel  # noqa: E402
+from research.volatility_structure.data_utils import _normalise_ohlcv  # noqa: E402
+from research.volatility_structure.evaluation import hac_mean  # noqa: E402
 from research.volatility_structure.har_wrapper import har_forecasts  # noqa: E402
 from research.volatility_structure.range_estimators import range_variances  # noqa: E402
 

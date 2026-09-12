@@ -57,7 +57,7 @@ def deployment_identity() -> dict[str, Any]:
 @router.get("/")
 def root():
     return {
-        "name": "Signal Seven Forecast API",
+        "name": "Signal Seven Volatility API",
         "status": "online",
         "version": APP_VERSION,
         "docs": "/docs",

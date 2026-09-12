@@ -42,13 +42,16 @@ function historyFixture(sessions = 300, withIntraday = true) {
   };
 }
 
-const forecastFixture = {
+const volatilityOutlookFixture = {
   ticker: 'MSFT',
-  future_dates: ['2024-06-03', '2024-06-04', '2024-06-05', '2024-06-06', '2024-06-07', '2024-06-10', '2024-06-11'],
-  predicted_prices: [401, 402, 403, 404, 405, 406, 407],
-  historical_error_band: {
-    upper_prices: [405, 406, 407, 408, 409, 410, 411],
-    lower_prices: [397, 398, 399, 400, 401, 402, 403],
+  byHorizon: {
+    5: {
+      future_dates: ['2024-06-03', '2024-06-04', '2024-06-05', '2024-06-06', '2024-06-07'],
+      volatility_cone: {
+        p05: [390, 391, 392, 393, 394],
+        p95: [410, 411, 412, 413, 414],
+      },
+    },
   },
 };
 
@@ -81,19 +84,22 @@ describe('PriceChart', () => {
     expect(screen.getByText(/\+1\.01%/)).toBeInTheDocument();
   });
 
-  it('switches ranges and overlays the forecast path', () => {
+  it('switches ranges and overlays the G3 expected volatility cone', () => {
     usePriceHistory.mockReturnValue({ history: historyFixture(300, true), loading: false, error: '', retry: vi.fn() });
-    render(<PriceChart ticker="MSFT" currencySymbol="$" forecast={forecastFixture} />);
+    useVolatilityOutlook.mockReturnValue({
+      outlook: volatilityOutlookFixture,
+      loading: false,
+      error: '',
+      retry: vi.fn(),
+    });
+    render(<PriceChart ticker="MSFT" currencySymbol="$" />);
     fireEvent.click(screen.getByRole('tab', { name: '1M' }));
     expect(screen.getByRole('tab', { name: '1M' })).toHaveAttribute('aria-selected', 'true');
     const labels = lastChartProps.data.datasets.map((ds) => ds.label);
     expect(labels).toContain('Price');
-    expect(labels).toContain('Average 7-day estimate');
-    expect(lastChartProps.data.labels.length).toBe(22 + 7);
-    // Honesty: estimate is dashed, detached from history, inside a marked region.
-    const estimate = lastChartProps.data.datasets.find((ds) => ds.label === 'Average 7-day estimate');
-    expect(estimate.borderDash).toEqual([6, 4]);
-    expect(estimate.data.slice(0, 22).every((v) => v == null)).toBe(true);
+    expect(labels).toContain('Expected volatility range (upper)');
+    expect(labels).toContain('Expected volatility range (lower)');
+    expect(lastChartProps.data.labels.length).toBe(22 + 5);
     expect(lastChartProps.data.forecastSplitIndex).toBe(21);
     expect(lastChartProps.plugins.map((p) => p.id)).toContain('t212ForecastRegion');
   });
@@ -108,6 +114,7 @@ describe('PriceChart', () => {
     fireEvent.doubleClick(container.querySelector('.t212-chart-wrap'));
     expect(screen.queryByRole('button', { name: 'Reset' })).toBeNull();
   });
+
   it('shows loading and error states', () => {
     const onSettled = vi.fn();
     usePriceHistory.mockReturnValue({ history: null, loading: true, error: '', meta: null, retry: vi.fn() });
@@ -126,70 +133,16 @@ describe('PriceChart', () => {
   it('reports settlement timing once per ticker', () => {
     const onSettled = vi.fn();
     usePriceHistory.mockReturnValue({
-      history: historyFixture(300, true), loading: false, error: '',
-      meta: { fetchMs: 412, fromCache: false }, retry: vi.fn(),
+      history: historyFixture(300, true),
+      loading: false,
+      error: '',
+      meta: { fetchMs: 412, fromCache: false },
+      retry: vi.fn(),
     });
     const { rerender } = render(<PriceChart ticker="MSFT" currencySymbol="$" onHistorySettled={onSettled} />);
     expect(onSettled).toHaveBeenCalledTimes(1);
     expect(onSettled).toHaveBeenCalledWith(expect.objectContaining({ ok: true, fetchMs: 412, fromCache: false }));
     rerender(<PriceChart ticker="MSFT" currencySymbol="$" onHistorySettled={onSettled} />);
     expect(onSettled).toHaveBeenCalledTimes(1);
-  });
-
-  it('falls back to forecast-embedded history when the history endpoint fails', () => {
-    usePriceHistory.mockReturnValue({ history: null, loading: false, error: 'Down', meta: null, retry: vi.fn() });
-    const fallbackForecast = {
-      ...forecastFixture,
-      historical_dates: ['2024-05-30', '2024-05-31'],
-      historical_prices: [398, 399],
-    };
-    render(<PriceChart ticker="MSFT" currencySymbol="$" forecast={fallbackForecast} />);
-    expect(screen.queryByRole('button', { name: 'Retry chart' })).toBeNull();
-    expect(screen.getByRole('tab', { name: 'MAX' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.queryByRole('tab', { name: '5D' })).toBeNull();
-    const labels = lastChartProps.data.datasets.map((ds) => ds.label);
-    expect(labels).toContain('Average 7-day estimate');
-  });
-
-  it('overlays the date-aligned G3 expected range and skips on mismatch', () => {
-    usePriceHistory.mockReturnValue({ history: historyFixture(300, true), loading: false, error: '', meta: null, retry: vi.fn() });
-    const aligned = {
-      future_dates: forecastFixture.future_dates.slice(0, 5),
-      volatility_cone: { p05: [390, 391, 392, 393, 394], p95: [410, 411, 412, 413, 414] },
-    };
-    useVolatilityOutlook.mockReturnValue({
-      outlook: { ticker: 'MSFT', byHorizon: { 5: aligned } }, loading: false, error: '', retry: vi.fn(),
-    });
-    render(<PriceChart ticker="MSFT" currencySymbol="$" forecast={forecastFixture} />);
-    const labels = lastChartProps.data.datasets.map((ds) => ds.label);
-    expect(labels).toContain('Expected volatility range (upper)');
-    const upper = lastChartProps.data.datasets.find((ds) => ds.label === 'Expected volatility range (upper)');
-    expect(upper.data.filter((v) => v != null)).toEqual([410, 411, 412, 413, 414]);
-
-    useVolatilityOutlook.mockReturnValue({
-      outlook: { ticker: 'MSFT', byHorizon: { 5: { ...aligned, future_dates: ['2099-01-01'] } } },
-      loading: false, error: '', retry: vi.fn(),
-    });
-    render(<PriceChart ticker="MSFT" currencySymbol="$" forecast={forecastFixture} />);
-    expect(lastChartProps.data.datasets.map((ds) => ds.label)).not.toContain('Expected volatility range (upper)');
-  });
-
-  it('refuses manufactured history instead of charting it', () => {
-    usePriceHistory.mockReturnValue({ history: null, loading: false, error: 'Down', meta: null, retry: vi.fn() });
-    render(
-      <PriceChart
-        ticker="MSFT"
-        currencySymbol="$"
-        forecast={{
-          ...forecastFixture,
-          historical_dates: ['2024-05-30', '2024-05-31'],
-          historical_prices: [398, 399],
-          historical_provenance: 'synthetic',
-        }}
-      />,
-    );
-    expect(screen.getByRole('button', { name: 'Retry chart' })).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'MAX' })).toBeNull();
-    expect(screen.queryByTestId('mock-chart')).toBeNull();
   });
 });

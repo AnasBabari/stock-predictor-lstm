@@ -24,7 +24,6 @@ from routes.common import limiter, validate_ticker
 from routes.health import deployment_identity as _deployment_identity
 from routes.health import router as health_router
 from routes.market import router as market_router
-from routes.simple_forecast import router as simple_forecast_router
 from routes.volatility import router as volatility_router
 
 __all__ = [
@@ -46,9 +45,9 @@ logger = logging.getLogger(__name__)
 
 # ── Application Setup ────────────────────────────────────────────────
 app = FastAPI(
-    title="Signal Seven Forecast API",
+    title="Signal Seven Volatility API",
     version=APP_VERSION,
-    description="Seven-session learned price estimates with chronological historical backtests.",
+    description="Causal equity volatility forecasting engine powered by G3 XGBoost models and range estimators.",
 )
 app.state.limiter = limiter
 
@@ -90,7 +89,6 @@ async def _security_headers(request: Request, call_next):
 # ── Router Registration ──────────────────────────────────────────────
 app.include_router(health_router)
 app.include_router(market_router)
-app.include_router(simple_forecast_router)
 app.include_router(volatility_router)
 
 
