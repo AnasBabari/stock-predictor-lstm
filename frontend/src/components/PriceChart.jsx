@@ -155,7 +155,7 @@ const crosshairPlugin = {
   },
 };
 
-// Dashed last-price line and right-edge terminal corridor tags (p95, last, p05)
+// Solid last-price reference line and right-edge Trading 212 badge pill
 const lastPricePlugin = {
   id: 't212LastPrice',
   afterDraw: (chart) => {
@@ -166,11 +166,13 @@ const lastPricePlugin = {
     const y = scales.y.getPixelForValue(price);
     if (y < chartArea.top || y > chartArea.bottom) return;
 
-    const color = config?.color || '#8b93a7';
+    const isDark = chart.config.options?.isDark ?? true;
+    const lineColor = config?.lineColor || (isDark ? 'rgba(56, 189, 248, 0.45)' : 'rgba(74, 163, 219, 0.50)');
+    const badgeBg = config?.badgeBg || (isDark ? '#0284c7' : '#4aa3db');
     const label = config?.label || '';
     const splitIdx = chart.data?.forecastSplitIndex;
 
-    // Draw horizontal dashed line across the historical region
+    // Draw solid horizontal price line across the chart
     let lineEndX = chartArea.right;
     if (splitIdx != null && scales.x) {
       const splitPixel = scales.x.getPixelForValue(splitIdx);
@@ -181,19 +183,19 @@ const lastPricePlugin = {
 
     ctx.save();
     ctx.beginPath();
-    ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.2;
+    // Trading 212 uses a crisp solid 1px horizontal line at the current price
+    ctx.setLineDash([]);
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1;
     ctx.moveTo(chartArea.left, y);
     ctx.lineTo(lineEndX, y);
     ctx.stroke();
-    ctx.setLineDash([]);
 
-    // 1. Current Price Badge Pill
+    // 1. Current Price Badge Pill (Solid Trading 212 Blue Pill)
     ctx.font = '700 10px JetBrains Mono, monospace';
     const width = ctx.measureText(label).width + 12;
     const tagY = Math.min(Math.max(y - 9, chartArea.top), chartArea.bottom - 18);
-    ctx.fillStyle = color;
+    ctx.fillStyle = badgeBg;
     drawPill(ctx, chartArea.right - width, tagY, width, 18, 4);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
@@ -202,8 +204,9 @@ const lastPricePlugin = {
     ctx.fillText(label, chartArea.right - width / 2, tagY + 9);
 
     // 2. Terminal Upper Bound Badge (p95) on Right Y-Scale
-    const isDark = chart.config.options?.isDark ?? true;
-    const cyanTagBg = isDark ? '#0284c7' : '#0369a1';
+    const tagAuxBg = isDark ? 'rgba(56, 189, 248, 0.20)' : 'rgba(74, 163, 219, 0.16)';
+    const tagAuxText = isDark ? '#38bdf8' : '#0284c7';
+    const tagAuxBorder = isDark ? 'rgba(56, 189, 248, 0.40)' : 'rgba(74, 163, 219, 0.40)';
     const upperVal = config?.upperTerminal;
     const lowerVal = config?.lowerTerminal;
 
@@ -213,10 +216,13 @@ const lastPricePlugin = {
         const uLabel = config?.upperLabel || upperVal.toFixed(2);
         const uWidth = ctx.measureText(uLabel).width + 10;
         const uY = Math.min(Math.max(yUpper - 8, chartArea.top), chartArea.bottom - 16);
-        ctx.fillStyle = cyanTagBg;
+        ctx.fillStyle = tagAuxBg;
+        ctx.strokeStyle = tagAuxBorder;
+        ctx.lineWidth = 1;
         drawPill(ctx, chartArea.right - uWidth, uY, uWidth, 16, 3);
         ctx.fill();
-        ctx.fillStyle = '#ffffff';
+        ctx.stroke();
+        ctx.fillStyle = tagAuxText;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(uLabel, chartArea.right - uWidth / 2, uY + 8);
@@ -230,10 +236,13 @@ const lastPricePlugin = {
         const lLabel = config?.lowerLabel || lowerVal.toFixed(2);
         const lWidth = ctx.measureText(lLabel).width + 10;
         const lY = Math.min(Math.max(yLower - 8, chartArea.top), chartArea.bottom - 16);
-        ctx.fillStyle = cyanTagBg;
+        ctx.fillStyle = tagAuxBg;
+        ctx.strokeStyle = tagAuxBorder;
+        ctx.lineWidth = 1;
         drawPill(ctx, chartArea.right - lWidth, lY, lWidth, 16, 3);
         ctx.fill();
-        ctx.fillStyle = '#ffffff';
+        ctx.stroke();
+        ctx.fillStyle = tagAuxText;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(lLabel, chartArea.right - lWidth / 2, lY + 8);
@@ -332,10 +341,10 @@ function volatilityConeDatasets(g3outlook, historyPrices, colors, horizon = 5, i
   const futureCount = bandDates.length;
 
   const cyanBorder = isDark ? '#38bdf8' : '#0284c7';
-  const outerCorridorBg = isDark ? 'rgba(56, 189, 248, 0.08)' : 'rgba(2, 132, 199, 0.07)';
-  const outerBoundary = isDark ? 'rgba(56, 189, 248, 0.50)' : 'rgba(2, 132, 199, 0.50)';
-  const innerCorridorBg = isDark ? 'rgba(56, 189, 248, 0.14)' : 'rgba(2, 132, 199, 0.12)';
-  const innerBoundary = isDark ? 'rgba(56, 189, 248, 0.30)' : 'rgba(2, 132, 199, 0.30)';
+  const outerCorridorBg = isDark ? 'rgba(56, 189, 248, 0.07)' : 'rgba(74, 163, 219, 0.06)';
+  const outerBoundary = isDark ? 'rgba(56, 189, 248, 0.35)' : 'rgba(74, 163, 219, 0.40)';
+  const innerCorridorBg = isDark ? 'rgba(56, 189, 248, 0.12)' : 'rgba(74, 163, 219, 0.10)';
+  const innerBoundary = isDark ? 'rgba(56, 189, 248, 0.25)' : 'rgba(74, 163, 219, 0.25)';
 
   const hasInnerBands = Array.isArray(bandUpper75) && Array.isArray(bandLower25);
 
@@ -344,13 +353,13 @@ function volatilityConeDatasets(g3outlook, historyPrices, colors, horizon = 5, i
     label: 'Expected volatility range (upper)',
     data: [...prefix, lastPrice, ...bandUpper95.slice(0, futureCount)],
     borderColor: outerBoundary,
-    borderWidth: 1.5,
-    borderDash: [4, 4],
+    borderWidth: 1.2,
+    borderDash: [3, 3],
     backgroundColor: outerCorridorBg,
     pointRadius: 0,
     pointHoverRadius: 4,
     fill: hasInnerBands ? '+4' : '+2',
-    tension: 0.2,
+    tension: 0.12,
     spanGaps: false,
   });
 
@@ -366,7 +375,7 @@ function volatilityConeDatasets(g3outlook, historyPrices, colors, horizon = 5, i
       pointRadius: 0,
       pointHoverRadius: 3,
       fill: '+2',
-      tension: 0.2,
+      tension: 0.12,
       spanGaps: false,
     });
   }
@@ -381,17 +390,17 @@ function volatilityConeDatasets(g3outlook, historyPrices, colors, horizon = 5, i
       ...(bandMedian ? bandMedian.slice(0, futureCount) : Array(futureCount).fill(lastPrice)),
     ],
     borderColor: cyanBorder,
-    borderWidth: 2.2,
-    borderDash: [5, 4],
+    borderWidth: 1.8,
+    borderDash: [4, 3],
     backgroundColor: 'transparent',
-    pointRadius: (ctx) => (ctx.dataIndex === totalPoints - 1 ? 5 : 0),
+    pointRadius: (ctx) => (ctx.dataIndex === totalPoints - 1 ? 4 : 0),
     pointBackgroundColor: cyanBorder,
     pointBorderColor: '#ffffff',
     pointBorderWidth: 2,
-    pointHoverRadius: 6,
+    pointHoverRadius: 5,
     pointHoverBackgroundColor: cyanBorder,
     fill: false,
-    tension: 0.2,
+    tension: 0.12,
     spanGaps: false,
   });
 
@@ -407,7 +416,7 @@ function volatilityConeDatasets(g3outlook, historyPrices, colors, horizon = 5, i
       pointRadius: 0,
       pointHoverRadius: 3,
       fill: false,
-      tension: 0.2,
+      tension: 0.12,
       spanGaps: false,
     });
   }
@@ -417,13 +426,13 @@ function volatilityConeDatasets(g3outlook, historyPrices, colors, horizon = 5, i
     label: 'Expected volatility range (lower)',
     data: [...prefix, lastPrice, ...bandLower05.slice(0, futureCount)],
     borderColor: outerBoundary,
-    borderWidth: 1.5,
-    borderDash: [4, 4],
+    borderWidth: 1.2,
+    borderDash: [3, 3],
     backgroundColor: 'transparent',
     pointRadius: 0,
     pointHoverRadius: 4,
     fill: false,
-    tension: 0.2,
+    tension: 0.12,
     spanGaps: false,
   });
 
@@ -495,34 +504,44 @@ export default function PriceChart({ ticker, currencySymbol = '$', onHistorySett
   }, [points]);
 
   const colors = useMemo(() => {
-    const up = stats.up;
+    // Trading 212 signature celestial blue line styling
     if (isDark) {
       return {
-        line: up ? '#00f5a0' : '#ff5c5c',
-        areaTop: up ? 'rgba(0,245,160,0.22)' : 'rgba(255,92,92,0.22)',
-        grid: 'rgba(255,255,255,0.06)',
+        line: '#38bdf8', // Vibrant electric Trading 212 sky blue
+        areaTop: 'rgba(56, 189, 248, 0.18)',
+        areaBottom: 'rgba(56, 189, 248, 0.0)',
+        grid: 'rgba(255, 255, 255, 0.04)',
         tick: '#8b93a7',
-        tooltipBg: '#0d131f',
-        tooltipTitle: '#e2e8f0',
+        tooltipBg: '#0f172a',
+        tooltipTitle: '#f8fafc',
         tooltipBody: '#94a3b8',
-        tooltipBorder: 'rgba(255,255,255,0.12)',
+        tooltipBorder: 'rgba(255, 255, 255, 0.12)',
+        priceLine: 'rgba(56, 189, 248, 0.45)',
+        priceBadgeBg: '#0284c7',
+        priceBadgeText: '#ffffff',
         estimate: '#38bdf8',
-        bandFill: 'rgba(56,189,248,0.12)',
+        bandFill: 'rgba(56, 189, 248, 0.07)',
+        bandBoundary: 'rgba(56, 189, 248, 0.35)',
       };
     }
     return {
-      line: up ? '#059669' : '#dc2626',
-      areaTop: up ? 'rgba(5,150,105,0.18)' : 'rgba(220,38,38,0.18)',
-      grid: 'rgba(0,0,0,0.06)',
+      line: '#4aa3db', // Exact sampled Trading 212 primary brand blue from user reference
+      areaTop: 'rgba(74, 163, 219, 0.18)',
+      areaBottom: 'rgba(74, 163, 219, 0.0)',
+      grid: 'rgba(0, 0, 0, 0.04)',
       tick: '#64748b',
       tooltipBg: '#ffffff',
       tooltipTitle: '#0f172a',
       tooltipBody: '#475569',
-      tooltipBorder: 'rgba(0,0,0,0.12)',
+      tooltipBorder: 'rgba(0, 0, 0, 0.12)',
+      priceLine: 'rgba(74, 163, 219, 0.50)',
+      priceBadgeBg: '#4aa3db',
+      priceBadgeText: '#ffffff',
       estimate: '#0284c7',
-      bandFill: 'rgba(2,132,199,0.10)',
+      bandFill: 'rgba(74, 163, 219, 0.06)',
+      bandBoundary: 'rgba(74, 163, 219, 0.40)',
     };
-  }, [isDark, stats.up]);
+  }, [isDark]);
 
   const chartData = useMemo(() => {
     const labels = points.labels.map((label) => formatAxisLabel(label, points.isIntraday));
@@ -554,14 +573,16 @@ export default function PriceChart({ ticker, currencySymbol = '$', onHistorySett
             if (!chartArea) return colors.areaTop;
             const grad = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
             grad.addColorStop(0, colors.areaTop);
-            grad.addColorStop(1, 'transparent');
+            grad.addColorStop(1, colors.areaBottom);
             return grad;
           },
           borderWidth: 2,
           pointRadius: 0,
-          pointHoverRadius: 5,
+          pointHoverRadius: 4,
           pointHoverBackgroundColor: colors.line,
-          tension: 0.2,
+          pointHoverBorderColor: '#ffffff',
+          pointHoverBorderWidth: 2,
+          tension: 0.12,
           fill: true,
           spanGaps: false,
         },
@@ -710,7 +731,8 @@ export default function PriceChart({ ticker, currencySymbol = '$', onHistorySett
       legend: { display: false },
       t212LastPrice: {
         value: stats.last,
-        color: stats.up ? (isDark ? '#00f5a0' : '#10b981') : (isDark ? '#ff5c5c' : '#ef4444'),
+        lineColor: colors.priceLine,
+        badgeBg: colors.priceBadgeBg,
         label: formatMoneyLocal(stats.last, currencySymbol),
         upperTerminal: p95Terminal,
         lowerTerminal: p05Terminal,
@@ -747,15 +769,12 @@ export default function PriceChart({ ticker, currencySymbol = '$', onHistorySett
         max: effectiveView?.end,
         ticks: {
           color: colors.tick,
-          maxTicksLimit: 10,
+          maxTicksLimit: 8,
           maxRotation: 0,
           font: { family: 'JetBrains Mono, monospace', size: 10 },
         },
         grid: {
-          display: true,
-          color: colors.grid,
-          borderDash: [2, 2],
-          drawTicks: false,
+          display: false, // NO VERTICAL GRID LINES - CLEAN TRADING 212 STYLE
         },
         border: {
           display: false,
@@ -768,6 +787,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', onHistorySett
           color: colors.tick,
           font: { family: 'JetBrains Mono, monospace', size: 10 },
           callback: (v) => formatMoneyLocal(Number(v), currencySymbol),
+          padding: 8,
         },
         grid: {
           display: true,
@@ -780,7 +800,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', onHistorySett
         },
       },
     },
-  }), [isDark, colors, chartData, effectiveView, yBounds, stats.last, stats.up, currencySymbol, p95Terminal, p05Terminal, hoveredIndex]);
+  }), [isDark, colors, chartData, effectiveView, yBounds, stats.last, currencySymbol, p95Terminal, p05Terminal, hoveredIndex]);
 
   const selectRange = useCallback((id) => {
     setRangeId(id);

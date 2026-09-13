@@ -1940,13 +1940,25 @@ footer {
 .range-pill.active,
 .horizon-pill.active {
   color: #ffffff;
-  background: #2962ff;
-  box-shadow: 0 2px 8px rgba(41, 98, 255, 0.35);
+  background: #0284c7;
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.35);
+}
+
+[data-theme='light'] .range-pill.active,
+[data-theme='light'] .horizon-pill.active {
+  color: #0284c7;
+  background: #eaf4fd;
+  border: 1px solid rgba(74, 163, 219, 0.3);
+  box-shadow: none;
 }
 
 .horizon-pill.active {
   background: #0284c7;
-  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.35);
+}
+
+[data-theme='light'] .horizon-pill.active {
+  background: #eaf4fd;
+  color: #0284c7;
 }
 
 .range-pill.reset-pill {
