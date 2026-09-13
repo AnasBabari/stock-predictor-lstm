@@ -20,11 +20,11 @@ export default defineConfig(() => {
       host: true,
       proxy: {
         '/api': {
-          target: process.env.VITE_API_URL || 'https://stock-predictor-lstm.onrender.com',
+          target: process.env.VITE_API_URL || 'http://127.0.0.1:8000',
           changeOrigin: true,
         },
         '/health': {
-          target: process.env.VITE_API_URL || 'https://stock-predictor-lstm.onrender.com',
+          target: process.env.VITE_API_URL || 'http://127.0.0.1:8000',
           changeOrigin: true,
         },
       },
@@ -34,11 +34,11 @@ export default defineConfig(() => {
       host: true,
       proxy: {
         '/api': {
-          target: process.env.VITE_API_URL || 'https://stock-predictor-lstm.onrender.com',
+          target: process.env.VITE_API_URL || 'http://127.0.0.1:8000',
           changeOrigin: true,
         },
         '/health': {
-          target: process.env.VITE_API_URL || 'https://stock-predictor-lstm.onrender.com',
+          target: process.env.VITE_API_URL || 'http://127.0.0.1:8000',
           changeOrigin: true,
         },
       },
