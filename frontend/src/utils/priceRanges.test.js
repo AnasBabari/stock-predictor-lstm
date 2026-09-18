@@ -45,11 +45,15 @@ describe('availableRanges', () => {
 });
 
 describe('defaultRangeId', () => {
-  it('defaults to the previous week', () => {
-    expect(defaultRangeId(['24H', '5D', '1M', 'MAX'])).toBe('5D');
+  it('defaults to 1M when available', () => {
+    expect(defaultRangeId(['24H', '5D', '1M', 'MAX'])).toBe('1M');
   });
 
-  it('falls back to 24H when the listing is days old', () => {
+  it('falls back to longest range below 1M (5D) when 1M is missing', () => {
+    expect(defaultRangeId(['24H', '5D', 'MAX'])).toBe('5D');
+  });
+
+  it('falls back to 24H when 5D and 1M are missing', () => {
     expect(defaultRangeId(['24H', 'MAX'])).toBe('24H');
   });
 

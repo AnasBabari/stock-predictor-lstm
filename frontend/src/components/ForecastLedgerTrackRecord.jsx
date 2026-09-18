@@ -1,45 +1,51 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
+export default function ForecastLedgerTrackRecord({ ticker, horizon, defaultOpen = false }) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
   const [ledgerData, setLedgerData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('all'); // 'all' | 'live' | 'historical_replay'
+  const fetchedTickerRef = useRef(null);
 
-  useEffect(() => {
-    let isMounted = true;
-    if (!ticker) return;
-
+  const fetchLedger = useCallback(async (sym) => {
+    if (!sym) return;
     setLoading(true);
     setError(null);
+    try {
+      const queryHorizon = horizon ? `&horizon=${encodeURIComponent(horizon)}` : '';
+      const url = `/api/v1/volatility/ledger?ticker=${encodeURIComponent(sym)}${queryHorizon}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`Failed to load forecast ledger (${res.status})`);
+      }
+      const data = await res.json();
+      setLedgerData(data);
+      fetchedTickerRef.current = sym;
+    } catch (err) {
+      setError(err.message || 'Unable to load past forecasts.');
+    } finally {
+      setLoading(false);
+    }
+  }, [horizon]);
 
-    const queryHorizon = horizon ? `&horizon=${encodeURIComponent(horizon)}` : '';
-    const url = `/api/v1/volatility/ledger?ticker=${encodeURIComponent(ticker)}${queryHorizon}`;
+  // Lazy fetch: only fetch when section is opened, and reuse cache for same ticker
+  useEffect(() => {
+    if (isOpen && ticker && fetchedTickerRef.current !== ticker) {
+      fetchLedger(ticker);
+    }
+  }, [isOpen, ticker, fetchLedger]);
 
-    fetch(url)
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`Failed to load forecast ledger (${res.status})`);
-        }
-        return res.json();
-      })
-      .then((data) => {
-        if (isMounted) {
-          setLedgerData(data);
-          setLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (isMounted) {
-          setError(err.message);
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [ticker, horizon]);
+  // Reset cache if ticker changes
+  useEffect(() => {
+    if (ticker && fetchedTickerRef.current && fetchedTickerRef.current !== ticker) {
+      setLedgerData(null);
+      fetchedTickerRef.current = null;
+      if (isOpen) {
+        fetchLedger(ticker);
+      }
+    }
+  }, [ticker, isOpen, fetchLedger]);
 
   if (!ticker) return null;
 
@@ -56,130 +62,112 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
   const displayTrack = activeTab === 'historical_replay' ? replayTrack : liveTrack;
 
   return (
-    <section
-      className="panel-card forecast-ledger-card"
+    <details
+      className="panel-card forecast-ledger-card ledger-expandable-section"
       id="forecastLedgerSection"
       aria-label="Past price-movement forecasts"
+      open={isOpen}
+      onToggle={(e) => setIsOpen(e.currentTarget.open)}
     >
-      <div className="panel-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <h3>
-            <svg
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              width="15"
-              height="15"
-              style={{ color: 'var(--teal)' }}
-            >
-              <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-              <path
-                fillRule="evenodd"
-                d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z"
-                clipRule="evenodd"
-              />
-            </svg>
-            Past price-movement forecasts
-          </h3>
-          <span className="badge badge-neutral">
-            {ticker} {horizon ? `${horizon} ${Number(horizon) === 1 ? 'market day' : 'market days'}` : 'All time periods'}
-          </span>
-        </div>
-        <div className="ledger-tab-group">
-          <button
-            className={`ledger-tab-btn ${activeTab === 'all' ? 'active' : ''}`}
-            onClick={() => setActiveTab('all')}
-            type="button"
+      <summary className="ledger-summary-header">
+        <span className="ledger-summary-title">
+          <svg
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            width="15"
+            height="15"
+            style={{ color: 'var(--teal)' }}
+            aria-hidden="true"
           >
-            All ({allEntries.length})
-          </button>
-          <button
-            className={`ledger-tab-btn ${activeTab === 'live' ? 'active' : ''}`}
-            onClick={() => setActiveTab('live')}
-            type="button"
-          >
-            Live ({liveTrack.total_forecasts ?? 0})
-          </button>
-          <button
-            className={`ledger-tab-btn ${activeTab === 'historical_replay' ? 'active' : ''}`}
-            onClick={() => setActiveTab('historical_replay')}
-            type="button"
-          >
-            Historical tests ({replayTrack.total_forecasts ?? 0})
-          </button>
-        </div>
-      </div>
+            <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+            <path
+              fillRule="evenodd"
+              d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z"
+              clipRule="evenodd"
+            />
+          </svg>
+          Past price-movement forecasts
+        </span>
+        <span className="badge badge-neutral">
+          {ticker} {horizon ? `${horizon} ${Number(horizon) === 1 ? 'market day' : 'market days'}` : 'All time periods'}
+        </span>
+      </summary>
 
-      <p className="method-note">This history measures the size of price swings, not future share prices. It is separate from the seven-day price estimate above.</p>
-      {loading ? (
-        <div className="ledger-loading-state">Loading past forecasts…</div>
-      ) : error ? (
-        <div className="ledger-error-state">Past forecasts are unavailable right now. Please try again later.</div>
-      ) : (
-        <>
-          <div className="ledger-kpi-grid">
-            <div className="ledger-kpi-box">
-              <span className="kpi-label">
-                {activeTab === 'historical_replay' ? 'Historical tests checked' : 'Live forecasts checked'}
-              </span>
-              <span className="kpi-value">{displayTrack.scored_forecasts ?? 0}</span>
-              <span className="kpi-subtext">
-                {activeTab === 'historical_replay'
-                  ? 'Tests using past data'
-                  : 'Recorded before the results were known'}
-              </span>
-            </div>
-            <div className="ledger-kpi-box">
-              <span className="kpi-label">Average error</span>
-              <span className="kpi-value mono">
-                {displayTrack.mean_mae != null ? `${(displayTrack.mean_mae * 100).toFixed(2)}%` : '—'}
-              </span>
-              <span className="kpi-subtext">Mistakes in estimated price swings</span>
-            </div>
-            <div className="ledger-kpi-box">
-              <span className="kpi-label">Error score</span>
-              <span className="kpi-value mono text-teal">
-                {displayTrack.mean_qlike != null ? displayTrack.mean_qlike.toFixed(4) : '—'}
-              </span>
-              <span className="kpi-subtext">Lower is better</span>
-            </div>
-            <div className="ledger-kpi-box">
-              <span className="kpi-label">Bigger or smaller swings correct</span>
-              <span className="kpi-value mono">
-                {displayTrack.direction_accuracy_pct != null
-                  ? `${displayTrack.direction_accuracy_pct.toFixed(1)}%`
-                  : '—'}
-              </span>
-              <span className="kpi-subtext">Not the direction of the stock price</span>
-            </div>
-          </div>
+      <div className="ledger-content-wrap">
+        <p className="method-note">
+          This history evaluates past volatility estimates against realised market movements. It is strictly separate from the price model evaluation.
+        </p>
 
-          <div className="ledger-table-wrap">
-            {filteredEntries.length === 0 ? (
-              <div className="ledger-empty-container">
-                <div className="ledger-empty-icon-box">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    width="20"
-                    height="20"
-                    aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"
-                    />
-                  </svg>
-                </div>
-                <strong className="ledger-empty-heading">No results to show yet</strong>
-                <p className="empty-state">No forecasts recorded in this view yet.</p>
-                <span className="ledger-empty-detail">
-                  Saved forecasts are checked once enough market days have passed. Historical tests are kept separate from forecasts made before the outcome was known.
+        {loading ? (
+          <div className="ledger-loading-state" role="status">Loading past forecasts…</div>
+        ) : error ? (
+          <div className="ledger-error-state" role="alert">Past forecasts are unavailable right now.</div>
+        ) : allEntries.length === 0 ? (
+          <p className="ledger-empty-sentence">No past recorded forecasts for this ticker yet.</p>
+        ) : (
+          <>
+            <div className="ledger-tab-group">
+              <button
+                className={`ledger-tab-btn ${activeTab === 'all' ? 'active' : ''}`}
+                onClick={() => setActiveTab('all')}
+                type="button"
+              >
+                All ({allEntries.length})
+              </button>
+              <button
+                className={`ledger-tab-btn ${activeTab === 'live' ? 'active' : ''}`}
+                onClick={() => setActiveTab('live')}
+                type="button"
+              >
+                Live ({liveTrack.total_forecasts ?? 0})
+              </button>
+              <button
+                className={`ledger-tab-btn ${activeTab === 'historical_replay' ? 'active' : ''}`}
+                onClick={() => setActiveTab('historical_replay')}
+                type="button"
+              >
+                Historical tests ({replayTrack.total_forecasts ?? 0})
+              </button>
+            </div>
+
+            <div className="ledger-kpi-grid">
+              <div className="ledger-kpi-box">
+                <span className="kpi-label">
+                  {activeTab === 'historical_replay' ? 'Historical tests checked' : 'Live forecasts checked'}
+                </span>
+                <span className="kpi-value">{displayTrack.scored_forecasts ?? 0}</span>
+                <span className="kpi-subtext">
+                  {activeTab === 'historical_replay'
+                    ? 'Tests using past data'
+                    : 'Recorded before the results were known'}
                 </span>
               </div>
-            ) : (
+              <div className="ledger-kpi-box">
+                <span className="kpi-label">Average error</span>
+                <span className="kpi-value mono">
+                  {displayTrack.mean_mae != null ? `${(displayTrack.mean_mae * 100).toFixed(2)}%` : '—'}
+                </span>
+                <span className="kpi-subtext">Mistakes in estimated price swings</span>
+              </div>
+              <div className="ledger-kpi-box">
+                <span className="kpi-label">Error score</span>
+                <span className="kpi-value mono text-teal">
+                  {displayTrack.mean_qlike != null ? displayTrack.mean_qlike.toFixed(4) : '—'}
+                </span>
+                <span className="kpi-subtext">Lower is better</span>
+              </div>
+              <div className="ledger-kpi-box">
+                <span className="kpi-label">Bigger or smaller swings correct</span>
+                <span className="kpi-value mono">
+                  {displayTrack.direction_accuracy_pct != null
+                    ? `${displayTrack.direction_accuracy_pct.toFixed(1)}%`
+                    : '—'}
+                </span>
+                <span className="kpi-subtext">Not the direction of the stock price</span>
+              </div>
+            </div>
+
+            <div className="ledger-table-wrap">
               <table className="ledger-table" aria-label="Historical forecast entries">
                 <thead>
                   <tr>
@@ -264,10 +252,10 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon }) {
                   })}
                 </tbody>
               </table>
-            )}
-          </div>
-        </>
-      )}
-    </section>
+            </div>
+          </>
+        )}
+      </div>
+    </details>
   );
 }

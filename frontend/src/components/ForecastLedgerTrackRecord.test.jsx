@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import ForecastLedgerTrackRecord from './ForecastLedgerTrackRecord';
 
@@ -96,7 +96,7 @@ describe('ForecastLedgerTrackRecord', () => {
   });
 
   it('renders track record metrics and forecast entries without verified wording', async () => {
-    render(<ForecastLedgerTrackRecord ticker="AAPL" horizon={5} />);
+    render(<ForecastLedgerTrackRecord ticker="AAPL" horizon={5} defaultOpen={true} />);
 
     expect(screen.getByText(/Loading past forecasts/i)).toBeInTheDocument();
     expect(screen.queryByText(/verified/i)).not.toBeInTheDocument();
@@ -124,6 +124,21 @@ describe('ForecastLedgerTrackRecord', () => {
     expect(screen.getByText('25')).toBeInTheDocument();
     expect(screen.getByText('2.45%')).toBeInTheDocument();
     expect(screen.getByText('0.7206')).toBeInTheDocument();
+  });
+
+  it('shows single sentence when there are no ledger records', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ entries: [], live_track_record: {}, replay_track_record: {} }),
+      })
+    ));
+
+    render(<ForecastLedgerTrackRecord ticker="AAPL" horizon={5} defaultOpen={true} />);
+    await waitFor(() => {
+      expect(screen.getByText('No past recorded forecasts for this ticker yet.')).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 
   it('renders null when ticker is omitted', () => {

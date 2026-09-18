@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePriceHistory } from '../hooks/usePriceHistory';
-import { useVolatilityOutlook } from '../hooks/useVolatilityOutlook';
 import {
   CHART_RANGES,
   availableRanges,
@@ -8,6 +7,7 @@ import {
   periodChange,
   sliceRangePoints,
 } from '../utils/priceRanges';
+import { getSharedEstimatePresentation } from '../utils/estimateAdapter';
 import LazyLineChart from './LazyLineChart';
 
 const MIN_ZOOM_POINTS = 12;
@@ -41,12 +41,17 @@ function formatMoneyLocal(value, currencySymbol) {
   if (isPence) {
     return `${numeric < 0 ? '-' : ''}${magnitude}p`;
   }
-  // Sign belongs outside the currency symbol: "-$5.17", not "$-5.17".
   return `${numeric < 0 ? '-' : ''}${symbol}${magnitude}`;
 }
 
 function formatAxisLabel(label, isIntraday) {
-  if (!isIntraday) return String(label).slice(2);
+  if (!isIntraday) {
+    // If it's a date string like '2026-09-09', show '09-09' or full label
+    if (typeof label === 'string' && label.length >= 10 && label.includes('-')) {
+      return label.slice(5);
+    }
+    return String(label);
+  }
   const parsed = Date.parse(label);
   if (!Number.isFinite(parsed)) return String(label);
   const date = new Date(parsed);
@@ -54,13 +59,10 @@ function formatAxisLabel(label, isIntraday) {
 }
 
 function padForecast(values, leadNulls) {
-  // Deliberately no anchor point: the estimate must NOT join the historical
-  // close seamlessly. The visible break plus the dashed style and shaded
-  // future region mark this as a model estimate, not a future price.
   return [...Array(Math.max(0, leadNulls)).fill(null), ...(values || [])];
 }
 
-// Vertical crosshair through the hovered point, Trading212 style.
+// Vertical crosshair through the hovered point
 const crosshairPlugin = {
   id: 't212Crosshair',
   afterDraw: (chart) => {
@@ -81,7 +83,7 @@ const crosshairPlugin = {
   },
 };
 
-// Dashed last-price line with a value tag on the right edge.
+// Dashed last-price line with a value tag on the right edge
 const lastPricePlugin = {
   id: 't212LastPrice',
   afterDraw: (chart) => {
@@ -116,60 +118,7 @@ const lastPricePlugin = {
   },
 };
 
-function forecastDatasets(forecast, historyLength, colors) {
-  const sets = [];
-  if (!forecast || !Array.isArray(forecast.future_dates) || forecast.future_dates.length === 0) {
-    return { sets, futureLabels: [] };
-  }
-  const futureLabels = forecast.future_dates;
-  // Estimates align to future labels only: index historyLength..end. The
-  // last history index stays null in these datasets, leaving a visible
-  // break between actuals and estimates.
-  const lead = Math.max(0, historyLength);
-  if (Array.isArray(forecast.predicted_prices) && forecast.predicted_prices.length > 0) {
-    sets.push({
-      label: 'Average 7-day estimate',
-      data: padForecast(forecast.predicted_prices, lead),
-      borderColor: colors.estimate,
-      backgroundColor: 'transparent',
-      borderWidth: 2.5,
-      borderDash: [6, 4],
-      pointRadius: 3,
-      pointBackgroundColor: colors.estimate,
-      pointBorderWidth: 0,
-      pointHoverRadius: 6,
-      tension: 0.3,
-      spanGaps: false,
-    });
-  }
-  const band = forecast.historical_error_band;
-  if (band && Array.isArray(band.upper_prices) && Array.isArray(band.lower_prices)) {
-    sets.push({
-      label: 'Estimate range (upper)',
-      data: padForecast(band.upper_prices, lead),
-      borderColor: 'transparent',
-      backgroundColor: colors.bandFill,
-      pointRadius: 0,
-      fill: '+1',
-      tension: 0.3,
-      spanGaps: false,
-    });
-    sets.push({
-      label: 'Estimate range (lower)',
-      data: padForecast(band.lower_prices, lead),
-      borderColor: 'transparent',
-      backgroundColor: 'transparent',
-      pointRadius: 0,
-      fill: false,
-      tension: 0.3,
-      spanGaps: false,
-    });
-  }
-  return { sets, futureLabels };
-}
-
-// Shaded estimate region past the last actual: the future is a scenario,
-// not a continuation of the price line.
+// Shaded estimate region past the last actual
 const forecastRegionPlugin = {
   id: 't212ForecastRegion',
   beforeDraw: (chart) => {
@@ -179,11 +128,11 @@ const forecastRegionPlugin = {
     const xPos = scales.x.getPixelForValue(splitIdx);
     if (xPos == null || xPos < chartArea.left || xPos > chartArea.right) return;
     ctx.save();
-    ctx.fillStyle = chart.config.options?.isDark ? 'rgba(56,189,248,0.05)' : 'rgba(2,132,199,0.05)';
+    ctx.fillStyle = chart.config.options?.isDark ? 'rgba(56,189,248,0.06)' : 'rgba(2,132,199,0.06)';
     ctx.fillRect(xPos, chartArea.top, chartArea.right - xPos, chartArea.bottom - chartArea.top);
     ctx.beginPath();
     ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = chart.config.options?.isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
+    ctx.strokeStyle = chart.config.options?.isDark ? 'rgba(56,189,248,0.35)' : 'rgba(2,132,199,0.35)';
     ctx.lineWidth = 1.5;
     ctx.moveTo(xPos, chartArea.top);
     ctx.lineTo(xPos, chartArea.bottom);
@@ -197,25 +146,31 @@ const forecastRegionPlugin = {
   },
 };
 
-export default function PriceChart({ ticker, currencySymbol = '$', forecast = null, onHistorySettled = null }) {
+export default function PriceChart({
+  ticker,
+  currencySymbol = '$',
+  forecast = null,
+  companyName = null,
+  onHistorySettled = null,
+  onRetryForecast = null,
+}) {
   const isDark = useAppTheme();
   const { history, loading, error, meta, retry } = usePriceHistory(ticker);
-  // G3 expected-range band shares the outlook module cache with the
-  // VolatilityOutlook card, so no second network fetch happens.
-  const { outlook: g3outlook } = useVolatilityOutlook(ticker);
   const [rangeId, setRangeId] = useState(null);
   const [view, setView] = useState(null);
+  const [showForecast, setShowForecast] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [showEstimateInfo, setShowEstimateInfo] = useState(false);
+
   const chartRef = useRef(null);
   const wrapRef = useRef(null);
   const dragRef = useRef(null);
   const reportedRef = useRef(null);
+  const expandBtnRef = useRef(null);
 
   const forecastForTicker = forecast && forecast.ticker === String(ticker || '').toUpperCase() ? forecast : null;
 
-  // Degraded mode: when the history endpoint is unreachable, fall back to
-  // the short history embedded in the forecast payload (exactly what the
-  // previous chart rendered). Synthetic placeholders are refused: a chart
-  // must never draw manufactured prices. No intraday legs, so 24H hides.
+  // Degraded mode: fallback history embedded in forecast payload if primary endpoint fails
   const fallbackHistory = useMemo(() => {
     if (forecastForTicker?.historical_provenance === 'synthetic') return null;
     const dates = forecastForTicker?.historical_dates;
@@ -230,6 +185,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
     if (daily.length < 2) return null;
     return {
       ticker: forecastForTicker.ticker,
+      asOf: forecastForTicker.data_as_of,
       daily,
       intraday: null,
       degraded: true,
@@ -240,8 +196,16 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
   const showLoading = loading && !fallbackHistory;
   const showError = !loading && error && !fallbackHistory;
 
-  // One settlement report per ticker: chart paint (endpoint or degraded) or
-  // terminal failure. Powers the user-visible timing footnote in App.
+  // Single presentation adapter verification
+  const estimate = useMemo(() => {
+    if (!forecastForTicker) return null;
+    return getSharedEstimatePresentation({
+      forecast: forecastForTicker,
+      history: effectiveHistory,
+      currencySymbol,
+    });
+  }, [forecastForTicker, effectiveHistory, currencySymbol]);
+
   useEffect(() => {
     if (!onHistorySettled) return;
     const key = String(ticker || '').toUpperCase();
@@ -284,8 +248,12 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
   );
 
   const activeRange = rangeId || defaultRangeId(available);
+  const isIntradayRange = activeRange === '24H' || points.isIntraday;
 
-  const totalLabels = points.labels.length + (forecastForTicker?.future_dates?.length || 0);
+  // Overlay forecast only when enabled, not intraday, and estimate is available without mismatch
+  const canShowForecastOverlay = showForecast && !isIntradayRange && estimate?.isAvailable;
+
+  const totalLabels = points.labels.length + (canShowForecastOverlay ? estimate.futureDates.length : 0);
   const fullView = totalLabels > 0 ? { start: 0, end: totalLabels - 1 } : null;
   const effectiveView = view || fullView;
   const isZoomed = Boolean(view && fullView && (view.start > 0 || view.end < fullView.end));
@@ -295,8 +263,6 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
     return { ...change, last: points.prices.filter(Number.isFinite).at(-1) };
   }, [points]);
 
-  // True only when there is a real last price to show. Guards the header
-  // against rendering "$0.00 (+0.00%)" before history arrives.
   const hasData = points.labels.length > 0 && Number.isFinite(stats.last);
 
   const colors = useMemo(() => {
@@ -304,7 +270,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
     if (isDark) {
       return {
         line: up ? '#00f5a0' : '#ff5c5c',
-        areaTop: up ? 'rgba(0,245,160,0.22)' : 'rgba(255,92,92,0.22)',
+        areaTop: up ? 'rgba(0,245,160,0.18)' : 'rgba(255,92,92,0.18)',
         grid: 'rgba(255,255,255,0.05)',
         tick: '#8b93a7',
         tooltipBg: '#0d0d1a',
@@ -312,12 +278,11 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
         tooltipBody: '#a0a0c0',
         tooltipBorder: 'rgba(255,255,255,0.08)',
         estimate: '#38bdf8',
-        bandFill: 'rgba(56,189,248,0.10)',
       };
     }
     return {
       line: up ? '#10b981' : '#ef4444',
-      areaTop: up ? 'rgba(16,185,129,0.18)' : 'rgba(239,68,68,0.18)',
+      areaTop: up ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
       grid: 'rgba(0,0,0,0.06)',
       tick: '#64748b',
       tooltipBg: '#ffffff',
@@ -325,89 +290,67 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
       tooltipBody: '#475569',
       tooltipBorder: 'rgba(0,0,0,0.08)',
       estimate: '#0284c7',
-      bandFill: 'rgba(2,132,199,0.10)',
     };
   }, [isDark, stats.up]);
 
   const chartData = useMemo(() => {
     const labels = [...points.labels.map((label) => formatAxisLabel(label, points.isIntraday))];
     const historyPadded = [...points.prices];
-    const { sets: forecastSets, futureLabels } = forecastForTicker
-      ? forecastDatasets(forecastForTicker, points.prices.length, colors)
-      : { sets: [], futureLabels: [] };
-    futureLabels.forEach((_, index) => {
-      historyPadded.push(null);
-      labels.push(`+${index + 1}d`);
+    const datasets = [];
+
+    // Main historical price dataset
+    datasets.push({
+      label: 'Price',
+      data: historyPadded,
+      borderColor: colors.line,
+      backgroundColor: (context) => {
+        const { ctx, chartArea } = context.chart;
+        if (!chartArea) return colors.areaTop;
+        const grad = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+        grad.addColorStop(0, colors.areaTop);
+        grad.addColorStop(1, 'transparent');
+        return grad;
+      },
+      borderWidth: 2,
+      pointRadius: 0,
+      pointHoverRadius: 5,
+      pointHoverBackgroundColor: colors.line,
+      tension: 0.25,
+      fill: true,
+      spanGaps: false,
     });
-    // Certified-volatility expected range (G3, 5-session): aligned strictly
-    // by date against the estimate path; skipped silently on any mismatch.
-    const bandSets = [];
-    const five = g3outlook?.byHorizon?.[5];
-    const bandUpper = five?.volatility_cone?.p95;
-    const bandLower = five?.volatility_cone?.p05;
-    const bandDates = five?.future_dates;
-    const estimateDates = forecastForTicker?.future_dates;
-    if (
-      Array.isArray(bandDates) && Array.isArray(bandUpper) && Array.isArray(bandLower)
-      && Array.isArray(estimateDates) && bandDates.length > 0
-      && bandUpper.length === bandDates.length && bandLower.length === bandDates.length
-      && estimateDates.slice(0, bandDates.length).join('|') === bandDates.join('|')
-    ) {
-      const head = Array(points.prices.length).fill(null);
-      const tail = Array(Math.max(0, labels.length - points.prices.length - bandDates.length)).fill(null);
-      bandSets.push(
-        {
-          label: 'Expected volatility range (upper)',
-          data: [...head, ...bandUpper, ...tail],
-          borderColor: 'transparent',
-          backgroundColor: colors.bandFill,
-          pointRadius: 0,
-          fill: '+1',
-          tension: 0.3,
-          spanGaps: false,
-        },
-        {
-          label: 'Expected volatility range (lower)',
-          data: [...head, ...bandLower, ...tail],
-          borderColor: 'transparent',
-          backgroundColor: 'transparent',
-          pointRadius: 0,
-          fill: false,
-          tension: 0.3,
-          spanGaps: false,
-        },
-      );
+
+    let forecastSplitIndex = null;
+
+    if (canShowForecastOverlay && estimate?.series?.length > 0) {
+      estimate.futureDates.forEach((futureDate) => {
+        historyPadded.push(null);
+        labels.push(formatAxisLabel(futureDate, false));
+      });
+
+      forecastSplitIndex = points.prices.length - 1;
+
+      datasets.push({
+        label: '7-day estimate',
+        data: padForecast(estimate.series, points.prices.length),
+        borderColor: colors.estimate,
+        backgroundColor: 'transparent',
+        borderWidth: 2.2,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        pointHoverRadius: 6,
+        pointHoverBackgroundColor: colors.estimate,
+        tension: 0.25,
+        spanGaps: false,
+      });
     }
+
     return {
       labels,
-      // Index of the last actual; everything right of it is estimate.
-      forecastSplitIndex: forecastSets.length > 0 ? points.prices.length - 1 : null,
-      datasets: [
-        {
-          label: 'Price',
-          data: historyPadded,
-          borderColor: colors.line,
-          backgroundColor: (context) => {
-            const { ctx, chartArea } = context.chart;
-            if (!chartArea) return colors.areaTop;
-            const grad = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-            grad.addColorStop(0, colors.areaTop);
-            grad.addColorStop(1, 'transparent');
-            return grad;
-          },
-          borderWidth: 2,
-          pointRadius: 0,
-          pointHoverRadius: 5,
-          pointHoverBackgroundColor: colors.line,
-          tension: 0.25,
-          fill: true,
-          spanGaps: false,
-        },
-        ...forecastSets,
-        ...bandSets,
-      ],
+      forecastSplitIndex,
+      datasets,
     };
-  }, [points, forecastForTicker, colors, g3outlook]);
+  }, [points, canShowForecastOverlay, estimate, colors]);
 
   const yBounds = useMemo(() => {
     if (!effectiveView || chartData.labels.length === 0) return {};
@@ -498,6 +441,28 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
     };
   }, [zoomAt, effectiveView, clampView]);
 
+  // Modal Escape listener & focus restoration
+  useEffect(() => {
+    if (!isExpanded) return undefined;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsExpanded(false);
+        expandBtnRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isExpanded]);
+
+  const toggleExpand = useCallback(() => {
+    setIsExpanded((prev) => {
+      if (prev) {
+        setTimeout(() => expandBtnRef.current?.focus(), 0);
+      }
+      return !prev;
+    });
+  }, []);
+
   const chartOptions = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
@@ -506,7 +471,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { display: false },
-      t212LastPrice: forecastForTicker
+      t212LastPrice: canShowForecastOverlay
         ? undefined
         : {
           value: stats.last,
@@ -554,7 +519,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
         grid: { color: colors.grid },
       },
     },
-  }), [isDark, colors, chartData, effectiveView, yBounds, stats.last, stats.up, currencySymbol, forecastForTicker]);
+  }), [isDark, colors, chartData, effectiveView, yBounds, stats.last, stats.change, currencySymbol, canShowForecastOverlay]);
 
   const selectRange = useCallback((id) => {
     setRangeId(id);
@@ -564,16 +529,24 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
   const changeClass = stats.change > 0 ? 'up' : stats.change < 0 ? 'down' : 'flat';
   const sign = stats.change > 0 ? '+' : '';
   const dataDate = effectiveHistory?.asOf || (Array.isArray(effectiveHistory?.daily) ? effectiveHistory.daily.at(-1)?.d : null);
+  const resolvedCompanyName = companyName || forecastForTicker?.ticker_name || null;
 
   return (
-    <section id="chartContainer" className="t212-chart-section" aria-label={`${ticker} price chart`}>
+    <section
+      id="chartContainer"
+      className={`t212-chart-section ${isExpanded ? 'expanded-modal-open' : ''}`}
+      aria-label={`${ticker} price chart`}
+    >
+      {/* Chart Header */}
       <div className="t212-chart-head">
         <div className="t212-price-block">
-          <span className="t212-ticker">{ticker}</span>
-          {/* Never render placeholder zeros: an unknown price must read as
-              unknown, not as "$0.00 (+0.00%)". */}
+          <div className="t212-title-row">
+            {resolvedCompanyName && <span className="t212-company-name">{resolvedCompanyName}</span>}
+            <span className="t212-ticker">{ticker}</span>
+          </div>
+
           {hasData ? (
-            <>
+            <div className="t212-metrics-row">
               <strong className="t212-price mono">
                 {formatMoneyLocal(stats.last, currencySymbol)}
               </strong>
@@ -590,36 +563,97 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
                   Data through {dataDate}
                 </span>
               )}
-            </>
+            </div>
           ) : (
             <span className="t212-price-skeleton" aria-hidden="true" />
           )}
         </div>
-        <div className="t212-range-tabs" role="tablist" aria-label="Chart time range">
-          {CHART_RANGES.filter((range) => available.includes(range.id)).map((range) => (
+
+        {/* Restrained Toolbar */}
+        <div className="t212-restrained-toolbar">
+          <div className="t212-range-tabs" role="tablist" aria-label="Chart time range">
+            {CHART_RANGES.filter((range) => available.includes(range.id)).map((range) => (
+              <button
+                key={range.id}
+                type="button"
+                role="tab"
+                aria-selected={activeRange === range.id}
+                className={`range-pill ${activeRange === range.id ? 'active' : ''}`}
+                onClick={() => selectRange(range.id)}
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="t212-toolbar-actions">
+            {/* 7-day estimate toggle */}
+            <div className="estimate-toggle-wrapper">
+              <button
+                type="button"
+                className={`toolbar-btn estimate-toggle-btn ${showForecast && !isIntradayRange ? 'active' : ''}`}
+                disabled={isIntradayRange}
+                onClick={() => setShowForecast((prev) => !prev)}
+                title={isIntradayRange ? '7-day estimate is hidden on 24H intraday range' : 'Toggle 7-day estimate line'}
+                aria-pressed={showForecast && !isIntradayRange}
+              >
+                <span className="estimate-indicator-dash" aria-hidden="true" />
+                7-day estimate
+              </button>
+              {isIntradayRange && (
+                <span className="intraday-estimate-note">Hidden for 24H</span>
+              )}
+            </div>
+
+            {/* Reset control */}
+            {isZoomed && (
+              <button
+                type="button"
+                className="toolbar-btn reset-btn"
+                onClick={() => setView(null)}
+                aria-label="Reset"
+              >
+                Reset
+              </button>
+            )}
+
+            {/* Expand chart control */}
             <button
-              key={range.id}
+              ref={expandBtnRef}
               type="button"
-              role="tab"
-              aria-selected={activeRange === range.id}
-              className={`range-pill ${activeRange === range.id ? 'active' : ''}`}
-              onClick={() => selectRange(range.id)}
+              className="toolbar-btn expand-btn"
+              onClick={toggleExpand}
+              aria-label={isExpanded ? 'Close expanded chart' : 'Expand chart'}
+              title={isExpanded ? 'Close (Esc)' : 'Expand chart'}
             >
-              {range.label}
+              {isExpanded ? 'Close' : 'Expand'}
             </button>
-          ))}
-          {isZoomed && (
-            <button type="button" className="range-pill reset-pill" onClick={() => setView(null)}>
-              Reset
-            </button>
-          )}
+          </div>
         </div>
       </div>
+
+      {/* Chart Canvas Wrap */}
       <div
-        className="t212-chart-wrap"
+        className={`t212-chart-wrap ${isExpanded ? 'expanded' : ''}`}
         ref={wrapRef}
-        style={{ height: 'clamp(340px, 48vh, 520px)', position: 'relative', cursor: 'crosshair', touchAction: 'none' }}
+        role={isExpanded ? 'dialog' : undefined}
+        aria-modal={isExpanded ? 'true' : undefined}
+        aria-label={isExpanded ? 'Expanded price chart' : undefined}
       >
+        {isExpanded && (
+          <div className="expanded-modal-bar">
+            <span className="expanded-title">{ticker} · Interactive chart</span>
+            <button
+              type="button"
+              className="expanded-close-btn"
+              onClick={toggleExpand}
+              aria-label="Close expanded chart"
+            >
+              ✕ Close (Esc)
+            </button>
+          </div>
+        )}
+
         {showLoading && (
           <div className="t212-chart-skeleton" role="status" aria-live="polite">
             <span className="t212-skeleton-bars" aria-hidden="true">
@@ -630,12 +664,14 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
             <span className="t212-skeleton-label">Loading price history…</span>
           </div>
         )}
+
         {showError && (
           <div className="t212-chart-error" role="alert">
             <p>{error}</p>
             <button type="button" className="retry-button" onClick={retry}>Retry chart</button>
           </div>
         )}
+
         {!showLoading && !showError && effectiveHistory && points.labels.length > 0 && (
           <React.Suspense fallback={<div className="loading-text">Loading Chart…</div>}>
             <LazyLineChart
@@ -646,12 +682,58 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
             />
           </React.Suspense>
         )}
+
         {!showLoading && !showError && effectiveHistory && points.labels.length === 0 && (
           <div className="empty-copy">Not enough price history for this view.</div>
         )}
       </div>
-      <p className="t212-chart-hint">Scroll to zoom · drag to pan · double-click to reset. Intraday 24H appears when intraday session bars load.</p>
+
+      {/* In-Chart Forecast Summary Line or Mismatch Alert */}
+      {estimate?.isAvailable && (
+        <div className="chart-estimate-bar">
+          <div className="estimate-summary-text">
+            <span className="estimate-dot" aria-hidden="true" />
+            <span>
+              <strong>Day 7 estimate:</strong> {formatMoneyLocal(estimate.finalPrice, currencySymbol)} ·{' '}
+              <span className={`estimate-delta ${estimate.direction}`}>
+                {estimate.changePct != null && Number.isFinite(estimate.changePct)
+                  ? `${estimate.changePct > 0 ? '+' : ''}${estimate.changePct.toFixed(1)}%`
+                  : '—'}
+              </span>{' '}
+              from the latest close.
+            </span>
+            <button
+              type="button"
+              className="info-icon-btn"
+              onClick={() => setShowEstimateInfo((prev) => !prev)}
+              aria-label="How this estimate works"
+              title="How this estimate works"
+            >
+              ℹ
+            </button>
+          </div>
+
+          {showEstimateInfo && (
+            <p className="estimate-inline-explanation">
+              Model estimate re-fitted on daily closing prices. Past performance does not guarantee future results.
+            </p>
+          )}
+        </div>
+      )}
+
+      {estimate?.isMismatch && (
+        <div className="chart-mismatch-alert" role="alert">
+          <span className="mismatch-icon" aria-hidden="true">⚠️</span>
+          <span className="mismatch-msg">
+            Forecast data does not match the latest market history ({estimate.mismatchReason}).
+          </span>
+          {onRetryForecast && (
+            <button type="button" className="retry-action-btn" onClick={onRetryForecast}>
+              Retry forecast
+            </button>
+          )}
+        </div>
+      )}
     </section>
   );
 }
-

@@ -3,7 +3,6 @@ import { fetchSimpleForecast, fetchTickerNews, wakeForecastService } from './api
 import { fetchPriceHistory } from './api/priceHistoryClient';
 import PriceChart from './components/PriceChart';
 import VolatilityOutlook from './components/VolatilityOutlook';
-import SimpleForecastChart, { midpointPrices } from './components/SimpleForecastChart';
 import ForecastLedgerTrackRecord from './components/ForecastLedgerTrackRecord';
 import { ALL_VALID_TICKERS, ALL_TICKERS_SET } from './universe';
 
@@ -46,7 +45,7 @@ function BacktestPanel({ backtest }) {
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Past performance</p>
-          <h2>How close were past estimates?</h2>
+          <h2>Price Model Historical Performance</h2>
         </div>
         {hasRatio && (
           <span className={`verdict ${beatBaseline ? 'positive' : 'caution'}`}>
@@ -141,8 +140,10 @@ function formatProviderLabel(provider) {
 }
 
 function NewsPanel({ news, ticker, loading }) {
+  const [showAll, setShowAll] = useState(false);
   const items = news?.items || [];
   const providerLabel = formatProviderLabel(news?.provider);
+  const displayedItems = showAll ? items : items.slice(0, 5);
 
   return (
     <section className="panel news-panel" aria-label="Live Market Headlines">
@@ -164,75 +165,59 @@ function NewsPanel({ news, ticker, loading }) {
           </span>
         </div>
       </div>
+
+      <p className="method-note news-top-disclosure">
+        These headlines are provided for market context only and do not affect the displayed price forecast.
+      </p>
+
       {loading && !items.length ? (
         <div className="news-loading-state" role="status" aria-label="Loading headlines">
           <div className="news-skeleton-pulse" />
           <span>Loading recent stories…</span>
         </div>
       ) : items.length ? (
-        <div className="news-cards-grid">
-          {items.slice(0, 6).map((item, index) => {
-            const sentiment = resolveSentimentBadge(item);
-            const title = item.title || item.headline || 'Market Update';
-            const timestamp = formatNewsTimestamp(item.published_at);
-            return (
-              <article key={`${item.published_at || ''}-${item.id || index}`} className="news-card">
-                <div className="news-card-header">
-                  <span className="news-source-tag">{item.source || 'Market Wire'}</span>
-                  <div className="news-card-meta">
+        <>
+          <ul className="news-simple-list">
+            {displayedItems.map((item, index) => {
+              const sentiment = resolveSentimentBadge(item);
+              const title = item.title || item.headline || 'Market Update';
+              const timestamp = formatNewsTimestamp(item.published_at);
+              return (
+                <li key={`${item.published_at || ''}-${item.id || index}`} className="news-list-item">
+                  <div className="news-item-meta">
+                    <span className="news-source">{item.source || 'Market Wire'}</span>
+                    {timestamp && <time className="news-time" dateTime={item.published_at}>{timestamp}</time>}
                     <span className={`sentiment-badge ${sentiment.type}`}>
-                      <span className="sentiment-indicator-dot" />
                       {sentiment.label}
                     </span>
-                    {item.after_market_close && (
-                      <span className="after-hours-tag" title="Published after regular market close">
-                        After market close
-                      </span>
-                    )}
-                    {timestamp && (
-                      <time className="news-timestamp" dateTime={item.published_at}>
-                        {timestamp}
-                      </time>
-                    )}
                   </div>
-                </div>
-                <h3 className="news-card-title">
-                  {item.url ? (
-                    <a href={item.url} target="_blank" rel="noreferrer noopener">
-                      {title}
-                    </a>
-                  ) : (
-                    title
-                  )}
-                </h3>
-                {item.summary && item.summary !== title && (
-                  <p className="news-card-summary">{item.summary}</p>
-                )}
-                <div className="news-card-footer">
-                  {item.url ? (
-                    <a
-                      className="news-external-link"
-                      href={item.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                    >
-                      Read full story <span aria-hidden="true">↗</span>
-                    </a>
-                  ) : (
-                    <span className="news-wire-note">News update</span>
-                  )}
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                  <h3 className="news-item-headline">
+                    {item.url ? (
+                      <a href={item.url} target="_blank" rel="noreferrer noopener">
+                        {title} <span className="external-arrow" aria-hidden="true">↗</span>
+                      </a>
+                    ) : (
+                      title
+                    )}
+                  </h3>
+                </li>
+              );
+            })}
+          </ul>
+
+          {items.length > 5 && (
+            <button
+              type="button"
+              className="show-more-news-btn"
+              onClick={() => setShowAll((prev) => !prev)}
+            >
+              {showAll ? 'Show fewer stories' : `Show more stories (${items.length - 5} more)`}
+            </button>
+          )}
+        </>
       ) : (
         <p className="empty-copy">No recent stories are available right now.</p>
       )}
-      <p className="method-note">
-        These stories help you follow the company, but do not affect this forecast.
-        Tone labels describe the wording of a story, not whether you should buy or sell.
-      </p>
     </section>
   );
 }
@@ -241,6 +226,7 @@ export default function App() {
   const [inputTicker, setInputTicker] = useState('');
   const [submittedTicker, setSubmittedTicker] = useState('');
   const [chartTicker, setChartTicker] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'news' | 'performance'
   const [serviceStatus, setServiceStatus] = useState('checking');
   const [wakeAttempt, setWakeAttempt] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -251,6 +237,7 @@ export default function App() {
   const [historyError, setHistoryError] = useState('');
   const [forecastError, setForecastError] = useState('');
   const [perf, setPerf] = useState(null);
+
   const wakeController = useRef(null);
   const requestController = useRef(null);
   const requestSeq = useRef(0);
@@ -279,9 +266,6 @@ export default function App() {
   const nowMs = useCallback(() => (typeof performance !== 'undefined' ? performance.now() : Date.now()), []);
 
   const handleHistorySettled = useCallback((report) => {
-    // Prefer the history request's own duration. Measuring from the click
-    // would also fold in the forecast request, which runs in parallel, and
-    // would report a chart time several times larger than reality.
     const chartMs = Number.isFinite(report?.fetchMs)
       ? Math.round(report.fetchMs)
       : Math.round(nowMs() - (perfT0.current || nowMs()));
@@ -371,7 +355,7 @@ export default function App() {
       setForecast(forecastValue);
       setPerf((prev) => ({ ...(prev || {}), forecastMs: Math.round(nowMs() - forecastT0) }));
 
-      // Check if forecast payload provides usable fallback history if main history endpoint fails
+      // Fallback check if primary history failed
       const dates = forecastValue?.historical_dates;
       const prices = forecastValue?.historical_prices;
       if (
@@ -418,18 +402,7 @@ export default function App() {
       const histErr = histSettled?.value?.error?.message;
       setHistoryError(histErr || 'Price history is unavailable for this stock right now.');
     }
-  }, [inputTicker, nowMs, serviceStatus]);
-
-  const summary = useMemo(() => {
-    if (!forecast?.lower_prices?.length || !forecast?.upper_prices?.length) return null;
-    const averagePrices = midpointPrices(forecast.lower_prices, forecast.upper_prices);
-    const finalPrice = Number(averagePrices.at(-1));
-    if (!Number.isFinite(finalPrice)) return null;
-    const hasCurrent = forecast.current_price != null && forecast.current_price !== '' && Number.isFinite(Number(forecast.current_price)) && Number(forecast.current_price) !== 0;
-    const currentPrice = hasCurrent ? Number(forecast.current_price) : null;
-    const change = currentPrice ? ((finalPrice / currentPrice) - 1) * 100 : null;
-    return { finalPrice, change };
-  }, [forecast]);
+  }, [inputTicker, nowMs, serviceStatus, chartTicker]);
 
   return (
     <div className="app-shell">
@@ -453,8 +426,11 @@ export default function App() {
       </header>
 
       <main id="top">
-        <section className="search-section">
-          <h1 className="explore-heading">Which stock would you like to explore?</h1>
+        {/* Search Header: Large heading on empty first visit; compact row beneath brand after submission */}
+        <section className={`search-section ${submittedTicker ? 'compact-search-section' : 'opening-search-section'}`}>
+          {!submittedTicker && (
+            <h1 className="explore-heading">Which stock would you like to explore?</h1>
+          )}
 
           <form className="stock-search-form" onSubmit={runForecast} noValidate>
             <div className="search-input-row">
@@ -517,8 +493,10 @@ export default function App() {
           )}
         </section>
 
+        {/* Results Workspace */}
         {chartTicker && (
           <div className="results">
+            {/* Centerpiece Interactive Price Chart */}
             <PriceChart
               ticker={chartTicker}
               currencySymbol={
@@ -527,8 +505,11 @@ export default function App() {
                   : (chartTicker.endsWith('.L') ? 'p' : '$')
               }
               forecast={forecast?.ticker === chartTicker ? forecast : null}
+              companyName={forecast?.ticker === chartTicker ? forecast.ticker_name : null}
               onHistorySettled={handleHistorySettled}
+              onRetryForecast={() => runForecast(submittedTicker)}
             />
+
             {forecastError && !loading && (
               <div className="actionable-forecast-error" role="alert">
                 <span>{forecastError}</span>
@@ -541,97 +522,103 @@ export default function App() {
                 </button>
               </div>
             )}
-            {perf?.chartMs != null && (
-              <p className="timing-note" role="status">
-                Chart {(perf.chartMs / 1000).toFixed(1)}s
-                {perf.forecastMs != null ? ` · Forecast ${(perf.forecastMs / 1000).toFixed(1)}s` : ' · Forecast…'}
-                {perf.cacheLabel ? ` · market data: ${perf.cacheLabel}` : ''}
-              </p>
-            )}
-            {forecast?.ticker === chartTicker && (
-              <>
-                <div className="chart-legend-strip">
-                  <div className="legend-pill">
-                    <span className="legend-color-dot historical-dot" aria-hidden="true" />
-                    <span>Past prices</span>
-                  </div>
-                  <div className="legend-pill">
-                    <span className="legend-color-dot forecast-dot" aria-hidden="true" />
-                    <span>Average 7-Day Estimate</span>
-                  </div>
-                </div>
-                <p className="chart-caption">
-                  The blue line shows the middle of each day's estimated price range.
-                  Actual prices can be higher or lower. This is not a guaranteed return.
-                </p>
-              </>
-            )}
-          </div>
-        )}
 
-        {forecast && summary && (
-          <div className="results">
-            <section className="panel forecast-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">
-                    {forecast.ticker_name ? `${forecast.ticker_name} (${forecast.ticker})` : forecast.ticker} · {forecast.exchange_name || 'Market'} · data through {forecast.data_as_of}
-                  </p>
-                  <h2>Average seven-day price estimate</h2>
-                </div>
-                <div className="heading-badges">
-                  <span className="model-pill">Estimate, not a guarantee</span>
-                </div>
+            {/* Supporting Information Behind Overview / News / Performance Tabs */}
+            <div className="supporting-tabs-container">
+              <div className="tab-navigation-bar" role="tablist" aria-label="Supporting information tabs">
+                <button
+                  type="button"
+                  role="tab"
+                  id="tab-overview"
+                  aria-selected={activeTab === 'overview'}
+                  aria-controls="panel-overview"
+                  className={`sub-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('overview')}
+                >
+                  Overview
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  id="tab-news"
+                  aria-selected={activeTab === 'news'}
+                  aria-controls="panel-news"
+                  className={`sub-tab-btn ${activeTab === 'news' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('news')}
+                >
+                  News{news?.items?.length ? ` (${news.items.length})` : ''}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  id="tab-performance"
+                  aria-selected={activeTab === 'performance'}
+                  aria-controls="panel-performance"
+                  className={`sub-tab-btn ${activeTab === 'performance' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('performance')}
+                >
+                  Performance
+                </button>
               </div>
-              <div className="summary-grid">
-                <article>
-                  <span>Latest price</span>
-                  <strong className="mono">{formatMoney(forecast.current_price, forecast.currency_symbol)}</strong>
-                  <small className="kpi-subtext">At the last market close</small>
-                </article>
-                <article>
-                  <span>Estimated price on day 7</span>
-                  <strong className="mono">{formatMoney(summary.finalPrice, forecast.currency_symbol)}</strong>
-                  <small className="kpi-subtext">Middle of the estimated price range</small>
-                </article>
-                <article>
-                  <span>Estimated change</span>
-                  <strong className={`mono ${summary.change != null && summary.change > 0 ? 'up' : summary.change != null && summary.change < 0 ? 'down' : 'flat'}`}>
-                    {summary.change != null && summary.change > 0 ? '+' : ''}{formatPercent(summary.change, 2)}
-                  </strong>
-                  <small className="kpi-subtext">Compared with the latest price</small>
-                </article>
-                <article>
-                  <span>Time ahead</span>
-                  <strong className="mono horizon-kpi">
-                    7 Trading Days
-                  </strong>
-                  <small className="kpi-subtext">Excludes weekends and market holidays</small>
-                </article>
-              </div>
-              <p className="method-note">
-                Model: {forecast.model?.name?.replaceAll('_', ' ') || 'Not provided'}. The model is re-fitted on completed daily bars each time this page runs; past performance never proves future results.
-              </p>
-            </section>
-            {chartTicker && (
-              <VolatilityOutlook
-                ticker={chartTicker}
-                currencySymbol={
-                  forecast?.ticker === chartTicker && forecast?.currency_symbol
-                    ? forecast.currency_symbol
-                    : (chartTicker.endsWith('.L') ? 'p' : '$')
-                }
-                currentPrice={forecast?.ticker === chartTicker ? forecast?.current_price : null}
-                priceEstimate={
-                  forecast?.ticker === chartTicker && summary
-                    ? { price: summary.finalPrice, changePct: summary.change }
-                    : null
-                }
-              />
-            )}
-            <BacktestPanel backtest={forecast.backtest} />
-            <NewsPanel news={news} ticker={forecast.ticker} loading={newsLoading} />
-            <ForecastLedgerTrackRecord ticker={forecast.ticker} />
+
+              {activeTab === 'overview' && (
+                <div id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+                  <VolatilityOutlook
+                    ticker={chartTicker}
+                    currencySymbol={
+                      forecast?.ticker === chartTicker && forecast?.currency_symbol
+                        ? forecast.currency_symbol
+                        : (chartTicker.endsWith('.L') ? 'p' : '$')
+                    }
+                    currentPrice={forecast?.ticker === chartTicker ? forecast?.current_price : null}
+                  />
+                </div>
+              )}
+
+              {activeTab === 'news' && (
+                <div id="panel-news" role="tabpanel" aria-labelledby="tab-news">
+                  <NewsPanel
+                    news={news}
+                    ticker={chartTicker}
+                    loading={newsLoading}
+                  />
+                </div>
+              )}
+
+              {activeTab === 'performance' && (
+                <div id="panel-performance" role="tabpanel" aria-labelledby="tab-performance">
+                  {forecast?.backtest ? (
+                    <BacktestPanel backtest={forecast.backtest} />
+                  ) : (
+                    <div className="panel empty-performance-panel">
+                      <p className="empty-copy">Historical evaluation metrics for the price model will appear when the forecast finishes loading.</p>
+                    </div>
+                  )}
+
+                  <ForecastLedgerTrackRecord ticker={chartTicker} />
+
+                  {perf && (
+                    <details className="perf-technical-details">
+                      <summary>Technical & operational diagnostics</summary>
+                      <dl className="technical-dl">
+                        <div>
+                          <dt>Price history load:</dt>
+                          <dd className="mono">{perf.chartMs != null ? `${perf.chartMs}ms` : '—'}</dd>
+                        </div>
+                        <div>
+                          <dt>Forecast compute:</dt>
+                          <dd className="mono">{perf.forecastMs != null ? `${perf.forecastMs}ms` : '—'}</dd>
+                        </div>
+                        <div>
+                          <dt>Market data cache:</dt>
+                          <dd className="mono">{perf.cacheLabel || '—'}</dd>
+                        </div>
+                      </dl>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>

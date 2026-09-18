@@ -58,10 +58,10 @@ beforeEach(() => {
 });
 
 describe('PriceChart', () => {
-  it('defaults to the previous week and hides 5Y for a 2024 IPO', () => {
+  it('defaults to 1M and hides 5Y for a 2024 IPO', () => {
     usePriceHistory.mockReturnValue({ history: historyFixture(500, true), loading: false, error: '', retry: vi.fn() });
     render(<PriceChart ticker="MSFT" currencySymbol="$" />);
-    expect(screen.getByRole('tab', { name: '5D' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '1M' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByRole('tab', { name: '5Y' })).toBeNull();
     expect(screen.getByRole('tab', { name: '1Y' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'MAX' })).toBeInTheDocument();
@@ -78,7 +78,7 @@ describe('PriceChart', () => {
     usePriceHistory.mockReturnValue({ history: historyFixture(300, true), loading: false, error: '', retry: vi.fn() });
     render(<PriceChart ticker="MSFT" currencySymbol="$" />);
     expect(screen.getByText('MSFT')).toBeInTheDocument();
-    expect(screen.getByText(/\+1\.01%/)).toBeInTheDocument();
+    expect(screen.getByText(/\+5\.56%/)).toBeInTheDocument();
   });
 
   it('switches ranges and overlays the forecast path', () => {
@@ -88,10 +88,10 @@ describe('PriceChart', () => {
     expect(screen.getByRole('tab', { name: '1M' })).toHaveAttribute('aria-selected', 'true');
     const labels = lastChartProps.data.datasets.map((ds) => ds.label);
     expect(labels).toContain('Price');
-    expect(labels).toContain('Average 7-day estimate');
+    expect(labels).toContain('7-day estimate');
     expect(lastChartProps.data.labels.length).toBe(22 + 7);
     // Honesty: estimate is dashed, detached from history, inside a marked region.
-    const estimate = lastChartProps.data.datasets.find((ds) => ds.label === 'Average 7-day estimate');
+    const estimate = lastChartProps.data.datasets.find((ds) => ds.label === '7-day estimate');
     expect(estimate.borderDash).toEqual([6, 4]);
     expect(estimate.data.slice(0, 22).every((v) => v == null)).toBe(true);
     expect(lastChartProps.data.forecastSplitIndex).toBe(21);
@@ -148,30 +148,16 @@ describe('PriceChart', () => {
     expect(screen.getByRole('tab', { name: 'MAX' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByRole('tab', { name: '5D' })).toBeNull();
     const labels = lastChartProps.data.datasets.map((ds) => ds.label);
-    expect(labels).toContain('Average 7-day estimate');
+    expect(labels).toContain('7-day estimate');
   });
 
-  it('overlays the date-aligned G3 expected range and skips on mismatch', () => {
+  it('removes automatic uncertainty and volatility bands from this price view by default', () => {
     usePriceHistory.mockReturnValue({ history: historyFixture(300, true), loading: false, error: '', meta: null, retry: vi.fn() });
-    const aligned = {
-      future_dates: forecastFixture.future_dates.slice(0, 5),
-      volatility_cone: { p05: [390, 391, 392, 393, 394], p95: [410, 411, 412, 413, 414] },
-    };
-    useVolatilityOutlook.mockReturnValue({
-      outlook: { ticker: 'MSFT', byHorizon: { 5: aligned } }, loading: false, error: '', retry: vi.fn(),
-    });
     render(<PriceChart ticker="MSFT" currencySymbol="$" forecast={forecastFixture} />);
     const labels = lastChartProps.data.datasets.map((ds) => ds.label);
-    expect(labels).toContain('Expected volatility range (upper)');
-    const upper = lastChartProps.data.datasets.find((ds) => ds.label === 'Expected volatility range (upper)');
-    expect(upper.data.filter((v) => v != null)).toEqual([410, 411, 412, 413, 414]);
-
-    useVolatilityOutlook.mockReturnValue({
-      outlook: { ticker: 'MSFT', byHorizon: { 5: { ...aligned, future_dates: ['2099-01-01'] } } },
-      loading: false, error: '', retry: vi.fn(),
-    });
-    render(<PriceChart ticker="MSFT" currencySymbol="$" forecast={forecastFixture} />);
-    expect(lastChartProps.data.datasets.map((ds) => ds.label)).not.toContain('Expected volatility range (upper)');
+    expect(labels).not.toContain('Expected volatility range (upper)');
+    expect(labels).not.toContain('Expected volatility range (lower)');
+    expect(labels).not.toContain('Estimate range (upper)');
   });
 
   it('refuses manufactured history instead of charting it', () => {

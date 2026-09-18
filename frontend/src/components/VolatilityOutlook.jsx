@@ -9,10 +9,6 @@ export function formatAnnualized(value) {
   return `${(Number(value) * 100).toFixed(1)}%`;
 }
 
-/**
- * One-sigma expected range around a reference price over a session window,
- * from an annualised volatility figure. Pure horizon math, no direction.
- */
 export function expectedRange(referencePrice, annualized, sessions) {
   const price = Number(referencePrice);
   const annual = Number(annualized);
@@ -36,6 +32,17 @@ function RiskPill({ level }) {
   return <span className={`risk-pill risk-${key}`}>{label}</span>;
 }
 
+function horizonPlainDescription(riskLevel, annual, trailing) {
+  const level = String(riskLevel || '').toLowerCase();
+  if (level.includes('elevated') || (annual != null && trailing != null && annual > trailing * 1.15)) {
+    return 'Elevated price movement likely compared to recent history';
+  }
+  if (level.includes('subdued') || level.includes('low') || (annual != null && trailing != null && annual < trailing * 0.85)) {
+    return 'Subdued price movement expected relative to typical conditions';
+  }
+  return 'Typical price fluctuations expected based on recent patterns';
+}
+
 function money(value, currencySymbol) {
   if (value == null || value === '' || !Number.isFinite(Number(value))) return '—';
   const isPence = currencySymbol === 'p' || currencySymbol === 'GBp';
@@ -49,16 +56,15 @@ function money(value, currencySymbol) {
   return `${numeric < 0 ? '-' : ''}${symbol}${formatted}`;
 }
 
-export default function VolatilityOutlook({ ticker, currencySymbol = '$', currentPrice = null, priceEstimate = null }) {
+export default function VolatilityOutlook({
+  ticker,
+  currencySymbol = '$',
+  currentPrice = null,
+  priceEstimate = null,
+}) {
   const { outlook, loading, error, retry } = useVolatilityOutlook(ticker);
   const symbol = String(ticker || '').toUpperCase();
   if (!symbol) return null;
-
-  const rows = outlook
-    ? OUTLOOK_HORIZONS.map((horizon) => ({ horizon, entry: outlook.byHorizon[horizon] })).filter((row) => row.entry)
-    : [];
-  const first = rows[0]?.entry || null;
-  const asOf = first?.evidence?.data_as_of || first?.asOf || null;
 
   const combined = (() => {
     const five = outlook?.byHorizon?.[5];
@@ -71,6 +77,45 @@ export default function VolatilityOutlook({ ticker, currencySymbol = '$', curren
     return { ...band, annual, changePct: Number(priceEstimate.changePct) };
   })();
 
+  if (loading) {
+    return (
+      <div className="volatility-status-row" role="status">
+        <span className="loading-dot" aria-hidden="true" />
+        <span>Loading volatility outlook…</span>
+      </div>
+    );
+  }
+
+  if (error || !outlook) {
+    return (
+      <div className="volatility-status-row error" role="alert">
+        <span>{error || 'Volatility outlook is unavailable for this stock right now.'}</span>
+        <button type="button" className="retry-action-btn" onClick={retry}>
+          Retry outlook
+        </button>
+      </div>
+    );
+  }
+
+  const rows = OUTLOOK_HORIZONS
+    .map((horizon) => ({ horizon, entry: outlook.byHorizon?.[horizon] }))
+    .filter((row) => row.entry);
+
+  if (rows.length === 0) {
+    return (
+      <div className="volatility-status-row" role="alert">
+        <span>No volatility horizons are available for {symbol}.</span>
+        <button type="button" className="retry-action-btn" onClick={retry}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const first = rows[0]?.entry || null;
+  const asOf = first?.evidence?.data_as_of || first?.asOf || null;
+  const modelName = first?.evidence?.model_name || first?.forecast?.model || 'Enhanced statistical model';
+
   return (
     <section className="panel outlook-panel" aria-label={`${symbol} volatility outlook`}>
       <div className="panel-heading">
@@ -80,108 +125,111 @@ export default function VolatilityOutlook({ ticker, currencySymbol = '$', curren
         </div>
       </div>
 
-      {loading && <div className="loading-text" role="status">Loading volatility outlook…</div>}
-      {!loading && error && (
-        <div role="alert">
-          <p className="empty-copy">{error}</p>
-          <button type="button" className="retry-button" onClick={retry}>Retry outlook</button>
+      <div className="horizon-rows-list">
+        {rows.map(({ horizon, entry }) => {
+          const annual = annualisedFromResponse(entry);
+          const trailing = Number(entry?.evidence?.trailing_annualized_volatility_60d);
+          const riskLevel = entry?.evidence?.risk_level || 'Normal';
+          const plainDesc = horizonPlainDescription(riskLevel, annual, trailing);
+          const range = currentPrice && annual ? expectedRange(currentPrice, annual, horizon) : null;
+          const adjustment = annual != null && trailing > 0 ? (annual / trailing - 1) : null;
+
+          return (
+            <article key={horizon} className="horizon-compact-row">
+              <div className="horizon-main-line">
+                <div className="horizon-badge-col">
+                  <strong className="horizon-name">{horizon} sessions</strong>
+                  <RiskPill level={riskLevel} />
+                </div>
+                <div className="horizon-desc-col">
+                  <span className="horizon-plain-desc">{plainDesc}</span>
+                  <span className="horizon-annual-val mono">
+                    {formatAnnualized(annual)} annualised
+                  </span>
+                </div>
+              </div>
+
+              <details className="horizon-expandable-details">
+                <summary>View numerical breakdown</summary>
+                <div className="horizon-details-content">
+                  <div className="detail-item">
+                    <span>Forecast volatility:</span>
+                    <strong className="mono">{formatAnnualized(annual)}</strong>
+                  </div>
+                  <div className="detail-item">
+                    <span>Trailing 60-day volatility:</span>
+                    <strong className="mono">{formatAnnualized(trailing)}</strong>
+                  </div>
+                  {adjustment != null && (
+                    <div className="detail-item">
+                      <span>Adjustment vs trailing:</span>
+                      <strong className="mono">
+                        {adjustment >= 0 ? '+' : ''}{(adjustment * 100).toFixed(1)}%
+                      </strong>
+                    </div>
+                  )}
+                  {!combined && range && (
+                    <div className="detail-item">
+                      <span>Expected price range (±1σ):</span>
+                      <strong className="mono">
+                        {money(range.low, currencySymbol)} – {money(range.high, currencySymbol)}
+                      </strong>
+                    </div>
+                  )}
+                  <div className="detail-item">
+                    <span>Data as of:</span>
+                    <strong className="mono">{entry?.evidence?.data_as_of || asOf || '—'}</strong>
+                  </div>
+                </div>
+              </details>
+            </article>
+          );
+        })}
+      </div>
+
+      {combined && (
+        <div className="combined-outlook" aria-label="Combined seven-day outlook">
+          <h3>7-Day Outlook</h3>
+          <dl>
+            <div>
+              <dt>Estimated price</dt>
+              <dd className="mono">{money(priceEstimate.price, currencySymbol)}</dd>
+            </div>
+            <div>
+              <dt>Model direction</dt>
+              <dd className={`mono ${combined.changePct >= 0 ? 'up' : 'down'}`}>
+                {combined.changePct >= 0 ? '+' : ''}{combined.changePct.toFixed(1)}%
+              </dd>
+            </div>
+            <div>
+              <dt>Expected volatility</dt>
+              <dd><RiskPill level={first?.evidence?.risk_level} /></dd>
+            </div>
+            <div>
+              <dt>Expected range</dt>
+              <dd className="mono">{money(combined.low, currencySymbol)}–{money(combined.high, currencySymbol)}</dd>
+            </div>
+          </dl>
         </div>
       )}
-      {!loading && !error && rows.length > 0 && (
-        <>
-          <table className="outlook-table">
-            <thead>
-              <tr>
-                <th scope="col">Period</th>
-                <th scope="col">Forecast</th>
-                <th scope="col">Risk level</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ horizon, entry }) => (
-                <tr key={horizon}>
-                  <td>Next {horizon} sessions</td>
-                  <td className="mono">{formatAnnualized(annualisedFromResponse(entry))} annualised</td>
-                  <td><RiskPill level={entry?.evidence?.risk_level} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
 
-          {combined && (
-            <div className="combined-outlook" aria-label="Combined seven-day outlook">
-              <h3>7-Day Outlook</h3>
-              <dl>
-                <div>
-                  <dt>Estimated price</dt>
-                  <dd className="mono">{money(priceEstimate.price, currencySymbol)}</dd>
-                </div>
-                <div>
-                  <dt>Model direction</dt>
-                  <dd className={`mono ${combined.changePct >= 0 ? 'up' : 'down'}`}>
-                    {combined.changePct >= 0 ? '+' : ''}{combined.changePct.toFixed(1)}%
-                  </dd>
-                </div>
-                <div>
-                  <dt>Expected volatility</dt>
-                  <dd><RiskPill level={first?.evidence?.risk_level} /></dd>
-                </div>
-                <div>
-                  <dt>Expected range</dt>
-                  <dd className="mono">{money(combined.low, currencySymbol)}–{money(combined.high, currencySymbol)}</dd>
-                </div>
-              </dl>
-              <p className="method-note">
-                Range shows where the current price would typically move over five sessions;
-                it is not a prediction that the estimate itself will be reached.
-              </p>
-            </div>
-          )}
-
-          <p className="method-note">
-            <strong>Model:</strong> Enhanced volatility forecast. Uses recent price behaviour,
-            trading ranges and volatility structure. Historically outperformed the previous
-            rolling-volatility model across the held-out test panel.
+      <details className="about-outlook-details">
+        <summary>About this outlook</summary>
+        <div className="about-outlook-body">
+          <p>
+            <strong>Model:</strong> Enhanced volatility forecast. Evaluated against realised market volatility on held-out test panel.
           </p>
-          <details className="forecast-details">
-            <summary>How this forecast works</summary>
-            <p>
-              The forecast starts from recent market volatility and adjusts it using
-              patterns learned across hundreds of stocks. It estimates how much prices
-              typically move — not which direction they move in.
-            </p>
-            <p>
-              Each horizon is evaluated independently against realised market volatility
-              on data the model never trained on. Past outperformance does not guarantee
-              future results.
-            </p>
-          </details>
-          <details className="forecast-details">
-            <summary>Advanced · model diagnostics</summary>
-            <dl className="diagnostics-list">
-              {rows.map(({ horizon, entry }) => {
-                const annual = annualisedFromResponse(entry);
-                const trailing = Number(entry?.evidence?.trailing_annualized_volatility_60d);
-                const adjustment = annual != null && trailing > 0 ? annual / trailing - 1 : null;
-                return (
-                  <div key={horizon}>
-                    <dt>{horizon}-session forecast</dt>
-                    <dd className="mono">{formatAnnualized(annual)}</dd>
-                    <dt>Recent market volatility (60-session)</dt>
-                    <dd className="mono">{formatAnnualized(trailing)}</dd>
-                    <dt>Model adjustment</dt>
-                    <dd className="mono">
-                      {adjustment == null ? '—' : `${adjustment >= 0 ? '+' : ''}${(adjustment * 100).toFixed(1)}%`}
-                    </dd>
-                    <dt>Last updated</dt>
-                    <dd className="mono">{entry?.evidence?.data_as_of || asOf || '—'}</dd>
-                  </div>
-                );
-              })}
-            </dl>
-          </details>
-        </>
-      )}
+          <p>
+            <strong>Interpretation:</strong> Volatility estimates describe the expected magnitude of price swings over each period, not whether prices will rise or fall.
+          </p>
+          <p>
+            <strong>Fallback Policy:</strong> If machine learning estimates encounter missing data, a validated statistical baseline is automatically used.
+          </p>
+          <p>
+            Past performance does not guarantee future results.
+          </p>
+        </div>
+      </details>
     </section>
   );
 }

@@ -17,7 +17,7 @@ export const CHART_RANGES = [
   { id: 'MAX', label: 'MAX', kind: 'daily', sessions: Number.POSITIVE_INFINITY },
 ];
 
-const DEFAULT_PREFERENCE = ['5D', '24H', '1M', '6M', '1Y', '5Y', 'MAX'];
+const DEFAULT_PREFERENCE = ['1M', '5D', '24H', '6M', '1Y', '5Y', 'MAX'];
 
 export function availableRanges({ dailyCount = 0, hasIntraday = false } = {}) {
   if (!(dailyCount >= 1)) return [];
