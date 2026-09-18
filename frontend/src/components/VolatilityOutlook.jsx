@@ -37,10 +37,16 @@ function RiskPill({ level }) {
 }
 
 function money(value, currencySymbol) {
-  if (!Number.isFinite(Number(value))) return '—';
-  const symbol = currencySymbol === 'p' || currencySymbol === 'GBp' ? 'p' : (currencySymbol || '$');
-  const decimals = symbol === 'p' ? 1 : 2;
-  return `${symbol}${Number(value).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return '—';
+  const isPence = currencySymbol === 'p' || currencySymbol === 'GBp';
+  const symbol = isPence ? 'p' : (currencySymbol || '$');
+  const decimals = isPence ? 1 : 2;
+  const numeric = Number(value);
+  const formatted = Math.abs(numeric).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  if (isPence) {
+    return `${numeric < 0 ? '-' : ''}${formatted}p`;
+  }
+  return `${numeric < 0 ? '-' : ''}${symbol}${formatted}`;
 }
 
 export default function VolatilityOutlook({ ticker, currencySymbol = '$', currentPrice = null, priceEstimate = null }) {
@@ -57,7 +63,7 @@ export default function VolatilityOutlook({ ticker, currencySymbol = '$', curren
   const combined = (() => {
     const five = outlook?.byHorizon?.[5];
     const annual = five ? annualisedFromResponse(five) : null;
-    if (!priceEstimate || !Number.isFinite(Number(priceEstimate.price)) || !annual || !Number.isFinite(Number(currentPrice))) {
+    if (!priceEstimate || priceEstimate.price == null || !Number.isFinite(Number(priceEstimate.price)) || !annual || currentPrice == null || !Number.isFinite(Number(currentPrice))) {
       return null;
     }
     const band = expectedRange(currentPrice, annual, 5);

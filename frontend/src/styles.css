@@ -318,6 +318,204 @@ button {
   background: rgba(14, 20, 34, 0.4);
 }
 
+/* ── Clean First-Visit Search Section ────────────────────────────── */
+.search-section {
+  max-width: 680px;
+  margin: 40px auto 32px;
+  text-align: center;
+}
+
+.explore-heading {
+  font-size: clamp(24px, 3.5vw, 38px);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: #fff;
+  margin-bottom: 24px;
+  line-height: 1.2;
+}
+
+.stock-search-form {
+  padding: 16px;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(165deg, rgba(14, 20, 34, 0.85) 0%, rgba(9, 13, 22, 0.92) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.6), 0 0 30px -5px rgba(56, 189, 248, 0.08);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stock-search-form:hover,
+.stock-search-form:focus-within {
+  border-color: rgba(56, 189, 248, 0.35);
+  box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.7), 0 0 36px -5px rgba(56, 189, 248, 0.14);
+}
+
+.search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.input-field-group {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 12px;
+  min-width: 0;
+}
+
+.input-field-group input {
+  flex: 1;
+  min-width: 160px;
+  height: 52px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  background: rgba(8, 12, 20, 0.75);
+  color: #fff;
+  padding: 0 18px;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  transition: all 0.2s ease;
+}
+
+.input-field-group input::placeholder {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-muted);
+}
+
+.input-field-group input:focus-visible {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.22), 0 0 16px rgba(56, 189, 248, 0.15);
+  background: rgba(10, 15, 26, 0.95);
+}
+
+.symbol-feedback {
+  flex: 1 1 auto;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  background: rgba(244, 63, 94, 0.12);
+  color: #fca5a5;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  max-width: 280px;
+}
+
+.view-outlook-btn {
+  height: 52px;
+  padding: 0 24px;
+  white-space: nowrap;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 4px 16px var(--cyan-glow);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.view-outlook-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #0369a1 0%, #0284c7 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(56, 189, 248, 0.35);
+  border-color: rgba(56, 189, 248, 0.7);
+}
+
+.view-outlook-btn:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.view-outlook-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #1e293b;
+  border-color: var(--border-subtle);
+  box-shadow: none;
+  transform: none;
+}
+
+.search-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: rgba(14, 20, 34, 0.6);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.progress-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  animation: pulseRadar 1.5s infinite;
+}
+
+.compact-error-message,
+.actionable-forecast-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 16px;
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  border-radius: var(--radius-md);
+  color: #fca5a5;
+  background: rgba(244, 63, 94, 0.1);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.retry-action-btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  border-radius: var(--radius-full);
+  background: rgba(244, 63, 94, 0.15);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.retry-action-btn:hover {
+  background: rgba(244, 63, 94, 0.3);
+  border-color: rgba(244, 63, 94, 0.6);
+}
+
+.retry-action-btn:focus-visible {
+  outline: 2px solid var(--crimson);
+  outline-offset: 2px;
+}
+
 /* ── Hero Section ──────────────────────────────────────────────────── */
 main {
   padding-top: 32px;
@@ -1759,6 +1957,23 @@ footer {
   .input-row {
     grid-template-columns: 1fr;
   }
+  .search-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .input-field-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .input-field-group input {
+    width: 100%;
+  }
+  .symbol-feedback {
+    max-width: 100%;
+  }
+  .view-outlook-btn {
+    width: 100%;
+  }
   .forecast-panel, .evidence-panel, .news-panel, .forecast-ledger-card {
     padding: 20px;
   }
@@ -1844,9 +2059,25 @@ footer {
   background: var(--crimson-glow);
 }
 
+.t212-change.flat,
+strong.mono.flat {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.05);
+}
+
 .t212-range-name {
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.t212-data-date {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
 }
 
 /* Placeholder shown while the first bars load, so the header never

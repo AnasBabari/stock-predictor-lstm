@@ -12,6 +12,28 @@ export default defineConfig(() => {
       setupFiles: './src/test/setup.js',
       testTimeout: 30_000,
       exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+      coverage: {
+        provider: 'v8',
+        reporter: ['text', 'json-summary', 'html'],
+        // Production code only. The test directory, build config and
+        // generated stockpiles are excluded by hand because vitest's
+        // default ignores data files and stories but not the whole tree.
+        include: ['src/**/*.{js,jsx}'],
+        exclude: [
+          'src/test/**',
+          'src/data/**',
+          'src/**/*.test.{js,jsx}',
+          'src/**/index.js',
+        ],
+        thresholds: {
+          // Documented in docs/quality.md. Coverage must not silently
+          // regress below these on PRs.
+          lines: 50,
+          functions: 50,
+          branches: 35,
+          statements: 50,
+        },
+      },
     },
     server: {
       // Local-development convenience only. Vercel's static production build

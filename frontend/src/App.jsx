@@ -8,7 +8,7 @@ import ForecastLedgerTrackRecord from './components/ForecastLedgerTrackRecord';
 import { ALL_VALID_TICKERS, ALL_TICKERS_SET } from './universe';
 
 function formatMoney(value, currencySymbol = '$') {
-  if (!Number.isFinite(Number(value))) return '—';
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return '—';
   const num = Number(value);
   if (currencySymbol === 'p' || currencySymbol === 'GBp') {
     return `${num.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}p`;
@@ -17,7 +17,8 @@ function formatMoney(value, currencySymbol = '$') {
 }
 
 function formatPercent(value, digits = 1) {
-  return Number.isFinite(Number(value)) ? `${Number(value).toFixed(digits)}%` : '—';
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return '—';
+  return `${Number(value).toFixed(digits)}%`;
 }
 
 function ServiceBadge({ status, attempt }) {
@@ -36,9 +37,10 @@ function ServiceBadge({ status, attempt }) {
 
 function BacktestPanel({ backtest }) {
   if (!backtest) return null;
-  const ratio = Number(backtest.relative_mae_vs_persistence);
-  const beatBaseline = ratio < 1;
-  const directionAcc = backtest.direction_accuracy != null ? backtest.direction_accuracy * 100 : null;
+  const hasRatio = backtest.relative_mae_vs_persistence != null && backtest.relative_mae_vs_persistence !== '' && Number.isFinite(Number(backtest.relative_mae_vs_persistence));
+  const ratio = hasRatio ? Number(backtest.relative_mae_vs_persistence) : null;
+  const beatBaseline = hasRatio && ratio < 1;
+  const directionAcc = backtest.direction_accuracy != null && backtest.direction_accuracy !== '' && Number.isFinite(Number(backtest.direction_accuracy)) ? Number(backtest.direction_accuracy) * 100 : null;
   return (
     <section className="panel evidence-panel" aria-label="Historical Model Performance">
       <div className="panel-heading">
@@ -46,9 +48,11 @@ function BacktestPanel({ backtest }) {
           <p className="eyebrow">Past performance</p>
           <h2>How close were past estimates?</h2>
         </div>
-        <span className={`verdict ${beatBaseline ? 'positive' : 'caution'}`}>
-          {beatBaseline ? 'More accurate than assuming no price change' : 'No better than assuming no price change'}
-        </span>
+        {hasRatio && (
+          <span className={`verdict ${beatBaseline ? 'positive' : 'caution'}`}>
+            {beatBaseline ? 'More accurate than assuming no price change' : 'No better than assuming no price change'}
+          </span>
+        )}
       </div>
       <div className="metrics-grid">
         <article>
@@ -234,7 +238,8 @@ function NewsPanel({ news, ticker, loading }) {
 }
 
 export default function App() {
-  const [ticker, setTicker] = useState('MSFT');
+  const [inputTicker, setInputTicker] = useState('');
+  const [submittedTicker, setSubmittedTicker] = useState('');
   const [chartTicker, setChartTicker] = useState(null);
   const [serviceStatus, setServiceStatus] = useState('checking');
   const [wakeAttempt, setWakeAttempt] = useState(1);
@@ -242,10 +247,13 @@ export default function App() {
   const [forecast, setForecast] = useState(null);
   const [news, setNews] = useState(null);
   const [newsLoading, setNewsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [inputError, setInputError] = useState('');
+  const [historyError, setHistoryError] = useState('');
+  const [forecastError, setForecastError] = useState('');
   const [perf, setPerf] = useState(null);
   const wakeController = useRef(null);
   const requestController = useRef(null);
+  const requestSeq = useRef(0);
   const perfT0 = useRef(0);
 
   const wake = useCallback(async () => {
@@ -289,92 +297,138 @@ export default function App() {
     setPerf((prev) => ({ ...(prev || {}), chartMs, fetchMs: report?.fetchMs ?? null, cacheLabel, degraded: Boolean(report?.degraded) }));
   }, [nowMs]);
 
-  // Warm the backend on first paint: the history request wakes a sleeping
-  // Render instance and fills the shared market-data cache, so the first
-  // real forecast resolves against warm data instead of a cold 8-year fetch.
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchPriceHistory('MSFT', { signal: controller.signal }).catch(() => {});
-    return () => controller.abort();
-  }, []);
-
   const runForecast = useCallback(async (eventOrSymbol) => {
     if (eventOrSymbol && typeof eventOrSymbol.preventDefault === 'function') {
       eventOrSymbol.preventDefault();
     }
-    const symbol = (typeof eventOrSymbol === 'string' && eventOrSymbol.trim() ? eventOrSymbol : ticker).trim().toUpperCase();
-    if (!symbol || !/^[A-Z0-9.\-_]{1,15}$/.test(symbol)) {
-      setError('Please enter a valid stock ticker symbol (e.g. MSFT, SHEL.L, NVDA, ARM).');
+    const raw = typeof eventOrSymbol === 'string' ? eventOrSymbol : inputTicker;
+    const symbol = String(raw || '').trim().toUpperCase();
+    if (!symbol) return;
+
+    if (!/^[A-Z0-9.\-_]{1,15}$/.test(symbol)) {
+      setInputError('Please enter a valid stock ticker symbol (e.g. MSFT, SHEL.L, NVDA, ARM).');
       return;
     }
     if (!ALL_TICKERS_SET.has(symbol)) {
-      setError(`Choose one of the ${ALL_VALID_TICKERS.length} supported LSE, NASDAQ, and NYSE tickers. This symbol is not supported yet.`);
+      setInputError(`Choose one of the ${ALL_VALID_TICKERS.length} supported LSE, NASDAQ, and NYSE tickers. This symbol is not supported yet.`);
       return;
     }
-    // Mount the dynamic chart immediately: its history request warms the
-    // backend cache in parallel with the wake/forecast sequence below.
-    setChartTicker(symbol);
-    perfT0.current = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    setPerf(null);
+
+    setInputError('');
+    setHistoryError('');
+    setForecastError('');
+
+    // Cancel outstanding requests and ignore late responses
     requestController.current?.abort();
     const controller = new AbortController();
     requestController.current = controller;
-    setTicker(symbol);
+    const seq = ++requestSeq.current;
+
+    // Clear previous results when selecting a different stock
+    if (chartTicker !== symbol) {
+      setChartTicker(null);
+    }
+    setForecast(null);
+    setNews(null);
+    setPerf(null);
+    setSubmittedTicker(symbol);
     setLoading(true);
     setNewsLoading(true);
-    setError('');
-    setNews(null);
-    try {
-      if (serviceStatus !== 'online') {
-        await wakeForecastService({ signal: controller.signal, onAttempt: setWakeAttempt });
-        setServiceStatus('online');
-      }
-      // Time the forecast request on its own. Measuring after
-      // Promise.allSettled would also await the news fetch and report the
-      // slower of the two as the "forecast" duration, which overstates it.
-      const forecastT0 = nowMs();
-      // Publish the forecast and its duration the moment it lands. Waiting
-      // for allSettled would hold both behind the news request, so the user
-      // would stare at "Forecast…" long after the forecast had arrived.
-      const forecastPromise = fetchSimpleForecast(symbol, {
-        signal: controller.signal,
-      }).then((value) => {
-        setForecast(value);
-        setPerf((prev) => ({ ...(prev || {}), forecastMs: Math.round(nowMs() - forecastT0) }));
-        return value;
+
+    perfT0.current = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+    let historyUsable = chartTicker === symbol;
+    let fallbackAvailable = false;
+
+    // 1. History request: reveals chart when usable historical data arrives
+    const historyPromise = fetchPriceHistory(symbol, { signal: controller.signal })
+      .then((historyResult) => {
+        if (requestSeq.current !== seq) return null;
+        if (Array.isArray(historyResult?.daily) && historyResult.daily.length > 0) {
+          historyUsable = true;
+          setChartTicker(symbol);
+        }
+        return historyResult;
+      })
+      .catch((err) => {
+        if (requestSeq.current !== seq) return null;
+        if (err?.name !== 'AbortError') {
+          return { error: err };
+        }
+        return null;
       });
 
-      const [forecastResult, newsResult] = await Promise.allSettled([
-        forecastPromise,
-        fetchTickerNews(symbol, { signal: controller.signal }),
-      ]);
+    // 2. Forecast request
+    const forecastPromise = (async () => {
+      if (serviceStatus !== 'online') {
+        await wakeForecastService({ signal: controller.signal, onAttempt: setWakeAttempt });
+        if (requestSeq.current !== seq) return null;
+        setServiceStatus('online');
+      }
+      const forecastT0 = nowMs();
+      const forecastValue = await fetchSimpleForecast(symbol, { signal: controller.signal });
+      if (requestSeq.current !== seq) return null;
+      setForecast(forecastValue);
+      setPerf((prev) => ({ ...(prev || {}), forecastMs: Math.round(nowMs() - forecastT0) }));
 
-      if (forecastResult.status !== 'fulfilled') {
-        throw forecastResult.reason;
+      // Check if forecast payload provides usable fallback history if main history endpoint fails
+      const dates = forecastValue?.historical_dates;
+      const prices = forecastValue?.historical_prices;
+      if (
+        forecastValue?.historical_provenance !== 'synthetic' &&
+        Array.isArray(dates) &&
+        Array.isArray(prices) &&
+        dates.length >= 2
+      ) {
+        fallbackAvailable = true;
+        if (!historyUsable) {
+          setChartTicker(symbol);
+        }
       }
+      return forecastValue;
+    })().catch((err) => {
+      if (requestSeq.current !== seq) return null;
+      if (err?.name !== 'AbortError') {
+        setForecastError(err?.message || 'The forecast could not be completed.');
+      }
+      return null;
+    });
 
-      if (newsResult.status === 'fulfilled') {
-        setNews(newsResult.value);
-      } else {
-        setNews({ status: 'unavailable', items: [] });
-      }
-    } catch (forecastError) {
-      if (forecastError?.name !== 'AbortError') {
-        setError(forecastError?.message || 'The forecast could not be completed.');
-      }
-    } finally {
-      setLoading(false);
-      setNewsLoading(false);
+    // 3. News request
+    const newsPromise = fetchTickerNews(symbol, { signal: controller.signal })
+      .then((newsResult) => {
+        if (requestSeq.current !== seq) return null;
+        setNews(newsResult);
+        return newsResult;
+      })
+      .catch((err) => {
+        if (requestSeq.current !== seq) return null;
+        if (err?.name !== 'AbortError') {
+          setNews({ status: 'unavailable', items: [] });
+        }
+        return null;
+      });
+
+    const [histSettled] = await Promise.allSettled([historyPromise, forecastPromise, newsPromise]);
+    if (requestSeq.current !== seq) return;
+    setLoading(false);
+    setNewsLoading(false);
+
+    if (!historyUsable && !fallbackAvailable) {
+      const histErr = histSettled?.value?.error?.message;
+      setHistoryError(histErr || 'Price history is unavailable for this stock right now.');
     }
-  }, [nowMs, serviceStatus, ticker]);
+  }, [inputTicker, nowMs, serviceStatus]);
 
   const summary = useMemo(() => {
     if (!forecast?.lower_prices?.length || !forecast?.upper_prices?.length) return null;
     const averagePrices = midpointPrices(forecast.lower_prices, forecast.upper_prices);
     const finalPrice = Number(averagePrices.at(-1));
-    const currentPrice = Number(forecast.current_price);
-    if (!Number.isFinite(finalPrice) || !Number.isFinite(currentPrice) || currentPrice === 0) return null;
-    return { finalPrice, change: ((finalPrice / currentPrice) - 1) * 100 };
+    if (!Number.isFinite(finalPrice)) return null;
+    const hasCurrent = forecast.current_price != null && forecast.current_price !== '' && Number.isFinite(Number(forecast.current_price)) && Number(forecast.current_price) !== 0;
+    const currentPrice = hasCurrent ? Number(forecast.current_price) : null;
+    const change = currentPrice ? ((finalPrice / currentPrice) - 1) * 100 : null;
+    return { finalPrice, change };
   }, [forecast]);
 
   return (
@@ -394,59 +448,73 @@ export default function App() {
         </a>
 
         <div className="topbar-right">
-          <span className="market-badge">
-            US & UK stocks
-          </span>
           <ServiceBadge status={serviceStatus} attempt={wakeAttempt} />
         </div>
       </header>
 
       <main id="top">
-        <section className="hero">
-          <div className="hero-intro">
-            <p className="eyebrow">A clearer view of your stocks</p>
-            <h1>Forecast the next<br /><em>7 trading days.</em></h1>
-            <p className="hero-copy">
-              Choose a stock to see its estimated price over the next seven market days,
-              catch up on the news, and see how close past estimates were.
-            </p>
-            <div className="trust-row">
-              <span>US & UK stocks</span>
-              <span>Tested on past prices</span>
-              <span>Recent company news</span>
-            </div>
-          </div>
+        <section className="search-section">
+          <h1 className="explore-heading">Which stock would you like to explore?</h1>
 
-          <form className="forecast-form" onSubmit={runForecast}>
-            <div className="form-heading">
-              <strong>Create forecast</strong>
-              <span>First visit may take a little longer</span>
-            </div>
-            <label htmlFor="ticker">Stock ticker</label>
-            <div className="input-row">
-              <input
-                id="ticker"
-                value={ticker}
-                onChange={(event) => setTicker(event.target.value.toUpperCase())}
-                placeholder="Search a stock ticker, e.g. MSFT or SHEL.L"
-                maxLength={15}
-                autoComplete="off"
-                spellCheck="false"
-              />
-              <div className="horizon-lock">
-                <small>Looking ahead</small>
-                <strong>7 trading days</strong>
+          <form className="stock-search-form" onSubmit={runForecast} noValidate>
+            <div className="search-input-row">
+              <div className="input-field-group">
+                <label htmlFor="tickerInput" className="sr-only">Stock ticker</label>
+                <input
+                  id="tickerInput"
+                  aria-label="Stock ticker"
+                  value={inputTicker}
+                  onChange={(event) => {
+                    setInputTicker(event.target.value.toUpperCase());
+                    if (inputError) setInputError('');
+                  }}
+                  placeholder="Enter a stock ticker"
+                  maxLength={15}
+                  autoComplete="off"
+                  spellCheck="false"
+                  aria-invalid={Boolean(inputError)}
+                  aria-describedby={inputError ? 'symbolError' : undefined}
+                />
+                {inputError && (
+                  <span id="symbolError" className="symbol-feedback" role="alert">
+                    {inputError}
+                  </span>
+                )}
               </div>
-            </div>
 
-            <button className="submit-forecast" type="submit" disabled={loading}>
-              {loading ? 'Preparing your forecast…' : `Run 7-day forecast for ${ticker}`}
-            </button>
+              <button
+                className="view-outlook-btn"
+                type="submit"
+                disabled={!inputTicker.trim()}
+              >
+                View outlook
+              </button>
+            </div>
           </form>
-          {serviceStatus === 'offline' && (
-            <button className="retry-button" onClick={wake} type="button">Try connecting again</button>
+
+          {loading && (
+            <div className="search-progress" role="status" aria-live="polite">
+              <span className="progress-dot" aria-hidden="true" />
+              <span>
+                {serviceStatus !== 'online'
+                  ? `Starting forecast service${wakeAttempt > 1 ? ` · attempt ${wakeAttempt}` : ''}… Preparing data for ${submittedTicker}…`
+                  : `Loading data for ${submittedTicker}…`}
+              </span>
+            </div>
           )}
-          {error && <div className="error-message" role="alert">{error}</div>}
+
+          {historyError && !loading && (
+            <div className="compact-error-message" role="alert">
+              <span>{historyError}</span>
+              <button
+                type="button"
+                className="retry-action-btn"
+                onClick={() => runForecast(submittedTicker)}
+              >
+                Retry
+              </button>
+            </div>
+          )}
         </section>
 
         {chartTicker && (
@@ -461,6 +529,18 @@ export default function App() {
               forecast={forecast?.ticker === chartTicker ? forecast : null}
               onHistorySettled={handleHistorySettled}
             />
+            {forecastError && !loading && (
+              <div className="actionable-forecast-error" role="alert">
+                <span>{forecastError}</span>
+                <button
+                  type="button"
+                  className="retry-action-btn"
+                  onClick={() => runForecast(submittedTicker)}
+                >
+                  Retry forecast
+                </button>
+              </div>
+            )}
             {perf?.chartMs != null && (
               <p className="timing-note" role="status">
                 Chart {(perf.chartMs / 1000).toFixed(1)}s
@@ -516,8 +596,8 @@ export default function App() {
                 </article>
                 <article>
                   <span>Estimated change</span>
-                  <strong className={`mono ${summary.change >= 0 ? 'up' : 'down'}`}>
-                    {summary.change >= 0 ? '+' : ''}{formatPercent(summary.change, 2)}
+                  <strong className={`mono ${summary.change != null && summary.change > 0 ? 'up' : summary.change != null && summary.change < 0 ? 'down' : 'flat'}`}>
+                    {summary.change != null && summary.change > 0 ? '+' : ''}{formatPercent(summary.change, 2)}
                   </strong>
                   <small className="kpi-subtext">Compared with the latest price</small>
                 </article>

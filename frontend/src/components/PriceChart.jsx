@@ -29,15 +29,19 @@ function useAppTheme() {
 }
 
 function formatMoneyLocal(value, currencySymbol) {
-  if (!Number.isFinite(value)) return '—';
-  const symbol = currencySymbol === 'p' || currencySymbol === 'GBp' ? 'p' : (currencySymbol || '$');
-  const decimals = symbol === 'p' ? 1 : 2;
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return '—';
+  const isPence = currencySymbol === 'p' || currencySymbol === 'GBp';
+  const symbol = isPence ? 'p' : (currencySymbol || '$');
+  const decimals = isPence ? 1 : 2;
   const numeric = Number(value);
-  // Sign belongs outside the currency symbol: "-$5.17", not "$-5.17".
   const magnitude = Math.abs(numeric).toLocaleString('en-US', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
+  if (isPence) {
+    return `${numeric < 0 ? '-' : ''}${magnitude}p`;
+  }
+  // Sign belongs outside the currency symbol: "-$5.17", not "$-5.17".
   return `${numeric < 0 ? '-' : ''}${symbol}${magnitude}`;
 }
 
@@ -506,7 +510,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
         ? undefined
         : {
           value: stats.last,
-          color: stats.up ? (isDark ? '#00f5a0' : '#10b981') : (isDark ? '#ff5c5c' : '#ef4444'),
+          color: stats.change > 0 ? (isDark ? '#00f5a0' : '#10b981') : stats.change < 0 ? (isDark ? '#ff5c5c' : '#ef4444') : '#8b93a7',
           label: formatMoneyLocal(stats.last, currencySymbol),
         },
       tooltip: {
@@ -557,8 +561,9 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
     setView(null);
   }, []);
 
-  const changeClass = stats.up ? 'up' : 'down';
-  const sign = stats.change >= 0 ? '+' : '';
+  const changeClass = stats.change > 0 ? 'up' : stats.change < 0 ? 'down' : 'flat';
+  const sign = stats.change > 0 ? '+' : '';
+  const dataDate = effectiveHistory?.asOf || (Array.isArray(effectiveHistory?.daily) ? effectiveHistory.daily.at(-1)?.d : null);
 
   return (
     <section id="chartContainer" className="t212-chart-section" aria-label={`${ticker} price chart`}>
@@ -572,12 +577,19 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
               <strong className="t212-price mono">
                 {formatMoneyLocal(stats.last, currencySymbol)}
               </strong>
-              <span className={`t212-change ${changeClass}`}>
-                {sign}{formatMoneyLocal(stats.change, currencySymbol)} ({sign}{stats.changePct.toFixed(2)}%)
-              </span>
+              {points.prices.filter(Number.isFinite).length >= 2 && (
+                <span className={`t212-change ${changeClass}`}>
+                  {sign}{formatMoneyLocal(stats.change, currencySymbol)} ({sign}{stats.changePct.toFixed(2)}%)
+                </span>
+              )}
               <span className="t212-range-name">
                 {activeRange === 'MAX' ? 'All time' : activeRange}
               </span>
+              {dataDate && !points.isIntraday && (
+                <span className="t212-data-date" title={`Market data through ${dataDate}`}>
+                  Data through {dataDate}
+                </span>
+              )}
             </>
           ) : (
             <span className="t212-price-skeleton" aria-hidden="true" />
@@ -638,7 +650,7 @@ export default function PriceChart({ ticker, currencySymbol = '$', forecast = nu
           <div className="empty-copy">Not enough price history for this view.</div>
         )}
       </div>
-      <p className="t212-chart-hint">Scroll to zoom · drag to pan · double-click to reset. Intraday 24H appears when live session bars load.</p>
+      <p className="t212-chart-hint">Scroll to zoom · drag to pan · double-click to reset. Intraday 24H appears when intraday session bars load.</p>
     </section>
   );
 }
