@@ -25,13 +25,19 @@
     "har_log_monthly",
     "vol_of_vol_20"
   ],
-  "base_margin": "log(trailing_rolling_base); add outside graph",
-  "inference": "z = onnx(x) + log(B); Vhat = exp(clip(z, -30, 10))",
-  "target_opset": 15,
-  "parity_max_abs_diff": 6.67572021484375e-06,
-  "promotion_ref": "artifacts/gpu_rolling_origin_v1 + test_report.json",
-  "train_rows": 498122,
-  "train_origin_min": "2015-03-31 00:00:00",
-  "train_origin_max": "2024-11-25 00:00:00",
-  "test_starts": "2024-11-26T00:00:00.000000000"
+  "serving_contract": "g3-qlike-base-margin-v2",
+  "graph_base_score": 0.5,
+  "onnx_sha256": "79ee8efcf10322ed6fd70f6a382a9aec430bce4eef7e410273b1a30d54665325",
+  "booster_sha256": "583f0367b3410cd9e2bfc3facfa79b9dfadf24368b15f2e536d3e73fda3a4148",
+  "freeze_manifest_sha256": "b36e7c9992ce23b29a745de753c4097622410d15eec0baddb5658454b75e574c",
+  "objective": "qlike(log-variance)",
+  "metric_source": "validation_panel",
+  "source_study": "artifacts/gpu_vol_panel_v1",
+  "source_freeze": "artifacts/g3_panel_v1",
+  "train_rows": 274539,
+  "validation_start": "2022-05-09T00:00:00.000000000",
+  "reserve_start": "2023-11-16T00:00:00.000000000",
+  "parity_rows": 2870,
+  "parity_max_relative_variance_error": 2.2016451680206828e-05,
+  "inference": "exp(clip(onnx(x) - graph_base_score + log(B), -30, 10))"
 }

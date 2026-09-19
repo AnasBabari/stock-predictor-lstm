@@ -49,8 +49,9 @@ The separate volatility endpoint includes **G3**, a GPU-trained XGBoost model th
 correction to rolling volatility. Training happens offline; the backend serves exported ONNX
 models without request-time G3 training or a production GPU.
 
-The recorded study used a 286-stock panel, six calendar-year evaluation folds, and a separately
-scored historical test partition. G3 was selected for integration on that evidence. Detailed
+The packaged G3 artifacts come from a 286-stock panel and a frozen historical
+validation panel. Their provenance is deliberately labelled `validation_panel`;
+the public response does not claim untouched test-set certification. Detailed
 results and limitations are preserved in the [research provenance record](artifacts/PROVENANCE_FINAL.md).
 
 If G3 cannot be loaded or used, the volatility endpoint explicitly reports a fallback to
@@ -82,7 +83,7 @@ UK chart history currently follows a separate Yahoo path. See the
 - Recent news is context only in the public price forecast. A positive MSFT news pilot did not
   generalize convincingly across the fixed 25-stock replication; the
   [negative result is preserved](artifacts/news_replication25_v1/STUDY_SUMMARY.md).
-- G3's historical volatility results do not demonstrate that the price predictor beats its
+- G3's validation-panel results do not demonstrate that the price predictor beats its
   baseline, or that either model will retain its performance in future markets.
 - Surviving-stock selection, provider coverage, and historical news revisions limit the research.
   Results do not automatically transfer to penny stocks, illiquid securities, or unseen markets.

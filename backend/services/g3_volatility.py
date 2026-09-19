@@ -1,10 +1,12 @@
 """Promoted G3 GPU-volatility serving (ONNX, no request-time training).
 
-G3 is a global XGBoost correction to rolling volatility, validated on the
-held-out test panel (see artifacts/gpu_rolling_origin_v1/test_report.json).
-For horizon H with rolling base B: Vhat = B * exp(delta), delta from the
-packaged ONNX graph plus log(B) added outside it. Forecasts are always
-positive; any failure degrades to the rolling baseline explicitly.
+G3 is a global XGBoost correction to rolling volatility. The packaged
+artifacts are the QLIKE-trained validation-panel freeze in
+``artifacts/g3_panel_v1``; they are not presented as a held-out production
+certification result. For horizon H with rolling base B, the ONNX graph emits
+the model margin with its training intercept. Serving replaces that intercept
+with log(B) and clips the complete log variance. Any failure degrades to the
+rolling baseline explicitly.
 
 Feature definitions mirror research/volatility_structure exactly; the parity
 test pins them bit-for-bit. This module must never import research code on
@@ -13,6 +15,8 @@ the production request path.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import threading
 from pathlib import Path
@@ -23,7 +27,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-G3_MODEL_VERSION = "g3-gpu-xgb-v1"
+G3_MODEL_VERSION = "g3-qlike-base-margin-v2"
 G3_FEATURE_SET_VERSION = "vol-gpu-panel-v1"
 G3_HORIZONS = (5, 10, 20)
 G3_FEATURES: tuple[str, ...] = (
@@ -53,14 +57,6 @@ G3_FEATURES: tuple[str, ...] = (
 _FOUR_LOG_2 = 4.0 * np.log(2.0)
 _TWO_LOG_2_MINUS_1 = 2.0 * np.log(2.0) - 1.0
 _SQRT_2_OVER_PI = float(np.sqrt(2.0 / np.pi))
-
-# Frozen test-panel evidence for user-facing provenance (do not edit by hand;
-# regenerate from artifacts/gpu_rolling_origin_v1/test_report.json).
-G3_TEST_EVIDENCE = {
-    5: {"delta_qlike": 0.23926, "relative_improvement": 0.2769, "p_two_sided": 1.04e-19},
-    10: {"delta_qlike": 0.23752, "relative_improvement": 0.3450, "p_two_sided": 1.19e-15},
-    20: {"delta_qlike": 0.23665, "relative_improvement": 0.4220, "p_two_sided": 1.86e-11},
-}
 
 _sessions: dict[int, Any] = {}
 _sessions_lock = threading.Lock()
@@ -248,9 +244,29 @@ def _load_session(horizon: int):
             meta_path = _model_dir() / f"g3_h{horizon}.meta.json"
             if not path.is_file() or not meta_path.is_file():
                 raise G3UnavailableError(f"packaged G3 model missing for horizon {horizon}")
-            session = ort.InferenceSession(str(path))
+            metadata = _load_metadata(horizon)
+            if hashlib.sha256(path.read_bytes()).hexdigest() != metadata["onnx_sha256"]:
+                raise G3UnavailableError("G3 artifact checksum mismatch")
+            session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
             _sessions[horizon] = session
         return session
+
+
+def _load_metadata(horizon: int) -> dict:
+    try:
+        meta = json.loads((_model_dir() / f"g3_h{horizon}.meta.json").read_text())
+        if (
+            meta.get("serving_contract") != G3_MODEL_VERSION
+            or meta.get("horizon") != horizon
+            or meta.get("features") != list(G3_FEATURES)
+            or meta.get("objective") != "qlike(log-variance)"
+            or not np.isfinite(float(meta["graph_base_score"]))
+            or not isinstance(meta["onnx_sha256"], str)
+        ):
+            raise ValueError("invalid contract")
+        return meta
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise G3UnavailableError("G3 metadata is missing or incompatible") from exc
 
 
 def g3_cumulative_variance(frame: pd.DataFrame, horizon: int) -> float:
@@ -262,11 +278,21 @@ def g3_cumulative_variance(frame: pd.DataFrame, horizon: int) -> float:
     if not np.isfinite(row).all():
         raise G3UnavailableError("latest session lacks complete G3 features")
     base = panel_rolling_base(frame, horizon)
-    session = _load_session(horizon)
-    raw = np.asarray(session.run(None, {"input": row})[0]).reshape(-1)[0]
-    # z = delta + log(B); Vhat = exp(z) = B * exp(delta). The base enters
-    # exactly once, inside the log-margin.
-    log_variance = min(max(float(raw), -30.0), 10.0) + np.log(max(base, 1e-12))
+    meta = _load_metadata(horizon)
+    try:
+        session = _load_session(horizon)
+        raw = float(np.asarray(session.run(None, {"input": row})[0]).reshape(-1)[0])
+    except G3UnavailableError:
+        raise
+    except Exception as exc:
+        raise G3UnavailableError("G3 inference unavailable") from exc
+    if not np.isfinite(raw):
+        raise G3UnavailableError("G3 produced a non-finite margin")
+    # Replace the graph's default intercept with the research DMatrix base_margin.
+    # Clip the COMPLETE margin, exactly as predict_xgb does; this is not a UI cap.
+    log_variance = np.clip(
+        raw - float(meta["graph_base_score"]) + np.log(max(base, 1e-12)), -30.0, 10.0
+    )
     variance = float(np.exp(log_variance))
     if not np.isfinite(variance) or variance <= 0:
         raise G3UnavailableError("G3 produced a non-positive variance")

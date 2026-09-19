@@ -122,8 +122,8 @@ GET /api/v1/volatility/forecast?ticker=MSFT&horizon=5&model=gpu_g3
               │           └─> _garch11_cumulative_variance_path(...)
               └─> build_live_volatility_forecast(snapshot, model, ...)
                     └─> G3 ONNX session.run([window])          (cached)
-                    └─> add back log(rolling_base) base margin
-                    └─> exp + clip to 1e-12
+                    └─> replace graph intercept with log(rolling_base)
+                    └─> clip complete log variance, then exp
 ```
 
 The G3 model itself is the tracked ONNX release in
@@ -216,21 +216,23 @@ Render), because Render's free tier wipes on sleep.
 
 ## Where the G3 model came from
 
-`backend/volatility_models/g3_h{5,10,20}.onnx` is the production
+`backend/volatility_models/g3_h{5,10,20}.onnx` is the deployed
 artefact. The ONNX graph implements exactly the inference rule in
 `docs/HISTORICAL_NEWS_VOLATILITY.md` and
 `artifacts/gpu_rolling_origin_v1/DECISION.md`: a global XGBoost
 rolling-volatility correction with a QLIKE objective, the 22-feature
-panel set, and `base_margin = log(rolling)`. The boot steps were:
+panel set, and `base_margin = log(rolling)`. The release metadata records
+`metric_source: validation_panel`; it is not an untouched-test certification.
+The boot steps were:
 
-1. `scripts/run_gpu_rolling_origin.py` (rolling-origin replication
-   across 2019-2024 folds).
-2. `scripts/freeze_g3_panel_v1.py` (per-horizon XGBoost freeze
-   pinned to the study's training partition; manifest at
+1. `scripts/run_gpu_rolling_origin.py` (research evaluation and
+   replication across chronological folds).
+2. `scripts/freeze_g3_panel_v1.py` (per-horizon QLIKE XGBoost freeze
+   pinned to the validation-panel training partition; manifest at
    `artifacts/g3_panel_v1/manifest.json`).
-3. `scripts/package_g3_models.py` (retrain on the full
-   train+validation window, export to ONNX opset 15, and freeze
-   sha256 in `meta.json`).
+3. `scripts/package_g3_models.py` (hash-verifies those frozen boosters,
+   exports without retraining to ONNX opset 15, and verifies final-variance
+   parity under varied base margins before writing any artifact).
 
 The same freeze manifests the ONNX↔XGBoost parity
-(`parity_max_abs_diff` in each `meta.json`).
+(`parity_max_relative_variance_error` in each `meta.json`).

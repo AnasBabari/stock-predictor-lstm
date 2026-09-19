@@ -161,16 +161,62 @@ def test_g3_inference_applies_base_margin_exactly_once(monkeypatch):
         def run(self, _outputs, _inputs):
             return [np.full((1,), self._raw)]
 
-    monkeypatch.setattr(g3, "_load_session", lambda horizon: FakeSession(0.0))
+    monkeypatch.setattr(
+        g3,
+        "_load_session",
+        lambda horizon: FakeSession(g3._load_metadata(horizon)["graph_base_score"]),
+    )
     for horizon in (5, 10, 20):
         base = g3.panel_rolling_base(frame, horizon)
         assert g3.g3_cumulative_variance(frame, horizon) == pytest.approx(base, rel=1e-12)
-    monkeypatch.setattr(g3, "_load_session", lambda horizon: FakeSession(0.5))
+    monkeypatch.setattr(
+        g3,
+        "_load_session",
+        lambda horizon: FakeSession(g3._load_metadata(horizon)["graph_base_score"] + 0.5),
+    )
     for horizon in (5, 10, 20):
         base = g3.panel_rolling_base(frame, horizon)
         assert g3.g3_cumulative_variance(frame, horizon) == pytest.approx(
             base * np.exp(0.5), rel=1e-12
         )
+
+
+@pytest.mark.parametrize("raw", [-100.0, 100.0])
+def test_g3_clips_complete_log_variance_not_the_correction(monkeypatch, raw):
+    from types import SimpleNamespace
+
+    import services.g3_volatility as g3
+
+    frame = _ohlc_frame()
+    monkeypatch.setattr(
+        g3, "_load_session", lambda _: SimpleNamespace(run=lambda *_: [np.array([raw])])
+    )
+    base = g3.panel_rolling_base(frame, 5)
+    intercept = g3._load_metadata(5)["graph_base_score"]
+    expected = np.exp(np.clip(raw - intercept + np.log(base), -30, 10))
+    assert g3.g3_cumulative_variance(frame, 5) == pytest.approx(expected, rel=1e-12)
+
+
+def test_g3_rejects_obsolete_metadata_before_inference(monkeypatch, tmp_path):
+    import services.g3_volatility as g3
+
+    (tmp_path / "g3_h5.meta.json").write_text(json.dumps({"serving_contract": "old"}))
+    monkeypatch.setattr(g3, "_model_dir", lambda: tmp_path)
+    with pytest.raises(g3.G3UnavailableError, match="metadata"):
+        g3.g3_cumulative_variance(_ohlc_frame(), 5)
+
+
+@pytest.mark.skipif(not HAS_ONNX, reason="onnxruntime not installed")
+def test_g3_rejects_tampered_graph_before_loading(monkeypatch, tmp_path):
+    import services.g3_volatility as g3
+
+    original = g3._model_dir()
+    (tmp_path / "g3_h5.meta.json").write_bytes((original / "g3_h5.meta.json").read_bytes())
+    (tmp_path / "g3_h5.onnx").write_bytes(b"not-the-reviewed-model")
+    monkeypatch.setattr(g3, "_model_dir", lambda: tmp_path)
+    monkeypatch.setattr(g3, "_sessions", {})
+    with pytest.raises(g3.G3UnavailableError, match="checksum"):
+        g3._load_session(5)
 
 
 @pytest.mark.skipif(not HAS_ONNX, reason="onnxruntime not installed")
@@ -220,13 +266,14 @@ def test_g3_serving_path_returns_promoted_cone(monkeypatch):
     monkeypatch.setattr(data_pipeline, "_download_ohlcv", lambda symbol: _ohlc_frame(800))
     body = build_live_volatility_forecast(_snapshot(), horizon=5, model="gpu_g3")
     assert body["forecast"]["model"] == "gpu_g3"
-    assert body["evidence"]["model_status"] == "gpu_promoted"
+    assert body["evidence"]["model_status"] == "learned_model"
     assert body["evidence"]["baseline"] is False
     quantiles = body["forecast"]["price_quantiles"]
     assert len(quantiles["p50"]) == 5
     assert quantiles["p50"][-1] == body["current_price"]
     assert body["evidence"]["fallback_used"] is None
-    assert body["evidence"]["test_evidence_qlike_vs_rolling"]["p_two_sided"] < 1e-9
+    assert body["evidence"]["test_evidence_qlike_vs_rolling"] is None
+    assert body["evidence"]["metric_source"] == "validation_panel"
 
 
 @pytest.mark.skipif(not HAS_ONNX, reason="onnxruntime not installed")

@@ -1,9 +1,10 @@
-# Final provenance — GPU-volatility study, completed with production integration
+# GPU-volatility provenance and serving correction record
 
-Status: study completed, production integration complete; deferred items
-listed at end. Branch: `study/gpu-panel-volatility-v1`. Pushed to origin.
-No user-facing model name claims certified status incorrectly; the UI
-labels the G3 promoted result as "Enhanced volatility forecast."
+Status: research artifacts are available and the serving path is being
+verified. The current G3 response is explicitly `validation_panel` evidence,
+not untouched-test certification. The serving correction repackages the
+hash-verified QLIKE boosters and replaces the ONNX graph intercept with the
+request-time rolling base before clipping the complete log-variance margin.
 
 ## Complete, frozen studies (tested + pushed)
 
@@ -24,9 +25,10 @@ labels the G3 promoted result as "Enhanced volatility forecast."
    B2 null on full universe, D null. E and F not executed by design.
 
 4. GPU-panel rolling-origin — frozen 6 calendar-year folds (2019-2024);
-   full 286-stock; G3 promotion passes; untouched-test burn at 91k/90k/88k
-   common origins; QLIKE improvement consistent (5: +23.9%, 10: +23.8%, 20: +23.7%,
-   all p < 1e-11). Proved deterministic reproducibility (G0 gate: max abs diff 0).
+   full 286-stock validation-panel artifact. The current serving contract does
+   not claim the earlier test-burn numbers as production evidence. The
+   hash-verified boosters remain reproducible and are exported without
+   retraining.
 
 5. Options pipeline audit — not executed due to missing entitlement
    (`study/options-implied-volatility` branch). Gate 0 plumbing verified
@@ -56,14 +58,15 @@ labels the G3 promoted result as "Enhanced volatility forecast."
 - `backend/services/forecast_artifacts.py`: pipeline-artifact caching
   (content-addressed `.artifact.json`, runtime-version guard, fail-closed
   pre-load, exact replay equality test). Not user-modifying.
-- `scripts/package_g3_models.py`: final ONNX build (opset 15, parity <=1.43e-05).
+- `scripts/package_g3_models.py`: hash-verified ONNX build (opset 15,
+  final-variance parity under varied base margins, no retraining).
 - `backend/volatility_models/`: 3 artifacts (`h5`, `h10`, `h20`), tracked (not in `.gitignore`), small size.
 - `frontend/src/components/VolatilityOutlook.jsx` + `test.jsx`: card rendering
   the G3 evidence without model names in copy (`Enhanced volatility forecast`,
   risk-level pill, 7-day combined outlook with range, diagnostics).
 - `frontend/src/ml/volatilityClient.js`: model param (`model=gpu_g3`) wired
-  through `mapVolatilityResponse`, status mapping (`gpu_promoted`), label
-  mapping (`enhanced` not certified), metrics (`held_out_test_panel` for promoted).
+  through `mapVolatilityResponse`, status mapping (`learned_model`), and
+  source-specific validation-panel disclosure.
 - `frontend/src/components/PriceChart.jsx`: G3 range bands (date-aligned
   5-day bands only; skipped gracefully on mismatch); forecast-region
   (`t212ForecastRegion`); dashed estimate (`borderDash: [6,4]`) with visible
@@ -126,9 +129,8 @@ labels the G3 promoted result as "Enhanced volatility forecast."
   verified private-index replacement (`c026cf0`) containing only the intended
   13 research-layer files.
 
-No further feature changes needed to reach the preregistered promotion result
-(G3 validated, untouched-test burned once, no test-set evaluation, no C++
-until promotion justifies it). Ready for deployment design — which you
-identified as the remaining scope: production G3 promotion on the certified
-contract, user-facing copy/metrics, chart-band overlay, and G2 silent
-recording via the existing live-forecast collector hook.
+The current serving contract intentionally does not claim a certified G3
+promotion. Deployment verification of the corrected ONNX path and any future
+independent untouched-test evaluation remain separate work. Until then, the
+UI and API retain validation-panel wording and do not present historical
+results as a live track record.

@@ -1,13 +1,13 @@
 {
   "ticker": "MSFT",
   "as_of": "2026-08-27",
-  "horizon": 5,
+  "horizon": 10,
   "current_price": 505.05999755859375,
   "forecast": {
-    "future_dates": ["2026-08-28", "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03"],
-    "expected_cumulative_variance": 0.001513231071599981,
-    "expected_annualized_volatility": 0.2761645270642829,
-    "predicted_volatility": 0.2761645270642829,
+    "future_dates": ["2026-08-28", "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"],
+    "expected_cumulative_variance": 0.0036938255997259863,
+    "expected_annualized_volatility": 0.30509736988885183,
+    "predicted_volatility": 0.30509736988885183,
     "volatility_unit": "annualized_sigma",
     "model": "gpu_g3",
     "requested_model": "gpu_g3",

@@ -156,7 +156,7 @@ which direction. See [methodology.md](methodology.md).
 |---|---|---|---|
 | `ticker` | string | `AAPL` | |
 | `horizon` | int | `5` | must be one of **5, 10, 20** |
-| `model` | string | `auto` | `gpu_g3` selects the certified model explicitly |
+| `model` | string | `auto` | `gpu_g3` selects the learned validation-panel model explicitly |
 
 Response (abridged):
 
@@ -180,12 +180,18 @@ predicted_volatility, volatility_unit, model, requested_model, baseline
 forecast works*: `model_status`, `model_family`, `model_name`,
 `baseline` (true when it fell back), `model_version`,
 `feature_set_version`, `model_policy_version`, `fallback_used`,
-`test_evidence_qlike_vs_rolling`, `risk_level`,
+`test_evidence_qlike_vs_rolling` (null unless independently supplied), `risk_level`,
 `risk_ratio_vs_trailing_60d`, `trailing_annualized_volatility_60d`.
 
-When the certified model cannot be used, the response **says so**:
+When the requested learned model cannot be used, the response **says so**:
 `baseline: true` plus a non-null `fallback_used`. It never silently
 substitutes a different model.
+
+The packaged G3 artifacts currently report `metric_source: validation_panel`.
+That is historical validation evidence, not a claim of untouched production
+test performance. A serving failure is disclosed with `model_status: baseline`
+and a non-null `fallback_used`; the UI renders missing risk information as
+`Unavailable`.
 
 ### `GET /api/v1/volatility/ledger`
 

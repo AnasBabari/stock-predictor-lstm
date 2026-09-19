@@ -201,7 +201,6 @@ def _build_g3_forecast(
     if len(future_dates) != horizon:
         raise ValueError("calendar did not provide the requested forecast horizon")
     learned = model_name == GPU_G3_MODEL
-    test_evidence = dict(g3.G3_TEST_EVIDENCE.get(horizon, {}))
     risk = _trailing_risk_context(frame, variance / horizon) if learned else {}
     return {
         "ticker": snapshot.ticker,
@@ -223,7 +222,7 @@ def _build_g3_forecast(
             "baseline": not learned,
         },
         "evidence": {
-            "model_status": "gpu_promoted" if learned else "baseline",
+            "model_status": "learned_model" if learned else "baseline",
             "model_family": "global_gpu_xgboost" if learned else "statistical_baseline",
             "model_name": model_name,
             "requested_model": requested_model,
@@ -239,7 +238,7 @@ def _build_g3_forecast(
             },
             "selected_horizon": horizon,
             "fallback_used": fallback_reason,
-            "test_evidence_qlike_vs_rolling": test_evidence if learned else None,
+            "test_evidence_qlike_vs_rolling": None,
             "risk_level": risk.get("risk_level") if learned else None,
             "risk_ratio_vs_trailing_60d": risk.get("risk_ratio_vs_trailing_60d")
             if learned
@@ -247,16 +246,14 @@ def _build_g3_forecast(
             "trailing_annualized_volatility_60d": risk.get("trailing_annualized_volatility_60d")
             if learned
             else None,
-            "promotion_reference": "artifacts/gpu_rolling_origin_v1/test_report.json"
-            if learned
-            else None,
+            "promotion_reference": "artifacts/g3_panel_v1/manifest.json" if learned else None,
             "scenario_label": "gaussian_model_implied_price_range",
             "scenario_description": (
                 "Price dispersion implied by forecast volatility under a zero-drift "
                 "Gaussian log-return reference model; not a point price forecast or "
                 "calibrated confidence interval."
             ),
-            "metric_source": "held_out_test_panel" if learned else "baseline_definition",
+            "metric_source": "validation_panel" if learned else "baseline_definition",
             "interval_method": "gaussian_reference_scenario",
             "interval_nominal_coverage": 0.90,
             "interval_scope": "pointwise_marginal_reference_not_empirically_calibrated",
