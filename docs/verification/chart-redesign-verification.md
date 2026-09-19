@@ -113,5 +113,26 @@ The intended Vercel project is `stock-predictor-lstm`
 `stock-predictor-lstm-two.vercel.app`, repository
 `AnasBabari/stock-predictor-lstm`, branch `main`.
 
-Production publishing and live API/chart checks are pending at this local
-verification checkpoint. They must not be inferred from the fixture images.
+## Publication blocker found after local verification
+
+The implementation is committed locally as `d127050` (G3 serving correction)
+and `af2bde7` (UI, tests and evidence). A normal push was rejected; no remote
+changes were overwritten and no force-push was attempted.
+
+Fetching revealed genuine divergence from common ancestor `3ce0dec`:
+local main had nine unique commits, remote main seven. Remote commit
+`c6db03a` removed `backend/routes/simple_forecast.py`,
+`backend/services/simple_forecast.py`, the forecast-artifact service,
+market-news service and frontend price client. Remote main also contains
+other chart and numerical fixes that must be preserved.
+
+The verified Vercel production deployment still points to remote main
+`b1ca951631371da774c33ad504341b40068ba881`, not these local corrections.
+Integrating a learned seven-session estimate into a remote branch that
+explicitly decommissioned it requires a product-scope decision. Publishing
+is paused until that conflict is resolved; no merge or rebase was attempted.
+
+Live API/chart verification of the new build remains **not performed**.
+Local fixture screenshots and serving parity must not be described as a
+successful production deployment. No ledger collection or settlement writes
+were made during this work.
