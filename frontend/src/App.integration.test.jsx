@@ -114,13 +114,13 @@ function volatilityBody(horizon, sym = 'MSFT', basePrice = 450) {
       expected_annualized_volatility: { 5: 0.214, 10: 0.231, 20: 0.208 }[horizon] ?? 0.214,
     },
     evidence: {
-      model_status: 'gpu_promoted',
+      model_status: 'learned_model',
       model_family: 'global_gpu_xgboost',
       model_name: 'gpu_g3',
       requested_model: 'gpu_g3',
       baseline: false,
-      model_version: 'g3-gpu-xgb-v1',
-      metric_source: 'held_out_test_panel',
+      model_version: 'g3-qlike-base-margin-v2',
+      metric_source: 'validation_panel',
       risk_level: 'Elevated',
       risk_ratio_vs_trailing_60d: 1.32,
       trailing_annualized_volatility_60d: 0.162,
@@ -207,7 +207,7 @@ describe('simplified forecast app', () => {
 
     expect(await screen.findByRole('heading', { name: 'Volatility Outlook' })).toBeInTheDocument();
     expect(screen.getByText('21.4% annualised')).toBeInTheDocument();
-    expect(screen.getByText(/held-out test panel/)).toBeInTheDocument();
+    expect(screen.getAllByText(/historical validation panel/).length).toBeGreaterThan(0);
     const card = screen.getByLabelText('MSFT volatility outlook');
     expect(card.textContent).not.toMatch(/G3|XGBoost|HAR|QLIKE/i);
   });

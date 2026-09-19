@@ -525,11 +525,23 @@ export default function App() {
 
             {/* Supporting Information Behind Overview / News / Performance Tabs */}
             <div className="supporting-tabs-container">
-              <div className="tab-navigation-bar" role="tablist" aria-label="Supporting information tabs">
+              <div className="tab-navigation-bar" role="tablist" aria-label="Supporting information tabs"
+                onKeyDown={(event) => {
+                  const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
+                  if (!keys.includes(event.key)) return;
+                  event.preventDefault();
+                  const tabs = ['overview', 'news', 'performance'];
+                  const index = tabs.indexOf(activeTab);
+                  const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2
+                    : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
+                  setActiveTab(tabs[next]);
+                  document.getElementById(`tab-${tabs[next]}`)?.focus();
+                }}>
                 <button
                   type="button"
                   role="tab"
                   id="tab-overview"
+                  tabIndex={activeTab === 'overview' ? 0 : -1}
                   aria-selected={activeTab === 'overview'}
                   aria-controls="panel-overview"
                   className={`sub-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
@@ -541,6 +553,7 @@ export default function App() {
                   type="button"
                   role="tab"
                   id="tab-news"
+                  tabIndex={activeTab === 'news' ? 0 : -1}
                   aria-selected={activeTab === 'news'}
                   aria-controls="panel-news"
                   className={`sub-tab-btn ${activeTab === 'news' ? 'active' : ''}`}
@@ -552,6 +565,7 @@ export default function App() {
                   type="button"
                   role="tab"
                   id="tab-performance"
+                  tabIndex={activeTab === 'performance' ? 0 : -1}
                   aria-selected={activeTab === 'performance'}
                   aria-controls="panel-performance"
                   className={`sub-tab-btn ${activeTab === 'performance' ? 'active' : ''}`}

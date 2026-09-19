@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { fetchForecastLedger } from '../api/forecastLedgerClient';
 
 export default function ForecastLedgerTrackRecord({ ticker, horizon, defaultOpen = false }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -6,46 +7,22 @@ export default function ForecastLedgerTrackRecord({ ticker, horizon, defaultOpen
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('all'); // 'all' | 'live' | 'historical_replay'
-  const fetchedTickerRef = useRef(null);
-
-  const fetchLedger = useCallback(async (sym) => {
-    if (!sym) return;
-    setLoading(true);
+  useEffect(() => {
+    setLedgerData(null);
     setError(null);
-    try {
-      const queryHorizon = horizon ? `&horizon=${encodeURIComponent(horizon)}` : '';
-      const url = `/api/v1/volatility/ledger?ticker=${encodeURIComponent(sym)}${queryHorizon}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`Failed to load forecast ledger (${res.status})`);
-      }
-      const data = await res.json();
-      setLedgerData(data);
-      fetchedTickerRef.current = sym;
-    } catch (err) {
-      setError(err.message || 'Unable to load past forecasts.');
-    } finally {
+    setActiveTab('all');
+    if (!ticker || !isOpen) {
       setLoading(false);
+      return undefined;
     }
-  }, [horizon]);
-
-  // Lazy fetch: only fetch when section is opened, and reuse cache for same ticker
-  useEffect(() => {
-    if (isOpen && ticker && fetchedTickerRef.current !== ticker) {
-      fetchLedger(ticker);
-    }
-  }, [isOpen, ticker, fetchLedger]);
-
-  // Reset cache if ticker changes
-  useEffect(() => {
-    if (ticker && fetchedTickerRef.current && fetchedTickerRef.current !== ticker) {
-      setLedgerData(null);
-      fetchedTickerRef.current = null;
-      if (isOpen) {
-        fetchLedger(ticker);
-      }
-    }
-  }, [ticker, isOpen, fetchLedger]);
+    const controller = new AbortController();
+    setLoading(true);
+    fetchForecastLedger(ticker, horizon, controller.signal)
+      .then((data) => { if (!controller.signal.aborted) setLedgerData(data); })
+      .catch((err) => { if (!controller.signal.aborted) setError(err.message); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [ticker, horizon, isOpen]);
 
   if (!ticker) return null;
 

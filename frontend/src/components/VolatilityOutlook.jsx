@@ -27,13 +27,14 @@ export function annualisedFromResponse(entry) {
 }
 
 function RiskPill({ level }) {
-  const key = String(level || 'Unknown').toLowerCase();
-  const label = key === 'unknown' ? 'Unknown' : String(level);
+  const key = String(level || 'Unavailable').toLowerCase();
+  const label = key === 'unknown' ? 'Unavailable' : String(level || 'Unavailable');
   return <span className={`risk-pill risk-${key}`}>{label}</span>;
 }
 
 function horizonPlainDescription(riskLevel, annual, trailing) {
   const level = String(riskLevel || '').toLowerCase();
+  if (!riskLevel || ['unknown', 'unavailable'].includes(level)) return 'Risk comparison unavailable';
   if (level.includes('elevated') || (annual != null && trailing != null && annual > trailing * 1.15)) {
     return 'Elevated price movement likely compared to recent history';
   }
@@ -114,7 +115,7 @@ export default function VolatilityOutlook({
 
   const first = rows[0]?.entry || null;
   const asOf = first?.evidence?.data_as_of || first?.asOf || null;
-  const modelName = first?.evidence?.model_name || first?.forecast?.model || 'Enhanced statistical model';
+  const missingHorizons = OUTLOOK_HORIZONS.filter((horizon) => !outlook.byHorizon?.[horizon]);
 
   return (
     <section className="panel outlook-panel" aria-label={`${symbol} volatility outlook`}>
@@ -128,8 +129,9 @@ export default function VolatilityOutlook({
       <div className="horizon-rows-list">
         {rows.map(({ horizon, entry }) => {
           const annual = annualisedFromResponse(entry);
-          const trailing = Number(entry?.evidence?.trailing_annualized_volatility_60d);
-          const riskLevel = entry?.evidence?.risk_level || 'Normal';
+          const trailingValue = entry?.evidence?.trailing_annualized_volatility_60d;
+          const trailing = trailingValue == null ? null : Number(trailingValue);
+          const riskLevel = entry?.evidence?.risk_level || 'Unavailable';
           const plainDesc = horizonPlainDescription(riskLevel, annual, trailing);
           const range = currentPrice && annual ? expectedRange(currentPrice, annual, horizon) : null;
           const adjustment = annual != null && trailing > 0 ? (annual / trailing - 1) : null;
@@ -186,6 +188,12 @@ export default function VolatilityOutlook({
           );
         })}
       </div>
+      {missingHorizons.length > 0 && (
+        <div className="volatility-status-row" role="status">
+          <span>{missingHorizons.join(', ')}-session outlook unavailable. Other periods are shown above.</span>
+          <button type="button" className="retry-action-btn" onClick={retry}>Retry missing periods</button>
+        </div>
+      )}
 
       {combined && (
         <div className="combined-outlook" aria-label="Combined seven-day outlook">
@@ -216,14 +224,21 @@ export default function VolatilityOutlook({
       <details className="about-outlook-details">
         <summary>About this outlook</summary>
         <div className="about-outlook-body">
-          <p>
-            <strong>Model:</strong> Enhanced volatility forecast. Evaluated against realised market volatility on held-out test panel.
-          </p>
+          {rows.map(({ horizon, entry }) => {
+            const evidence = entry.evidence || {};
+            const baseline = evidence.baseline === true || evidence.model_status === 'baseline' || Boolean(evidence.fallback_used);
+            const enhanced = ['gpu_promoted', 'learned_model'].includes(evidence.model_status) && !baseline;
+            return (
+              <p key={horizon}>
+                <strong>{horizon} sessions:</strong> {baseline ? 'Statistical baseline' : enhanced ? 'Enhanced volatility forecast' : 'Model information unavailable'}.
+                {evidence.fallback_used ? ' The requested model was unavailable; a fallback was used.' : ''}
+                {evidence.metric_source === 'held_out_test_panel' ? ' Evaluation: held-out test panel.' : ''}
+                {evidence.metric_source === 'validation_panel' ? ' Evaluation: historical validation panel.' : ''}
+              </p>
+            );
+          })}
           <p>
             <strong>Interpretation:</strong> Volatility estimates describe the expected magnitude of price swings over each period, not whether prices will rise or fall.
-          </p>
-          <p>
-            <strong>Fallback Policy:</strong> If machine learning estimates encounter missing data, a validated statistical baseline is automatically used.
           </p>
           <p>
             Past performance does not guarantee future results.

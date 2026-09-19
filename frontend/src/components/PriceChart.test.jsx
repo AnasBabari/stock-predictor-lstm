@@ -35,7 +35,10 @@ vi.mock('./LazyLineChart', () => ({
 function historyFixture(sessions = 300, withIntraday = true) {
   return {
     ticker: 'MSFT',
-    daily: Array.from({ length: sessions }, (_, i) => ({ d: `2024-01-${String((i % 28) + 1).padStart(2, '0')}`, c: 100 + i })),
+    daily: Array.from({ length: sessions }, (_, i) => ({
+      d: new Date(Date.UTC(2024, 5, 1 - (sessions - 1 - i))).toISOString().slice(0, 10),
+      c: 100 + i,
+    })),
     intraday: withIntraday
       ? Array.from({ length: 20 }, (_, i) => ({ t: `2024-06-01T14:${String(i).padStart(2, '0')}:00+00:00`, c: 200 + i }))
       : null,
@@ -44,6 +47,8 @@ function historyFixture(sessions = 300, withIntraday = true) {
 
 const forecastFixture = {
   ticker: 'MSFT',
+  data_as_of: '2024-06-01',
+  current_price: 399,
   future_dates: ['2024-06-03', '2024-06-04', '2024-06-05', '2024-06-06', '2024-06-07', '2024-06-10', '2024-06-11'],
   predicted_prices: [401, 402, 403, 404, 405, 406, 407],
   historical_error_band: {
@@ -140,7 +145,7 @@ describe('PriceChart', () => {
     usePriceHistory.mockReturnValue({ history: null, loading: false, error: 'Down', meta: null, retry: vi.fn() });
     const fallbackForecast = {
       ...forecastFixture,
-      historical_dates: ['2024-05-30', '2024-05-31'],
+      historical_dates: ['2024-05-30', '2024-06-01'],
       historical_prices: [398, 399],
     };
     render(<PriceChart ticker="MSFT" currencySymbol="$" forecast={fallbackForecast} />);
@@ -193,7 +198,10 @@ describe('PriceChart', () => {
   it('puts the sign outside the currency symbol for a falling period', () => {
     const falling = {
       ticker: 'MSFT',
-      daily: Array.from({ length: 300 }, (_, i) => ({ d: `2024-01-${String((i % 28) + 1).padStart(2, '0')}`, c: 400 - i })),
+      daily: Array.from({ length: 300 }, (_, i) => ({
+        d: new Date(Date.UTC(2024, 5, 1 - (299 - i))).toISOString().slice(0, 10),
+        c: 400 - i,
+      })),
       intraday: null,
     };
     usePriceHistory.mockReturnValue({ history: falling, loading: false, error: '', retry: vi.fn() });

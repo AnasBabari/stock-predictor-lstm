@@ -49,7 +49,7 @@ describe('getSharedEstimatePresentation', () => {
     const withoutBounds = { ...baseForecast, lower_prices: [], upper_prices: [] };
     const res = getSharedEstimatePresentation({ forecast: withoutBounds });
     expect(res.isAvailable).toBe(false);
-    expect(res.reason).toBe('missing_bounds');
+    expect(res.reason).toBe('invalid_horizon');
     expect(res.series).toEqual([]);
   });
 
@@ -102,9 +102,9 @@ describe('getSharedEstimatePresentation', () => {
       ticker: 'SHEL.L',
       data_as_of: '2026-09-09',
       current_price: 2600.54,
-      lower_prices: [2580.0, 2590.0],
-      upper_prices: [2620.0, 2630.0],
-      future_dates: ['2026-09-10', '2026-09-11'],
+      lower_prices: [2580.0, 2590.0, 2600.0, 2605.0, 2610.0, 2615.0, 2620.0],
+      upper_prices: [2620.0, 2630.0, 2640.0, 2645.0, 2650.0, 2655.0, 2660.0],
+      future_dates: ['2026-09-10', '2026-09-11', '2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17', '2026-09-18'],
     };
     const ukHistory = {
       ticker: 'SHEL.L',
@@ -118,5 +118,32 @@ describe('getSharedEstimatePresentation', () => {
     });
     expect(res.isAvailable).toBe(true);
     expect(res.isMismatch).toBe(false);
+  });
+
+  it('rejects the reproduced false estimate when a bound is null or inverted', () => {
+    const nullBound = { ...baseForecast, lower_prices: [null, ...baseForecast.lower_prices.slice(1)] };
+    expect(getSharedEstimatePresentation({ forecast: nullBound, history: baseHistory }).isAvailable).toBe(false);
+    const inverted = { ...baseForecast, upper_prices: [480, ...baseForecast.upper_prices.slice(1)] };
+    expect(getSharedEstimatePresentation({ forecast: inverted, history: baseHistory }).reason).toBe('invalid_bounds');
+  });
+
+  it('rejects truncated paths and missing origin information', () => {
+    const truncated = { ...baseForecast, future_dates: baseForecast.future_dates.slice(0, 6) };
+    expect(getSharedEstimatePresentation({ forecast: truncated, history: baseHistory }).reason).toBe('invalid_horizon');
+    const missingOrigin = { ...baseForecast, data_as_of: undefined };
+    expect(getSharedEstimatePresentation({ forecast: missingOrigin, history: baseHistory }).reason).toBe('invalid_origin');
+  });
+
+  it.each([null, '', ' ', NaN, Infinity, -1, 0, false])('rejects invalid bound %s without coercing it to a price', (value) => {
+    for (const key of ['lower_prices', 'upper_prices']) {
+      const forecast = { ...baseForecast, [key]: [value, ...baseForecast[key].slice(1)] };
+      expect(getSharedEstimatePresentation({ forecast, history: baseHistory }).reason).toBe('invalid_bounds');
+    }
+  });
+
+  it.each(['2026-09-09', '2026-09-11', '2026-02-30', null])('rejects non-increasing or invalid future date %s', (value) => {
+    const forecast = { ...baseForecast, future_dates: [...baseForecast.future_dates] };
+    forecast.future_dates[2] = value;
+    expect(getSharedEstimatePresentation({ forecast, history: baseHistory }).reason).toBe('invalid_dates');
   });
 });

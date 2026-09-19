@@ -84,7 +84,7 @@ export function validateVolatilityResponse(body, ticker, days) {
     QUANTILE_KEYS.map((key) => [key, quantileSeries(body.forecast, key, days)])
   );
   const isBaseline = body.evidence?.model_status === 'baseline';
-  const isPromoted = body.evidence?.model_status === 'gpu_promoted';
+  const isPromoted = ['gpu_promoted', 'learned_model'].includes(body.evidence?.model_status);
   const isLegacyCertified = body.evidence?.certified === true
     && body.evidence?.certified_heads?.volatility === true;
   if (!isBaseline && !isPromoted && !isLegacyCertified) {
@@ -129,10 +129,10 @@ export function validateVolatilityResponse(body, ticker, days) {
 export function mapVolatilityResponse(body, ticker, days) {
   const data = validateVolatilityResponse(body, ticker, days);
   const isBaseline = data.evidence?.model_status === 'baseline';
-  const isPromoted = data.evidence?.model_status === 'gpu_promoted';
+  const isPromoted = ['gpu_promoted', 'learned_model'].includes(data.evidence?.model_status);
   const summary = data.evidence?.horizon_certification?.[String(days)] || {};
   const metricSource = data.evidence?.metric_source
-    || (isBaseline ? 'baseline_definition' : isPromoted ? 'held_out_test_panel' : 'locked_purged_walk_forward');
+    || (isBaseline ? 'baseline_definition' : isPromoted ? 'validation_panel' : 'locked_purged_walk_forward');
   const evidence = data.evidence || {};
   const dataAsOf = evidence.data_as_of || data.as_of;
   const modelVersion = evidence.model_version || evidence.model_id || data.forecast?.model;
@@ -195,11 +195,11 @@ export function mapVolatilityResponse(body, ticker, days) {
       promoted: !isBaseline,
       selected_horizon: days,
       best_validated_horizon: days,
-      promoted_horizons: !isBaseline && data.evidence?.certified_heads?.volatility ? [days] : [],
+      promoted_horizons: !isBaseline && (isPromoted || data.evidence?.certified_heads?.volatility) ? [days] : [],
       reasons: [isBaseline
         ? 'This forecast is a transparent causal baseline; learned-model benchmark evidence is not loaded.'
         : isPromoted
-        ? 'Enhanced model trained across hundreds of stocks; outperformed the previous rolling-volatility model across the held-out test panel. Direction and price levels remain uncertified.'
+        ? 'Enhanced model output is backed by a historical validation panel; this does not claim held-out production skill. Direction and price levels remain uncertified.'
         : hasReturnDistribution
         ? 'Terminal Student-t return location and variance cleared the sealed CRPS, QLIKE, and coverage gates; direction remains uncertified.'
         : 'Conditional volatility is certified; no learned return-location or direction claim is made.'],

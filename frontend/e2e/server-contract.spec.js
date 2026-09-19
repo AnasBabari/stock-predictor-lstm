@@ -1,109 +1,100 @@
 import { expect, test } from '@playwright/test';
-import { activeVolatilityForecastPayload } from './fixtures.js';
+import { installFixtures } from './uiFixtures.js';
 
-function mockVolatilityApi(page, forecastHandler) {
-  const calls = { forecast: [], search: 0, info: 0 };
-  page.route('**/api/v1/search?query=*', (route) => {
-    calls.search += 1;
-    return route.fulfill({ json: [{ ticker: 'MSFT', name: 'Microsoft Corp.', type: 'Equity' }] });
-  });
-  page.route('**/api/v1/info?ticker=MSFT', (route) => {
-    calls.info += 1;
-    return route.fulfill({ json: { longName: 'Microsoft Corp.', sector: 'Technology' } });
-  });
-  page.route('**/api/v1/volatility/forecast?*', (route) => {
-    calls.forecast.push(route.request().url());
-    return forecastHandler(route);
-  });
-  return calls;
+async function submit(page) {
+  await page.goto('/');
+  await page.getByLabel('Stock ticker').fill('MSFT');
+  await page.getByRole('button', { name: /view outlook/i }).click();
+  await expect(page.locator('#chartContainer canvas')).toBeVisible();
 }
 
-test('active volatility baseline is rendered with an honest scenario range', async ({ page }) => {
-  test.setTimeout(30_000);
-  const calls = mockVolatilityApi(page, (route) =>
-    route.fulfill({ json: activeVolatilityForecastPayload('MSFT', 5) })
-  );
+test('first visit waits for a stock selection without a placeholder chart', async ({ page }) => {
+  const calls = [];
+  page.on('request', (request) => calls.push(request.url()));
+  await installFixtures(page);
   await page.goto('/');
-  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
-  await page.getByRole('button', { name: 'Predict', exact: true }).click();
-
-  await expect(page.locator('#metricsCard')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText('BASELINE').first()).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/Historical vs Causal Volatility Scenario/i)).toBeVisible({ timeout: 10_000 });
-
-  expect(calls.forecast).toHaveLength(1);
-  expect(calls.forecast[0]).toContain('ticker=MSFT');
-  expect(calls.forecast[0]).toContain('horizon=5');
+  await expect(page.getByLabel('Stock ticker')).toHaveValue('');
+  await expect(page.locator('#chartContainer')).toHaveCount(0);
+  expect(calls.some((url) => /\/api\/v1\/(history|forecast)/.test(url))).toBe(false);
 });
 
-test('server 503 abstention surfaces truthful message and does not substitute a baseline', async ({ page }) => {
-  test.setTimeout(30_000);
-  const calls = mockVolatilityApi(page, (route) =>
-    route.fulfill({
-      status: 503,
-      json: {
-        detail: {
-          code: 'abstain_no_certified_model',
-          message: 'No certified global model is available yet.',
-        },
-      },
-    })
-  );
-  await page.goto('/');
-  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
-  await page.getByRole('button', { name: 'Predict', exact: true }).click();
-
-  await expect(
-    page.getByText(/legacy global model is unavailable|active volatility forecast/i).first()
-  ).toBeVisible({ timeout: 15_000 });
-
-  expect(calls.forecast).toHaveLength(1);
+test('valid estimate, modal keyboard containment and supporting tab navigation', async ({ page }) => {
+  await installFixtures(page);
+  await submit(page);
+  await expect(page.locator('.chart-estimate-bar')).toContainText('$456.00');
+  const expand = page.getByRole('button', { name: 'Expand chart', exact: true });
+  await expand.click();
+  const dialog = page.getByRole('dialog', { name: 'Expanded price chart' });
+  const close = dialog.getByRole('button', { name: 'Close expanded chart' });
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(close).toBeFocused();
+  expect(await page.getByLabel('Stock ticker').evaluate((element) => Boolean(element.closest('[inert]')))).toBe(true);
+  await expect.poll(async () => {
+    const canvas = await dialog.locator('canvas').boundingBox();
+    const bounds = await dialog.boundingBox();
+    return canvas.y + canvas.height <= bounds.y + bounds.height;
+  }).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(expand).toBeFocused();
+  expect(await page.locator('body').evaluate((element) => element.style.overflow)).not.toBe('hidden');
+  await page.getByRole('tab', { name: 'Overview', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: /News/ })).toBeFocused();
+  await expect(page.getByText('[Example fixture] Company update for layout verification')).toBeVisible();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('tab', { name: 'Performance', exact: true })).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toBeFocused();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByRole('tab', { name: 'Performance', exact: true })).toBeFocused();
 });
 
-test('server integrity failure fails closed with error toast/message', async ({ page }) => {
-  test.setTimeout(30_000);
-  const calls = mockVolatilityApi(page, (route) =>
-    route.fulfill({
-      status: 503,
-      json: {
-        detail: {
-          code: 'artifact_integrity_failure',
-          message: 'Release digest mismatch.',
-        },
-      },
-    })
-  );
-  await page.goto('/');
-  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
-  await page.getByRole('button', { name: 'Predict', exact: true }).click();
-
-  await expect(
-    page.getByText(/volatility forecast service is temporarily unavailable|integrity failure/i).first()
-  ).toBeVisible({ timeout: 15_000 });
-
-  expect(calls.forecast).toHaveLength(1);
+test('one unavailable horizon retains the other results and exposes its status', async ({ page }) => {
+  await installFixtures(page, 10);
+  await submit(page);
+  await expect(page.getByText(/10-session outlook unavailable/)).toBeVisible();
+  await expect(page.getByText('5 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('20 sessions', { exact: true })).toBeVisible();
+  await page.getByText('About this outlook', { exact: true }).click();
+  await expect(page.getByText(/Evaluation: historical validation panel/)).toHaveCount(2);
 });
 
-test('uncertified horizon returns 503 and displays clean error without baseline fallback', async ({ page }) => {
-  test.setTimeout(30_000);
-  const calls = mockVolatilityApi(page, (route) =>
-    route.fulfill({
-      status: 503,
-      json: {
-        detail: {
-          code: 'certified_horizon_unavailable',
-          message: 'The selected horizon is not certified.',
-        },
-      },
-    })
-  );
-  await page.goto('/');
-  await page.getByRole('combobox', { name: 'Search stock ticker or company name' }).fill('MSFT');
-  await page.getByRole('button', { name: 'Predict', exact: true }).click();
+for (const [name, overrides] of [
+  ['null bounds that previously produced a false $55 estimate', { lower_prices: Array(7).fill(null), upper_prices: Array(7).fill(110) }],
+  ['truncated path', { lower_prices: [440], upper_prices: [460] }],
+  ['missing origin', { data_as_of: null }],
+  ['inconsistent origin', { current_price: 315.34 }],
+]) {
+  test(`rejects ${name} while keeping history visible`, async ({ page }) => {
+    await installFixtures(page, null, overrides);
+    await submit(page);
+    await expect(page.getByText(/Day 7 estimate:/)).toHaveCount(0);
+    await expect(page.locator('.chart-mismatch-alert')).toBeVisible();
+    await expect(page.locator('#chartContainer canvas')).toBeVisible();
+    await expect(page.locator('.t212-price')).toHaveText('$450.00');
+  });
+}
 
-  await expect(
-    page.getByText(/selected volatility horizon is not available/i).first()
-  ).toBeVisible({ timeout: 15_000 });
-
-  expect(calls.forecast).toHaveLength(1);
+test('touch scrolling can pass the chart without trapping the page', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await context.newPage();
+  await installFixtures(page);
+  await submit(page);
+  await page.locator('#chartContainer canvas').scrollIntoViewIfNeeded();
+  const canvas = await page.locator('#chartContainer canvas').boundingBox();
+  const startY = Math.min(canvas.y + canvas.height - 20, 750);
+  const startScroll = await page.evaluate(() => window.scrollY);
+  const client = await context.newCDPSession(page);
+  await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 180, y: startY }] });
+  for (let step = 1; step <= 6; step++) {
+    await client.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 180, y: startY - step * 40 }] });
+  }
+  await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(startScroll + 60);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await context.close();
 });

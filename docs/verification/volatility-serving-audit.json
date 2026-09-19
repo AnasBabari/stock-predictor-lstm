@@ -1,0 +1,35 @@
+{
+  "fixture_type": "local_serving_audit",
+  "fixture_status": "not_live_verification",
+  "ticker": "MSFT",
+  "data_as_of": "2026-08-27",
+  "data_source": "data/tri_exchange/cache/MSFT.parquet",
+  "model": "g3-qlike-base-margin-v2",
+  "feature_schema": "vol-gpu-panel-v1",
+  "formula": "exp(clip(onnx(x) - graph_base_score + log(rolling_cumulative_variance), -30, 10))",
+  "horizons": {
+    "5": {
+      "rolling_cumulative_variance": 0.0015143530696440203,
+      "served_cumulative_variance": 0.001513231071599981,
+      "annualized_sigma": 0.2761645270642829,
+      "status": "learned_model"
+    },
+    "10": {
+      "rolling_cumulative_variance": 0.0030287061392880407,
+      "served_cumulative_variance": 0.0036938255997259863,
+      "annualized_sigma": 0.30509736988885183,
+      "status": "learned_model"
+    },
+    "20": {
+      "rolling_cumulative_variance": 0.006057412278576081,
+      "served_cumulative_variance": 0.00856195799287245,
+      "annualized_sigma": 0.32845193059288424,
+      "status": "learned_model"
+    }
+  },
+  "notes": [
+    "Values are generated from the local MSFT parquet and packaged ONNX artifacts.",
+    "This fixture proves the serving path and is not a live deployment result.",
+    "The validation-panel provenance is disclosed separately from any untouched test claim."
+  ]
+}

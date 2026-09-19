@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import ForecastLedgerTrackRecord from './ForecastLedgerTrackRecord';
+import { clearForecastLedgerCache } from '../api/forecastLedgerClient';
 
 const mockLedgerResponse = {
   ticker: 'AAPL',
@@ -83,6 +84,7 @@ const mockLedgerResponse = {
 
 describe('ForecastLedgerTrackRecord', () => {
   beforeEach(() => {
+    clearForecastLedgerCache();
     vi.stubGlobal('fetch', vi.fn(() =>
       Promise.resolve({
         ok: true,
@@ -144,5 +146,25 @@ describe('ForecastLedgerTrackRecord', () => {
   it('renders null when ticker is omitted', () => {
     const { container } = render(<ForecastLedgerTrackRecord ticker="" horizon={5} />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it('cancels an old ticker request and ignores its late response', async () => {
+    let finishOld;
+    let oldSignal;
+    vi.stubGlobal('fetch', vi.fn()
+      .mockImplementationOnce((_url, { signal }) => {
+        oldSignal = signal;
+        return new Promise((resolve) => { finishOld = resolve; });
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ entries: [] }) }));
+    const { rerender } = render(<ForecastLedgerTrackRecord ticker="AAPL" horizon={5} defaultOpen />);
+    rerender(<ForecastLedgerTrackRecord ticker="MSFT" horizon={20} defaultOpen />);
+    expect(oldSignal.aborted).toBe(true);
+    await screen.findByText('No past recorded forecasts for this ticker yet.');
+    await act(async () => {
+      finishOld({ ok: true, json: async () => mockLedgerResponse });
+    });
+    expect(screen.getByText('MSFT 20 market days')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 });

@@ -52,7 +52,7 @@ export function useVolatilityOutlook(ticker) {
       }
     }))
       .then((entries) => {
-        if (seqRef.current !== id) return;
+        if (seqRef.current !== id || controller.signal.aborted) return;
         const byHorizon = Object.fromEntries(entries);
         const loaded = OUTLOOK_HORIZONS.filter((horizon) => byHorizon[horizon]);
         if (loaded.length === 0) {
@@ -67,7 +67,7 @@ export function useVolatilityOutlook(ticker) {
         setLoading(false);
       })
       .catch((err) => {
-        if (seqRef.current === id && err?.name !== 'AbortError') {
+        if (seqRef.current === id && !controller.signal.aborted && err?.name !== 'AbortError') {
           setOutlook(null);
           setLoading(false);
           setError(err?.message || 'Volatility outlook is unavailable right now.');
@@ -77,8 +77,9 @@ export function useVolatilityOutlook(ticker) {
   }, [ticker, retryTick]);
 
   const retry = useCallback(() => {
+    outlookCache.delete(String(ticker || '').trim().toUpperCase());
     setRetryTick((tick) => tick + 1);
-  }, []);
+  }, [ticker]);
 
   return { outlook, loading, error, retry };
 }

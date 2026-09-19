@@ -1,166 +1,62 @@
-/**
- * Pure presentation adapter for 7-day model price estimates.
- *
- * Guarantees that:
- * 1. The chart dashed line, the final Day 7 estimate, and the percentage
- *    change are strictly computed from the exact same midpoint series.
- * 2. If lower/upper bounds are missing or invalid, the estimate is marked
- *    unavailable rather than silently displaying an alternative series.
- * 3. History compatibility is strictly verified (ticker, origin date,
- *    and close price at display precision). Any mismatch suppresses the
- *    forecast overlay and summary without synthetic rescaling.
- */
+/** One validated seven-session midpoint series for the chart and summary. */
+const unavailable = (reason, mismatchReason = null) => ({
+  isAvailable: false, isMismatch: Boolean(mismatchReason), reason, mismatchReason,
+  series: [], futureDates: [], finalPrice: null, changePct: null, direction: 'flat',
+});
+const positive = (value) => (typeof value === 'number' || typeof value === 'string')
+  && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) > 0;
+const validDate = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+  && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 
-export function getSharedEstimatePresentation({
-  forecast,
-  history,
-  currencySymbol = '$',
-} = {}) {
-  if (!forecast) {
-    return {
-      isAvailable: false,
-      isMismatch: false,
-      reason: 'no_forecast',
-      series: [],
-      futureDates: [],
-      finalPrice: null,
-      changePct: null,
-      direction: 'flat',
-    };
+export function getSharedEstimatePresentation({ forecast, history, currencySymbol = '$' } = {}) {
+  if (!forecast) return unavailable('no_forecast');
+  if (typeof forecast.ticker !== 'string' || !forecast.ticker.trim()
+      || !validDate(forecast.data_as_of) || !positive(forecast.current_price)) {
+    return unavailable('invalid_origin');
   }
-
-  const lower = forecast.lower_prices || forecast.historical_error_band?.lower_prices;
-  const upper = forecast.upper_prices || forecast.historical_error_band?.upper_prices;
-  const futureDates = forecast.future_dates;
-
-  if (
-    !Array.isArray(lower) ||
-    !Array.isArray(upper) ||
-    !Array.isArray(futureDates) ||
-    lower.length === 0 ||
-    upper.length === 0 ||
-    futureDates.length === 0
-  ) {
-    return {
-      isAvailable: false,
-      isMismatch: false,
-      reason: 'missing_bounds',
-      series: [],
-      futureDates: [],
-      finalPrice: null,
-      changePct: null,
-      direction: 'flat',
-    };
+  const lower = forecast.lower_prices ?? forecast.historical_error_band?.lower_prices;
+  const upper = forecast.upper_prices ?? forecast.historical_error_band?.upper_prices;
+  const dates = forecast.future_dates;
+  if (![lower, upper, dates].every((values) => Array.isArray(values) && values.length === 7)
+      || (forecast.forecast_days != null && Number(forecast.forecast_days) !== 7)) {
+    return unavailable('invalid_horizon');
   }
-
-  const count = Math.min(lower.length, upper.length, futureDates.length);
-  const midpointSeries = [];
-
-  for (let i = 0; i < count; i += 1) {
-    const low = Number(lower[i]);
-    const high = Number(upper[i]);
-    if (!Number.isFinite(low) || !Number.isFinite(high)) {
-      return {
-        isAvailable: false,
-        isMismatch: false,
-        reason: 'non_finite_bounds',
-        series: [],
-        futureDates: [],
-        finalPrice: null,
-        changePct: null,
-        direction: 'flat',
-      };
+  let previous = forecast.data_as_of;
+  const series = [];
+  for (let i = 0; i < 7; i += 1) {
+    if (!validDate(dates[i]) || dates[i] <= previous) return unavailable('invalid_dates');
+    previous = dates[i];
+    if (!positive(lower[i]) || !positive(upper[i]) || Number(lower[i]) > Number(upper[i])) {
+      return unavailable('invalid_bounds');
     }
-    midpointSeries.push((low + high) / 2);
+    const midpoint = Number(lower[i]) / 2 + Number(upper[i]) / 2;
+    if (!Number.isFinite(midpoint)) return unavailable('invalid_bounds');
+    series.push(midpoint);
   }
-
-  const finalPrice = midpointSeries.at(-1);
-  if (!Number.isFinite(finalPrice)) {
-    return {
-      isAvailable: false,
-      isMismatch: false,
-      reason: 'invalid_final_price',
-      series: [],
-      futureDates: [],
-      finalPrice: null,
-      changePct: null,
-      direction: 'flat',
-    };
+  const lastBar = Array.isArray(history?.daily) ? history.daily.at(-1) : null;
+  if (typeof history?.ticker !== 'string' || !history.ticker || !lastBar || !validDate(lastBar.d) || !positive(lastBar.c)) {
+    return unavailable('history_unavailable');
   }
-
-  // If history is provided, check compatibility
-  if (history) {
-    const historyTicker = String(history.ticker || '').toUpperCase();
-    const forecastTicker = String(forecast.ticker || '').toUpperCase();
-
-    if (historyTicker && forecastTicker && historyTicker !== forecastTicker) {
-      return {
-        isAvailable: false,
-        isMismatch: true,
-        mismatchReason: `Ticker mismatch: history is ${historyTicker} but forecast is ${forecastTicker}`,
-        series: [],
-        futureDates: [],
-        finalPrice: null,
-        changePct: null,
-        direction: 'flat',
-      };
-    }
-
-    const lastBar = Array.isArray(history.daily) ? history.daily.at(-1) : null;
-    const historyDate = history.asOf || lastBar?.d;
-    const forecastOriginDate = forecast.data_as_of;
-
-    if (historyDate && forecastOriginDate && historyDate !== forecastOriginDate) {
-      return {
-        isAvailable: false,
-        isMismatch: true,
-        mismatchReason: `Origin date mismatch: history latest date is ${historyDate} but forecast is as of ${forecastOriginDate}`,
-        series: [],
-        futureDates: [],
-        finalPrice: null,
-        changePct: null,
-        direction: 'flat',
-      };
-    }
-
-    if (lastBar && Number.isFinite(Number(lastBar.c)) && forecast.current_price != null) {
-      const isPence = currencySymbol === 'p' || currencySymbol === 'GBp';
-      const precision = isPence ? 1 : 2;
-      const historyCloseStr = Number(lastBar.c).toFixed(precision);
-      const forecastCloseStr = Number(forecast.current_price).toFixed(precision);
-
-      if (historyCloseStr !== forecastCloseStr) {
-        return {
-          isAvailable: false,
-          isMismatch: true,
-          mismatchReason: `Origin price mismatch: history close was ${historyCloseStr} but forecast origin was ${forecastCloseStr}`,
-          series: [],
-          futureDates: [],
-          finalPrice: null,
-          changePct: null,
-          direction: 'flat',
-        };
-      }
-    }
+  if (history.ticker.toUpperCase() !== forecast.ticker.toUpperCase()) {
+    return unavailable('origin_mismatch', 'Ticker mismatch');
   }
-
-  const baselinePrice = Number(forecast.current_price);
-  const hasBaseline = Number.isFinite(baselinePrice) && baselinePrice > 0;
-  const changePct = hasBaseline ? ((finalPrice / baselinePrice) - 1) * 100 : null;
-  const direction = changePct == null || Math.abs(changePct) < 0.001
-    ? 'flat'
-    : changePct > 0
-      ? 'up'
-      : 'down';
-
+  if (lastBar.d !== forecast.data_as_of || (history.asOf && history.asOf !== lastBar.d)) {
+    return unavailable('origin_mismatch', 'Origin date mismatch');
+  }
+  const unit = (symbol) => ['p', 'GBp', 'GBX'].includes(symbol) ? 'GBp' : symbol;
+  if (history.currencySymbol && unit(history.currencySymbol) !== unit(currencySymbol)) {
+    return unavailable('origin_mismatch', 'Quote unit mismatch');
+  }
+  const precision = unit(currencySymbol) === 'GBp' ? 1 : 2;
+  if (Number(lastBar.c).toFixed(precision) !== Number(forecast.current_price).toFixed(precision)) {
+    return unavailable('origin_mismatch', 'Origin price mismatch');
+  }
+  const finalPrice = series[6];
+  const changePct = (finalPrice / Number(forecast.current_price) - 1) * 100;
+  if (!Number.isFinite(changePct)) return unavailable('invalid_bounds');
   return {
-    isAvailable: true,
-    isMismatch: false,
-    mismatchReason: null,
-    series: midpointSeries,
-    futureDates: futureDates.slice(0, count),
-    finalPrice,
-    changePct,
-    direction,
+    isAvailable: true, isMismatch: false, mismatchReason: null, reason: null,
+    series, futureDates: [...dates], finalPrice, changePct,
+    direction: Math.abs(changePct) < 0.001 ? 'flat' : changePct > 0 ? 'up' : 'down',
   };
 }

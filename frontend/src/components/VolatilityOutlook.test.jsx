@@ -14,6 +14,10 @@ function entry(annual, risk, trailing) {
   return {
     forecast: { expected_annualized_volatility: annual },
     evidence: {
+      model_status: 'learned_model',
+      baseline: false,
+      model_version: 'g3-qlike-base-margin-v2',
+      metric_source: 'validation_panel',
       risk_level: risk,
       trailing_annualized_volatility_60d: trailing,
       data_as_of: '2026-09-04',
@@ -66,7 +70,7 @@ describe('VolatilityOutlook', () => {
     expect(screen.getAllByText('Elevated')).toHaveLength(2);
     expect(screen.getByText('Moderate')).toBeInTheDocument();
     expect(container.textContent).not.toMatch(/G3|XGBoost|HAR|QLIKE/i);
-    expect(screen.getByText(/held-out test panel/)).toBeInTheDocument();
+    expect(screen.getAllByText(/historical validation panel/).length).toBeGreaterThan(0);
   });
 
   it('combines the price estimate with the volatility band', () => {

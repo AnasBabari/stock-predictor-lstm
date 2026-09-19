@@ -123,7 +123,7 @@ const forecastRegionPlugin = {
   id: 't212ForecastRegion',
   beforeDraw: (chart) => {
     const { ctx, chartArea, scales } = chart;
-    const splitIdx = chart.data?.forecastSplitIndex;
+    const splitIdx = chart.options.plugins?.t212ForecastRegion?.splitIndex;
     if (splitIdx == null || !scales.x || !chartArea) return;
     const xPos = scales.x.getPixelForValue(splitIdx);
     if (xPos == null || xPos < chartArea.left || xPos > chartArea.right) return;
@@ -179,8 +179,9 @@ export default function PriceChart({
     const count = Math.min(dates.length, prices.length);
     const daily = [];
     for (let i = 0; i < count; i += 1) {
+      if (prices[i] == null || prices[i] === '') continue;
       const close = Number(prices[i]);
-      if (dates[i] && Number.isFinite(close)) daily.push({ d: String(dates[i]), c: close });
+      if (dates[i] && Number.isFinite(close) && close > 0) daily.push({ d: String(dates[i]), c: close });
     }
     if (daily.length < 2) return null;
     return {
@@ -409,6 +410,7 @@ export default function PriceChart({
       zoomAt(event.clientX - rect.left, event.deltaY > 0 ? 1.18 : 0.85);
     };
     const onPointerDown = (event) => {
+      if (event.pointerType === 'touch') return;
       if (event.button !== 0 || !chartRef.current) return;
       const rect = node.getBoundingClientRect();
       dragRef.current = { x: event.clientX - rect.left, view: effectiveView };
@@ -444,14 +446,45 @@ export default function PriceChart({
   // Modal Escape listener & focus restoration
   useEffect(() => {
     if (!isExpanded) return undefined;
+    const dialog = wrapRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    // Make every sibling outside the dialog inert, preserving prior values.
+    const blocked = [];
+    for (let node = dialog; node?.parentElement; node = node.parentElement) {
+      for (const sibling of node.parentElement.children) {
+        if (sibling !== node) {
+          blocked.push([sibling, sibling.inert]);
+          sibling.inert = true;
+        }
+      }
+      if (node.parentElement === document.body) break;
+    }
+    const focusable = () => [...dialog.querySelectorAll('button:not(:disabled), [href], [tabindex="0"]')];
+    focusable()[0]?.focus();
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
         setIsExpanded(false);
-        expandBtnRef.current?.focus();
+      }
+      if (e.key === 'Tab') {
+        const elements = focusable();
+        const first = elements[0];
+        const last = elements.at(-1);
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault(); last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault(); first?.focus();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      blocked.forEach(([element, inert]) => { element.inert = inert; });
+      document.body.style.overflow = previousOverflow;
+      expandBtnRef.current?.focus();
+    };
   }, [isExpanded]);
 
   const toggleExpand = useCallback(() => {
@@ -471,6 +504,7 @@ export default function PriceChart({
     interaction: { mode: 'index', intersect: false },
     plugins: {
       legend: { display: false },
+      t212ForecastRegion: { splitIndex: chartData.forecastSplitIndex },
       t212LastPrice: canShowForecastOverlay
         ? undefined
         : {
@@ -642,7 +676,7 @@ export default function PriceChart({
       >
         {isExpanded && (
           <div className="expanded-modal-bar">
-            <span className="expanded-title">{ticker} · Interactive chart</span>
+            <span className="expanded-title" id="expanded-chart-title">{ticker} · Interactive chart</span>
             <button
               type="button"
               className="expanded-close-btn"
@@ -672,6 +706,7 @@ export default function PriceChart({
           </div>
         )}
 
+        <div className="t212-canvas-viewport">
         {!showLoading && !showError && effectiveHistory && points.labels.length > 0 && (
           <React.Suspense fallback={<div className="loading-text">Loading Chart…</div>}>
             <LazyLineChart
@@ -686,6 +721,7 @@ export default function PriceChart({
         {!showLoading && !showError && effectiveHistory && points.labels.length === 0 && (
           <div className="empty-copy">Not enough price history for this view.</div>
         )}
+        </div>
       </div>
 
       {/* In-Chart Forecast Summary Line or Mismatch Alert */}
@@ -733,6 +769,12 @@ export default function PriceChart({
             </button>
           )}
         </div>
+      )}
+      {forecastForTicker && estimate && !estimate.isAvailable && !estimate.isMismatch && (
+        <p className="chart-mismatch-alert" role="status">
+          Seven-day estimate unavailable: forecast data is incomplete or invalid.
+          {onRetryForecast && <button type="button" className="retry-action-btn" onClick={onRetryForecast}>Retry forecast</button>}
+        </p>
       )}
     </section>
   );
