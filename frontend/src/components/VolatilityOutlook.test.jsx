@@ -73,25 +73,6 @@ describe('VolatilityOutlook', () => {
     expect(screen.getAllByText(/historical validation panel/).length).toBeGreaterThan(0);
   });
 
-  it('combines the price estimate with the volatility band', () => {
-    useVolatilityOutlook.mockReturnValue({
-      outlook: { ticker: 'MSFT', byHorizon: { 5: entry(0.214, 'Elevated', 0.162) } },
-      loading: false,
-      error: '',
-      retry: vi.fn(),
-    });
-    render(
-      <VolatilityOutlook
-        ticker="MSFT"
-        currencySymbol="$"
-        currentPrice={425.3}
-        priceEstimate={{ price: 431.2, changePct: 1.5 }}
-      />,
-    );
-    expect(screen.getByText('$431.20')).toBeInTheDocument();
-    expect(screen.getByText('+1.5%')).toBeInTheDocument();
-    expect(screen.getByText(/\$412\.4.*\$438\.6|\$412.*\$438/)).toBeInTheDocument();
-  });
 
   it('shows diagnostics with baseline comparison and adjustment', () => {
     useVolatilityOutlook.mockReturnValue({

@@ -55,6 +55,8 @@ def test_gjr_path_is_finite_monotone_cumulative():
     assert len(path) == 20
     assert np.isfinite(path).all() and (path > 0).all()
     assert (np.diff(path) >= -1e-12).all()
+    # Path variance must align with daily return variance scale (~1.44e-4 for std=0.012), not > 1.0
+    assert path[0] < 0.001
 
 
 def test_egarch_fit_and_path_are_stable():
@@ -66,6 +68,8 @@ def test_egarch_fit_and_path_are_stable():
     assert len(path) == 20
     assert np.isfinite(path).all() and (path > 0).all()
     assert (np.diff(path) >= -1e-12).all()
+    # Path variance must align with daily return variance scale, not > 1.0
+    assert path[0] < 0.001
 
 
 def test_short_or_invalid_input_raises():
@@ -75,3 +79,47 @@ def test_short_or_invalid_input_raises():
         fit_egarch(_gbm_closes(n=30))
     with pytest.raises(ValueError, match="positive"):
         gjr_cumulative_variance_path(_gbm_closes(), maximum_horizon=0)
+    with pytest.raises(ValueError, match="positive"):
+        egarch_cumulative_variance_path(_gbm_closes(), maximum_horizon=0)
+
+
+def test_asymmetric_paths_support_minimum_valid_length():
+    closes = _gbm_closes(n=65)
+    gjr_path = gjr_cumulative_variance_path(closes, maximum_horizon=5)
+    assert len(gjr_path) == 5
+    assert np.isfinite(gjr_path).all() and (gjr_path > 0).all()
+    assert gjr_path[0] < 0.001
+
+    egarch_path = egarch_cumulative_variance_path(closes, maximum_horizon=5)
+    assert len(egarch_path) == 5
+    assert np.isfinite(egarch_path).all() and (egarch_path > 0).all()
+    assert egarch_path[0] < 0.001
+
+
+def test_asymmetric_garch_input_formats():
+    series = _gbm_closes(n=70)
+
+    # Lowercase close column DataFrame
+    df_lower = pd.DataFrame({"close": series.to_numpy()})
+    fit_lower = fit_gjr_garch(df_lower)
+    assert np.isfinite(fit_lower["omega"])
+
+    # Single-column DataFrame without Close label
+    df_single = pd.DataFrame({"price": series.to_numpy()})
+    fit_single = fit_egarch(df_single)
+    assert np.isfinite(fit_single["omega"])
+
+    # 2D numpy array of shape (N, 1)
+    arr_2d = series.to_numpy().reshape(-1, 1)
+    path_2d = gjr_cumulative_variance_path(arr_2d, maximum_horizon=3)
+    assert len(path_2d) == 3
+
+    # Python list of floats
+    list_input = list(series.to_numpy())
+    path_list = egarch_cumulative_variance_path(list_input, maximum_horizon=3)
+    assert len(path_list) == 3
+
+    # Multi-column DataFrame missing Close column raises ValueError
+    df_invalid = pd.DataFrame({"open": series.to_numpy(), "volume": series.to_numpy()})
+    with pytest.raises(ValueError, match="DataFrame must contain a 'Close' or 'close' column"):
+        fit_gjr_garch(df_invalid)

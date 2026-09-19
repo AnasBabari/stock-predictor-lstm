@@ -99,58 +99,6 @@ def test_history_provider_failure_is_503(monkeypatch):
     assert response.status_code == 503
 
 
-def test_history_warms_shared_cache_for_learned_forecast(monkeypatch, tmp_path):
-    """Same invariant through the training endpoint: chart load first, then
-    GET /api/v1/forecast must not refetch bars. The learned forecast keeps
-    its exact values; only the redundant upstream fetch disappears."""
-    import data_pipeline
-    from calendars import latest_completed_trading_session
-    from market_data.cache import MarketDataCache
-    from market_data.service import MarketDataService
-
-    required = latest_completed_trading_session().date().isoformat()
-    calls = {"upstream_fetches": 0}
-
-    class CountingProvider:
-        name = "alpaca"
-
-        @property
-        def configured(self) -> bool:
-            return True
-
-        def fetch_daily_bars(self, symbol: str, *, years: int):
-            calls["upstream_fetches"] += 1
-            rng = np.random.default_rng(7)
-            index = pd.bdate_range(end=required, periods=900)
-            index = index[index <= required][-800:]
-            close = 500 * np.exp(np.cumsum(0.0003 + rng.normal(0, 0.01, len(index))))
-            frame = pd.DataFrame(
-                {
-                    "Open": close * np.exp(rng.normal(0, 0.002, len(index))),
-                    "High": close * 1.01,
-                    "Low": close * 0.99,
-                    "Close": close,
-                    "Volume": rng.integers(100_000, 1_000_000, len(index)),
-                },
-                index=index,
-            )
-            return MarketDataResult(frame=frame, provider="alpaca", data_as_of=required)
-
-    service = MarketDataService([CountingProvider()], cache=MarketDataCache(tmp_path / "mdcache"))
-    monkeypatch.setattr(data_pipeline, "market_data_service", service)
-    monkeypatch.setattr(market, "_fetch_history_intraday", lambda symbol: None)
-
-    history = CLIENT.get("/api/v1/history", params={"ticker": "MSFT"})
-    assert history.status_code == 200
-    assert calls["upstream_fetches"] == 1
-
-    forecast = CLIENT.get("/api/v1/forecast", params={"ticker": "MSFT", "days": 7})
-    assert forecast.status_code == 200
-    assert forecast.json()["ticker"] == "MSFT"
-    assert calls["upstream_fetches"] == 1
-    assert "server-timing" in forecast.headers
-
-
 def test_history_warms_shared_cache_for_volatility_forecast(monkeypatch, tmp_path):
     """Performance invariant: one upstream fetch serves both chart and forecast.
 
@@ -207,3 +155,55 @@ def test_history_warms_shared_cache_for_volatility_forecast(monkeypatch, tmp_pat
     assert forecast.status_code == 200
     assert forecast.json()["evidence"]["data_as_of"] == required
     assert calls["upstream_fetches"] == 1
+
+
+def test_history_warms_shared_cache_for_learned_forecast(monkeypatch, tmp_path):
+    """Same invariant through the training endpoint: chart load first, then
+    GET /api/v1/forecast must not refetch bars. The learned forecast keeps
+    its exact values; only the redundant upstream fetch disappears."""
+    import data_pipeline
+    from calendars import latest_completed_trading_session
+    from market_data.cache import MarketDataCache
+    from market_data.service import MarketDataService
+
+    required = latest_completed_trading_session().date().isoformat()
+    calls = {"upstream_fetches": 0}
+
+    class CountingProvider:
+        name = "alpaca"
+
+        @property
+        def configured(self) -> bool:
+            return True
+
+        def fetch_daily_bars(self, symbol: str, *, years: int):
+            calls["upstream_fetches"] += 1
+            rng = np.random.default_rng(7)
+            index = pd.bdate_range(end=required, periods=900)
+            index = index[index <= required][-800:]
+            close = 500 * np.exp(np.cumsum(0.0003 + rng.normal(0, 0.01, len(index))))
+            frame = pd.DataFrame(
+                {
+                    "Open": close * np.exp(rng.normal(0, 0.002, len(index))),
+                    "High": close * 1.01,
+                    "Low": close * 0.99,
+                    "Close": close,
+                    "Volume": rng.integers(100_000, 1_000_000, len(index)),
+                },
+                index=index,
+            )
+            return MarketDataResult(frame=frame, provider="alpaca", data_as_of=required)
+
+    service = MarketDataService([CountingProvider()], cache=MarketDataCache(tmp_path / "mdcache"))
+    monkeypatch.setattr(data_pipeline, "market_data_service", service)
+    monkeypatch.setattr(market, "_fetch_history_intraday", lambda symbol: None)
+
+    history = CLIENT.get("/api/v1/history", params={"ticker": "MSFT"})
+    assert history.status_code == 200
+    assert calls["upstream_fetches"] == 1
+
+    forecast = CLIENT.get("/api/v1/forecast", params={"ticker": "MSFT", "days": 7})
+    assert forecast.status_code == 200
+    assert forecast.json()["ticker"] == "MSFT"
+    assert calls["upstream_fetches"] == 1
+    assert "server-timing" in forecast.headers

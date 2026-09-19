@@ -24,7 +24,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from backend.data_pipeline import _download_ohlcv  # noqa: E402
-from research.price_forecasting.gpu_pipeline import (  # noqa: E402
+from research.volatility_structure.data_utils import (  # noqa: E402
     TRI_EXCHANGE_TICKERS,
     _normalise_ohlcv,
 )

@@ -10,15 +10,6 @@ from slowapi import Limiter
 
 from config import settings
 
-VALID_MODEL_TYPES = {
-    "lstm",
-    "gru",
-    "attention",
-    "bilstm",
-    "bilstm_attention_regression",
-    "bilstm_attention_direction",
-}
-
 _trusted_proxy_ips = frozenset(settings.trusted_proxy_ips)
 
 
@@ -78,14 +69,3 @@ def validate_ticker(ticker: str) -> str:
     if not re.fullmatch(r"[A-Z0-9.\-]{1,12}", ticker):
         raise HTTPException(status_code=400, detail="Invalid ticker symbol.")
     return ticker
-
-
-def validate_model_type(model_type: str) -> str:
-    """Validate model type parameter to prevent path traversal."""
-    model_type = model_type.strip().lower()
-    if model_type not in VALID_MODEL_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid model type. Must be one of: {sorted(VALID_MODEL_TYPES)}",
-        )
-    return model_type

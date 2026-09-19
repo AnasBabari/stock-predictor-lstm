@@ -20,11 +20,21 @@ _SQRT_2_OVER_PI = float(np.sqrt(2.0 / np.pi))
 
 
 def _clean_returns(close: pd.Series | np.ndarray, *, minimum: int = 60) -> np.ndarray:
-    prices = np.asarray(
-        close["Close"].to_numpy(dtype=float)
-        if isinstance(close, pd.DataFrame)
-        else pd.Series(close, dtype=float).to_numpy(dtype=float)
-    ).reshape(-1)
+    if isinstance(close, pd.DataFrame):
+        for candidate in ("Close", "close"):
+            if candidate in close.columns:
+                series = close[candidate]
+                break
+        else:
+            if len(close.columns) == 1:
+                series = close.iloc[:, 0]
+            else:
+                raise ValueError("DataFrame must contain a 'Close' or 'close' column")
+        prices = np.asarray(series.to_numpy(dtype=float)).reshape(-1)
+    elif isinstance(close, pd.Series):
+        prices = np.asarray(close.to_numpy(dtype=float)).reshape(-1)
+    else:
+        prices = np.asarray(close, dtype=float).reshape(-1)
     finite = prices[np.isfinite(prices) & (prices > 0.0)]
     returns = np.diff(np.log(finite))
     returns = returns[np.isfinite(returns)][-252:]
@@ -51,9 +61,7 @@ def _gjr_conditional(
     return conditional
 
 
-def fit_gjr_garch(close: pd.Series | np.ndarray) -> dict[str, float]:
-    """Fit Gaussian GJR-GARCH(1,1); gamma >= 0 captures the leverage effect."""
-    returns = _clean_returns(close)
+def _fit_gjr_from_returns(returns: np.ndarray) -> dict[str, float]:
     sample_var = max(float(np.var(returns, ddof=1)), 1e-8)
 
     def negative_log_likelihood(params: np.ndarray) -> float:
@@ -68,7 +76,8 @@ def fit_gjr_garch(close: pd.Series | np.ndarray) -> dict[str, float]:
         # Positive NLL: +0.5 * sum(lnc + r^2/c). (A leading minus sign here
         # would minimize the log-likelihood and pin every parameter at a
         # degenerate bound; the test DGPs guard this orientation.)
-        return float(0.5 * np.sum(np.log(conditional) + returns**2 / conditional))
+        nll = float(0.5 * np.sum(np.log(conditional) + returns**2 / conditional))
+        return nll if np.isfinite(nll) else _PENALTY
 
     initial = np.array([0.05 * sample_var, 0.06, 0.05, 0.85], dtype=np.float64)
     result = minimize(
@@ -101,6 +110,12 @@ def fit_gjr_garch(close: pd.Series | np.ndarray) -> dict[str, float]:
     }
 
 
+def fit_gjr_garch(close: pd.Series | np.ndarray) -> dict[str, float]:
+    """Fit Gaussian GJR-GARCH(1,1); gamma >= 0 captures the leverage effect."""
+    returns = _clean_returns(close)
+    return _fit_gjr_from_returns(returns)
+
+
 def gjr_cumulative_variance_path(
     close: pd.Series | np.ndarray, maximum_horizon: int = 20
 ) -> np.ndarray:
@@ -109,7 +124,7 @@ def gjr_cumulative_variance_path(
     if maximum_horizon < 1:
         raise ValueError("maximum_horizon must be positive")
     returns = _clean_returns(close)
-    fit = fit_gjr_garch(returns)
+    fit = _fit_gjr_from_returns(returns)
     omega, alpha, gamma, beta = fit["omega"], fit["alpha"], fit["gamma"], fit["beta"]
     conditional = _gjr_conditional(returns, omega, alpha, gamma, beta)
     if conditional is None:  # pragma: no cover - guarded by fit bounds
@@ -135,9 +150,7 @@ def gjr_cumulative_variance_path(
     return cumulative_path
 
 
-def fit_egarch(close: pd.Series | np.ndarray) -> dict[str, float]:
-    """Fit Gaussian EGARCH(1,1). A negative gamma is the leverage effect."""
-    returns = _clean_returns(close)
+def _fit_egarch_from_returns(returns: np.ndarray) -> dict[str, float]:
     sample_var = max(float(np.var(returns, ddof=1)), 1e-8)
     log_sample = float(np.log(sample_var))
 
@@ -148,19 +161,20 @@ def fit_egarch(close: pd.Series | np.ndarray) -> dict[str, float]:
         log_variance = np.empty(len(returns), dtype=np.float64)
         log_variance[0] = log_sample
         for index in range(1, len(returns)):
-            shock = returns[index - 1] / max(np.sqrt(np.exp(log_variance[index - 1])), 1e-8)
+            prev_log = float(np.clip(log_variance[index - 1], -50.0, 50.0))
+            denom = max(float(np.sqrt(np.exp(prev_log))), 1e-8)
+            shock = returns[index - 1] / denom
             if not np.isfinite(shock):
                 return _PENALTY
             log_variance[index] = (
-                omega
-                + alpha * (abs(shock) - _SQRT_2_OVER_PI)
-                + gamma * shock
-                + beta * log_variance[index - 1]
+                omega + alpha * (abs(shock) - _SQRT_2_OVER_PI) + gamma * shock + beta * prev_log
             )
-        if not np.isfinite(log_variance).all():
-            return _PENALTY
-        variance = np.exp(log_variance)
-        return float(0.5 * np.sum(np.log(variance) + returns**2 / variance))
+            if not np.isfinite(log_variance[index]) or abs(log_variance[index]) > 50.0:
+                return _PENALTY
+        clamped_log = np.clip(log_variance, -50.0, 50.0)
+        variance = np.exp(clamped_log)
+        nll = float(0.5 * np.sum(clamped_log + returns**2 / variance))
+        return nll if np.isfinite(nll) else _PENALTY
 
     initial = np.array([(1.0 - 0.9) * log_sample, 0.10, -0.05, 0.90], dtype=np.float64)
     result = minimize(
@@ -190,6 +204,12 @@ def fit_egarch(close: pd.Series | np.ndarray) -> dict[str, float]:
     }
 
 
+def fit_egarch(close: pd.Series | np.ndarray) -> dict[str, float]:
+    """Fit Gaussian EGARCH(1,1). A negative gamma is the leverage effect."""
+    returns = _clean_returns(close)
+    return _fit_egarch_from_returns(returns)
+
+
 def egarch_cumulative_variance_path(
     close: pd.Series | np.ndarray, maximum_horizon: int = 20
 ) -> np.ndarray:
@@ -202,35 +222,37 @@ def egarch_cumulative_variance_path(
     if maximum_horizon < 1:
         raise ValueError("maximum_horizon must be positive")
     returns = _clean_returns(close)
-    fit = fit_egarch(returns)
+    fit = _fit_egarch_from_returns(returns)
     omega, alpha, gamma, beta = fit["omega"], fit["alpha"], fit["gamma"], fit["beta"]
     log_sample = float(np.log(max(float(np.var(returns, ddof=1)), 1e-8)))
     log_variance = np.empty(len(returns), dtype=np.float64)
     log_variance[0] = log_sample
     for index in range(1, len(returns)):
-        shock = returns[index - 1] / max(np.sqrt(np.exp(log_variance[index - 1])), 1e-8)
-        log_variance[index] = (
-            omega
-            + alpha * (abs(shock) - _SQRT_2_OVER_PI)
-            + gamma * shock
-            + beta * log_variance[index - 1]
+        prev_log = float(np.clip(log_variance[index - 1], -50.0, 50.0))
+        denom = max(float(np.sqrt(np.exp(prev_log))), 1e-8)
+        shock = returns[index - 1] / denom
+        log_variance[index] = np.clip(
+            omega + alpha * (abs(shock) - _SQRT_2_OVER_PI) + gamma * shock + beta * prev_log,
+            -50.0,
+            50.0,
         )
     if not np.isfinite(log_variance).all():
         raise ValueError("EGARCH produced a non-finite variance filter")
+    last_prev_log = float(np.clip(log_variance[-1], -50.0, 50.0))
+    last_denom = max(float(np.sqrt(np.exp(last_prev_log))), 1e-8)
     next_log = (
         omega
-        + alpha
-        * (abs(returns[-1] / max(np.sqrt(np.exp(log_variance[-1])), 1e-8)) - _SQRT_2_OVER_PI)
-        + gamma * (returns[-1] / max(np.sqrt(np.exp(log_variance[-1])), 1e-8))
-        + beta * log_variance[-1]
+        + alpha * (abs(returns[-1] / last_denom) - _SQRT_2_OVER_PI)
+        + gamma * (returns[-1] / last_denom)
+        + beta * last_prev_log
     )
-    steps = np.arange(1, maximum_horizon + 1, dtype=np.float64)
+    steps = np.arange(maximum_horizon, dtype=np.float64)
     if abs(beta) >= 0.9999:
         expected_log = np.full(maximum_horizon, next_log, dtype=np.float64)
     else:
-        unconditional = omega / (1.0 - beta)
+        unconditional = omega / max(1.0 - beta, 1e-5)
         expected_log = unconditional + (next_log - unconditional) * beta**steps
-    daily_path = np.maximum(np.exp(expected_log), _EPS)
+    daily_path = np.maximum(np.exp(np.clip(expected_log, -50.0, 50.0)), _EPS)
     cumulative_path = np.cumsum(daily_path)
     if not np.isfinite(cumulative_path).all() or np.any(np.diff(cumulative_path) < -1e-12):
         raise ValueError("EGARCH produced an invalid cumulative variance path")

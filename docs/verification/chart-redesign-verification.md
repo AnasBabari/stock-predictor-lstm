@@ -113,7 +113,7 @@ The intended Vercel project is `stock-predictor-lstm`
 `stock-predictor-lstm-two.vercel.app`, repository
 `AnasBabari/stock-predictor-lstm`, branch `main`.
 
-## Publication blocker found after local verification
+## Publication reconciliation
 
 The implementation is committed locally as `d127050` (G3 serving correction)
 and `af2bde7` (UI, tests and evidence). A normal push was rejected; no remote
@@ -126,13 +126,29 @@ local main had nine unique commits, remote main seven. Remote commit
 market-news service and frontend price client. Remote main also contains
 other chart and numerical fixes that must be preserved.
 
-The verified Vercel production deployment still points to remote main
+At the initial push attempt, the verified Vercel deployment pointed to remote main
 `b1ca951631371da774c33ad504341b40068ba881`, not these local corrections.
-Integrating a learned seven-session estimate into a remote branch that
-explicitly decommissioned it requires a product-scope decision. Publishing
-is paused until that conflict is resolved; no merge or rebase was attempted.
+The user then authorized reconciliation and pushing the learned seven-session
+forecast. A normal merge retains both histories, the remote GARCH numerical
+fixes, multi-format research inputs, React ref handling, and the local-backend
+development proxy. The approved chart layout, learned price endpoint, model
+modules, artifact cache, news service and required dependencies are retained.
+Unused legacy frontend components and bulk research dumps remain removed as
+in remote main; the referenced negative-study summary is preserved.
 
-Live API/chart verification of the new build remains **not performed**.
+The remote volatility `model=auto` selection is preserved. The explicit
+`model=gpu_g3` route uses the corrected ONNX artifacts. No blanket promotion
+of learned volatility models has been introduced.
+
+The merged frontend suite has 153 tests in 22 files (unused legacy-component
+tests were removed by remote main); all pass, as do the build and all 16
+browser checks. The merged backend/research suite has 273 tests, including
+the restored history-to-learned-forecast cache regression and the new remote
+GARCH cases. News provider tests now use offline fixtures instead of depending
+on an untracked local archive or live provider availability. Ruff and the
+frozen dependency lock check pass.
+
+Live API/chart verification of the new build remains **not performed** in this record.
 Local fixture screenshots and serving parity must not be described as a
 successful production deployment. No ledger collection or settlement writes
 were made during this work.

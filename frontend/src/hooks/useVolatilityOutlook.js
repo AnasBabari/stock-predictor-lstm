@@ -9,7 +9,7 @@ export function clearVolatilityOutlookCache() {
 }
 
 /**
- * Enhanced-volatility outlook for one ticker (model=gpu_g3, horizons
+ * Volatility outlook for one ticker (model=auto, horizons
  * 5/10/20 fetched in parallel). Cached per ticker for the page lifetime.
  * A failed horizon resolves to null so one bad response never blocks the
  * other two; the card renders whatever arrived.
@@ -44,7 +44,7 @@ export function useVolatilityOutlook(ticker) {
     setError('');
     Promise.all(OUTLOOK_HORIZONS.map(async (horizon) => {
       try {
-        const result = await fetchVolatilityForecast(symbol, horizon, controller.signal, { model: 'gpu_g3' });
+        const result = await fetchVolatilityForecast(symbol, horizon, controller.signal, { model: 'auto' });
         return [horizon, result];
       } catch (err) {
         if (err?.name === 'AbortError') throw err;

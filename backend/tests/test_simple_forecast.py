@@ -187,8 +187,25 @@ def test_news_route_returns_contract(monkeypatch) -> None:
     assert payload["items"][0]["headline"] == "Mock Headline"
 
 
-def test_news_service_returns_rich_headline_objects() -> None:
+def _fixture_news_item():
+    from services.market_news import _format_news_item
+
+    return _format_news_item(
+        identifier="unit-fixture",
+        title="Example fixture: company announces earnings",
+        summary="Company reports growth in revenue.",
+        source="Unit test fixture",
+        published_at="2026-09-04T12:00:00Z",
+        url="https://example.com/fixture",
+        provider="yahoo",
+    )
+
+
+def test_news_service_returns_rich_headline_objects(monkeypatch) -> None:
     from services.market_news import clear_news_cache, fetch_recent_news
+
+    monkeypatch.setattr("services.market_news._fetch_from_alpaca", lambda *_a, **_k: [])
+    monkeypatch.setattr("services.market_news._fetch_from_yahoo", lambda _s: [_fixture_news_item()])
 
     clear_news_cache()
     res = fetch_recent_news("TSLA")
@@ -223,6 +240,12 @@ def test_news_service_fallbacks(monkeypatch) -> None:
     from services.market_news import clear_news_cache, fetch_recent_news
 
     clear_news_cache()
+    # Test provider selection without network access or a developer's local archive.
+    monkeypatch.setattr("services.market_news._fetch_from_alpaca", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        "services.market_news._fetch_from_sec_edgar", lambda _s: [_fixture_news_item()]
+    )
+    monkeypatch.setattr("services.market_news._fetch_from_cache", lambda _s: [_fixture_news_item()])
 
     # When Yahoo fails, falls back to SEC EDGAR
     monkeypatch.setattr(
